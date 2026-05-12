@@ -5,13 +5,25 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
+import android.text.Layout
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.style.AbsoluteSizeSpan
+import android.text.style.ForegroundColorSpan
+import android.text.style.LeadingMarginSpan
+import android.text.style.StyleSpan
+import android.text.style.TypefaceSpan
 import androidx.core.graphics.createBitmap
 import com.aryan.reader.pdf.DummyTextPage
 import com.aryan.reader.pdf.ReaderDocument
@@ -30,16 +42,22 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.zip.ZipFile
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import androidx.core.graphics.withSave
+import androidx.core.graphics.withClip
+import androidx.core.graphics.withTranslation
 
-internal const val PPTX_RENDERER_VERSION = 1
+internal const val PPTX_RENDERER_VERSION = 3
 private const val EMU_PER_POINT = 12_700f
 private const val DEFAULT_SLIDE_WIDTH_EMU = 12_192_000
 private const val DEFAULT_SLIDE_HEIGHT_EMU = 6_858_000
 private const val DEFAULT_TEXT_SIZE_PT = 18f
 private const val DEFAULT_TEXT_MARGIN_PT = 91_440f / EMU_PER_POINT
+private const val DEFAULT_LINE_SPACING_MULTIPLE = 1.0f
 
 internal data class PptxDeck(
     val widthPoint: Int,
@@ -69,23 +87,70 @@ internal data class PptxShapeElement(
     override val bounds: RectF,
     val preset: String,
     val fillColor: Int?,
+    val gradientFill: PptxGradientFill? = null,
     val lineColor: Int?,
     val lineWidthPoint: Float,
     val paragraphs: List<PptxParagraph>,
     val hyperlink: String?,
-    val placeholderKey: PptxPlaceholderKey?
+    val placeholderKey: PptxPlaceholderKey?,
+    val textInsets: PptxTextInsets = PptxTextInsets(),
+    val verticalAnchor: PptxVerticalAnchor = PptxVerticalAnchor.TOP,
+    val rotationDegrees: Float = 0f,
+    val renderText: Boolean = true,
+    val fontScale: Float = 1f,
+    val lineSpacingReduction: Float = 0f
 ) : PptxElement
 
 internal data class PptxImageElement(
     override val bounds: RectF,
     val bytes: ByteArray,
-    val contentType: String?
+    val contentType: String?,
+    val crop: PptxImageCrop = PptxImageCrop(),
+    val rotationDegrees: Float = 0f
 ) : PptxElement
+
+internal data class PptxImageCrop(
+    val left: Float = 0f,
+    val top: Float = 0f,
+    val right: Float = 0f,
+    val bottom: Float = 0f
+)
+
+internal data class PptxTableElement(
+    override val bounds: RectF,
+    val rows: List<PptxTableRow>,
+    val rotationDegrees: Float = 0f
+) : PptxElement
+
+internal data class PptxTableRow(
+    val heightPoint: Float?,
+    val cells: List<PptxTableCell>
+)
+
+internal data class PptxTableCell(
+    val widthPoint: Float?,
+    val fillColor: Int?,
+    val lineColor: Int?,
+    val paragraphs: List<PptxParagraph>,
+    val textInsets: PptxTextInsets = PptxTextInsets(left = 3.6f, top = 3.6f, right = 3.6f, bottom = 3.6f),
+    val verticalAnchor: PptxVerticalAnchor = PptxVerticalAnchor.TOP
+)
 
 internal data class PptxParagraph(
     val runs: List<PptxTextRun>,
     val alignment: PptxTextAlign = PptxTextAlign.START,
-    val bullet: String? = null
+    val bullet: String? = null,
+    val level: Int = 0,
+    val marginLeftPt: Float? = null,
+    val indentPt: Float? = null,
+    val spaceBeforePt: Float = 0f,
+    val spaceAfterPt: Float = 0f,
+    val lineSpacingMultiple: Float = DEFAULT_LINE_SPACING_MULTIPLE,
+    val alignmentExplicit: Boolean = false,
+    val bulletExplicit: Boolean = false,
+    val spaceBeforeExplicit: Boolean = false,
+    val spaceAfterExplicit: Boolean = false,
+    val lineSpacingExplicit: Boolean = false
 )
 
 internal data class PptxTextRun(
@@ -94,7 +159,12 @@ internal data class PptxTextRun(
     val color: Int? = null,
     val bold: Boolean = false,
     val italic: Boolean = false,
-    val typeface: String? = null
+    val typeface: String? = null,
+    val sizeExplicit: Boolean = false,
+    val colorExplicit: Boolean = false,
+    val boldExplicit: Boolean = false,
+    val italicExplicit: Boolean = false,
+    val typefaceExplicit: Boolean = false
 )
 
 internal enum class PptxTextAlign {
@@ -102,6 +172,25 @@ internal enum class PptxTextAlign {
     CENTER,
     END
 }
+
+internal enum class PptxVerticalAnchor {
+    TOP,
+    MIDDLE,
+    BOTTOM
+}
+
+internal data class PptxTextInsets(
+    val left: Float = DEFAULT_TEXT_MARGIN_PT,
+    val top: Float = DEFAULT_TEXT_MARGIN_PT,
+    val right: Float = DEFAULT_TEXT_MARGIN_PT,
+    val bottom: Float = DEFAULT_TEXT_MARGIN_PT
+)
+
+internal data class PptxGradientFill(
+    val startColor: Int,
+    val endColor: Int,
+    val angleDegrees: Float = 0f
+)
 
 internal data class PptxPlaceholderKey(
     val type: String?,
@@ -121,13 +210,161 @@ private data class PptxRelationship(
 )
 
 private data class PptxTheme(
-    val colors: Map<String, Int> = emptyMap()
+    val colors: Map<String, Int> = emptyMap(),
+    val majorTypeface: String? = null,
+    val minorTypeface: String? = null
 )
 
 private data class ParsedPart(
     val backgroundColor: Int? = null,
-    val elements: List<PptxElement> = emptyList()
+    val elements: List<PptxElement> = emptyList(),
+    val textDefaults: PptxTextDefaults = PptxTextDefaults()
 )
+
+private data class PptxTextDefaults(
+    val title: Map<Int, PptxParagraphStyle> = emptyMap(),
+    val body: Map<Int, PptxParagraphStyle> = emptyMap(),
+    val other: Map<Int, PptxParagraphStyle> = emptyMap()
+) {
+    fun merge(override: PptxTextDefaults): PptxTextDefaults {
+        return PptxTextDefaults(
+            title = title.mergeStyles(override.title),
+            body = body.mergeStyles(override.body),
+            other = other.mergeStyles(override.other)
+        )
+    }
+
+    fun forPlaceholder(key: PptxPlaceholderKey?): Map<Int, PptxParagraphStyle> {
+        return when (key?.type?.placeholderFamily()) {
+            "title" -> title
+            "body", null -> if (key != null) body else other
+            "subtitle" -> other.ifEmpty { body }
+            else -> other
+        }
+    }
+}
+
+private data class PptxParagraphStyle(
+    val alignment: PptxTextAlign? = null,
+    val bullet: String? = null,
+    val bulletExplicit: Boolean = false,
+    val marginLeftPt: Float? = null,
+    val indentPt: Float? = null,
+    val spaceBeforePt: Float? = null,
+    val spaceAfterPt: Float? = null,
+    val lineSpacingMultiple: Float? = null,
+    val run: PptxRunStyle = PptxRunStyle()
+) {
+    fun merge(override: PptxParagraphStyle): PptxParagraphStyle {
+        return PptxParagraphStyle(
+            alignment = override.alignment ?: alignment,
+            bullet = if (override.bulletExplicit) override.bullet else bullet,
+            bulletExplicit = bulletExplicit || override.bulletExplicit,
+            marginLeftPt = override.marginLeftPt ?: marginLeftPt,
+            indentPt = override.indentPt ?: indentPt,
+            spaceBeforePt = override.spaceBeforePt ?: spaceBeforePt,
+            spaceAfterPt = override.spaceAfterPt ?: spaceAfterPt,
+            lineSpacingMultiple = override.lineSpacingMultiple ?: lineSpacingMultiple,
+            run = run.merge(override.run)
+        )
+    }
+}
+
+private data class PptxRunStyle(
+    val sizePt: Float? = null,
+    val color: Int? = null,
+    val bold: Boolean? = null,
+    val italic: Boolean? = null,
+    val typeface: String? = null
+) {
+    fun merge(override: PptxRunStyle): PptxRunStyle {
+        return PptxRunStyle(
+            sizePt = override.sizePt ?: sizePt,
+            color = override.color ?: color,
+            bold = override.bold ?: bold,
+            italic = override.italic ?: italic,
+            typeface = override.typeface ?: typeface
+        )
+    }
+}
+
+private data class PptxGroupTransform(
+    val scaleX: Float = 1f,
+    val scaleY: Float = 1f,
+    val dx: Float = 0f,
+    val dy: Float = 0f,
+    val rotationDegrees: Float = 0f
+) {
+    fun then(child: PptxGroupTransform): PptxGroupTransform {
+        return PptxGroupTransform(
+            scaleX = scaleX * child.scaleX,
+            scaleY = scaleY * child.scaleY,
+            dx = dx + child.dx * scaleX,
+            dy = dy + child.dy * scaleY,
+            rotationDegrees = rotationDegrees + child.rotationDegrees
+        )
+    }
+
+    fun apply(element: PptxElement): PptxElement {
+        if (this == IDENTITY) return element
+        return when (element) {
+            is PptxShapeElement -> element.copy(
+                bounds = mapRect(element.bounds),
+                lineWidthPoint = element.lineWidthPoint * averageScale(),
+                rotationDegrees = element.rotationDegrees + rotationDegrees
+            )
+            is PptxImageElement -> element.copy(
+                bounds = mapRect(element.bounds),
+                rotationDegrees = element.rotationDegrees + rotationDegrees
+            )
+            is PptxTableElement -> element.copy(
+                bounds = mapRect(element.bounds),
+                rotationDegrees = element.rotationDegrees + rotationDegrees
+            )
+        }
+    }
+
+    private fun mapRect(rect: RectF): RectF {
+        val left = rect.left * scaleX + dx
+        val right = rect.right * scaleX + dx
+        val top = rect.top * scaleY + dy
+        val bottom = rect.bottom * scaleY + dy
+        return RectF(min(left, right), min(top, bottom), max(left, right), max(top, bottom))
+    }
+
+    private fun averageScale(): Float = ((scaleX + scaleY) / 2f).coerceAtLeast(0.01f)
+
+    companion object {
+        val IDENTITY = PptxGroupTransform()
+
+        fun fromGroup(group: Element): PptxGroupTransform {
+            val xfrm = group.childrenByLocalTag("grpSpPr")
+                .firstOrNull()
+                ?.childrenByLocalTag("xfrm")
+                ?.firstOrNull()
+                ?: return IDENTITY
+            val off = xfrm.childrenByLocalTag("off").firstOrNull()
+            val ext = xfrm.childrenByLocalTag("ext").firstOrNull()
+            val chOff = xfrm.childrenByLocalTag("chOff").firstOrNull()
+            val chExt = xfrm.childrenByLocalTag("chExt").firstOrNull() ?: return IDENTITY
+            val childWidth = chExt.xmlFloat("cx")?.emuToPoint()?.takeIf { it != 0f } ?: return IDENTITY
+            val childHeight = chExt.xmlFloat("cy")?.emuToPoint()?.takeIf { it != 0f } ?: return IDENTITY
+            val scaleX = (ext?.xmlFloat("cx")?.emuToPoint() ?: childWidth) / childWidth
+            val scaleY = (ext?.xmlFloat("cy")?.emuToPoint() ?: childHeight) / childHeight
+            val childX = chOff?.xmlFloat("x")?.emuToPoint() ?: 0f
+            val childY = chOff?.xmlFloat("y")?.emuToPoint() ?: 0f
+            val offX = off?.xmlFloat("x")?.emuToPoint() ?: 0f
+            val offY = off?.xmlFloat("y")?.emuToPoint() ?: 0f
+            return PptxGroupTransform(
+                scaleX = scaleX,
+                scaleY = scaleY,
+                dx = offX - childX * scaleX,
+                dy = offY - childY * scaleY,
+                rotationDegrees = xfrm.xmlFloat("rot")?.let { it / 60_000f } ?: 0f
+            )
+        }
+    }
+}
 
 internal object PptxDeckCache {
     private const val MAX_ENTRIES = 4
@@ -214,11 +451,20 @@ internal object PptxDocumentParser {
             zip.xml(path)?.let { parsePart(zip, it, zip.relationshipsFor(path), theme, renderPlaceholderText = false) }
         } ?: ParsedPart()
         val layout = layoutPath?.let { path ->
-            zip.xml(path)?.let { parsePart(zip, it, zip.relationshipsFor(path), theme, renderPlaceholderText = false) }
+            zip.xml(path)?.let {
+                parsePart(
+                    zip = zip,
+                    document = it,
+                    relationships = zip.relationshipsFor(path),
+                    theme = theme,
+                    renderPlaceholderText = false,
+                    inheritedTextDefaults = master.textDefaults
+                )
+            }
         } ?: ParsedPart()
         val slide = parsePart(zip, slideXml, slideRels, theme, renderPlaceholderText = true)
         val inheritedElements = master.elements + layout.elements
-        val elements = inheritedElements + inheritPlaceholderBounds(slide.elements, inheritedElements)
+        val elements = inheritedElements + inheritPlaceholderProperties(slide.elements, inheritedElements)
         val backgroundColor = slide.backgroundColor ?: layout.backgroundColor ?: master.backgroundColor ?: Color.WHITE
         val textIndex = PptxTextIndexer.index(elements)
 
@@ -237,8 +483,10 @@ internal object PptxDocumentParser {
         document: Element,
         relationships: PptxRelationships,
         theme: PptxTheme,
-        renderPlaceholderText: Boolean
+        renderPlaceholderText: Boolean,
+        inheritedTextDefaults: PptxTextDefaults = PptxTextDefaults()
     ): ParsedPart {
+        val textDefaults = inheritedTextDefaults.merge(document.textDefaults(theme))
         val background = document.firstByLocalTag("bgPr")?.solidFillColor(theme)
             ?: document.firstByLocalTag("bgRef")?.schemeColor(theme)
         val elements = mutableListOf<PptxElement>()
@@ -250,10 +498,11 @@ internal object PptxDocumentParser {
                 relationships = relationships,
                 theme = theme,
                 renderPlaceholderText = renderPlaceholderText,
+                textDefaults = textDefaults,
                 output = elements
             )
         }
-        return ParsedPart(backgroundColor = background, elements = elements)
+        return ParsedPart(backgroundColor = background, elements = elements, textDefaults = textDefaults)
     }
 
     private fun parseDrawingElement(
@@ -262,15 +511,21 @@ internal object PptxDocumentParser {
         relationships: PptxRelationships,
         theme: PptxTheme,
         renderPlaceholderText: Boolean,
-        output: MutableList<PptxElement>
+        textDefaults: PptxTextDefaults,
+        output: MutableList<PptxElement>,
+        transform: PptxGroupTransform = PptxGroupTransform.IDENTITY
     ) {
         when (element.localTag()) {
-            "sp", "cxnsp" -> parseShape(element, relationships, theme, renderPlaceholderText)?.let(output::add)
-            "pic" -> parseImage(zip, element, relationships)?.let(output::add)
+            "sp", "cxnsp" -> parseShape(element, relationships, theme, renderPlaceholderText, textDefaults)
+                ?.let { output += transform.apply(it) }
+            "pic" -> parseImage(zip, element, relationships)
+                ?.let { output += transform.apply(it) }
             "grpsp" -> element.children().forEach { child ->
-                parseDrawingElement(zip, child, relationships, theme, renderPlaceholderText, output)
+                val childTransform = transform.then(PptxGroupTransform.fromGroup(element))
+                parseDrawingElement(zip, child, relationships, theme, renderPlaceholderText, textDefaults, output, childTransform)
             }
-            "graphicframe" -> parseGraphicFrame(element, theme)?.let(output::add)
+            "graphicframe" -> parseGraphicFrame(element, relationships, theme)
+                ?.let { output += transform.apply(it) }
         }
     }
 
@@ -278,24 +533,36 @@ internal object PptxDocumentParser {
         element: Element,
         relationships: PptxRelationships,
         theme: PptxTheme,
-        renderPlaceholderText: Boolean
+        renderPlaceholderText: Boolean,
+        textDefaults: PptxTextDefaults
     ): PptxShapeElement? {
         val spPr = element.childrenByLocalTag("spPr").firstOrNull()
         val bounds = spPr?.boundsFromTransform() ?: element.boundsFromTransform()
+        val txBody = element.firstByLocalTag("txBody")
+        val bodyPr = txBody?.childrenByLocalTag("bodyPr")?.firstOrNull()
         val preset = spPr?.childrenByLocalTag("prstGeom")?.firstOrNull()?.xmlAttr("prst")
             ?: if (element.localTag() == "cxnsp") "line" else "rect"
         val placeholderKey = element.firstByLocalTag("ph")?.placeholderKey()
-        val paragraphs = if (placeholderKey != null && !renderPlaceholderText) {
-            emptyList()
-        } else {
-            parseTextBody(element.firstByLocalTag("txBody"), theme)
-        }
+        val style = element.childrenByLocalTag("style").firstOrNull()
+        val shapeRunDefaults = PptxRunStyle(color = style?.firstByLocalTag("fontRef")?.solidLikeColor(theme))
+        val paragraphs = parseTextBody(
+            txBody = txBody,
+            theme = theme,
+            inheritedStyles = textDefaults.forPlaceholder(placeholderKey),
+            shapeRunDefaults = shapeRunDefaults
+        )
+        val useBackgroundFill = element.xmlAttr("useBgFill").isTruthyXmlFlag()
         val fillColor = when {
+            useBackgroundFill -> null
             spPr?.firstDirectByLocalTag("noFill") != null -> null
-            else -> spPr?.solidFillColor(theme)
+            else -> spPr?.solidFillColor(theme) ?: style?.firstByLocalTag("fillRef")?.solidLikeColor(theme)
         }
+        val gradientFill = spPr?.gradientFill(theme)
         val line = spPr?.childrenByLocalTag("ln")?.firstOrNull()
-        val lineColor = line?.solidFillColor(theme)
+        val lineColor = when {
+            line?.firstDirectByLocalTag("noFill") != null -> null
+            else -> line?.solidFillColor(theme) ?: style?.firstByLocalTag("lnRef")?.solidLikeColor(theme)
+        }
         val lineWidth = line?.xmlFloat("w")?.emuToPoint() ?: 0.75f
         val hyperlink = element.firstByLocalTag("hlinkClick")
             ?.xmlAttr("r:id")
@@ -307,11 +574,18 @@ internal object PptxDocumentParser {
             bounds = bounds,
             preset = preset.lowercase(Locale.ROOT),
             fillColor = fillColor,
+            gradientFill = gradientFill,
             lineColor = lineColor,
             lineWidthPoint = lineWidth,
             paragraphs = paragraphs,
             hyperlink = hyperlink,
-            placeholderKey = placeholderKey
+            placeholderKey = placeholderKey,
+            textInsets = bodyPr?.textInsets() ?: PptxTextInsets(),
+            verticalAnchor = bodyPr?.verticalAnchor() ?: PptxVerticalAnchor.TOP,
+            rotationDegrees = spPr?.rotationDegreesFromTransform() ?: element.rotationDegreesFromTransform(),
+            renderText = placeholderKey == null || renderPlaceholderText,
+            fontScale = bodyPr?.autoFitFontScale() ?: 1f,
+            lineSpacingReduction = bodyPr?.autoFitLineSpacingReduction() ?: 0f
         )
     }
 
@@ -320,77 +594,185 @@ internal object PptxDocumentParser {
         element: Element,
         relationships: PptxRelationships
     ): PptxImageElement? {
-        val relId = element.firstByLocalTag("blip")?.xmlAttr("r:embed") ?: return null
+        val blip = element.firstByLocalTag("blip") ?: return null
+        val relId = blip.xmlAttr("r:embed") ?: blip.xmlAttr("r:link") ?: return null
         val rel = relationships.byId[relId] ?: return null
         val target = rel.resolvedTarget
         val entry = zip.getEntry(target) ?: return null
         val bytes = zip.getInputStream(entry).use { it.readBytes() }
+        val crop = element.firstByLocalTag("srcRect")?.imageCrop() ?: PptxImageCrop()
         val bounds = element.childrenByLocalTag("spPr").firstOrNull()?.boundsFromTransform()
             ?: element.boundsFromTransform()
         return PptxImageElement(
             bounds = bounds,
             bytes = bytes,
-            contentType = target.imageContentType()
+            contentType = target.imageContentType(),
+            crop = crop,
+            rotationDegrees = element.childrenByLocalTag("spPr").firstOrNull()?.rotationDegreesFromTransform()
+                ?: element.rotationDegreesFromTransform()
         )
     }
 
-    private fun parseGraphicFrame(element: Element, theme: PptxTheme): PptxElement? {
-        val table = element.firstByLocalTag("tbl") ?: return null
+    private fun parseGraphicFrame(
+        element: Element,
+        relationships: PptxRelationships,
+        theme: PptxTheme
+    ): PptxElement? {
+        val table = element.firstByLocalTag("tbl") ?: return parseGraphicPlaceholder(element, relationships, theme)
         val bounds = element.boundsFromTransform()
-        val rows = table.childrenByLocalTag("tr")
-        val text = rows.joinToString("\n") { row ->
-            row.childrenByLocalTag("tc")
-                .joinToString("    ") { cell -> cell.allByLocalTag("t").joinToString("") { it.wholeText() } }
+        val gridWidths = table.firstByLocalTag("tblGrid")
+            ?.childrenByLocalTag("gridCol")
+            ?.map { it.xmlFloat("w")?.emuToPoint() }
+            .orEmpty()
+        val rows = table.childrenByLocalTag("tr").map { row ->
+            val cells = row.childrenByLocalTag("tc").mapIndexed { index, cell ->
+                val tcPr = cell.childrenByLocalTag("tcPr").firstOrNull()
+                val textInsets = tcPr?.textInsets() ?: PptxTextInsets(left = 3.6f, top = 3.6f, right = 3.6f, bottom = 3.6f)
+                PptxTableCell(
+                    widthPoint = gridWidths.getOrNull(index),
+                    fillColor = tcPr?.solidFillColor(theme),
+                    lineColor = tcPr?.tableCellLineColor(theme),
+                    paragraphs = parseTextBody(cell.childrenByLocalTag("txBody").firstOrNull(), theme),
+                    textInsets = textInsets,
+                    verticalAnchor = tcPr?.verticalAnchor() ?: PptxVerticalAnchor.TOP
+                )
+            }
+            PptxTableRow(
+                heightPoint = row.xmlFloat("h")?.emuToPoint(),
+                cells = cells
+            )
         }
-        if (text.isBlank()) return null
+        if (rows.all { row -> row.cells.all { it.paragraphs.isEmpty() } }) return null
+        return PptxTableElement(
+            bounds = bounds,
+            rows = rows,
+            rotationDegrees = element.rotationDegreesFromTransform()
+        )
+    }
+
+    private fun parseGraphicPlaceholder(
+        element: Element,
+        relationships: PptxRelationships,
+        theme: PptxTheme
+    ): PptxElement? {
+        val bounds = element.boundsFromTransform()
+        if (bounds.width() <= 0f || bounds.height() <= 0f) return null
+        val chartRel = element.firstByLocalTag("chart")?.xmlAttr("r:id")
+        val diagramRel = element.firstByLocalTag("relIds")?.xmlAttr("r:dm")
+        val mediaRel = element.firstByLocalTag("videoFile")?.xmlAttr("r:link")
+            ?: element.firstByLocalTag("audioFile")?.xmlAttr("r:link")
+        val label = when {
+            chartRel != null -> "Chart"
+            diagramRel != null -> "SmartArt"
+            mediaRel != null -> "Media"
+            else -> return null
+        }
+        val target = (chartRel ?: diagramRel ?: mediaRel)?.let { relationships.byId[it]?.resolvedTarget }
         return PptxShapeElement(
             bounds = bounds,
             preset = "rect",
-            fillColor = Color.TRANSPARENT,
-            lineColor = theme.colors["tx1"] ?: Color.DKGRAY,
+            fillColor = Color.rgb(245, 246, 248),
+            gradientFill = null,
+            lineColor = theme.colors["tx1"] ?: Color.GRAY,
             lineWidthPoint = 0.75f,
-            paragraphs = text.lines().map { line -> PptxParagraph(listOf(PptxTextRun(line))) },
+            paragraphs = listOf(
+                PptxParagraph(
+                    runs = listOf(PptxTextRun(target?.let { "$label: ${it.substringAfterLast('/')}" } ?: label)),
+                    alignment = PptxTextAlign.CENTER
+                )
+            ),
             hyperlink = null,
-            placeholderKey = null
+            placeholderKey = null,
+            textInsets = PptxTextInsets(left = 8f, top = 8f, right = 8f, bottom = 8f),
+            verticalAnchor = PptxVerticalAnchor.MIDDLE,
+            rotationDegrees = element.rotationDegreesFromTransform()
         )
     }
 
-    private fun parseTextBody(txBody: Element?, theme: PptxTheme): List<PptxParagraph> {
+    private fun parseTextBody(
+        txBody: Element?,
+        theme: PptxTheme,
+        inheritedStyles: Map<Int, PptxParagraphStyle> = emptyMap(),
+        shapeRunDefaults: PptxRunStyle = PptxRunStyle()
+    ): List<PptxParagraph> {
         if (txBody == null) return emptyList()
+        val localStyles = txBody.childrenByLocalTag("lstStyle")
+            .firstOrNull()
+            ?.paragraphStyles(theme)
+            .orEmpty()
+        val styles = inheritedStyles.mergeStyles(localStyles)
         return txBody.childrenByLocalTag("p").mapNotNull { paragraph ->
             val pPr = paragraph.childrenByLocalTag("pPr").firstOrNull()
-            val defaultRunPr = pPr?.childrenByLocalTag("defRPr")?.firstOrNull()
-            val defaultSize = defaultRunPr?.xmlFloat("sz")?.let { it / 100f }
-            val defaultColor = defaultRunPr?.solidFillColor(theme)
-            val alignment = when (pPr?.xmlAttr("algn")) {
-                "ctr" -> PptxTextAlign.CENTER
-                "r" -> PptxTextAlign.END
-                else -> PptxTextAlign.START
-            }
-            val bullet = pPr?.firstByLocalTag("buChar")?.xmlAttr("char")
+            val endParaRunPr = paragraph.childrenByLocalTag("endParaRPr").firstOrNull()
+            val level = pPr?.xmlInt("lvl")?.coerceAtLeast(0) ?: 0
+            val paragraphStyle = (styles[level] ?: styles[0] ?: PptxParagraphStyle())
+                .merge(pPr?.paragraphStyle(theme) ?: PptxParagraphStyle())
+            val paragraphRunStyle = shapeRunDefaults
+                .merge(paragraphStyle.run)
+                .merge(endParaRunPr?.runStyle(theme) ?: PptxRunStyle())
             val runs = mutableListOf<PptxTextRun>()
             paragraph.children().forEach { child ->
                 when (child.localTag()) {
                     "r", "fld" -> {
                         val rPr = child.childrenByLocalTag("rPr").firstOrNull()
+                        val runStyle = paragraphRunStyle.merge(rPr?.runStyle(theme) ?: PptxRunStyle())
                         val text = child.firstByLocalTag("t")?.wholeText().orEmpty()
                         if (text.isNotEmpty()) {
                             runs += PptxTextRun(
                                 text = text,
-                                sizePt = rPr?.xmlFloat("sz")?.let { it / 100f } ?: defaultSize,
-                                color = rPr?.solidFillColor(theme) ?: defaultColor,
-                                bold = rPr?.xmlAttr("b").isTruthyXmlFlag(),
-                                italic = rPr?.xmlAttr("i").isTruthyXmlFlag(),
-                                typeface = rPr?.firstByLocalTag("latin")?.xmlAttr("typeface")
+                                sizePt = runStyle.sizePt,
+                                color = runStyle.color,
+                                bold = runStyle.bold ?: false,
+                                italic = runStyle.italic ?: false,
+                                typeface = runStyle.typeface,
+                                sizeExplicit = rPr?.xmlAttr("sz") != null,
+                                colorExplicit = rPr?.hasTextColor() == true,
+                                boldExplicit = rPr?.xmlAttr("b") != null,
+                                italicExplicit = rPr?.xmlAttr("i") != null,
+                                typefaceExplicit = rPr?.hasTypeface() == true
                             )
                         }
                     }
-                    "br" -> runs += PptxTextRun("\n", sizePt = defaultSize, color = defaultColor)
+                    "br" -> {
+                        val rPr = child.childrenByLocalTag("rPr").firstOrNull()
+                        val runStyle = paragraphRunStyle.merge(rPr?.runStyle(theme) ?: PptxRunStyle())
+                        runs += PptxTextRun(
+                            "\n",
+                            sizePt = runStyle.sizePt,
+                            color = runStyle.color,
+                            bold = runStyle.bold ?: false,
+                            italic = runStyle.italic ?: false,
+                            typeface = runStyle.typeface
+                        )
+                    }
+                    "tab" -> runs += PptxTextRun(
+                        "\t",
+                        sizePt = paragraphRunStyle.sizePt,
+                        color = paragraphRunStyle.color,
+                        bold = paragraphRunStyle.bold ?: false,
+                        italic = paragraphRunStyle.italic ?: false,
+                        typeface = paragraphRunStyle.typeface
+                    )
                 }
             }
             val safeRuns = runs.ifEmpty { listOf(PptxTextRun("")) }
-            PptxParagraph(safeRuns, alignment, bullet).takeIf { paragraph ->
-                paragraph.runs.any { it.text.isNotBlank() }
+            PptxParagraph(
+                runs = safeRuns,
+                alignment = paragraphStyle.alignment ?: PptxTextAlign.START,
+                bullet = paragraphStyle.bullet,
+                level = level,
+                marginLeftPt = paragraphStyle.marginLeftPt,
+                indentPt = paragraphStyle.indentPt,
+                spaceBeforePt = paragraphStyle.spaceBeforePt ?: 0f,
+                spaceAfterPt = paragraphStyle.spaceAfterPt ?: 0f,
+                lineSpacingMultiple = paragraphStyle.lineSpacingMultiple ?: DEFAULT_LINE_SPACING_MULTIPLE,
+                alignmentExplicit = pPr?.xmlAttr("algn") != null,
+                bulletExplicit = pPr?.hasBulletDefinition() == true,
+                spaceBeforeExplicit = pPr?.firstByLocalTag("spcBef") != null,
+                spaceAfterExplicit = pPr?.firstByLocalTag("spcAft") != null,
+                lineSpacingExplicit = pPr?.firstByLocalTag("lnSpc") != null
+            ).takeIf { parsedParagraph ->
+                parsedParagraph.runs.any { it.text.isNotBlank() }
             }
         }
     }
@@ -402,6 +784,15 @@ internal object PptxDocumentParser {
                 ?: colorNode.firstByLocalTag("sysClr")?.xmlAttr("lastClr")?.toColorOrNull()
             value?.let { colorNode.localTag() to it }
         }.toMap()
+        val fontScheme = document.firstByLocalTag("fontScheme")
+        val majorTypeface = fontScheme?.firstByLocalTag("majorFont")
+            ?.firstByLocalTag("latin")
+            ?.xmlAttr("typeface")
+            ?.takeIf { it.isNotBlank() }
+        val minorTypeface = fontScheme?.firstByLocalTag("minorFont")
+            ?.firstByLocalTag("latin")
+            ?.xmlAttr("typeface")
+            ?.takeIf { it.isNotBlank() }
         val aliases = buildMap {
             putAll(colors)
             colors["lt1"]?.let { put("bg1", it) }
@@ -409,7 +800,11 @@ internal object PptxDocumentParser {
             colors["lt2"]?.let { put("bg2", it) }
             colors["dk2"]?.let { put("tx2", it) }
         }
-        return PptxTheme(aliases)
+        return PptxTheme(
+            colors = aliases,
+            majorTypeface = majorTypeface,
+            minorTypeface = minorTypeface
+        )
     }
 
     private fun ZipFile.xml(path: String): Element? {
@@ -438,7 +833,7 @@ internal object PptxDocumentParser {
     }
 }
 
-private fun inheritPlaceholderBounds(
+private fun inheritPlaceholderProperties(
     slideElements: List<PptxElement>,
     inheritedElements: List<PptxElement>
 ): List<PptxElement> {
@@ -451,20 +846,66 @@ private fun inheritPlaceholderBounds(
     return slideElements.map { element ->
         val shape = element as? PptxShapeElement ?: return@map element
         val key = shape.placeholderKey ?: return@map shape
-        if (shape.bounds.width() > 0f && shape.bounds.height() > 0f) return@map shape
 
         val inherited = inheritedPlaceholders.lastOrNull { inherited ->
             inherited.placeholderKey?.matches(key) == true
         } ?: return@map shape
+        val shouldInheritBounds = shape.bounds.width() <= 0f || shape.bounds.height() <= 0f
 
         shape.copy(
-            bounds = RectF(inherited.bounds),
-            preset = if (shape.preset == "rect") inherited.preset else shape.preset,
+            bounds = if (shouldInheritBounds) RectF(inherited.bounds) else shape.bounds,
+            preset = if (shouldInheritBounds && shape.preset == "rect") inherited.preset else shape.preset,
             fillColor = shape.fillColor ?: inherited.fillColor,
+            gradientFill = shape.gradientFill ?: inherited.gradientFill,
             lineColor = shape.lineColor ?: inherited.lineColor,
-            lineWidthPoint = if (shape.lineWidthPoint == 0.75f) inherited.lineWidthPoint else shape.lineWidthPoint
+            lineWidthPoint = if (shape.lineWidthPoint == 0.75f) inherited.lineWidthPoint else shape.lineWidthPoint,
+            paragraphs = shape.paragraphs.inheritTextStyles(inherited.paragraphs),
+            textInsets = if (shape.textInsets == PptxTextInsets()) inherited.textInsets else shape.textInsets,
+            verticalAnchor = if (shape.verticalAnchor == PptxVerticalAnchor.TOP) inherited.verticalAnchor else shape.verticalAnchor,
+            rotationDegrees = if (shape.rotationDegrees == 0f) inherited.rotationDegrees else shape.rotationDegrees,
+            fontScale = if (shape.fontScale == 1f) inherited.fontScale else shape.fontScale,
+            lineSpacingReduction = if (shape.lineSpacingReduction == 0f) {
+                inherited.lineSpacingReduction
+            } else {
+                shape.lineSpacingReduction
+            }
         )
     }
+}
+
+private fun List<PptxParagraph>.inheritTextStyles(fallback: List<PptxParagraph>): List<PptxParagraph> {
+    if (isEmpty() || fallback.isEmpty()) return this
+    return mapIndexed { index, paragraph ->
+        val fallbackParagraph = fallback.firstOrNull { it.level == paragraph.level }
+            ?: fallback.getOrNull(index)
+            ?: fallback.first()
+        paragraph.inheritTextStyle(fallbackParagraph)
+    }
+}
+
+private fun PptxParagraph.inheritTextStyle(fallback: PptxParagraph): PptxParagraph {
+    val fallbackRun = fallback.runs.firstOrNull()
+    return copy(
+        runs = runs.map { run -> run.inheritTextStyle(fallbackRun) },
+        alignment = if (alignmentExplicit) alignment else fallback.alignment,
+        bullet = if (bulletExplicit) bullet else fallback.bullet,
+        marginLeftPt = marginLeftPt ?: fallback.marginLeftPt,
+        indentPt = indentPt ?: fallback.indentPt,
+        spaceBeforePt = if (spaceBeforeExplicit) spaceBeforePt else fallback.spaceBeforePt,
+        spaceAfterPt = if (spaceAfterExplicit) spaceAfterPt else fallback.spaceAfterPt,
+        lineSpacingMultiple = if (lineSpacingExplicit) lineSpacingMultiple else fallback.lineSpacingMultiple
+    )
+}
+
+private fun PptxTextRun.inheritTextStyle(fallback: PptxTextRun?): PptxTextRun {
+    if (fallback == null) return this
+    return copy(
+        sizePt = if (sizeExplicit) sizePt else sizePt ?: fallback.sizePt,
+        color = if (colorExplicit) color else color ?: fallback.color,
+        bold = if (boldExplicit) bold else fallback.bold || bold,
+        italic = if (italicExplicit) italic else fallback.italic || italic,
+        typeface = if (typefaceExplicit) typeface else typeface ?: fallback.typeface
+    )
 }
 
 internal class PptxDocumentWrapper(
@@ -584,7 +1025,7 @@ internal class PptxTextPage(
                 .values
                 .mapNotNull { boxes ->
                     boxes.fold<PptxCharBox, RectF?>(null) { acc, box ->
-                        if (acc == null) RectF(box.bounds) else acc.apply { union(box.bounds) }
+                        acc?.apply { union(box.bounds) } ?: RectF(box.bounds)
                     }
                 }
             rects += lineRects.map(::ReaderTextRect)
@@ -663,204 +1104,655 @@ private object PptxTextIndexer {
         val text = StringBuilder()
         val charBoxes = mutableListOf<PptxCharBox>()
         elements.forEach { element ->
-            val shape = element as? PptxShapeElement ?: return@forEach
-            val layout = layoutParagraphs(shape, shape.bounds)
-            layout.forEach { laidOut ->
-                val globalStart = text.length
-                text.append(laidOut.text)
-                laidOut.charBoxes.forEachIndexed { localIndex, rect ->
-                    charBoxes += PptxCharBox(
-                        char = laidOut.text.getOrElse(localIndex) { ' ' },
-                        bounds = rect
-                    )
+            when (element) {
+                is PptxShapeElement -> appendShapeText(element, text, charBoxes)
+                is PptxTableElement -> layoutTableCells(element).forEach { cell ->
+                    appendShapeText(cell.asShape(), text, charBoxes)
                 }
-                if (globalStart < text.length && text.lastOrNull() != '\n') {
-                    text.append('\n')
-                    charBoxes += PptxCharBox('\n', RectF(shape.bounds.left, shape.bounds.bottom, shape.bounds.left, shape.bounds.bottom))
-                }
+                is PptxImageElement -> Unit
             }
         }
         val indexedText = text.toString().trimEnd()
         return PptxTextIndex(indexedText, charBoxes.take(indexedText.length))
     }
+
+    private fun appendShapeText(
+        shape: PptxShapeElement,
+        text: StringBuilder,
+        charBoxes: MutableList<PptxCharBox>
+    ) {
+        if (!shape.renderText) return
+        val layout = layoutParagraphs(shape, shape.bounds)
+        layout.forEach { laidOut ->
+            val globalStart = text.length
+            text.append(laidOut.text)
+            laidOut.charBoxes.forEachIndexed { localIndex, rect ->
+                charBoxes += PptxCharBox(
+                    char = laidOut.text.getOrElse(localIndex) { ' ' },
+                    bounds = rect
+                )
+            }
+            if (globalStart < text.length && text.lastOrNull() != '\n') {
+                text.append('\n')
+                charBoxes += PptxCharBox('\n', RectF(shape.bounds.left, shape.bounds.bottom, shape.bounds.left, shape.bounds.bottom))
+            }
+        }
+    }
 }
 
 private data class LaidOutParagraph(
     val text: String,
-    val lines: List<LaidOutLine>,
+    val layout: StaticLayout,
+    val x: Float,
+    val y: Float,
     val charBoxes: List<RectF>
 )
 
-private data class LaidOutLine(
+private data class PreparedParagraphLayout(
+    val paragraph: PptxParagraph,
     val text: String,
-    val x: Float,
-    val baseline: Float,
-    val fontSizePoint: Float,
-    val run: PptxTextRun
+    val layout: StaticLayout
 )
+
+private data class LaidOutTableCell(
+    val rect: RectF,
+    val cell: PptxTableCell
+)
+
+private fun LaidOutTableCell.asShape(): PptxShapeElement {
+    return PptxShapeElement(
+        bounds = rect,
+        preset = "rect",
+        fillColor = cell.fillColor,
+        gradientFill = null,
+        lineColor = cell.lineColor,
+        lineWidthPoint = 0.75f,
+        paragraphs = cell.paragraphs,
+        hyperlink = null,
+        placeholderKey = null,
+        textInsets = cell.textInsets,
+        verticalAnchor = cell.verticalAnchor
+    )
+}
+
+private val TextLayoutPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+    color = Color.BLACK
+    textSize = DEFAULT_TEXT_SIZE_PT
+}
 
 private object PptxSlideRenderer {
     fun render(slide: PptxSlide, bitmap: Bitmap, startX: Int, startY: Int, drawSizeX: Int, drawSizeY: Int) {
         val canvas = Canvas(bitmap)
         canvas.drawColor(slide.backgroundColor ?: Color.WHITE)
         if (slide.widthPoint <= 0 || slide.heightPoint <= 0) return
-        canvas.save()
-        canvas.translate(startX.toFloat(), startY.toFloat())
-        canvas.scale(drawSizeX.toFloat() / slide.widthPoint, drawSizeY.toFloat() / slide.heightPoint)
+        canvas.withTranslation(startX.toFloat(), startY.toFloat()) {
+            scale(drawSizeX.toFloat() / slide.widthPoint, drawSizeY.toFloat() / slide.heightPoint)
 
-        slide.elements.forEach { element ->
-            when (element) {
-                is PptxShapeElement -> drawShape(canvas, element)
-                is PptxImageElement -> drawImage(canvas, element)
+            slide.elements.forEach { element ->
+                when (element) {
+                    is PptxShapeElement -> drawShape(this, element)
+                    is PptxImageElement -> drawImage(this, element)
+                    is PptxTableElement -> drawTable(this, element)
+                }
             }
-        }
 
-        canvas.restore()
+        }
     }
 
     private fun drawShape(canvas: Canvas, shape: PptxShapeElement) {
-        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = shape.fillColor ?: Color.TRANSPARENT
-        }
-        if (shape.fillColor != null && Color.alpha(shape.fillColor) > 0) {
-            when (shape.preset) {
-                "ellipse" -> canvas.drawOval(shape.bounds, fillPaint)
-                "roundrect" -> canvas.drawRoundRect(shape.bounds, shape.bounds.width() * 0.08f, shape.bounds.height() * 0.08f, fillPaint)
-                "triangle" -> canvas.drawPath(Path().apply {
-                    moveTo(shape.bounds.centerX(), shape.bounds.top)
-                    lineTo(shape.bounds.right, shape.bounds.bottom)
-                    lineTo(shape.bounds.left, shape.bounds.bottom)
-                    close()
-                }, fillPaint)
-                else -> canvas.drawRect(shape.bounds, fillPaint)
+        canvas.withRotation(shape.bounds, shape.rotationDegrees) {
+            val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                shape.gradientFill?.let { shader = it.toShader(shape.bounds) }
+                if (shape.gradientFill == null) {
+                    color = shape.fillColor ?: Color.TRANSPARENT
+                }
             }
-        }
+            if (shape.gradientFill != null || (shape.fillColor != null && Color.alpha(shape.fillColor) > 0)) {
+                drawPresetShape(canvas, shape.bounds, shape.preset, fillPaint)
+            }
 
-        val strokeColor = shape.lineColor
-        if (strokeColor != null && Color.alpha(strokeColor) > 0) {
-            val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                color = strokeColor
-                strokeWidth = shape.lineWidthPoint.coerceAtLeast(0.25f)
+            val strokeColor = shape.lineColor
+            if (strokeColor != null && Color.alpha(strokeColor) > 0) {
+                val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE
+                    color = strokeColor
+                    strokeWidth = shape.lineWidthPoint.coerceAtLeast(0.25f)
+                }
+                drawPresetShape(canvas, shape.bounds, shape.preset, strokePaint)
             }
-            if (shape.preset == "line") {
-                canvas.drawLine(shape.bounds.left, shape.bounds.top, shape.bounds.right, shape.bounds.bottom, strokePaint)
-            } else {
-                canvas.drawRect(shape.bounds, strokePaint)
-            }
-        }
 
-        drawText(canvas, shape)
+            drawText(canvas, shape)
+        }
     }
 
     private fun drawText(canvas: Canvas, shape: PptxShapeElement) {
+        if (!shape.renderText) return
         val layout = layoutParagraphs(shape, shape.bounds)
-        layout.flatMap { it.lines }.forEach { line ->
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = line.run.color ?: Color.BLACK
-                textSize = line.fontSizePoint
-                typeface = Typeface.create(
-                    line.run.typeface ?: "sans-serif",
-                    when {
-                        line.run.bold && line.run.italic -> Typeface.BOLD_ITALIC
-                        line.run.bold -> Typeface.BOLD
-                        line.run.italic -> Typeface.ITALIC
-                        else -> Typeface.NORMAL
-                    }
-                )
+        val clip = shape.textBounds()
+        layout.forEach { paragraph ->
+            canvas.withClip(clip) {
+                translate(paragraph.x, paragraph.y)
+                paragraph.layout.draw(this)
             }
-            canvas.drawText(line.text, line.x, line.baseline, paint)
+        }
+    }
+
+    private fun drawTable(canvas: Canvas, table: PptxTableElement) {
+        canvas.withRotation(table.bounds, table.rotationDegrees) {
+            layoutTableCells(table).forEach { laidOutCell ->
+                val rect = laidOutCell.rect
+                val cell = laidOutCell.cell
+                val fill = cell.fillColor
+                if (fill != null && Color.alpha(fill) > 0) {
+                    canvas.drawRect(rect, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.FILL
+                        color = fill
+                    })
+                }
+                cell.lineColor?.let { lineColor ->
+                    canvas.drawRect(rect, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        color = lineColor
+                        strokeWidth = 0.5f
+                    })
+                }
+                drawText(canvas, laidOutCell.asShape())
+            }
         }
     }
 
     private fun drawImage(canvas: Canvas, image: PptxImageElement) {
-        val bitmap = BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size)
-        if (bitmap != null) {
-            canvas.drawBitmap(bitmap, null, image.bounds, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-            bitmap.recycle()
-        } else {
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                color = Color.LTGRAY
+        canvas.withRotation(image.bounds, image.rotationDegrees) {
+            val bitmap = BitmapFactory.decodeByteArray(image.bytes, 0, image.bytes.size)
+            if (bitmap != null) {
+                canvas.drawBitmap(
+                    bitmap,
+                    image.crop.sourceRect(bitmap.width, bitmap.height),
+                    image.bounds,
+                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                )
+                bitmap.recycle()
+            } else {
+                val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.FILL
+                    color = Color.LTGRAY
+                }
+                canvas.drawRect(image.bounds, paint)
+                paint.style = Paint.Style.STROKE
+                paint.color = Color.GRAY
+                paint.strokeWidth = 0.75f
+                canvas.drawRect(image.bounds, paint)
             }
-            canvas.drawRect(image.bounds, paint)
-            paint.style = Paint.Style.STROKE
-            paint.color = Color.GRAY
-            paint.strokeWidth = 0.75f
-            canvas.drawRect(image.bounds, paint)
         }
     }
 }
 
 private fun layoutParagraphs(shape: PptxShapeElement, bounds: RectF): List<LaidOutParagraph> {
     if (shape.paragraphs.isEmpty() || bounds.width() <= 0f || bounds.height() <= 0f) return emptyList()
-    val result = mutableListOf<LaidOutParagraph>()
-    var y = bounds.top + DEFAULT_TEXT_MARGIN_PT
-    val maxWidth = (bounds.width() - DEFAULT_TEXT_MARGIN_PT * 2f).coerceAtLeast(bounds.width() * 0.6f)
-    shape.paragraphs.forEach { paragraph ->
-        val paragraphText = paragraph.runs.joinToString("") { it.text }
-        if (paragraphText.isBlank()) {
-            y += DEFAULT_TEXT_SIZE_PT
-            return@forEach
-        }
-        val firstRun = paragraph.runs.firstOrNull { it.text.isNotEmpty() } ?: PptxTextRun("")
-        val fontSizePoint = firstRun.sizePt ?: DEFAULT_TEXT_SIZE_PT
-        val lineHeight = fontSizePoint * 1.22f
-        val words = paragraphText.replace('\n', ' ').split(Regex("""\s+""")).filter { it.isNotEmpty() }
-        val lines = mutableListOf<String>()
-        var current = paragraph.bullet?.let { "$it " }.orEmpty()
-        words.forEach { word ->
-            val candidate = if (current.isBlank()) word else "$current $word"
-            if (estimateTextWidth(candidate, fontSizePoint) > maxWidth && current.isNotBlank()) {
-                lines += current
-                current = word
-            } else {
-                current = candidate
-            }
-        }
-        if (current.isNotBlank()) lines += current
+    val textBounds = shape.textBounds(bounds)
+    if (textBounds.width() <= 0f || textBounds.height() <= 0f) return emptyList()
 
-        val laidOutLines = mutableListOf<LaidOutLine>()
-        val charBoxes = mutableListOf<RectF>()
-        val paragraphTextOut = StringBuilder()
-        lines.forEachIndexed { index, lineText ->
-            val lineWidth = estimateTextWidth(lineText, fontSizePoint)
-            val x = when (paragraph.alignment) {
-                PptxTextAlign.CENTER -> bounds.left + (bounds.width() - lineWidth) / 2f
-                PptxTextAlign.END -> bounds.right - DEFAULT_TEXT_MARGIN_PT - lineWidth
-                PptxTextAlign.START -> bounds.left + DEFAULT_TEXT_MARGIN_PT
-            }
-            val baseline = y + fontSizePoint
-            laidOutLines += LaidOutLine(lineText, x, baseline, fontSizePoint, firstRun)
-            var charX = x
-            lineText.forEach { char ->
-                val charWidth = estimateTextWidth(char.toString(), fontSizePoint)
-                charBoxes += RectF(charX, y, charX + charWidth, y + lineHeight)
-                charX += charWidth
-                paragraphTextOut.append(char)
-            }
-            if (index < lines.lastIndex) {
-                paragraphTextOut.append('\n')
-                charBoxes += RectF(charX, y, charX, y + lineHeight)
-            }
-            y += lineHeight
-        }
-        y += lineHeight * 0.22f
-        result += LaidOutParagraph(paragraphTextOut.toString(), laidOutLines, charBoxes)
+    val layoutWidth = textBounds.width().roundToInt().coerceAtLeast(1)
+    val prepared = shape.paragraphs.mapNotNull { paragraph ->
+        val text = paragraph.displayText()
+        if (text.isBlank()) return@mapNotNull null
+        val spannable = paragraph.toSpannable(text, shape.fontScale)
+        val layout = StaticLayout.Builder
+            .obtain(spannable, 0, spannable.length, TextLayoutPaint, layoutWidth)
+            .setAlignment(paragraph.alignment.toLayoutAlignment())
+            .setIncludePad(false)
+            .setLineSpacing(
+                0f,
+                (paragraph.lineSpacingMultiple * (1f - shape.lineSpacingReduction)).coerceIn(0.55f, 2.5f)
+            )
+            .build()
+        PreparedParagraphLayout(paragraph, text, layout)
     }
-    return result
+    if (prepared.isEmpty()) return emptyList()
+
+    val totalHeight = prepared.sumOf { item ->
+        (item.paragraph.spaceBeforePt + item.layout.height + item.paragraph.spaceAfterPt).toDouble()
+    }.toFloat()
+    var y = when (shape.verticalAnchor) {
+        PptxVerticalAnchor.TOP -> textBounds.top
+        PptxVerticalAnchor.MIDDLE -> textBounds.top + ((textBounds.height() - totalHeight) / 2f).coerceAtLeast(0f)
+        PptxVerticalAnchor.BOTTOM -> textBounds.bottom - totalHeight.coerceAtMost(textBounds.height())
+    }
+
+    return prepared.mapNotNull { item ->
+        y += item.paragraph.spaceBeforePt
+        if (y > textBounds.bottom) return@mapNotNull null
+        val paragraphY = y
+        val charBoxes = item.layout.charBoxesFor(item.text, textBounds.left, paragraphY)
+            .map { rect -> rect.rotatedBounds(shape.bounds, shape.rotationDegrees) }
+        y += item.layout.height + item.paragraph.spaceAfterPt
+        LaidOutParagraph(
+            text = item.text,
+            layout = item.layout,
+            x = textBounds.left,
+            y = paragraphY,
+            charBoxes = charBoxes
+        )
+    }
 }
 
-private fun estimateTextWidth(text: String, fontSizePoint: Float): Float {
-    return text.sumOf { char ->
-        when {
-            char == ' ' -> fontSizePoint * 0.32f
-            char.code > 0x2E80 -> fontSizePoint
-            char.isUpperCase() -> fontSizePoint * 0.62f
-            else -> fontSizePoint * 0.54f
-        }.toDouble()
-    }.toFloat()
+private fun PptxShapeElement.textBounds(sourceBounds: RectF = bounds): RectF {
+    return RectF(
+        sourceBounds.left + textInsets.left,
+        sourceBounds.top + textInsets.top,
+        sourceBounds.right - textInsets.right,
+        sourceBounds.bottom - textInsets.bottom
+    )
+}
+
+private fun PptxParagraph.displayText(): String {
+    val text = runs.joinToString("") { it.text }
+    val prefix = bullet?.takeIf { it.isNotBlank() }?.let { "$it " }.orEmpty()
+    return prefix + text
+}
+
+private fun PptxParagraph.toSpannable(displayText: String, fontScale: Float): SpannableStringBuilder {
+    val builder = SpannableStringBuilder(displayText)
+    val bulletPrefixLength = bullet?.takeIf { it.isNotBlank() }?.let { it.length + 1 } ?: 0
+    val baseMargin = marginLeftPt ?: ((level * 18f) + if (bulletPrefixLength > 0) 18f else 0f)
+    val firstMargin = (baseMargin + (indentPt ?: if (bulletPrefixLength > 0) -12f else 0f))
+        .roundToInt()
+        .coerceAtLeast(0)
+    val restMargin = baseMargin.roundToInt().coerceAtLeast(0)
+    if (firstMargin > 0 || restMargin > 0) {
+        builder.setSpan(
+            LeadingMarginSpan.Standard(firstMargin, restMargin),
+            0,
+            builder.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+    }
+
+    var offset = bulletPrefixLength
+    runs.forEach { run ->
+        val start = offset
+        val end = (start + run.text.length).coerceAtMost(builder.length)
+        if (start >= end) return@forEach
+        builder.setSpan(
+            AbsoluteSizeSpan(scaledTextSize(run.sizePt, fontScale), false),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        run.color?.let { color ->
+            builder.setSpan(ForegroundColorSpan(color), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        if (run.bold || run.italic) {
+            builder.setSpan(
+                StyleSpan(
+                    when {
+                        run.bold && run.italic -> Typeface.BOLD_ITALIC
+                        run.bold -> Typeface.BOLD
+                        else -> Typeface.ITALIC
+                    }
+                ),
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        run.typeface?.takeIf { it.isNotBlank() && !it.startsWith("+") }?.let { family ->
+            builder.setSpan(TypefaceSpan(family), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        offset = end
+    }
+
+    if (bulletPrefixLength > 0) {
+        val firstRun = runs.firstOrNull()
+        builder.setSpan(
+            AbsoluteSizeSpan(scaledTextSize(firstRun?.sizePt, fontScale), false),
+            0,
+            bulletPrefixLength,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        firstRun?.color?.let { color ->
+            builder.setSpan(ForegroundColorSpan(color), 0, bulletPrefixLength, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+    return builder
+}
+
+private fun PptxTextAlign.toLayoutAlignment(): Layout.Alignment {
+    return when (this) {
+        PptxTextAlign.START -> Layout.Alignment.ALIGN_NORMAL
+        PptxTextAlign.CENTER -> Layout.Alignment.ALIGN_CENTER
+        PptxTextAlign.END -> Layout.Alignment.ALIGN_OPPOSITE
+    }
+}
+
+private fun StaticLayout.charBoxesFor(text: String, originX: Float, originY: Float): List<RectF> {
+    if (text.isEmpty()) return emptyList()
+    return text.indices.map { index ->
+        val line = getLineForOffset(index.coerceIn(0, text.length))
+        val nextOffset = (index + 1).coerceAtMost(text.length)
+        val left = runCatching { getPrimaryHorizontal(index) }.getOrDefault(getLineLeft(line))
+        val right = runCatching { getPrimaryHorizontal(nextOffset) }.getOrDefault(left)
+        val minX = min(left, right)
+        val maxX = max(left, right).let { if (it == minX) it + 0.5f else it }
+        RectF(
+            originX + minX,
+            originY + getLineTop(line),
+            originX + maxX,
+            originY + getLineBottom(line)
+        )
+    }
+}
+
+private fun RectF.rotatedBounds(bounds: RectF, rotationDegrees: Float): RectF {
+    if (rotationDegrees == 0f) return this
+    val radians = Math.toRadians(rotationDegrees.toDouble())
+    val cosValue = cos(radians).toFloat()
+    val sinValue = sin(radians).toFloat()
+    val cx = bounds.centerX()
+    val cy = bounds.centerY()
+    val points = arrayOf(
+        left to top,
+        right to top,
+        right to bottom,
+        left to bottom
+    ).map { (x, y) ->
+        val dx = x - cx
+        val dy = y - cy
+        PointF(cx + dx * cosValue - dy * sinValue, cy + dx * sinValue + dy * cosValue)
+    }
+    return RectF(
+        points.minOf { it.x },
+        points.minOf { it.y },
+        points.maxOf { it.x },
+        points.maxOf { it.y }
+    )
+}
+
+private fun layoutTableCells(table: PptxTableElement): List<LaidOutTableCell> {
+    if (table.rows.isEmpty() || table.bounds.width() <= 0f || table.bounds.height() <= 0f) return emptyList()
+    val explicitHeight = table.rows
+        .mapNotNull { it.heightPoint?.takeIf { h -> h > 0f } }
+        .sumOf { it.toDouble() }
+        .toFloat()
+    val missingRows = table.rows.count { it.heightPoint == null || it.heightPoint <= 0f }
+    val fallbackHeight = if (missingRows > 0) {
+        ((table.bounds.height() - explicitHeight).coerceAtLeast(1f)) / missingRows
+    } else {
+        table.bounds.height() / table.rows.size
+    }
+
+    val cells = mutableListOf<LaidOutTableCell>()
+    var y = table.bounds.top
+    table.rows.forEach { row ->
+        val rowHeight = row.heightPoint?.takeIf { it > 0f } ?: fallbackHeight
+        val explicitWidth = row.cells
+            .mapNotNull { it.widthPoint?.takeIf { w -> w > 0f } }
+            .sumOf { it.toDouble() }
+            .toFloat()
+        val missingCells = row.cells.count { it.widthPoint == null || it.widthPoint <= 0f }
+        val fallbackWidth = if (missingCells > 0) {
+            ((table.bounds.width() - explicitWidth).coerceAtLeast(1f)) / missingCells
+        } else if (row.cells.isNotEmpty()) {
+            table.bounds.width() / row.cells.size
+        } else {
+            table.bounds.width()
+        }
+        var x = table.bounds.left
+        row.cells.forEach { cell ->
+            val cellWidth = cell.widthPoint?.takeIf { it > 0f } ?: fallbackWidth
+            cells += LaidOutTableCell(
+                rect = RectF(x, y, x + cellWidth, y + rowHeight),
+                cell = cell
+            )
+            x += cellWidth
+        }
+        y += rowHeight
+    }
+    return cells
+}
+
+private inline fun Canvas.withRotation(bounds: RectF, rotationDegrees: Float, block: () -> Unit) {
+    withSave {
+        try {
+            if (rotationDegrees != 0f) {
+                rotate(rotationDegrees, bounds.centerX(), bounds.centerY())
+            }
+            block()
+        } finally {
+        }
+    }
+}
+
+private fun drawPresetShape(canvas: Canvas, bounds: RectF, preset: String, paint: Paint) {
+    when (preset) {
+        "line" -> canvas.drawLine(bounds.left, bounds.top, bounds.right, bounds.bottom, paint)
+        "ellipse" -> canvas.drawOval(bounds, paint)
+        "roundrect", "roundRect" -> canvas.drawRoundRect(bounds, bounds.width() * 0.08f, bounds.height() * 0.08f, paint)
+        "triangle" -> canvas.drawPath(Path().apply {
+            moveTo(bounds.centerX(), bounds.top)
+            lineTo(bounds.right, bounds.bottom)
+            lineTo(bounds.left, bounds.bottom)
+            close()
+        }, paint)
+        "diamond" -> canvas.drawPath(Path().apply {
+            moveTo(bounds.centerX(), bounds.top)
+            lineTo(bounds.right, bounds.centerY())
+            lineTo(bounds.centerX(), bounds.bottom)
+            lineTo(bounds.left, bounds.centerY())
+            close()
+        }, paint)
+        else -> canvas.drawRect(bounds, paint)
+    }
+}
+
+private fun PptxGradientFill.toShader(bounds: RectF): Shader {
+    val radians = Math.toRadians(angleDegrees.toDouble())
+    val dx = cos(radians).toFloat() * bounds.width()
+    val dy = sin(radians).toFloat() * bounds.height()
+    return LinearGradient(
+        bounds.centerX() - dx / 2f,
+        bounds.centerY() - dy / 2f,
+        bounds.centerX() + dx / 2f,
+        bounds.centerY() + dy / 2f,
+        startColor,
+        endColor,
+        Shader.TileMode.CLAMP
+    )
+}
+
+private fun Element.textDefaults(theme: PptxTheme): PptxTextDefaults {
+    val txStyles = firstByLocalTag("txStyles") ?: return PptxTextDefaults()
+    return PptxTextDefaults(
+        title = txStyles.childrenByLocalTag("titleStyle").firstOrNull()?.paragraphStyles(theme).orEmpty(),
+        body = txStyles.childrenByLocalTag("bodyStyle").firstOrNull()?.paragraphStyles(theme).orEmpty(),
+        other = txStyles.childrenByLocalTag("otherStyle").firstOrNull()?.paragraphStyles(theme).orEmpty()
+    )
+}
+
+private fun Element.paragraphStyles(theme: PptxTheme): Map<Int, PptxParagraphStyle> {
+    return children().mapNotNull { child ->
+        val tag = child.localTag()
+        val level = when {
+            tag == "defppr" -> 0
+            tag.startsWith("lvl") && tag.endsWith("ppr") -> {
+                tag.removePrefix("lvl").removeSuffix("ppr").toIntOrNull()?.minus(1)
+            }
+            else -> null
+        } ?: return@mapNotNull null
+        level.coerceAtLeast(0) to child.paragraphStyle(theme)
+    }.toMap()
+}
+
+private fun Element.paragraphStyle(theme: PptxTheme): PptxParagraphStyle {
+    val bullet = when {
+        firstDirectByLocalTag("buNone") != null -> null
+        firstDirectByLocalTag("buAutoNum") != null -> firstDirectByLocalTag("buAutoNum")?.numberedBullet()
+        else -> firstDirectByLocalTag("buChar")?.xmlAttr("char")
+    }
+    return PptxParagraphStyle(
+        alignment = when (xmlAttr("algn")) {
+            "ctr" -> PptxTextAlign.CENTER
+            "r" -> PptxTextAlign.END
+            else -> null
+        },
+        bullet = bullet,
+        bulletExplicit = hasBulletDefinition(),
+        marginLeftPt = xmlFloat("marL")?.emuToPoint(),
+        indentPt = xmlFloat("indent")?.emuToPoint(),
+        spaceBeforePt = firstDirectByLocalTag("spcBef")?.spacingPoints(),
+        spaceAfterPt = firstDirectByLocalTag("spcAft")?.spacingPoints(),
+        lineSpacingMultiple = firstDirectByLocalTag("lnSpc")?.spacingMultiple(),
+        run = childrenByLocalTag("defRPr").firstOrNull()?.runStyle(theme) ?: PptxRunStyle()
+    )
+}
+
+private fun Element.runStyle(theme: PptxTheme): PptxRunStyle {
+    return PptxRunStyle(
+        sizePt = xmlFloat("sz")?.let { it / 100f },
+        color = solidFillColor(theme),
+        bold = xmlAttr("b")?.isTruthyXmlFlag(),
+        italic = xmlAttr("i")?.isTruthyXmlFlag(),
+        typeface = typefaceName(theme)
+    )
+}
+
+private fun Element.numberedBullet(): String {
+    return when (xmlAttr("type")) {
+        "alphaLcPeriod" -> "a."
+        "alphaUcPeriod" -> "A."
+        "romanLcPeriod" -> "i."
+        "romanUcPeriod" -> "I."
+        else -> "1."
+    }
+}
+
+private fun Map<Int, PptxParagraphStyle>.mergeStyles(
+    overrides: Map<Int, PptxParagraphStyle>
+): Map<Int, PptxParagraphStyle> {
+    if (isEmpty()) return overrides
+    if (overrides.isEmpty()) return this
+    return buildMap {
+        putAll(this@mergeStyles)
+        overrides.forEach { (level, style) ->
+            put(level, this@mergeStyles[level]?.merge(style) ?: style)
+        }
+    }
+}
+
+private fun scaledTextSize(sizePt: Float?, fontScale: Float): Int {
+    return ((sizePt ?: DEFAULT_TEXT_SIZE_PT) * fontScale.coerceIn(0.4f, 2f))
+        .roundToInt()
+        .coerceAtLeast(1)
+}
+
+private fun Element.imageCrop(): PptxImageCrop {
+    return PptxImageCrop(
+        left = xmlFloat("l")?.let { it / 100_000f }?.coerceIn(0f, 1f) ?: 0f,
+        top = xmlFloat("t")?.let { it / 100_000f }?.coerceIn(0f, 1f) ?: 0f,
+        right = xmlFloat("r")?.let { it / 100_000f }?.coerceIn(0f, 1f) ?: 0f,
+        bottom = xmlFloat("b")?.let { it / 100_000f }?.coerceIn(0f, 1f) ?: 0f
+    )
+}
+
+private fun PptxImageCrop.sourceRect(width: Int, height: Int): Rect {
+    val leftPx = (width * left).roundToInt().coerceIn(0, width - 1)
+    val topPx = (height * top).roundToInt().coerceIn(0, height - 1)
+    val rightPx = (width * (1f - right)).roundToInt().coerceIn(leftPx + 1, width)
+    val bottomPx = (height * (1f - bottom)).roundToInt().coerceIn(topPx + 1, height)
+    return Rect(leftPx, topPx, rightPx, bottomPx)
+}
+
+private fun Element.gradientFill(theme: PptxTheme): PptxGradientFill? {
+    val gradFill = childrenByLocalTag("gradFill").firstOrNull() ?: return null
+    val stops = gradFill.firstByLocalTag("gsLst")
+        ?.childrenByLocalTag("gs")
+        ?.mapNotNull { stop -> stop.solidLikeColor(theme)?.let { stop.xmlInt("pos").orZero() to it } }
+        ?.sortedBy { it.first }
+        .orEmpty()
+    if (stops.size < 2) return null
+    val angle = gradFill.firstByLocalTag("lin")?.xmlFloat("ang")?.let { it / 60_000f } ?: 0f
+    return PptxGradientFill(
+        startColor = stops.first().second,
+        endColor = stops.last().second,
+        angleDegrees = angle
+    )
+}
+
+private fun Element.solidLikeColor(theme: PptxTheme): Int? {
+    firstByLocalTag("srgbClr")?.let { color ->
+        return color.xmlAttr("val")?.toColorOrNull()?.applyLuminance(color)
+    }
+    firstByLocalTag("schemeClr")?.let { color ->
+        val scheme = color.xmlAttr("val") ?: return null
+        return theme.colors[scheme]?.applyLuminance(color)
+    }
+    firstByLocalTag("sysClr")?.let { color ->
+        return color.xmlAttr("lastClr")?.toColorOrNull()?.applyLuminance(color)
+    }
+    return null
+}
+
+private fun Element.textInsets(): PptxTextInsets {
+    return PptxTextInsets(
+        left = (xmlFloat("lIns") ?: xmlFloat("marL"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT,
+        top = (xmlFloat("tIns") ?: xmlFloat("marT"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT,
+        right = (xmlFloat("rIns") ?: xmlFloat("marR"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT,
+        bottom = (xmlFloat("bIns") ?: xmlFloat("marB"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT
+    )
+}
+
+private fun Element.verticalAnchor(): PptxVerticalAnchor {
+    return when (xmlAttr("anchor")) {
+        "ctr" -> PptxVerticalAnchor.MIDDLE
+        "b" -> PptxVerticalAnchor.BOTTOM
+        else -> PptxVerticalAnchor.TOP
+    }
+}
+
+private fun Element.tableCellLineColor(theme: PptxTheme): Int? {
+    val line = children().firstOrNull { child ->
+        child.localTag() in setOf("lnl", "lnr", "lnt", "lnb", "ln")
+    }
+    return line?.solidFillColor(theme)
+}
+
+private fun Element.spacingPoints(): Float? {
+    firstByLocalTag("spcPts")?.xmlFloat("val")?.let { return it / 100f }
+    firstByLocalTag("spcPct")?.xmlFloat("val")?.let { return DEFAULT_TEXT_SIZE_PT * (it / 100_000f) }
+    return null
+}
+
+private fun Element.spacingMultiple(): Float? {
+    firstByLocalTag("spcPct")?.xmlFloat("val")?.let { return it / 100_000f }
+    return null
+}
+
+private fun Element.autoFitFontScale(): Float? {
+    return firstDirectByLocalTag("normAutofit")
+        ?.xmlFloat("fontScale")
+        ?.let { it / 100_000f }
+        ?.coerceIn(0.4f, 2f)
+}
+
+private fun Element.autoFitLineSpacingReduction(): Float? {
+    return firstDirectByLocalTag("normAutofit")
+        ?.xmlFloat("lnSpcReduction")
+        ?.let { it / 100_000f }
+        ?.coerceIn(0f, 0.5f)
+}
+
+private fun Element.typefaceName(theme: PptxTheme): String? {
+    val raw = firstByLocalTag("latin")?.xmlAttr("typeface")
+        ?: firstByLocalTag("ea")?.xmlAttr("typeface")
+        ?: firstByLocalTag("cs")?.xmlAttr("typeface")
+    val resolved = when {
+        raw == null -> null
+        raw.startsWith("+mj") -> theme.majorTypeface ?: raw
+        raw.startsWith("+mn") -> theme.minorTypeface ?: raw
+        else -> raw
+    }
+    return resolved?.takeIf { it.isNotBlank() }
 }
 
 private fun Element.boundsFromTransform(): RectF {
@@ -877,6 +1769,13 @@ private fun Element.boundsFromTransform(): RectF {
 private fun Float.emuToPoint(): Float = this / EMU_PER_POINT
 
 private fun Float.emuToPointInt(): Int = emuToPoint().roundToInt().coerceAtLeast(1)
+
+private fun Int?.orZero(): Int = this ?: 0
+
+private fun Element.rotationDegreesFromTransform(): Float {
+    val xfrm = childrenByLocalTag("xfrm").firstOrNull() ?: firstByLocalTag("xfrm")
+    return xfrm?.xmlFloat("rot")?.let { it / 60_000f } ?: 0f
+}
 
 private fun Element.solidFillColor(theme: PptxTheme): Int? {
     val solid = childrenByLocalTag("solidFill").firstOrNull() ?: return null
@@ -902,10 +1801,24 @@ private fun Element.schemeColor(theme: PptxTheme): Int? {
 }
 
 private fun Int.applyLuminance(colorElement: Element): Int {
+    val shade = colorElement.firstByLocalTag("shade")?.xmlFloat("val")?.let { it / 100_000f }
+    val tint = colorElement.firstByLocalTag("tint")?.xmlFloat("val")?.let { it / 100_000f }
     val mod = colorElement.firstByLocalTag("lumMod")?.xmlFloat("val")?.let { it / 100_000f } ?: 1f
     val off = colorElement.firstByLocalTag("lumOff")?.xmlFloat("val")?.let { it / 100_000f } ?: 0f
-    fun channel(value: Int): Int = ((value * mod) + (255f * off)).roundToInt().coerceIn(0, 255)
-    return Color.argb(Color.alpha(this), channel(Color.red(this)), channel(Color.green(this)), channel(Color.blue(this)))
+    val alpha = colorElement.firstByLocalTag("alpha")?.xmlFloat("val")?.let { it / 100_000f } ?: 1f
+    fun channel(value: Int): Int {
+        var next = value.toFloat()
+        shade?.let { next *= it }
+        tint?.let { next += (255f - next) * it }
+        next = (next * mod) + (255f * off)
+        return next.roundToInt().coerceIn(0, 255)
+    }
+    return Color.argb(
+        (Color.alpha(this) * alpha).roundToInt().coerceIn(0, 255),
+        channel(Color.red(this)),
+        channel(Color.green(this)),
+        channel(Color.blue(this))
+    )
 }
 
 private fun String.toColorOrNull(): Int? {
@@ -934,6 +1847,32 @@ private fun File.contentHash(): String {
 
 private fun String?.isTruthyXmlFlag(): Boolean {
     return this == "1" || equals("true", ignoreCase = true)
+}
+
+private fun String.placeholderFamily(): String {
+    return when (this.lowercase(Locale.ROOT)) {
+        "ctrtitle" -> "title"
+        "subttl" -> "subtitle"
+        else -> this.lowercase(Locale.ROOT)
+    }
+}
+
+private fun Element.hasBulletDefinition(): Boolean {
+    return firstDirectByLocalTag("buNone") != null ||
+        firstDirectByLocalTag("buChar") != null ||
+        firstDirectByLocalTag("buAutoNum") != null
+}
+
+private fun Element.hasTextColor(): Boolean {
+    return firstDirectByLocalTag("solidFill") != null ||
+        firstDirectByLocalTag("gradFill") != null ||
+        firstDirectByLocalTag("noFill") != null
+}
+
+private fun Element.hasTypeface(): Boolean {
+    return firstByLocalTag("latin") != null ||
+        firstByLocalTag("ea") != null ||
+        firstByLocalTag("cs") != null
 }
 
 private fun Element.localTag(): String = tagName().substringAfter(':').lowercase(Locale.ROOT)
@@ -967,7 +1906,7 @@ private fun Element.placeholderKey(): PptxPlaceholderKey {
 
 private fun PptxPlaceholderKey.matches(other: PptxPlaceholderKey): Boolean {
     if (index != null && other.index != null && index == other.index) return true
-    if (type != null && other.type != null && type == other.type) return true
+    if (type != null && other.type != null && type.placeholderFamily() == other.type.placeholderFamily()) return true
     return index == null && other.index == null && type == null && other.type == null
 }
 
@@ -980,12 +1919,12 @@ private fun Element.firstDirectByLocalTag(tag: String): Element? = childrenByLoc
 
 private fun Element.firstByLocalTag(tag: String): Element? {
     val local = tag.lowercase(Locale.ROOT)
-    return getAllElements().firstOrNull { it.localTag() == local }
+    return allElements.firstOrNull { it.localTag() == local }
 }
 
 private fun Element.allByLocalTag(tag: String): List<Element> {
     val local = tag.lowercase(Locale.ROOT)
-    return getAllElements().filter { it.localTag() == local }
+    return allElements.filter { it.localTag() == local }
 }
 
 private fun String.relationshipsPath(): String {

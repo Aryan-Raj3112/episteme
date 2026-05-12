@@ -34,10 +34,32 @@ class PptxDocumentParserTest {
         assertTrue(deck.slides.single().text.contains("Layout Text"))
         assertTrue(deck.slides.single().text.contains("Hello PPTX"))
         assertTrue(deck.slides.single().text.contains("Inherited Placeholder"))
+        assertTrue(deck.slides.single().text.contains("Cell A"))
+        assertTrue(deck.slides.single().text.contains("Grouped Text"))
         assertFalse(deck.slides.single().text.contains("Layout Placeholder Prompt"))
+        val inheritedPlaceholder = deck.slides.single().elements
+            .filterIsInstance<PptxShapeElement>()
+            .single { shape -> shape.paragraphs.any { paragraph -> paragraph.runs.any { it.text.contains("Inherited Placeholder") } } }
+        assertEquals(PptxTextAlign.CENTER, inheritedPlaceholder.paragraphs.single().alignment)
+        assertEquals(24f, inheritedPlaceholder.paragraphs.single().runs.first().sizePt)
+        val centeredShape = deck.slides.single().elements
+            .filterIsInstance<PptxShapeElement>()
+            .single { shape -> shape.paragraphs.any { paragraph -> paragraph.runs.any { it.text.contains("Centered") } } }
+        assertEquals(PptxTextAlign.CENTER, centeredShape.paragraphs.single().alignment)
+        assertEquals(PptxVerticalAnchor.MIDDLE, centeredShape.verticalAnchor)
+        assertEquals(36f, centeredShape.paragraphs.single().runs.first().sizePt)
+        val table = deck.slides.single().elements.filterIsInstance<PptxTableElement>().single()
+        assertEquals(1, table.rows.size)
+        assertEquals(PptxVerticalAnchor.MIDDLE, table.rows.single().cells.first().verticalAnchor)
+        val groupedShape = deck.slides.single().elements
+            .filterIsInstance<PptxShapeElement>()
+            .single { shape -> shape.paragraphs.any { paragraph -> paragraph.runs.any { it.text.contains("Grouped Text") } } }
+        assertTrue(groupedShape.bounds.left > 35f)
         assertTrue(
             deck.slides.single().elements.any {
-                it is PptxImageElement && it.bytes.contentEquals(byteArrayOf(1, 2, 3, 4))
+                it is PptxImageElement &&
+                    it.bytes.contentEquals(byteArrayOf(1, 2, 3, 4)) &&
+                    it.crop.left > 0f
             }
         )
     }
@@ -119,13 +141,39 @@ class PptxDocumentParserTest {
                             </p:sp>
                             <p:pic>
                                 <p:nvPicPr><p:cNvPr id="3" name="Image"/></p:nvPicPr>
-                                <p:blipFill><a:blip r:embed="rId2"/></p:blipFill>
+                                <p:blipFill><a:blip r:embed="rId2"/><a:srcRect l="10000"/></p:blipFill>
                                 <p:spPr><a:xfrm><a:off x="4000000" y="500000"/><a:ext cx="1000000" cy="1000000"/></a:xfrm></p:spPr>
                             </p:pic>
                             <p:sp>
                                 <p:nvSpPr><p:cNvPr id="4" name="Body"/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
                                 <p:txBody><a:bodyPr/><a:p><a:r><a:t>Inherited Placeholder</a:t></a:r></a:p></p:txBody>
                             </p:sp>
+                            <p:sp>
+                                <p:nvSpPr><p:cNvPr id="5" name="Centered"/></p:nvSpPr>
+                                <p:spPr><a:xfrm><a:off x="4500000" y="1800000"/><a:ext cx="3500000" cy="900000"/></a:xfrm><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FFFFFF"/></a:gs><a:gs pos="100000"><a:srgbClr val="DDEEFF"/></a:gs></a:gsLst><a:lin ang="5400000"/></a:gradFill></p:spPr>
+                                <p:txBody><a:bodyPr anchor="ctr" lIns="182880" rIns="182880"/><a:p><a:pPr algn="ctr"/><a:r><a:rPr sz="3600" b="1"/><a:t>Centered</a:t></a:r><a:r><a:rPr sz="1800"/><a:t> Small</a:t></a:r></a:p></p:txBody>
+                            </p:sp>
+                            <p:graphicFrame>
+                                <p:nvGraphicFramePr><p:cNvPr id="6" name="Table"/></p:nvGraphicFramePr>
+                                <p:xfrm><a:off x="4500000" y="3000000"/><a:ext cx="3000000" cy="800000"/></p:xfrm>
+                                <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+                                    <a:tbl><a:tblGrid><a:gridCol w="1500000"/><a:gridCol w="1500000"/></a:tblGrid>
+                                        <a:tr h="800000">
+                                            <a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>Cell A</a:t></a:r></a:p></a:txBody><a:tcPr marL="12700" anchor="ctr"><a:solidFill><a:srgbClr val="FFF2CC"/></a:solidFill></a:tcPr></a:tc>
+                                            <a:tc><a:txBody><a:bodyPr/><a:p><a:r><a:t>Cell B</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>
+                                        </a:tr>
+                                    </a:tbl>
+                                </a:graphicData></a:graphic>
+                            </p:graphicFrame>
+                            <p:grpSp>
+                                <p:nvGrpSpPr><p:cNvPr id="7" name="Group"/></p:nvGrpSpPr>
+                                <p:grpSpPr><a:xfrm><a:off x="500000" y="3000000"/><a:ext cx="2000000" cy="900000"/><a:chOff x="0" y="0"/><a:chExt cx="2000000" cy="900000"/></a:xfrm></p:grpSpPr>
+                                <p:sp>
+                                    <p:nvSpPr><p:cNvPr id="8" name="Grouped"/></p:nvSpPr>
+                                    <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1600000" cy="500000"/></a:xfrm></p:spPr>
+                                    <p:txBody><a:bodyPr/><a:p><a:r><a:t>Grouped Text</a:t></a:r></a:p></p:txBody>
+                                </p:sp>
+                            </p:grpSp>
                         </p:spTree>
                     </p:cSld>
                 </p:sld>
@@ -205,7 +253,7 @@ class PptxDocumentParserTest {
                     <p:sp>
                         <p:nvSpPr><p:cNvPr id="9" name="Body Placeholder"/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
                         <p:spPr><a:xfrm><a:off x="1000000" y="1800000"/><a:ext cx="4000000" cy="900000"/></a:xfrm></p:spPr>
-                        <p:txBody><a:bodyPr/><a:p><a:r><a:t>Layout Placeholder Prompt</a:t></a:r></a:p></p:txBody>
+                        <p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="2400"/></a:lvl1pPr></a:lstStyle><a:p><a:r><a:t>Layout Placeholder Prompt</a:t></a:r></a:p></p:txBody>
                     </p:sp>
                 </p:spTree></p:cSld>
             </p:sldLayout>
