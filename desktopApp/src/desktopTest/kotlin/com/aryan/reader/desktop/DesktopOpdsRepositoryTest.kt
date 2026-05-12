@@ -37,6 +37,36 @@ class DesktopOpdsRepositoryTest {
         }
     }
 
+    @Test
+    fun `desktop opds http creates basic authorization header for challenged catalogs`() {
+        assertEquals(
+            "Basic dXNlcjpwYXNz",
+            DesktopOpdsHttp.authorizationHeaderForChallenge(
+                challenge = "Basic realm=\"Catalog\"",
+                url = "https://example.org/opds",
+                username = "user",
+                password = "pass"
+            )
+        )
+    }
+
+    @Test
+    fun `desktop opds http creates digest authorization header for challenged catalogs`() {
+        assertEquals(
+            "Digest username=\"Mufasa\", realm=\"testrealm@host.com\", nonce=\"abcdef\", " +
+                "uri=\"/dir/index.atom?x=1\", response=\"ca833912ad1f4339630e23476d538d67\", " +
+                "qop=auth, nc=00000001, cnonce=\"0a4f113b\", opaque=\"xyz\"",
+            DesktopOpdsHttp.authorizationHeaderForChallenge(
+                challenge = "Digest realm=\"testrealm@host.com\", nonce=\"abcdef\", qop=\"auth\", opaque=\"xyz\"",
+                url = "https://example.org/dir/index.atom?x=1",
+                username = "Mufasa",
+                password = "Circle Of Life",
+                cnonce = "0a4f113b",
+                nonceCount = "00000001"
+            )
+        )
+    }
+
     private fun DesktopOpdsRepository.addCatalogForTest(
         title: String,
         url: String,

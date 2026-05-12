@@ -10,14 +10,15 @@ import com.aryan.reader.shared.opds.SharedOpdsParser
 import com.aryan.reader.shared.opds.SharedOpdsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.Closeable
 import java.io.File
-import java.net.Authenticator
-import java.net.PasswordAuthentication
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.security.MessageDigest
 import java.time.Duration
+import java.util.Base64
 import java.util.UUID
 
 internal class DesktopOpdsRepository(
@@ -144,56 +145,144 @@ internal data class DesktopOpdsStreamResponse(
 
 internal object DesktopOpdsHttp {
     fun fetchString(url: String, username: String?, password: String?): DesktopOpdsTextResponse {
-        ensureNetworkAccess()
-        val request = request(url).build()
-        val response = client(username, password).send(request, HttpResponse.BodyHandlers.ofString())
+        val response = send(url, username, password, HttpResponse.BodyHandlers.ofString())
         return DesktopOpdsTextResponse(response.statusCode(), response.body().orEmpty())
     }
 
     fun fetchStream(url: String, username: String?, password: String?): DesktopOpdsStreamResponse {
-        ensureNetworkAccess()
-        val request = request(url).build()
-        val response = client(username, password).send(request, HttpResponse.BodyHandlers.ofInputStream())
+        val response = send(url, username, password, HttpResponse.BodyHandlers.ofInputStream())
         return DesktopOpdsStreamResponse(response.statusCode(), response.headers(), response.body())
     }
 
     fun fetchBytes(url: String, catalog: OpdsCatalog?): ByteArray {
-        ensureNetworkAccess()
-        val request = request(url).build()
-        val response = client(catalog?.username, catalog?.password).send(request, HttpResponse.BodyHandlers.ofByteArray())
+        val response = send(url, catalog?.username, catalog?.password, HttpResponse.BodyHandlers.ofByteArray())
         if (response.statusCode() !in 200..299) {
             error("HTTP ${response.statusCode()}")
         }
         return response.body()
     }
 
-    private fun request(url: String): HttpRequest.Builder {
-        return HttpRequest.newBuilder(URI(url.trim()))
+    private fun <T> send(
+        url: String,
+        username: String?,
+        password: String?,
+        bodyHandler: HttpResponse.BodyHandler<T>
+    ): HttpResponse<T> {
+        ensureNetworkAccess()
+        val uri = URI(url.trim())
+        val response = client().send(request(uri).build(), bodyHandler)
+        val challenge = response.headers().firstValue("www-authenticate").orElse(null)
+        val authorization = if (response.statusCode() == 401) {
+            authorizationHeaderForChallenge(
+                challenge = challenge,
+                url = uri.toString(),
+                username = username,
+                password = password
+            )
+        } else {
+            null
+        }
+        if (authorization == null) return response
+
+        (response.body() as? Closeable)?.close()
+        return client().send(
+            request(uri)
+                .header("Authorization", authorization)
+                .build(),
+            bodyHandler
+        )
+    }
+
+    private fun request(uri: URI): HttpRequest.Builder {
+        return HttpRequest.newBuilder(uri)
             .timeout(Duration.ofSeconds(45))
             .header("User-Agent", "EpistemeReader/1.0 (Desktop)")
     }
 
-    private fun client(username: String?, password: String?): HttpClient {
-        val builder = HttpClient.newBuilder()
+    private fun client(): HttpClient {
+        return HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(20))
             .followRedirects(HttpClient.Redirect.NORMAL)
-
-        if (!username.isNullOrBlank() && !password.isNullOrBlank()) {
-            builder.authenticator(
-                object : Authenticator() {
-                    override fun getPasswordAuthentication(): PasswordAuthentication {
-                        return PasswordAuthentication(username, password.toCharArray())
-                    }
-                }
-            )
-        }
-
-        return builder.build()
+            .build()
     }
 
     private fun ensureNetworkAccess() {
         check(currentDesktopBuildProfile().featurePolicy.networkAccess) {
             "Network access is disabled in this desktop build."
         }
+    }
+
+    internal fun authorizationHeaderForChallenge(
+        challenge: String?,
+        url: String,
+        username: String?,
+        password: String?,
+        method: String = "GET",
+        cnonce: String = UUID.randomUUID().toString().replace("-", ""),
+        nonceCount: String = "00000001"
+    ): String? {
+        if (challenge.isNullOrBlank() || username.isNullOrBlank() || password.isNullOrBlank()) return null
+        return when {
+            challenge.startsWith("Basic", ignoreCase = true) -> {
+                val credentials = "$username:$password".toByteArray(Charsets.ISO_8859_1)
+                "Basic ${Base64.getEncoder().encodeToString(credentials)}"
+            }
+
+            challenge.startsWith("Digest", ignoreCase = true) -> {
+                val params = parseAuthParams(challenge)
+                val realm = params["realm"].orEmpty()
+                val nonce = params["nonce"] ?: return null
+                val qop = params["qop"]
+                    ?.split(',')
+                    ?.map { it.trim().trim('"') }
+                    ?.firstOrNull { it.equals("auth", ignoreCase = true) }
+                val opaque = params["opaque"]
+                val uri = URI(url)
+                val requestUri = buildString {
+                    append(uri.rawPath.takeIf { !it.isNullOrBlank() } ?: "/")
+                    uri.rawQuery?.let { append('?').append(it) }
+                }
+                val ha1 = md5("$username:$realm:$password")
+                val ha2 = md5("${method.uppercase()}:$requestUri")
+                val responseHash = if (qop != null) {
+                    md5("$ha1:$nonce:$nonceCount:$cnonce:$qop:$ha2")
+                } else {
+                    md5("$ha1:$nonce:$ha2")
+                }
+
+                buildString {
+                    append("Digest username=\"${username.escapeAuthQuote()}\", ")
+                    append("realm=\"${realm.escapeAuthQuote()}\", ")
+                    append("nonce=\"${nonce.escapeAuthQuote()}\", ")
+                    append("uri=\"${requestUri.escapeAuthQuote()}\", ")
+                    append("response=\"$responseHash\"")
+                    if (qop != null) {
+                        append(", qop=$qop, nc=$nonceCount, cnonce=\"${cnonce.escapeAuthQuote()}\"")
+                    }
+                    if (opaque != null) {
+                        append(", opaque=\"${opaque.escapeAuthQuote()}\"")
+                    }
+                }
+            }
+
+            else -> null
+        }
+    }
+
+    private fun parseAuthParams(challenge: String): Map<String, String> {
+        return Regex("""(\w+)=(?:"([^"]*)"|([^,\s]+))""")
+            .findAll(challenge)
+            .associate { match ->
+                match.groupValues[1].lowercase() to (match.groupValues[2].ifBlank { match.groupValues[3] })
+            }
+    }
+
+    private fun md5(input: String): String {
+        val bytes = MessageDigest.getInstance("MD5").digest(input.toByteArray())
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun String.escapeAuthQuote(): String {
+        return replace("\\", "\\\\").replace("\"", "\\\"")
     }
 }

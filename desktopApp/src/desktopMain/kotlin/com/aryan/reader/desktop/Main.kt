@@ -1984,7 +1984,14 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     onDownloadBook = ::downloadOpdsBook,
                                     onReadBook = ::openReader,
                                     onStreamBook = ::streamOpdsBook,
-                                    onClearError = { emitOpds(opdsController.clearError()) }
+                                    onClearError = { emitOpds(opdsController.clearError()) },
+                                    coverContent = { entry, modifier ->
+                                        DesktopOpdsCoverImage(
+                                            entry = entry,
+                                            catalog = opdsState.currentCatalog,
+                                            modifier = modifier
+                                        )
+                                    }
                                 )
                             } else {
                                 Box(Modifier.fillMaxSize())
@@ -10435,15 +10442,13 @@ private fun SharedReaderScreenState.withBanner(message: String, isError: Boolean
 
 private val DesktopReadableFileTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
 private val DesktopSyncableFileTypes = SharedFileCapabilities.syncableTypesFor(ReaderPlatform.DESKTOP)
-private val DesktopBookFileTypes = SharedFileCapabilities.all
-    .filter { capability ->
-        capability.type in DesktopReadableFileTypes && capability.type != FileType.PDF
-    }
-    .mapTo(mutableSetOf()) { it.type }
+private val DesktopBookFileTypes = DesktopReadableFileTypes
 private val DesktopBookFileDialogPattern = SharedFileCapabilities.all
     .filter { it.type in DesktopBookFileTypes }
     .flatMap { capability -> capability.extensions.map { extension -> "*.$extension" } }
     .joinToString(";")
+
+internal fun desktopBookFileTypesForDialog(): Set<FileType> = DesktopBookFileTypes
 
 private const val EpistemeSourceUrl = "https://github.com/Aryan-Raj3112/episteme"
 private const val EpistemeIssuesUrl = "https://github.com/Aryan-Raj3112/episteme/issues"

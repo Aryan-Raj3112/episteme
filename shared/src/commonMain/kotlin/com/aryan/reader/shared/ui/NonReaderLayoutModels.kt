@@ -4,7 +4,9 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.ReadStatusFilter
+import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFeaturePolicy
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.isOpdsStream
@@ -121,6 +123,50 @@ data class NonReaderLibraryOrganizationModel(
     val hasInAppBooks: Boolean,
     val hasOpdsStreams: Boolean
 )
+
+internal data class NonReaderLibraryFileTypeGroup(
+    val title: String,
+    val fileTypes: List<FileType>
+)
+
+private val LibraryFileTypeGroupTemplates = listOf(
+    NonReaderLibraryFileTypeGroup(
+        title = "Books",
+        fileTypes = listOf(FileType.EPUB, FileType.MOBI, FileType.FB2)
+    ),
+    NonReaderLibraryFileTypeGroup(
+        title = "Documents",
+        fileTypes = listOf(FileType.PDF, FileType.DOCX, FileType.ODT, FileType.FODT)
+    ),
+    NonReaderLibraryFileTypeGroup(
+        title = "Text and web",
+        fileTypes = listOf(FileType.MD, FileType.TXT, FileType.HTML)
+    ),
+    NonReaderLibraryFileTypeGroup(
+        title = "Comics",
+        fileTypes = listOf(FileType.CBZ, FileType.CBR, FileType.CB7)
+    )
+)
+
+internal fun nonReaderLibraryFileTypeGroups(
+    platform: ReaderPlatform = ReaderPlatform.DESKTOP
+): List<NonReaderLibraryFileTypeGroup> {
+    val readableTypes = SharedFileCapabilities.readableTypesFor(platform)
+    val knownGroupedTypes = LibraryFileTypeGroupTemplates.flatMapTo(mutableSetOf()) { it.fileTypes }
+    val grouped = LibraryFileTypeGroupTemplates.mapNotNull { group ->
+        val visibleTypes = group.fileTypes.filter { it in readableTypes }
+        group.copy(fileTypes = visibleTypes).takeIf { visibleTypes.isNotEmpty() }
+    }
+    val otherTypes = readableTypes
+        .filterNot { it in knownGroupedTypes }
+        .sortedBy { it.ordinal }
+
+    return if (otherTypes.isEmpty()) {
+        grouped
+    } else {
+        grouped + NonReaderLibraryFileTypeGroup("Other", otherTypes)
+    }
+}
 
 fun SharedReaderScreenState.toNonReaderLibraryOrganizationModel(): NonReaderLibraryOrganizationModel {
     val books = rawLibraryBooks

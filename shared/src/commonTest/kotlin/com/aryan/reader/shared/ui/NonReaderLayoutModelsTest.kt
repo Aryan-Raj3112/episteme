@@ -4,7 +4,9 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.ReadStatusFilter
+import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFeaturePolicy
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
@@ -16,6 +18,42 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class NonReaderLayoutModelsTest {
+
+    @Test
+    fun `desktop library exposes the same top level organization tabs as Android`() {
+        val visibleTabs = visibleNonReaderLibraryTabs()
+
+        assertEquals(
+            listOf(
+                NonReaderLibraryTab.BOOKS,
+                NonReaderLibraryTab.SHELVES,
+                NonReaderLibraryTab.FOLDERS
+            ),
+            visibleTabs
+        )
+        assertFalse(NonReaderLibraryTab.SMART_SHELVES in visibleTabs)
+        assertFalse(NonReaderLibraryTab.TAGS in visibleTabs)
+        assertFalse(NonReaderLibraryTab.UNREAD in visibleTabs)
+        assertFalse(NonReaderLibraryTab.IN_PROGRESS in visibleTabs)
+        assertFalse(NonReaderLibraryTab.COMPLETED in visibleTabs)
+    }
+
+    @Test
+    fun `desktop library filter file type groups include every shared readable format`() {
+        val groupedTypes = nonReaderLibraryFileTypeGroups().flatMap { it.fileTypes }
+
+        assertEquals(
+            SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP),
+            groupedTypes.toSet()
+        )
+        assertEquals(groupedTypes.size, groupedTypes.toSet().size)
+        assertTrue(FileType.DOCX in groupedTypes)
+        assertTrue(FileType.FODT in groupedTypes)
+        assertTrue(
+            nonReaderLibraryFileTypeGroups()
+                .any { it.title == "Comics" && FileType.CBR in it.fileTypes && FileType.CB7 in it.fileTypes }
+        )
+    }
 
     @Test
     fun `home layout separates active tab pinned and recent books`() {

@@ -5,6 +5,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -13,6 +15,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class DesktopReaderDefaultsTest {
+
+    @Test
+    fun `desktop open book dialog accepts every shared desktop readable format`() {
+        assertEquals(
+            SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP),
+            desktopBookFileTypesForDialog()
+        )
+        assertTrue(FileType.PDF in desktopBookFileTypesForDialog())
+    }
 
     @Test
     fun `desktop uses global reader defaults when book has no local settings`() {
