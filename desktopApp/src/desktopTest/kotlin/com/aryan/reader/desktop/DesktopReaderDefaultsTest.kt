@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.pdf.PdfZoomSpec
@@ -93,6 +94,41 @@ class DesktopReaderDefaultsTest {
                 newZoom = 2f
             )
         )
+        val offCenterPivot = desktopPdfZoomPreviewPivotFraction(
+            viewportRootOffset = Offset(20f, 30f),
+            pageRootOffset = Offset(120f, 230f),
+            anchor = Offset(250f, 450f),
+            pageCanvasSize = IntSize(500, 1000)
+        ) ?: error("Expected off-center pivot")
+        assertEquals(0.3f, offCenterPivot.x, 0.0001f)
+        assertEquals(0.25f, offCenterPivot.y, 0.0001f)
+
+        val clampedPivot = desktopPdfZoomPreviewPivotFraction(
+            viewportRootOffset = Offset.Zero,
+            pageRootOffset = Offset.Zero,
+            anchor = Offset(900f, -20f),
+            pageCanvasSize = IntSize(500, 1000)
+        ) ?: error("Expected clamped pivot")
+        assertEquals(1f, clampedPivot.x, 0.0001f)
+        assertEquals(0f, clampedPivot.y, 0.0001f)
+
+        val firstPageDocumentTranslation = desktopPdfDocumentZoomPreviewTranslation(
+            viewportRootOffset = Offset.Zero,
+            pageRootOffset = Offset(0f, 0f),
+            anchor = Offset(100f, 200f),
+            previewScale = 2f
+        ) ?: error("Expected first page document translation")
+        assertEquals(-100f, firstPageDocumentTranslation.x, 0.0001f)
+        assertEquals(-200f, firstPageDocumentTranslation.y, 0.0001f)
+
+        val secondPageDocumentTranslation = desktopPdfDocumentZoomPreviewTranslation(
+            viewportRootOffset = Offset.Zero,
+            pageRootOffset = Offset(0f, 900f),
+            anchor = Offset(100f, 200f),
+            previewScale = 2f
+        ) ?: error("Expected second page document translation")
+        assertEquals(-100f, secondPageDocumentTranslation.x, 0.0001f)
+        assertEquals(700f, secondPageDocumentTranslation.y, 0.0001f)
     }
 
     private fun bookItem(id: String): BookItem {
