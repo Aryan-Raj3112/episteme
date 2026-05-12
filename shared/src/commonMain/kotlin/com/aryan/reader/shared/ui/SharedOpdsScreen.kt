@@ -47,7 +47,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -298,7 +297,7 @@ private fun SharedOpdsFeedView(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                     if (showSearch) {
-                        OutlinedTextField(
+                        SharedStableOutlinedTextField(
                             value = query,
                             onValueChange = { query = it },
                             placeholder = { Text("Search catalog") },
@@ -805,16 +804,17 @@ private fun SharedOpdsCatalogDialog(
         title = { Text(if (isEditMode) "Edit catalog" else "Add OPDS catalog") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Catalog name") }, singleLine = true)
-                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, singleLine = true)
+                SharedStableOutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Catalog name") }, singleLine = true, selectionKey = catalog?.id ?: "new:title")
+                SharedStableOutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, singleLine = true, selectionKey = catalog?.id ?: "new:url")
                 Text("Authentication optional", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, singleLine = true)
-                OutlinedTextField(
+                SharedStableOutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, singleLine = true, selectionKey = catalog?.id ?: "new:username")
+                SharedStableOutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text("Password") },
                     singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
+                    visualTransformation = PasswordVisualTransformation(),
+                    selectionKey = catalog?.id ?: "new:password"
                 )
             }
         },

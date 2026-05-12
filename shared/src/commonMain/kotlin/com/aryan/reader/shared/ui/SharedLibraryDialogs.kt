@@ -17,7 +17,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,7 +50,7 @@ fun SharedTextInputDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
+            SharedStableOutlinedTextField(
                 value = value,
                 onValueChange = { value = it },
                 label = { Text(label) },
@@ -198,11 +197,11 @@ fun SharedBookEditDialog(
         title = { Text("Edit book") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = author, onValueChange = { author = it }, label = { Text("Author") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = seriesName, onValueChange = { seriesName = it }, label = { Text("Series") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = seriesIndex, onValueChange = { seriesIndex = it }, label = { Text("Series index") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = tagText, onValueChange = { tagText = it }, label = { Text("Tags, comma separated") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                SharedStableOutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, singleLine = true, modifier = Modifier.fillMaxWidth(), selectionKey = "${book.id}:title")
+                SharedStableOutlinedTextField(value = author, onValueChange = { author = it }, label = { Text("Author") }, singleLine = true, modifier = Modifier.fillMaxWidth(), selectionKey = "${book.id}:author")
+                SharedStableOutlinedTextField(value = seriesName, onValueChange = { seriesName = it }, label = { Text("Series") }, singleLine = true, modifier = Modifier.fillMaxWidth(), selectionKey = "${book.id}:series")
+                SharedStableOutlinedTextField(value = seriesIndex, onValueChange = { seriesIndex = it }, label = { Text("Series index") }, singleLine = true, modifier = Modifier.fillMaxWidth(), selectionKey = "${book.id}:seriesIndex")
+                SharedStableOutlinedTextField(value = tagText, onValueChange = { tagText = it }, label = { Text("Tags, comma separated") }, singleLine = true, modifier = Modifier.fillMaxWidth(), selectionKey = "${book.id}:tags")
                 if (knownTags.isNotEmpty()) {
                     Text("Existing: ${knownTags.joinToString { it.name }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

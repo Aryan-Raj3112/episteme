@@ -59,7 +59,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -632,14 +631,15 @@ private fun SharedReaderHighlightSheet(
                 onDismiss()
             }
         }
-        OutlinedTextField(
+        SharedStableOutlinedTextField(
             value = noteText,
             onValueChange = { noteText = it },
             label = { Text("Note") },
             minLines = 3,
             maxLines = 5,
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp),
+            selectionKey = highlight.id
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1096,7 +1096,7 @@ private fun SharedReaderSearchControls(
         }
 
         if (session.isSearchActive) {
-            OutlinedTextField(
+            SharedStableOutlinedTextField(
                 value = session.searchQuery,
                 onValueChange = { onReaderAction(ReaderAction.SearchChanged(it)) },
                 label = { Text("Search text") },
@@ -2265,7 +2265,7 @@ private fun SharedTtsReplacementRuleEditor(
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(if (seedRule == null) "New rule" else "Edit rule", fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
+            SharedStableOutlinedTextField(
                 value = from,
                 onValueChange = { from = it },
                 label = { Text("Replace") },
@@ -2275,7 +2275,7 @@ private fun SharedTtsReplacementRuleEditor(
             if (!validation.isValid && validation.message != null) {
                 Text(validation.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
-            OutlinedTextField(
+            SharedStableOutlinedTextField(
                 value = to,
                 onValueChange = { to = it },
                 label = { Text("Speak as") },
@@ -2287,7 +2287,7 @@ private fun SharedTtsReplacementRuleEditor(
                 FilterChip(selected = wholeWord, onClick = { wholeWord = !wholeWord }, label = { Text("Whole word") })
                 FilterChip(selected = matchCase, onClick = { matchCase = !matchCase }, label = { Text("Match case") })
             }
-            OutlinedTextField(
+            SharedStableOutlinedTextField(
                 value = previewText,
                 onValueChange = { previewText = it },
                 label = { Text("Preview") },

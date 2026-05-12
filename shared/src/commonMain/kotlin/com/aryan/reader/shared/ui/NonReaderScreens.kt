@@ -67,7 +67,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -836,7 +835,7 @@ private fun LibraryToolbar(
     onCreateSmartShelf: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(
+        SharedStableOutlinedTextField(
             value = state.searchQuery,
             onValueChange = { onStateChange(state.reduce(LibraryAction.SearchChanged(it))) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },

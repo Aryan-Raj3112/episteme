@@ -61,7 +61,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.ScrollableTabRow
@@ -321,6 +320,7 @@ import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedReaderPopupLayer
 import com.aryan.reader.shared.ui.SharedReaderScreen
+import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
 import com.aryan.reader.shared.ui.SharedReaderTtsReplacementControls
 import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
@@ -2686,7 +2686,7 @@ private fun SmartShelfDialog(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedTextField(
+                SharedStableOutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Shelf name") },
@@ -2742,12 +2742,13 @@ private fun SmartShelfDialog(
                                 }
                             }
                         }
-                        OutlinedTextField(
+                        SharedStableOutlinedTextField(
                             value = draft.value,
                             onValueChange = { value -> rules = rules.updateAt(index) { copy(value = value) } },
                             label = { Text(draft.field.valueLabel()) },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            selectionKey = index
                         )
                     }
                 }
@@ -5661,7 +5662,7 @@ private fun PdfReaderScreen(
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
+                        SharedStableOutlinedTextField(
                             value = searchQuery,
                             onValueChange = {
                                 dispatchPdf(SharedPdfReaderAction.SearchChanged(it))
@@ -6629,7 +6630,7 @@ private fun DesktopAiByokSettingsDialog(
                         )
                     }
                 }
-                OutlinedTextField(
+                SharedStableOutlinedTextField(
                     value = pendingKey,
                     onValueChange = { pendingKey = it },
                     label = { Text("API key") },
@@ -8044,12 +8045,13 @@ private fun DesktopPdfAnnotationEditor(
                 }
             }
             if (annotation.kind == PdfAnnotationKind.TEXT) {
-                OutlinedTextField(
+                SharedStableOutlinedTextField(
                     value = annotation.text,
                     onValueChange = { onUpdate(annotation.copy(text = it)) },
                     label = { Text("Text note") },
                     minLines = 2,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    selectionKey = annotation.id
                 )
                 SharedPdfTextStyleControls(
                     style = annotation.sharedPdfTextStyle(),
@@ -8106,14 +8108,15 @@ private fun DesktopPdfAnnotationEditor(
                         )
                     }
                 }
-                OutlinedTextField(
+                SharedStableOutlinedTextField(
                     value = annotation.note.orEmpty(),
                     onValueChange = { note -> onUpdate(annotation.copy(note = note.takeIf { it.isNotBlank() })) },
                     label = { Text("Note") },
                     minLines = 3,
                     maxLines = 5,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    selectionKey = annotation.id
                 )
             }
             if (annotation.kind == PdfAnnotationKind.INK) {
@@ -10292,7 +10295,7 @@ private fun ReaderSidebar(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
+                SharedStableOutlinedTextField(
                     value = session.searchQuery,
                     onValueChange = onSearchChange,
                     label = { Text("Find in book") },

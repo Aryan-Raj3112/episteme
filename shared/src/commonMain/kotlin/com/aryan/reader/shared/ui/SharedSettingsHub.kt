@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -127,7 +126,7 @@ fun SharedSettingsHub(
                 )
             }
 
-            OutlinedTextField(
+            SharedStableOutlinedTextField(
                 value = query,
                 onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth(),

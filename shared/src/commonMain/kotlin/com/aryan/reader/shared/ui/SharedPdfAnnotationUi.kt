@@ -75,9 +75,11 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -443,15 +445,29 @@ fun SharedPdfTextBoxEditorOverlay(
     val moveHandleWidthPx = with(density) { moveHandleWidth.toPx() }
     val moveHandleHeightPx = with(density) { moveHandleHeight.toPx() }
     val moveHandleBelow = topPx + heightPx + moveHandleHeightPx + 10f <= canvasSize.height
+    var textFieldValue by remember(id) {
+        mutableStateOf(TextFieldValue(text, TextRange(text.length)))
+    }
 
     LaunchedEffect(id, style) {
         focusRequester.requestFocus()
     }
 
+    LaunchedEffect(id, text) {
+        if (text != textFieldValue.text) {
+            textFieldValue = TextFieldValue(text, TextRange(text.length))
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         BasicTextField(
-            value = text,
-            onValueChange = onTextChange,
+            value = textFieldValue,
+            onValueChange = { nextValue ->
+                textFieldValue = nextValue
+                if (nextValue.text != text) {
+                    onTextChange(nextValue.text)
+                }
+            },
             textStyle = TextStyle(
                 color = textColor,
                 fontSize = style.fontSize.sp,

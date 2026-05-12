@@ -41,7 +41,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -67,7 +66,9 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -532,7 +533,7 @@ private fun SharedCreateAppThemeDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                OutlinedTextField(
+                SharedStableOutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Theme name") },
@@ -1023,13 +1024,17 @@ private fun SharedRgbInput(
     value: Int,
     onValueChange: (Float) -> Unit
 ) {
-    var text by remember(value) { mutableStateOf(value.coerceIn(0, 255).toString()) }
+    var textFieldValue by remember(value) {
+        val text = value.coerceIn(0, 255).toString()
+        mutableStateOf(TextFieldValue(text, TextRange(text.length)))
+    }
 
     BasicTextField(
-        value = text,
-        onValueChange = { newText ->
+        value = textFieldValue,
+        onValueChange = { nextValue ->
+            val newText = nextValue.text
             if (newText.length <= 3 && newText.all { it.isDigit() }) {
-                text = newText
+                textFieldValue = nextValue
                 newText.toIntOrNull()?.let { channel ->
                     onValueChange(channel.coerceIn(0, 255) / 255f)
                 }
@@ -1056,7 +1061,9 @@ fun SharedHexInput(
     onHexChanged: (Color) -> Unit
 ) {
     val hexValue = color.toSharedHexString().removePrefix("#")
-    var text by remember(hexValue) { mutableStateOf(hexValue) }
+    var textFieldValue by remember(hexValue) {
+        mutableStateOf(TextFieldValue(hexValue, TextRange(hexValue.length)))
+    }
 
     Row(
         modifier = Modifier
@@ -1074,12 +1081,16 @@ fun SharedHexInput(
             fontWeight = FontWeight.Bold
         )
         BasicTextField(
-            value = text,
-            onValueChange = { newText ->
+            value = textFieldValue,
+            onValueChange = { nextValue ->
+                val newText = nextValue.text
                 if (newText.length <= 6) {
                     val uppercased = newText.uppercase()
                     if (uppercased.all { it.isDigit() || it in 'A'..'F' }) {
-                        text = uppercased
+                        textFieldValue = nextValue.copy(
+                            text = uppercased,
+                            selection = TextRange(nextValue.selection.end.coerceIn(0, uppercased.length))
+                        )
                         if (uppercased.length == 6) {
                             uppercased.toSharedHexColorOrNull()?.let(onHexChanged)
                         }
