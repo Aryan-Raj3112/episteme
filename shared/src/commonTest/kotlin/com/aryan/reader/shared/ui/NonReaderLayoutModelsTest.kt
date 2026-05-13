@@ -157,6 +157,44 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `library visible selection follows folder shelf navigation`() {
+        val rootBook = book("root", sourceFolder = "/sync")
+        val childBook = book("child", sourceFolder = "/sync")
+        val rootShelf = Shelf(
+            id = "folder_/sync",
+            name = "Sync",
+            type = ShelfType.FOLDER,
+            books = listOf(rootBook, childBook),
+            directBooks = listOf(rootBook),
+            childShelfIds = listOf("folder_/sync::Nested")
+        )
+        val childShelf = Shelf(
+            id = "folder_/sync::Nested",
+            name = "Nested",
+            type = ShelfType.FOLDER,
+            books = listOf(childBook),
+            directBooks = listOf(childBook),
+            parentShelfId = rootShelf.id,
+            depth = 1
+        )
+
+        val rootState = SharedReaderScreenState(
+            shelves = listOf(rootShelf, childShelf),
+            libraryBooks = listOf(rootBook, childBook)
+        )
+        val childState = rootState.copy(viewingShelfId = childShelf.id)
+
+        assertEquals(
+            listOf("root", "child"),
+            rootState.visibleBooksForLibrarySelection(NonReaderLibraryTab.FOLDERS).map { it.id }
+        )
+        assertEquals(
+            listOf("child"),
+            childState.visibleBooksForLibrarySelection(NonReaderLibraryTab.FOLDERS).map { it.id }
+        )
+    }
+
+    @Test
     fun `library organization does not expose unknown as an available file type`() {
         val organization = SharedReaderScreenState(
             rawLibraryBooks = listOf(

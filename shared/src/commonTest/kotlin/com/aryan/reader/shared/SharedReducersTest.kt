@@ -13,4 +13,21 @@ class SharedReducersTest {
 
         assertEquals(setOf("one", "two"), result.selectedBookIds)
     }
+
+    @Test
+    fun `visible selection helper selects visible books and clears when all are selected`() {
+        val visibleBooks = listOf(
+            BookItem("one", "/books/one.epub", FileType.EPUB, "one.epub", timestamp = 1L),
+            BookItem("two", "/books/two.epub", FileType.EPUB, "two.epub", timestamp = 2L)
+        )
+
+        val selected = SharedReaderScreenState()
+            .replaceBookSelectionWithVisibleBooks(visibleBooks)
+
+        assertEquals(setOf("one", "two"), selected.selectedBookIds)
+        assertEquals(
+            emptySet(),
+            selected.replaceBookSelectionWithVisibleBooks(visibleBooks).selectedBookIds
+        )
+    }
 }

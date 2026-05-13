@@ -54,6 +54,18 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
     }
 }
 
+fun SharedReaderScreenState.replaceBookSelectionWithVisibleBooks(
+    visibleBooks: Collection<BookItem>
+): SharedReaderScreenState {
+    val visibleIds = visibleBooks.mapTo(linkedSetOf()) { it.id }
+    val action = if (visibleIds.isNotEmpty() && selectedBookIds.containsAll(visibleIds)) {
+        LibraryAction.SelectionCleared
+    } else {
+        LibraryAction.BookSelectionReplaced(visibleIds)
+    }
+    return reduce(action)
+}
+
 fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
     return when (action) {
         is AppAction.BannerShown -> copy(bannerMessage = action.message)

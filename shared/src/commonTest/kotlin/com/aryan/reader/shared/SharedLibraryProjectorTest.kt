@@ -205,6 +205,34 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
+    fun `SharedLibraryStateProjector auto creates synced folder fallback shelves from source folders`() {
+        val folderBook = book(
+            id = "folder_book",
+            sourceFolder = "C:/Library",
+            path = "C:/Library/Nested/Book.epub"
+        )
+
+        val result = SharedLibraryStateProjector(
+            SharedFolderPathResolver { item ->
+                if (item.id == "folder_book") listOf("Nested") else emptyList()
+            }
+        ).project(
+            SharedLibraryProjectionInput(
+                state = SharedReaderScreenState(),
+                booksFromStore = listOf(folderBook),
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                tags = emptyList()
+            )
+        )
+
+        assertEquals(listOf("C:/Library"), result.syncedFolders.map { it.uriString })
+        assertEquals("Library", result.syncedFolders.single().name)
+        assertEquals(listOf("folder_book"), result.shelves.first { it.id == "folder_C:/Library" }.books.ids())
+        assertEquals(listOf("folder_book"), result.shelves.first { it.id == "folder_C:/Library::Nested" }.directBooks.ids())
+    }
+
+    @Test
     fun `SharedLibraryStateProjector builds smart shelves from shared rules`() {
         val smartRules = SmartCollectionEngine.toJson(
             SmartCollectionDefinition(

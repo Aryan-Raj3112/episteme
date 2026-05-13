@@ -36,6 +36,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -104,6 +106,7 @@ import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.isOpdsStream
 import com.aryan.reader.shared.progressPercentValue
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.replaceBookSelectionWithVisibleBooks
 
 enum class NonReaderLibraryTab {
     BOOKS,
@@ -126,6 +129,33 @@ internal fun visibleNonReaderLibraryTabs(): List<NonReaderLibraryTab> = AndroidL
 
 private fun NonReaderLibraryTab.visibleLibraryTab(): NonReaderLibraryTab {
     return takeIf { it in AndroidLibraryTabs } ?: NonReaderLibraryTab.BOOKS
+}
+
+internal fun SharedReaderScreenState.visibleBooksForLibrarySelection(tab: NonReaderLibraryTab): List<BookItem> {
+    return when (tab.visibleLibraryTab()) {
+        NonReaderLibraryTab.BOOKS,
+        NonReaderLibraryTab.UNREAD,
+        NonReaderLibraryTab.IN_PROGRESS,
+        NonReaderLibraryTab.COMPLETED -> libraryBooks
+        NonReaderLibraryTab.SHELVES -> shelves
+            .filter { it.type != ShelfType.FOLDER && it.type != ShelfType.TAG && it.type != ShelfType.SMART }
+            .flatMap { it.books }
+            .distinctBy { it.id }
+        NonReaderLibraryTab.SMART_SHELVES -> shelves
+            .filter { it.type == ShelfType.SMART }
+            .flatMap { it.books }
+            .distinctBy { it.id }
+        NonReaderLibraryTab.TAGS -> shelves
+            .filter { it.type == ShelfType.TAG && it.bookCount > 0 }
+            .flatMap { it.books }
+            .distinctBy { it.id }
+        NonReaderLibraryTab.FOLDERS -> {
+            val currentFolder = viewingShelfId?.let { id -> shelves.firstOrNull { it.id == id && it.type == ShelfType.FOLDER } }
+            val folderShelves = currentFolder?.let(::listOf)
+                ?: shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null }
+            folderShelves.flatMap { it.books }.distinctBy { it.id }
+        }
+    }
 }
 
 private enum class BookViewMode {
@@ -320,12 +350,19 @@ fun SharedLibraryScreen(
         if (state.selectedBookIds.isNotEmpty()) {
             val selectedBooks = state.rawLibraryBooks.filter { it.id in state.selectedBookIds }
             val allSelectedPinned = selectedBooks.isNotEmpty() && selectedBooks.all { it.id in state.pinnedLibraryBookIds }
+            val visibleSelectionBooks = state.visibleBooksForLibrarySelection(activeLibraryTab)
+            val allVisibleSelected = visibleSelectionBooks.isNotEmpty() &&
+                state.selectedBookIds.containsAll(visibleSelectionBooks.map { it.id })
             SelectionToolbar(
                 count = state.selectedBookIds.size,
                 onClear = onClearSelection,
                 onRemove = onRemoveSelected,
                 onTag = onTagSelectedBooks,
                 onAddToShelf = onAddSelectedBooksToShelf,
+                onSelectAll = {
+                    onStateChange(state.replaceBookSelectionWithVisibleBooks(visibleSelectionBooks))
+                },
+                selectAllLabel = if (allVisibleSelected) "Clear visible" else "Select visible",
                 onPin = {
                     selectedBooks
                         .filter { book -> allSelectedPinned || book.id !in state.pinnedLibraryBookIds }
@@ -577,6 +614,7 @@ private fun HomeBookShelf(
                     book = book,
                     selected = book.id in selectedBookIds,
                     pinned = book.id in pinnedBookIds,
+                    selectionModeActive = selectedBookIds.isNotEmpty(),
                     onOpen = { onOpenBook(book) },
                     onToggleSelection = { onToggleSelection(book.id) },
                     onShowInfo = { onShowBookInfo(book) },
@@ -596,6 +634,8 @@ private fun SelectionToolbar(
     onRemove: () -> Unit,
     onTag: () -> Unit = {},
     onAddToShelf: () -> Unit = {},
+    onSelectAll: (() -> Unit)? = null,
+    selectAllLabel: String = "Select visible",
     onPin: (() -> Unit)? = null,
     pinLabel: String = "Pin",
     onInfo: (() -> Unit)? = null
@@ -639,6 +679,13 @@ private fun SelectionToolbar(
                     Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Shelf")
+                }
+                onSelectAll?.let { selectAll ->
+                    TextButton(onClick = selectAll) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(selectAllLabel)
+                    }
                 }
                 TextButton(onClick = onClear) {
                     Text("Clear")
@@ -1036,15 +1083,14 @@ private fun LibraryContent(
             )
 
             NonReaderLibraryTab.FOLDERS -> {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (state.syncedFolders.isNotEmpty()) {
-                        FolderSyncActionRow(
-                            onSyncFolderMetadata = onSyncFolderMetadata,
-                            onScanFolders = onScanFolders
-                        )
-                    }
-                    ShelfCollection(
-                        shelves = state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null },
+                val currentFolder = state.viewingShelfId
+                    ?.let { id -> state.shelves.firstOrNull { it.id == id && it.type == ShelfType.FOLDER } }
+                if (currentFolder != null) {
+                    FolderShelfDetail(
+                        shelf = currentFolder,
+                        childShelves = currentFolder.childShelfIds.mapNotNull { childId ->
+                            state.shelves.firstOrNull { it.id == childId }
+                        },
                         selectedBookIds = state.selectedBookIds,
                         pinnedBookIds = state.pinnedLibraryBookIds,
                         onOpenBook = onOpenBook,
@@ -1052,11 +1098,34 @@ private fun LibraryContent(
                         onShowBookInfo = onShowBookInfo,
                         onEditBook = onEditBook,
                         onTogglePinned = onTogglePinned,
-                        onRemoveFolder = onRemoveFolder,
-                        emptyTitle = "No folders yet",
-                        emptyBody = "Imported folder metadata will appear here when available.",
+                        onOpenShelf = { shelf -> onStateChange(state.copy(viewingShelfId = shelf.id)) },
+                        onBack = { onStateChange(state.copy(viewingShelfId = currentFolder.parentShelfId)) },
                         modifier = Modifier.weight(1f)
                     )
+                } else {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (state.syncedFolders.isNotEmpty()) {
+                            FolderSyncActionRow(
+                                onSyncFolderMetadata = onSyncFolderMetadata,
+                                onScanFolders = onScanFolders
+                            )
+                        }
+                        ShelfCollection(
+                            shelves = state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null },
+                            selectedBookIds = state.selectedBookIds,
+                            pinnedBookIds = state.pinnedLibraryBookIds,
+                            onOpenBook = onOpenBook,
+                            onToggleSelection = onToggleSelection,
+                            onShowBookInfo = onShowBookInfo,
+                            onEditBook = onEditBook,
+                            onTogglePinned = onTogglePinned,
+                            onRemoveFolder = onRemoveFolder,
+                            onOpenShelf = { shelf -> onStateChange(state.copy(viewingShelfId = shelf.id)) },
+                            emptyTitle = "No folders yet",
+                            emptyBody = "Imported folder metadata will appear here when available.",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
 
@@ -1318,6 +1387,7 @@ private fun BookGrid(
                     book = book,
                     selected = book.id in selectedBookIds,
                     pinned = book.id in pinnedBookIds,
+                    selectionModeActive = selectedBookIds.isNotEmpty(),
                     onOpen = { onOpenBook(book) },
                     onToggleSelection = { onToggleSelection(book.id) },
                     onShowInfo = { onShowBookInfo(book) },
@@ -1339,6 +1409,7 @@ private fun BookGrid(
                     book = book,
                     selected = book.id in selectedBookIds,
                     pinned = book.id in pinnedBookIds,
+                    selectionModeActive = selectedBookIds.isNotEmpty(),
                     onOpen = { onOpenBook(book) },
                     onToggleSelection = { onToggleSelection(book.id) },
                     onShowInfo = { onShowBookInfo(book) },
@@ -1356,6 +1427,7 @@ private fun BookTile(
     book: BookItem,
     selected: Boolean,
     pinned: Boolean,
+    selectionModeActive: Boolean,
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
     onShowInfo: () -> Unit,
@@ -1370,7 +1442,12 @@ private fun BookTile(
         shape = RoundedCornerShape(8.dp),
         modifier = modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onOpen, onLongClick = onToggleSelection)
+            .combinedClickable(
+                onClick = {
+                    if (selectionModeActive) onToggleSelection() else onOpen()
+                },
+                onLongClick = onToggleSelection
+            )
     ) {
         Column {
             Box {
@@ -1435,6 +1512,7 @@ private fun BookListItem(
     book: BookItem,
     selected: Boolean,
     pinned: Boolean,
+    selectionModeActive: Boolean,
     onOpen: () -> Unit,
     onToggleSelection: () -> Unit,
     onShowInfo: () -> Unit,
@@ -1445,7 +1523,12 @@ private fun BookListItem(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onOpen, onLongClick = onToggleSelection),
+            .combinedClickable(
+                onClick = {
+                    if (selectionModeActive) onToggleSelection() else onOpen()
+                },
+                onLongClick = onToggleSelection
+            ),
         shape = RoundedCornerShape(8.dp),
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
@@ -1698,6 +1781,7 @@ private fun ShelfCollection(
     onRenameShelf: (Shelf) -> Unit = {},
     onDeleteShelf: (Shelf) -> Unit = {},
     onRemoveFolder: (Shelf) -> Unit = {},
+    onOpenShelf: ((Shelf) -> Unit)? = null,
     emptyTitle: String,
     emptyBody: String,
     modifier: Modifier = Modifier
@@ -1729,7 +1813,8 @@ private fun ShelfCollection(
                 onTogglePinned = onTogglePinned,
                 onRenameShelf = onRenameShelf,
                 onDeleteShelf = onDeleteShelf,
-                onRemoveFolder = onRemoveFolder
+                onRemoveFolder = onRemoveFolder,
+                onOpenShelf = onOpenShelf
             )
         }
     }
@@ -1747,7 +1832,8 @@ private fun ShelfSection(
     onTogglePinned: (BookItem) -> Unit,
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
-    onRemoveFolder: (Shelf) -> Unit
+    onRemoveFolder: (Shelf) -> Unit,
+    onOpenShelf: ((Shelf) -> Unit)?
 ) {
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -1756,19 +1842,34 @@ private fun ShelfSection(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                CollectionCoverStack(shelf)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(
-                            imageVector = shelf.type.icon,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val openShelf = onOpenShelf
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(if (openShelf != null) Modifier.clickable { openShelf(shelf) } else Modifier),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CollectionCoverStack(shelf)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(
+                                imageVector = shelf.type.icon,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Text(shelf.subtitleLabel(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("${shelf.bookCount} books", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (openShelf != null) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Open folder",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
                     IconButton(onClick = { onRenameShelf(shelf) }, modifier = Modifier.size(34.dp)) {
@@ -1790,6 +1891,7 @@ private fun ShelfSection(
                             book = book,
                             selected = book.id in selectedBookIds,
                             pinned = book.id in pinnedBookIds,
+                            selectionModeActive = selectedBookIds.isNotEmpty(),
                             onOpen = { onOpenBook(book) },
                             onToggleSelection = { onToggleSelection(book.id) },
                             onShowInfo = { onShowBookInfo(book) },
@@ -1802,6 +1904,154 @@ private fun ShelfSection(
             }
         }
     }
+}
+
+@Composable
+private fun FolderShelfDetail(
+    shelf: Shelf,
+    childShelves: List<Shelf>,
+    selectedBookIds: Set<String>,
+    pinnedBookIds: Set<String>,
+    onOpenBook: (BookItem) -> Unit,
+    onToggleSelection: (String) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit,
+    onEditBook: (BookItem) -> Unit,
+    onTogglePinned: (BookItem) -> Unit,
+    onOpenShelf: (Shelf) -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f)) {
+                    Text(shelf.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(shelf.subtitleLabel(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        if (childShelves.isEmpty() && shelf.directBooks.isEmpty()) {
+            SharedEmptyState(
+                icon = { Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                title = "Folder is empty",
+                body = "No supported files or subfolders are available here.",
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (childShelves.isNotEmpty()) {
+                    item(key = "folders_header") {
+                        SectionLabel("Folders")
+                    }
+                    items(childShelves, key = { it.id }) { childShelf ->
+                        FolderShelfListItem(
+                            shelf = childShelf,
+                            onOpenShelf = { onOpenShelf(childShelf) }
+                        )
+                    }
+                }
+                if (shelf.directBooks.isNotEmpty()) {
+                    item(key = "files_header") {
+                        SectionLabel("Files")
+                    }
+                    items(shelf.directBooks, key = { it.id }) { book ->
+                        BookListItem(
+                            book = book,
+                            selected = book.id in selectedBookIds,
+                            pinned = book.id in pinnedBookIds,
+                            selectionModeActive = selectedBookIds.isNotEmpty(),
+                            onOpen = { onOpenBook(book) },
+                            onToggleSelection = { onToggleSelection(book.id) },
+                            onShowInfo = { onShowBookInfo(book) },
+                            onEdit = { onEditBook(book) },
+                            onTogglePinned = { onTogglePinned(book) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+@Composable
+private fun FolderShelfListItem(
+    shelf: Shelf,
+    onOpenShelf: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenShelf),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CollectionCoverStack(shelf)
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Text(shelf.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(shelf.subtitleLabel(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Open folder",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun Shelf.subtitleLabel(): String {
+    if (type != ShelfType.FOLDER) return bookCountLabel(bookCount)
+    val parts = buildList {
+        if (childShelfCount > 0) add(folderCountLabel(childShelfCount))
+        if (directBookCount > 0) add(fileCountLabel(directBookCount))
+    }
+    return parts.ifEmpty { listOf(bookCountLabel(bookCount)) }.joinToString(", ")
+}
+
+private fun bookCountLabel(count: Int): String {
+    return "$count ${if (count == 1) "book" else "books"}"
+}
+
+private fun folderCountLabel(count: Int): String {
+    return "$count ${if (count == 1) "folder" else "folders"}"
+}
+
+private fun fileCountLabel(count: Int): String {
+    return "$count ${if (count == 1) "file" else "files"}"
 }
 
 @Composable

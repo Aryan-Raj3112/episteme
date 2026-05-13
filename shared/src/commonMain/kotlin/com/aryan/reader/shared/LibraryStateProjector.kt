@@ -35,6 +35,7 @@ class SharedLibraryStateProjector(
     fun project(input: SharedLibraryProjectionInput): SharedReaderScreenState {
         val current = input.state
         val allLibraryBooks = input.booksFromStore
+        val syncedFolders = current.syncedFolders.withSourceFolderFallbacks(allLibraryBooks)
         val queried = filterBySearch(allLibraryBooks, current.searchQuery)
         val filtered = applyLibraryFilters(queried, current.libraryFilters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
@@ -54,7 +55,7 @@ class SharedLibraryStateProjector(
             shelfRefs = input.shelfRefs,
             tags = input.tags,
             sortOrder = current.sortOrder,
-            syncedFolders = current.syncedFolders
+            syncedFolders = syncedFolders
         )
         val validShelfIds = shelfProjection.shelves.mapTo(mutableSetOf()) { it.id }
         val viewingShelfId = current.viewingShelfId?.takeIf { it in validShelfIds }
@@ -89,7 +90,8 @@ class SharedLibraryStateProjector(
             openTabIds = openTabIds,
             activeTabBookId = activeTabBookId,
             booksAvailableForAdding = booksAvailableForAdding,
-            allTags = input.tags
+            allTags = input.tags,
+            syncedFolders = syncedFolders
         )
     }
 
@@ -250,6 +252,21 @@ class SharedLibraryStateProjector(
         val directBooks: MutableList<BookItem> = mutableListOf(),
         val childShelfIds: MutableList<String> = mutableListOf()
     )
+}
+
+private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>): List<SyncedFolder> {
+    val knownFolders = mapTo(linkedSetOf()) { it.uriString }
+    val missingFolders = books
+        .mapNotNull { it.sourceFolder?.takeIf(String::isNotBlank) }
+        .filterTo(linkedSetOf()) { knownFolders.add(it) }
+        .map { sourceFolder ->
+            SyncedFolder(
+                uriString = sourceFolder,
+                name = sourceFolder.folderDisplayName(),
+                lastScanTime = 0L
+            )
+        }
+    return if (missingFolders.isEmpty()) this else this + missingFolders
 }
 
 private fun String.folderDisplayName(): String {

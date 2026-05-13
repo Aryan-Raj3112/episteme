@@ -377,7 +377,7 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                     onColorSelected = { color ->
                         onColorSelected(
                             if (isHighlighter) {
-                                color.withSharedPdfAlpha(Color(selectedColor).alpha)
+                                color.withSharedPdfAnnotationAlpha(Color(selectedColor).alpha)
                             } else {
                                 color
                             }
@@ -440,7 +440,7 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                     Slider(
                         value = alpha,
                         onValueChange = { nextAlpha ->
-                            onColorSelected(selectedColor.withSharedPdfAlpha(nextAlpha))
+                            onColorSelected(selectedColor.withSharedPdfAnnotationAlpha(nextAlpha))
                         },
                         valueRange = 0.1f..1f,
                         colors = SliderDefaults.colors(
@@ -1658,6 +1658,10 @@ private fun DrawScope.drawInkPreview(
 
 private val PdfInkTool.isHighlighter: Boolean
     get() = this == PdfInkTool.HIGHLIGHTER || this == PdfInkTool.HIGHLIGHTER_ROUND
+
+private fun Int.withSharedPdfAnnotationAlpha(alpha: Float): Int {
+    return Color(this).copy(alpha = alpha.coerceIn(0f, 1f)).toArgb()
+}
 
 private val SharedPdfAnnotation.textDecoration: TextDecoration
     get() {
