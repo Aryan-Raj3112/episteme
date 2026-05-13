@@ -121,7 +121,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        WebView.setWebContentsDebuggingEnabled(true)
+        if (BuildConfig.DEBUG) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

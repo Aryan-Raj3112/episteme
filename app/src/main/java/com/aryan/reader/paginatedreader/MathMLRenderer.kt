@@ -29,6 +29,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.aryan.reader.BuildConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -75,12 +76,13 @@ class MathMLRenderer(private val context: Context) {
 
     private fun setupWebView() {
         try {
-            WebView.setWebContentsDebuggingEnabled(true)
+            if (BuildConfig.DEBUG) {
+                WebView.setWebContentsDebuggingEnabled(true)
+            }
 
             webView = WebView(context).apply {
                 @SuppressLint("SetJavaScriptEnabled")
                 settings.javaScriptEnabled = true
-                settings.allowFileAccess = true
                 settings.domStorageEnabled = true
                 addJavascriptInterface(WebAppInterface { svg ->
                     completeCurrentJob(RenderResult.Success(svg))
