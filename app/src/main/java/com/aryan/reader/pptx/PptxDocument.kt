@@ -22,7 +22,10 @@ import android.text.TextPaint
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
+import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
+import android.text.style.SubscriptSpan
+import android.text.style.SuperscriptSpan
 import android.text.style.TypefaceSpan
 import androidx.core.graphics.createBitmap
 import com.aryan.reader.pdf.DummyTextPage
@@ -50,13 +53,14 @@ import kotlin.math.sin
 import androidx.core.graphics.withSave
 import androidx.core.graphics.withTranslation
 
-internal const val PPTX_RENDERER_VERSION = 4
+internal const val PPTX_RENDERER_VERSION = 5
 private const val EMU_PER_POINT = 12_700f
 private const val DEFAULT_SLIDE_WIDTH_EMU = 12_192_000
 private const val DEFAULT_SLIDE_HEIGHT_EMU = 6_858_000
 private const val DEFAULT_TEXT_SIZE_PT = 18f
 private const val DEFAULT_TEXT_MARGIN_PT = 91_440f / EMU_PER_POINT
 private const val DEFAULT_LINE_SPACING_MULTIPLE = 1.0f
+private const val MAX_NUMBERING_LEVELS = 9
 
 internal data class PptxDeck(
     val widthPoint: Int,
@@ -98,7 +102,8 @@ internal data class PptxShapeElement(
     val renderText: Boolean = true,
     val fontScale: Float = 1f,
     val lineSpacingReduction: Float = 0f,
-    val autoFitMode: PptxAutoFitMode = PptxAutoFitMode.NONE
+    val autoFitMode: PptxAutoFitMode = PptxAutoFitMode.NONE,
+    val customGeometry: PptxCustomGeometry? = null
 ) : PptxElement
 
 internal data class PptxImageElement(
@@ -106,7 +111,8 @@ internal data class PptxImageElement(
     val bytes: ByteArray,
     val contentType: String?,
     val crop: PptxImageCrop = PptxImageCrop(),
-    val rotationDegrees: Float = 0f
+    val rotationDegrees: Float = 0f,
+    val opacity: Float = 1f
 ) : PptxElement
 
 internal data class PptxImageCrop(
@@ -160,11 +166,13 @@ internal data class PptxTextRun(
     val bold: Boolean = false,
     val italic: Boolean = false,
     val typeface: String? = null,
+    val baseline: Float = 0f,
     val sizeExplicit: Boolean = false,
     val colorExplicit: Boolean = false,
     val boldExplicit: Boolean = false,
     val italicExplicit: Boolean = false,
-    val typefaceExplicit: Boolean = false
+    val typefaceExplicit: Boolean = false,
+    val baselineExplicit: Boolean = false
 )
 
 internal enum class PptxTextAlign {
@@ -198,6 +206,57 @@ internal data class PptxGradientFill(
     val angleDegrees: Float = 0f
 )
 
+internal data class PptxCustomGeometry(
+    val width: Float,
+    val height: Float,
+    val commands: List<PptxPathCommand>
+) {
+    fun toPath(bounds: RectF): Path {
+        val scaleX = bounds.width() / width.coerceAtLeast(1f)
+        val scaleY = bounds.height() / height.coerceAtLeast(1f)
+        fun x(value: Float) = bounds.left + value * scaleX
+        fun y(value: Float) = bounds.top + value * scaleY
+        return Path().apply {
+            commands.forEach { command ->
+                when (command) {
+                    is PptxPathCommand.MoveTo -> moveTo(x(command.x), y(command.y))
+                    is PptxPathCommand.LineTo -> lineTo(x(command.x), y(command.y))
+                    is PptxPathCommand.QuadTo -> quadTo(
+                        x(command.x1),
+                        y(command.y1),
+                        x(command.x2),
+                        y(command.y2)
+                    )
+                    is PptxPathCommand.CubicTo -> cubicTo(
+                        x(command.x1),
+                        y(command.y1),
+                        x(command.x2),
+                        y(command.y2),
+                        x(command.x3),
+                        y(command.y3)
+                    )
+                    PptxPathCommand.Close -> close()
+                }
+            }
+        }
+    }
+}
+
+internal sealed interface PptxPathCommand {
+    data class MoveTo(val x: Float, val y: Float) : PptxPathCommand
+    data class LineTo(val x: Float, val y: Float) : PptxPathCommand
+    data class QuadTo(val x1: Float, val y1: Float, val x2: Float, val y2: Float) : PptxPathCommand
+    data class CubicTo(
+        val x1: Float,
+        val y1: Float,
+        val x2: Float,
+        val y2: Float,
+        val x3: Float,
+        val y3: Float
+    ) : PptxPathCommand
+    object Close : PptxPathCommand
+}
+
 internal data class PptxPlaceholderKey(
     val type: String?,
     val index: String?
@@ -219,7 +278,11 @@ private data class PptxTheme(
     val colors: Map<String, Int> = emptyMap(),
     val majorTypeface: String? = null,
     val minorTypeface: String? = null
-)
+) {
+    fun color(name: String): Int? {
+        return colors[name] ?: colors[name.lowercase(Locale.ROOT)]
+    }
+}
 
 private data class ParsedPart(
     val backgroundColor: Int? = null,
@@ -253,6 +316,8 @@ private data class PptxTextDefaults(
 private data class PptxParagraphStyle(
     val alignment: PptxTextAlign? = null,
     val bullet: String? = null,
+    val autoNumberType: String? = null,
+    val autoNumberStartAt: Int? = null,
     val bulletExplicit: Boolean = false,
     val marginLeftPt: Float? = null,
     val indentPt: Float? = null,
@@ -265,6 +330,8 @@ private data class PptxParagraphStyle(
         return PptxParagraphStyle(
             alignment = override.alignment ?: alignment,
             bullet = if (override.bulletExplicit) override.bullet else bullet,
+            autoNumberType = if (override.bulletExplicit) override.autoNumberType else autoNumberType,
+            autoNumberStartAt = if (override.bulletExplicit) override.autoNumberStartAt else autoNumberStartAt,
             bulletExplicit = bulletExplicit || override.bulletExplicit,
             marginLeftPt = override.marginLeftPt ?: marginLeftPt,
             indentPt = override.indentPt ?: indentPt,
@@ -281,7 +348,8 @@ private data class PptxRunStyle(
     val color: Int? = null,
     val bold: Boolean? = null,
     val italic: Boolean? = null,
-    val typeface: String? = null
+    val typeface: String? = null,
+    val baseline: Float? = null
 ) {
     fun merge(override: PptxRunStyle): PptxRunStyle {
         return PptxRunStyle(
@@ -289,10 +357,64 @@ private data class PptxRunStyle(
             color = override.color ?: color,
             bold = override.bold ?: bold,
             italic = override.italic ?: italic,
-            typeface = override.typeface ?: typeface
+            typeface = override.typeface ?: typeface,
+            baseline = override.baseline ?: baseline
         )
     }
 }
+
+private data class PptxTableStyle(
+    val whole: PptxTableCellStyle = PptxTableCellStyle(),
+    val firstRow: PptxTableCellStyle = PptxTableCellStyle(),
+    val lastRow: PptxTableCellStyle = PptxTableCellStyle(),
+    val firstColumn: PptxTableCellStyle = PptxTableCellStyle(),
+    val lastColumn: PptxTableCellStyle = PptxTableCellStyle(),
+    val band1Horizontal: PptxTableCellStyle = PptxTableCellStyle(),
+    val band2Horizontal: PptxTableCellStyle = PptxTableCellStyle()
+) {
+    fun cellStyle(
+        rowIndex: Int,
+        columnIndex: Int,
+        rowCount: Int,
+        columnCount: Int,
+        options: PptxTableStyleOptions
+    ): PptxTableCellStyle {
+        var style = whole
+        if (options.bandRow) {
+            val bandIndex = rowIndex - if (options.firstRow) 1 else 0
+            if (bandIndex >= 0) {
+                style = style.merge(if (bandIndex % 2 == 0) band1Horizontal else band2Horizontal)
+            }
+        }
+        if (options.firstRow && rowIndex == 0) style = style.merge(firstRow)
+        if (options.lastRow && rowIndex == rowCount - 1) style = style.merge(lastRow)
+        if (options.firstColumn && columnIndex == 0) style = style.merge(firstColumn)
+        if (options.lastColumn && columnIndex == columnCount - 1) style = style.merge(lastColumn)
+        return style
+    }
+}
+
+private data class PptxTableCellStyle(
+    val fillColor: Int? = null,
+    val lineColor: Int? = null,
+    val run: PptxRunStyle = PptxRunStyle()
+) {
+    fun merge(override: PptxTableCellStyle): PptxTableCellStyle {
+        return PptxTableCellStyle(
+            fillColor = override.fillColor ?: fillColor,
+            lineColor = override.lineColor ?: lineColor,
+            run = run.merge(override.run)
+        )
+    }
+}
+
+private data class PptxTableStyleOptions(
+    val firstRow: Boolean = false,
+    val lastRow: Boolean = false,
+    val firstColumn: Boolean = false,
+    val lastColumn: Boolean = false,
+    val bandRow: Boolean = false
+)
 
 private data class PptxGroupTransform(
     val scaleX: Float = 1f,
@@ -413,7 +535,7 @@ internal object PptxDocumentParser {
                 }
 
             val slides = slidePaths.mapNotNull { slidePath ->
-                runCatching { parseSlide(zip, slidePath, width, height) }
+                runCatching { parseSlide(zip, presentation, slidePath, width, height) }
                     .onFailure { Timber.w(it, "Failed to parse PPTX slide $slidePath") }
                     .getOrNull()
             }
@@ -437,7 +559,13 @@ internal object PptxDocumentParser {
         }
     }
 
-    private fun parseSlide(zip: ZipFile, slidePath: String, width: Int, height: Int): PptxSlide {
+    private fun parseSlide(
+        zip: ZipFile,
+        presentation: Element,
+        slidePath: String,
+        width: Int,
+        height: Int
+    ): PptxSlide {
         val slideXml = zip.xml(slidePath) ?: error("Missing slide part: $slidePath")
         val slideRels = zip.relationshipsFor(slidePath)
         val layoutPath = slideRels.byId.values
@@ -452,9 +580,19 @@ internal object PptxDocumentParser {
             ?.firstOrNull { it.type.endsWith("/theme", ignoreCase = true) }
             ?.resolvedTarget
         val theme = themePath?.let { path -> zip.xml(path)?.let(::parseTheme) } ?: PptxTheme()
+        val presentationDefaults = presentation.presentationTextDefaults(theme)
 
         val master = masterPath?.let { path ->
-            zip.xml(path)?.let { parsePart(zip, it, zip.relationshipsFor(path), theme, renderPlaceholderText = false) }
+            zip.xml(path)?.let {
+                parsePart(
+                    zip = zip,
+                    document = it,
+                    relationships = zip.relationshipsFor(path),
+                    theme = theme,
+                    renderPlaceholderText = false,
+                    inheritedTextDefaults = presentationDefaults
+                )
+            }
         } ?: ParsedPart()
         val layout = layoutPath?.let { path ->
             zip.xml(path)?.let {
@@ -468,7 +606,14 @@ internal object PptxDocumentParser {
                 )
             }
         } ?: ParsedPart()
-        val slide = parsePart(zip, slideXml, slideRels, theme, renderPlaceholderText = true)
+        val slide = parsePart(
+            zip = zip,
+            document = slideXml,
+            relationships = slideRels,
+            theme = theme,
+            renderPlaceholderText = true,
+            inheritedTextDefaults = layout.textDefaults
+        )
         val inheritedElements = master.elements + layout.elements
         val elements = inheritedElements + inheritPlaceholderProperties(slide.elements, inheritedElements)
         val backgroundColor = slide.backgroundColor ?: layout.backgroundColor ?: master.backgroundColor ?: Color.WHITE
@@ -492,9 +637,11 @@ internal object PptxDocumentParser {
         renderPlaceholderText: Boolean,
         inheritedTextDefaults: PptxTextDefaults = PptxTextDefaults()
     ): ParsedPart {
-        val textDefaults = inheritedTextDefaults.merge(document.textDefaults(theme))
-        val background = document.firstByLocalTag("bgPr")?.solidFillColor(theme)
-            ?: document.firstByLocalTag("bgRef")?.schemeColor(theme)
+        val partTheme = theme.withColorMap(document.colorMapElement())
+        val textDefaults = inheritedTextDefaults.merge(document.textDefaults(partTheme))
+        val background = document.firstByLocalTag("bgPr")?.solidFillColor(partTheme)
+            ?: document.firstByLocalTag("bgRef")?.schemeColor(partTheme)
+        val tableStyles = zip.tableStyles(partTheme)
         val elements = mutableListOf<PptxElement>()
         val tree = document.firstByLocalTag("spTree") ?: document
         tree.children().forEach { child ->
@@ -502,9 +649,10 @@ internal object PptxDocumentParser {
                 zip = zip,
                 element = child,
                 relationships = relationships,
-                theme = theme,
+                theme = partTheme,
                 renderPlaceholderText = renderPlaceholderText,
                 textDefaults = textDefaults,
+                tableStyles = tableStyles,
                 output = elements
             )
         }
@@ -518,6 +666,7 @@ internal object PptxDocumentParser {
         theme: PptxTheme,
         renderPlaceholderText: Boolean,
         textDefaults: PptxTextDefaults,
+        tableStyles: Map<String, PptxTableStyle>,
         output: MutableList<PptxElement>,
         transform: PptxGroupTransform = PptxGroupTransform.IDENTITY
     ) {
@@ -528,9 +677,19 @@ internal object PptxDocumentParser {
                 ?.let { output += transform.apply(it) }
             "grpsp" -> element.children().forEach { child ->
                 val childTransform = transform.then(PptxGroupTransform.fromGroup(element))
-                parseDrawingElement(zip, child, relationships, theme, renderPlaceholderText, textDefaults, output, childTransform)
+                parseDrawingElement(
+                    zip = zip,
+                    element = child,
+                    relationships = relationships,
+                    theme = theme,
+                    renderPlaceholderText = renderPlaceholderText,
+                    textDefaults = textDefaults,
+                    tableStyles = tableStyles,
+                    output = output,
+                    transform = childTransform
+                )
             }
-            "graphicframe" -> parseGraphicFrame(element, relationships, theme)
+            "graphicframe" -> parseGraphicFrame(element, relationships, theme, tableStyles)
                 ?.let { output += transform.apply(it) }
         }
     }
@@ -548,6 +707,7 @@ internal object PptxDocumentParser {
         val bodyPr = txBody?.childrenByLocalTag("bodyPr")?.firstOrNull()
         val preset = spPr?.childrenByLocalTag("prstGeom")?.firstOrNull()?.xmlAttr("prst")
             ?: if (element.localTag() == "cxnsp") "line" else "rect"
+        val customGeometry = spPr?.childrenByLocalTag("custGeom")?.firstOrNull()?.customGeometry()
         val placeholderKey = element.firstByLocalTag("ph")?.placeholderKey()
         val style = element.childrenByLocalTag("style").firstOrNull()
         val shapeRunDefaults = PptxRunStyle(color = style?.firstByLocalTag("fontRef")?.solidLikeColor(theme))
@@ -592,7 +752,8 @@ internal object PptxDocumentParser {
             renderText = placeholderKey == null || renderPlaceholderText,
             fontScale = bodyPr?.autoFitFontScale() ?: 1f,
             lineSpacingReduction = bodyPr?.autoFitLineSpacingReduction() ?: 0f,
-            autoFitMode = bodyPr?.autoFitMode() ?: PptxAutoFitMode.NONE
+            autoFitMode = bodyPr?.autoFitMode() ?: PptxAutoFitMode.NONE,
+            customGeometry = customGeometry
         )
     }
 
@@ -616,30 +777,60 @@ internal object PptxDocumentParser {
             contentType = target.imageContentType(),
             crop = crop,
             rotationDegrees = element.childrenByLocalTag("spPr").firstOrNull()?.rotationDegreesFromTransform()
-                ?: element.rotationDegreesFromTransform()
+                ?: element.rotationDegreesFromTransform(),
+            opacity = blip.imageOpacity()
         )
     }
 
     private fun parseGraphicFrame(
         element: Element,
         relationships: PptxRelationships,
-        theme: PptxTheme
+        theme: PptxTheme,
+        tableStyles: Map<String, PptxTableStyle>
     ): PptxElement? {
         val table = element.firstByLocalTag("tbl") ?: return parseGraphicPlaceholder(element, relationships, theme)
         val bounds = element.boundsFromTransform()
+        val tblPr = table.childrenByLocalTag("tblPr").firstOrNull()
+        val tableStyle = tblPr
+            ?.firstDirectByLocalTag("tableStyleId")
+            ?.wholeText()
+            ?.trim()
+            ?.let { tableStyles[it] }
+        val styleOptions = PptxTableStyleOptions(
+            firstRow = tblPr?.xmlAttr("firstRow").isTruthyXmlFlag(),
+            lastRow = tblPr?.xmlAttr("lastRow").isTruthyXmlFlag(),
+            firstColumn = tblPr?.xmlAttr("firstCol").isTruthyXmlFlag(),
+            lastColumn = tblPr?.xmlAttr("lastCol").isTruthyXmlFlag(),
+            bandRow = tblPr?.xmlAttr("bandRow").isTruthyXmlFlag()
+        )
         val gridWidths = table.firstByLocalTag("tblGrid")
             ?.childrenByLocalTag("gridCol")
             ?.map { it.xmlFloat("w")?.emuToPoint() }
             .orEmpty()
-        val rows = table.childrenByLocalTag("tr").map { row ->
+        val rowElements = table.childrenByLocalTag("tr")
+        val rows = rowElements.mapIndexed { rowIndex, row ->
             val cells = row.childrenByLocalTag("tc").mapIndexed { index, cell ->
                 val tcPr = cell.childrenByLocalTag("tcPr").firstOrNull()
+                val style = tableStyle?.cellStyle(
+                    rowIndex = rowIndex,
+                    columnIndex = index,
+                    rowCount = rowElements.size,
+                    columnCount = gridWidths.size.coerceAtLeast(row.childrenByLocalTag("tc").size),
+                    options = styleOptions
+                )
                 val textInsets = tcPr?.textInsets() ?: PptxTextInsets(left = 3.6f, top = 3.6f, right = 3.6f, bottom = 3.6f)
                 PptxTableCell(
                     widthPoint = gridWidths.getOrNull(index),
-                    fillColor = tcPr?.solidFillColor(theme),
-                    lineColor = tcPr?.tableCellLineColor(theme),
-                    paragraphs = parseTextBody(cell.childrenByLocalTag("txBody").firstOrNull(), theme),
+                    fillColor = when {
+                        tcPr?.firstDirectByLocalTag("noFill") != null -> null
+                        else -> tcPr?.solidFillColor(theme) ?: style?.fillColor
+                    },
+                    lineColor = tcPr?.tableCellLineColor(theme) ?: style?.lineColor,
+                    paragraphs = parseTextBody(
+                        txBody = cell.childrenByLocalTag("txBody").firstOrNull(),
+                        theme = theme,
+                        shapeRunDefaults = style?.run ?: PptxRunStyle()
+                    ),
                     textInsets = textInsets,
                     verticalAnchor = tcPr?.verticalAnchor() ?: PptxVerticalAnchor.TOP
                 )
@@ -680,7 +871,7 @@ internal object PptxDocumentParser {
             preset = "rect",
             fillColor = Color.rgb(245, 246, 248),
             gradientFill = null,
-            lineColor = theme.colors["tx1"] ?: Color.GRAY,
+            lineColor = theme.color("tx1") ?: Color.GRAY,
             lineWidthPoint = 0.75f,
             paragraphs = listOf(
                 PptxParagraph(
@@ -708,6 +899,8 @@ internal object PptxDocumentParser {
             ?.paragraphStyles(theme)
             .orEmpty()
         val styles = inheritedStyles.mergeStyles(localStyles)
+        val numberCounters = IntArray(MAX_NUMBERING_LEVELS)
+        val numberCounterStarted = BooleanArray(MAX_NUMBERING_LEVELS)
         return txBody.childrenByLocalTag("p").mapNotNull { paragraph ->
             val pPr = paragraph.childrenByLocalTag("pPr").firstOrNull()
             val endParaRunPr = paragraph.childrenByLocalTag("endParaRPr").firstOrNull()
@@ -732,11 +925,13 @@ internal object PptxDocumentParser {
                                 bold = runStyle.bold ?: false,
                                 italic = runStyle.italic ?: false,
                                 typeface = runStyle.typeface,
+                                baseline = runStyle.baseline ?: 0f,
                                 sizeExplicit = rPr?.xmlAttr("sz") != null,
                                 colorExplicit = rPr?.hasTextColor() == true,
                                 boldExplicit = rPr?.xmlAttr("b") != null,
                                 italicExplicit = rPr?.xmlAttr("i") != null,
-                                typefaceExplicit = rPr?.hasTypeface() == true
+                                typefaceExplicit = rPr?.hasTypeface() == true,
+                                baselineExplicit = rPr?.xmlAttr("baseline") != null
                             )
                         }
                     }
@@ -749,7 +944,8 @@ internal object PptxDocumentParser {
                             color = runStyle.color,
                             bold = runStyle.bold ?: false,
                             italic = runStyle.italic ?: false,
-                            typeface = runStyle.typeface
+                            typeface = runStyle.typeface,
+                            baseline = runStyle.baseline ?: 0f
                         )
                     }
                     "tab" -> runs += PptxTextRun(
@@ -758,15 +954,18 @@ internal object PptxDocumentParser {
                         color = paragraphRunStyle.color,
                         bold = paragraphRunStyle.bold ?: false,
                         italic = paragraphRunStyle.italic ?: false,
-                        typeface = paragraphRunStyle.typeface
+                        typeface = paragraphRunStyle.typeface,
+                        baseline = paragraphRunStyle.baseline ?: 0f
                     )
                 }
             }
             val safeRuns = runs.ifEmpty { listOf(PptxTextRun("")) }
+            if (safeRuns.none { it.text.isNotBlank() }) return@mapNotNull null
+            val bullet = paragraphStyle.resolvedBullet(level, numberCounters, numberCounterStarted)
             PptxParagraph(
                 runs = safeRuns,
                 alignment = paragraphStyle.alignment ?: PptxTextAlign.START,
-                bullet = paragraphStyle.bullet,
+                bullet = bullet,
                 level = level,
                 marginLeftPt = paragraphStyle.marginLeftPt,
                 indentPt = paragraphStyle.indentPt,
@@ -778,9 +977,7 @@ internal object PptxDocumentParser {
                 spaceBeforeExplicit = pPr?.firstByLocalTag("spcBef") != null,
                 spaceAfterExplicit = pPr?.firstByLocalTag("spcAft") != null,
                 lineSpacingExplicit = pPr?.firstByLocalTag("lnSpc") != null
-            ).takeIf { parsedParagraph ->
-                parsedParagraph.runs.any { it.text.isNotBlank() }
-            }
+            )
         }
     }
 
@@ -814,6 +1011,14 @@ internal object PptxDocumentParser {
         )
     }
 
+    private fun Element.presentationTextDefaults(theme: PptxTheme): PptxTextDefaults {
+        val defaults = firstByLocalTag("defaultTextStyle")
+            ?.paragraphStyles(theme)
+            .orEmpty()
+        if (defaults.isEmpty()) return PptxTextDefaults()
+        return PptxTextDefaults(title = defaults, body = defaults, other = defaults)
+    }
+
     private fun ZipFile.xml(path: String): Element? {
         val entry = getEntry(path) ?: return null
         return getInputStream(entry).use { input ->
@@ -838,6 +1043,39 @@ internal object PptxDocumentParser {
         }.associateBy { it.id }
         return PptxRelationships(rels)
     }
+
+    private fun ZipFile.tableStyles(theme: PptxTheme): Map<String, PptxTableStyle> {
+        val document = xml("ppt/tableStyles.xml") ?: return emptyMap()
+        return document.allByLocalTag("tblStyle").mapNotNull { style ->
+            val id = style.xmlAttr("styleId") ?: return@mapNotNull null
+            id to PptxTableStyle(
+                whole = style.childrenByLocalTag("wholeTbl").firstOrNull()?.tableStylePart(theme) ?: PptxTableCellStyle(),
+                firstRow = style.childrenByLocalTag("firstRow").firstOrNull()?.tableStylePart(theme) ?: PptxTableCellStyle(),
+                lastRow = style.childrenByLocalTag("lastRow").firstOrNull()?.tableStylePart(theme) ?: PptxTableCellStyle(),
+                firstColumn = style.childrenByLocalTag("firstCol").firstOrNull()?.tableStylePart(theme) ?: PptxTableCellStyle(),
+                lastColumn = style.childrenByLocalTag("lastCol").firstOrNull()?.tableStylePart(theme) ?: PptxTableCellStyle(),
+                band1Horizontal = style.childrenByLocalTag("band1H").firstOrNull()?.tableStylePart(theme) ?: PptxTableCellStyle(),
+                band2Horizontal = style.childrenByLocalTag("band2H").firstOrNull()?.tableStylePart(theme) ?: PptxTableCellStyle()
+            )
+        }.toMap()
+    }
+}
+
+private fun PptxTheme.withColorMap(mapping: Element?): PptxTheme {
+    if (mapping == null) return this
+    val mappedColors = colors.toMutableMap()
+    listOf("bg1", "tx1", "bg2", "tx2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink")
+        .forEach { alias ->
+            val target = mapping.xmlAttr(alias) ?: return@forEach
+            color(target)?.let { mappedColors[alias.lowercase(Locale.ROOT)] = it }
+        }
+    return copy(colors = mappedColors)
+}
+
+private fun Element.colorMapElement(): Element? {
+    firstByLocalTag("overrideClrMapping")?.let { return it }
+    if (firstByLocalTag("masterClrMapping") != null) return null
+    return firstByLocalTag("clrMap")
 }
 
 private fun inheritPlaceholderProperties(
@@ -876,7 +1114,8 @@ private fun inheritPlaceholderProperties(
             } else {
                 shape.lineSpacingReduction
             },
-            autoFitMode = if (shape.autoFitMode == PptxAutoFitMode.NONE) inherited.autoFitMode else shape.autoFitMode
+            autoFitMode = if (shape.autoFitMode == PptxAutoFitMode.NONE) inherited.autoFitMode else shape.autoFitMode,
+            customGeometry = shape.customGeometry ?: inherited.customGeometry
         )
     }
 }
@@ -912,7 +1151,8 @@ private fun PptxTextRun.inheritTextStyle(fallback: PptxTextRun?): PptxTextRun {
         color = if (colorExplicit) color else color ?: fallback.color,
         bold = if (boldExplicit) bold else fallback.bold || bold,
         italic = if (italicExplicit) italic else fallback.italic || italic,
-        typeface = if (typefaceExplicit) typeface else typeface ?: fallback.typeface
+        typeface = if (typefaceExplicit) typeface else typeface ?: fallback.typeface,
+        baseline = if (baselineExplicit) baseline else baseline.takeUnless { it == 0f } ?: fallback.baseline
     )
 }
 
@@ -1217,7 +1457,7 @@ private object PptxSlideRenderer {
                 }
             }
             if (shape.gradientFill != null || (shape.fillColor != null && Color.alpha(shape.fillColor) > 0)) {
-                drawPresetShape(canvas, shape.bounds, shape.preset, fillPaint)
+                drawPresetShape(canvas, shape.bounds, shape.preset, shape.customGeometry, fillPaint)
             }
 
             val strokeColor = shape.lineColor
@@ -1227,7 +1467,7 @@ private object PptxSlideRenderer {
                     color = strokeColor
                     strokeWidth = shape.lineWidthPoint.coerceAtLeast(0.25f)
                 }
-                drawPresetShape(canvas, shape.bounds, shape.preset, strokePaint)
+                drawPresetShape(canvas, shape.bounds, shape.preset, shape.customGeometry, strokePaint)
             }
 
             drawText(canvas, shape)
@@ -1239,11 +1479,11 @@ private object PptxSlideRenderer {
         val layout = layoutParagraphs(shape, shape.bounds)
         val clip = shape.textBounds().takeUnless { shape.autoFitMode == PptxAutoFitMode.SHAPE }
         layout.forEach { paragraph ->
-            canvas.save()
-            clip?.let { canvas.clipRect(it) }
-            canvas.translate(paragraph.x, paragraph.y)
-            paragraph.layout.draw(canvas)
-            canvas.restore()
+            canvas.withSave {
+                clip?.let { clipRect(it) }
+                translate(paragraph.x, paragraph.y)
+                paragraph.layout.draw(this)
+            }
         }
     }
 
@@ -1279,7 +1519,9 @@ private object PptxSlideRenderer {
                     bitmap,
                     image.crop.sourceRect(bitmap.width, bitmap.height),
                     image.bounds,
-                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        alpha = (255f * image.opacity.coerceIn(0f, 1f)).roundToInt().coerceIn(0, 255)
+                    }
                 )
                 bitmap.recycle()
             } else {
@@ -1438,6 +1680,16 @@ private fun PptxParagraph.toSpannable(displayText: String, fontScale: Float): Sp
         run.typeface?.takeIf { it.isNotBlank() && !it.startsWith("+") }?.let { family ->
             builder.setSpan(TypefaceSpan(family), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+        when {
+            run.baseline > 0.05f -> {
+                builder.setSpan(SuperscriptSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                builder.setSpan(RelativeSizeSpan(0.75f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            run.baseline < -0.05f -> {
+                builder.setSpan(SubscriptSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                builder.setSpan(RelativeSizeSpan(0.75f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
         offset = end
     }
 
@@ -1562,7 +1814,17 @@ private inline fun Canvas.withRotation(bounds: RectF, rotationDegrees: Float, bl
     }
 }
 
-private fun drawPresetShape(canvas: Canvas, bounds: RectF, preset: String, paint: Paint) {
+private fun drawPresetShape(
+    canvas: Canvas,
+    bounds: RectF,
+    preset: String,
+    customGeometry: PptxCustomGeometry?,
+    paint: Paint
+) {
+    if (customGeometry != null && preset != "line") {
+        canvas.drawPath(customGeometry.toPath(bounds), paint)
+        return
+    }
     when (preset) {
         "line" -> canvas.drawLine(bounds.left, bounds.top, bounds.right, bounds.bottom, paint)
         "ellipse" -> canvas.drawOval(bounds, paint)
@@ -1623,18 +1885,23 @@ private fun Element.paragraphStyles(theme: PptxTheme): Map<Int, PptxParagraphSty
 }
 
 private fun Element.paragraphStyle(theme: PptxTheme): PptxParagraphStyle {
+    val autoNumber = firstDirectByLocalTag("buAutoNum")
+    val bulletTypeface = firstDirectByLocalTag("buFont")?.xmlAttr("typeface")
     val bullet = when {
         firstDirectByLocalTag("buNone") != null -> null
-        firstDirectByLocalTag("buAutoNum") != null -> firstDirectByLocalTag("buAutoNum")?.numberedBullet()
-        else -> firstDirectByLocalTag("buChar")?.xmlAttr("char")
+        autoNumber != null -> null
+        else -> firstDirectByLocalTag("buChar")?.xmlAttr("char")?.normalizeBulletGlyph(bulletTypeface)
     }
     return PptxParagraphStyle(
         alignment = when (xmlAttr("algn")) {
+            "l", "just", "justLow", "dist", "thaiDist" -> PptxTextAlign.START
             "ctr" -> PptxTextAlign.CENTER
             "r" -> PptxTextAlign.END
             else -> null
         },
         bullet = bullet,
+        autoNumberType = autoNumber?.xmlAttr("type"),
+        autoNumberStartAt = autoNumber?.xmlInt("startAt"),
         bulletExplicit = hasBulletDefinition(),
         marginLeftPt = xmlFloat("marL")?.emuToPoint(),
         indentPt = xmlFloat("indent")?.emuToPoint(),
@@ -1651,17 +1918,97 @@ private fun Element.runStyle(theme: PptxTheme): PptxRunStyle {
         color = solidFillColor(theme),
         bold = xmlAttr("b")?.isTruthyXmlFlag(),
         italic = xmlAttr("i")?.isTruthyXmlFlag(),
-        typeface = typefaceName(theme)
+        typeface = typefaceName(theme),
+        baseline = xmlFloat("baseline")?.let { it / 100_000f }
     )
 }
 
-private fun Element.numberedBullet(): String {
-    return when (xmlAttr("type")) {
-        "alphaLcPeriod" -> "a."
-        "alphaUcPeriod" -> "A."
-        "romanLcPeriod" -> "i."
-        "romanUcPeriod" -> "I."
-        else -> "1."
+private fun PptxParagraphStyle.resolvedBullet(
+    level: Int,
+    counters: IntArray,
+    counterStarted: BooleanArray
+): String? {
+    val numberType = autoNumberType
+    if (numberType != null) {
+        val index = level.coerceIn(0, MAX_NUMBERING_LEVELS - 1)
+        if (!counterStarted[index]) {
+            counters[index] = (autoNumberStartAt ?: 1).coerceAtLeast(1)
+            counterStarted[index] = true
+        } else {
+            counters[index] += 1
+        }
+        for (resetIndex in index + 1 until MAX_NUMBERING_LEVELS) {
+            counterStarted[resetIndex] = false
+            counters[resetIndex] = 0
+        }
+        return formatAutoNumber(counters[index], numberType)
+    }
+    return bullet
+}
+
+private fun formatAutoNumber(number: Int, type: String): String {
+    val normalized = type.lowercase(Locale.ROOT)
+    val value = when {
+        normalized.startsWith("alphalc") -> number.toAlphabeticLabel().lowercase(Locale.ROOT)
+        normalized.startsWith("alphauc") -> number.toAlphabeticLabel()
+        normalized.startsWith("romanlc") -> number.toRomanNumeral().lowercase(Locale.ROOT)
+        normalized.startsWith("romanuc") -> number.toRomanNumeral()
+        else -> number.toString()
+    }
+    return when {
+        "parenboth" in normalized -> "($value)"
+        "parenr" in normalized -> "$value)"
+        "period" in normalized -> "$value."
+        else -> value
+    }
+}
+
+private fun Int.toAlphabeticLabel(): String {
+    var value = coerceAtLeast(1)
+    val result = StringBuilder()
+    while (value > 0) {
+        value -= 1
+        result.insert(0, ('A'.code + (value % 26)).toChar())
+        value /= 26
+    }
+    return result.toString()
+}
+
+private fun Int.toRomanNumeral(): String {
+    var value = coerceIn(1, 3999)
+    val numerals = listOf(
+        1000 to "M",
+        900 to "CM",
+        500 to "D",
+        400 to "CD",
+        100 to "C",
+        90 to "XC",
+        50 to "L",
+        40 to "XL",
+        10 to "X",
+        9 to "IX",
+        5 to "V",
+        4 to "IV",
+        1 to "I"
+    )
+    return buildString {
+        numerals.forEach { (amount, numeral) ->
+            while (value >= amount) {
+                append(numeral)
+                value -= amount
+            }
+        }
+    }
+}
+
+private fun String.normalizeBulletGlyph(typeface: String?): String {
+    val family = typeface.orEmpty().lowercase(Locale.ROOT)
+    if ("wingdings" !in family && "symbol" !in family) return this
+    return when (this) {
+        "\u00A7", "\u00D8", "\u00B7", "\uF0B7" -> "\u2022"
+        "\u00FC", "\uF0FC" -> "\u2713"
+        "\u00A8", "\uF0A8" -> "\u25E6"
+        else -> this
     }
 }
 
@@ -1693,12 +2040,67 @@ private fun Element.imageCrop(): PptxImageCrop {
     )
 }
 
+private fun Element.imageOpacity(): Float {
+    firstByLocalTag("alphaModFix")?.xmlFloat("amt")?.let { return (it / 100_000f).coerceIn(0f, 1f) }
+    firstByLocalTag("alphaMod")?.xmlFloat("amt")?.let { return (it / 100_000f).coerceIn(0f, 1f) }
+    firstByLocalTag("alpha")?.xmlFloat("val")?.let { return (it / 100_000f).coerceIn(0f, 1f) }
+    return 1f
+}
+
 private fun PptxImageCrop.sourceRect(width: Int, height: Int): Rect {
     val leftPx = (width * left).roundToInt().coerceIn(0, width - 1)
     val topPx = (height * top).roundToInt().coerceIn(0, height - 1)
     val rightPx = (width * (1f - right)).roundToInt().coerceIn(leftPx + 1, width)
     val bottomPx = (height * (1f - bottom)).roundToInt().coerceIn(topPx + 1, height)
     return Rect(leftPx, topPx, rightPx, bottomPx)
+}
+
+private fun Element.customGeometry(): PptxCustomGeometry? {
+    val paths = firstByLocalTag("pathLst")?.childrenByLocalTag("path").orEmpty()
+    if (paths.isEmpty()) return null
+    val width = paths.first().xmlFloat("w")?.takeIf { it > 0f } ?: return null
+    val height = paths.first().xmlFloat("h")?.takeIf { it > 0f } ?: return null
+    val commands = paths.flatMap { path ->
+        path.children().mapNotNull { command ->
+            when (command.localTag()) {
+                "moveto" -> command.firstDirectByLocalTag("pt")?.pathPoint()?.let { PptxPathCommand.MoveTo(it.x, it.y) }
+                "lnto" -> command.firstDirectByLocalTag("pt")?.pathPoint()?.let { PptxPathCommand.LineTo(it.x, it.y) }
+                "quadbezto" -> {
+                    val points = command.childrenByLocalTag("pt").mapNotNull { it.pathPoint() }
+                    if (points.size >= 2) {
+                        PptxPathCommand.QuadTo(points[0].x, points[0].y, points[1].x, points[1].y)
+                    } else {
+                        null
+                    }
+                }
+                "cubicbezto" -> {
+                    val points = command.childrenByLocalTag("pt").mapNotNull { it.pathPoint() }
+                    if (points.size >= 3) {
+                        PptxPathCommand.CubicTo(
+                            points[0].x,
+                            points[0].y,
+                            points[1].x,
+                            points[1].y,
+                            points[2].x,
+                            points[2].y
+                        )
+                    } else {
+                        null
+                    }
+                }
+                "close" -> PptxPathCommand.Close
+                else -> null
+            }
+        }
+    }
+    return PptxCustomGeometry(width = width, height = height, commands = commands)
+        .takeIf { it.commands.isNotEmpty() }
+}
+
+private fun Element.pathPoint(): PointF? {
+    val x = xmlFloat("x") ?: return null
+    val y = xmlFloat("y") ?: return null
+    return PointF(x, y)
 }
 
 private fun Element.gradientFill(theme: PptxTheme): PptxGradientFill? {
@@ -1723,7 +2125,10 @@ private fun Element.solidLikeColor(theme: PptxTheme): Int? {
     }
     firstByLocalTag("schemeClr")?.let { color ->
         val scheme = color.xmlAttr("val") ?: return null
-        return theme.colors[scheme]?.applyLuminance(color)
+        return theme.color(scheme)?.applyLuminance(color)
+    }
+    firstByLocalTag("prstClr")?.let { color ->
+        return color.xmlAttr("val")?.presetColorOrNull()?.applyLuminance(color)
     }
     firstByLocalTag("sysClr")?.let { color ->
         return color.xmlAttr("lastClr")?.toColorOrNull()?.applyLuminance(color)
@@ -1749,10 +2154,32 @@ private fun Element.verticalAnchor(): PptxVerticalAnchor {
 }
 
 private fun Element.tableCellLineColor(theme: PptxTheme): Int? {
-    val line = children().firstOrNull { child ->
-        child.localTag() in setOf("lnl", "lnr", "lnt", "lnb", "ln")
+    val line = children().firstNotNullOfOrNull { child ->
+        when (child.localTag()) {
+            "lnl", "lnr", "lnt", "lnb", "ln" -> child
+            "left", "right", "top", "bottom", "insideh", "insidev" -> child.firstDirectByLocalTag("ln")
+            else -> null
+        }
     }
     return line?.solidFillColor(theme)
+}
+
+private fun Element.tableStylePart(theme: PptxTheme): PptxTableCellStyle {
+    val tcStyle = childrenByLocalTag("tcStyle").firstOrNull()
+    return PptxTableCellStyle(
+        fillColor = tcStyle?.firstDirectByLocalTag("fill")?.solidFillColor(theme),
+        lineColor = tcStyle?.firstDirectByLocalTag("tcBdr")?.tableCellLineColor(theme),
+        run = childrenByLocalTag("tcTxStyle").firstOrNull()?.tableTextRunStyle(theme) ?: PptxRunStyle()
+    )
+}
+
+private fun Element.tableTextRunStyle(theme: PptxTheme): PptxRunStyle {
+    return PptxRunStyle(
+        color = solidLikeColor(theme),
+        bold = xmlAttr("b")?.isTruthyXmlFlag(),
+        italic = xmlAttr("i")?.isTruthyXmlFlag(),
+        typeface = typefaceName(theme)
+    )
 }
 
 private fun Element.spacingPoints(): Float? {
@@ -1830,7 +2257,10 @@ private fun Element.solidFillColor(theme: PptxTheme): Int? {
     }
     solid.firstByLocalTag("schemeClr")?.let { color ->
         val scheme = color.xmlAttr("val") ?: return null
-        return theme.colors[scheme]?.applyLuminance(color)
+        return theme.color(scheme)?.applyLuminance(color)
+    }
+    solid.firstByLocalTag("prstClr")?.let { color ->
+        return color.xmlAttr("val")?.presetColorOrNull()?.applyLuminance(color)
     }
     solid.firstByLocalTag("sysClr")?.let { color ->
         return color.xmlAttr("lastClr")?.toColorOrNull()?.applyLuminance(color)
@@ -1841,9 +2271,12 @@ private fun Element.solidFillColor(theme: PptxTheme): Int? {
 private fun Element.schemeColor(theme: PptxTheme): Int? {
     firstByLocalTag("schemeClr")?.let { color ->
         val scheme = color.xmlAttr("val") ?: return null
-        return theme.colors[scheme]?.applyLuminance(color)
+        return theme.color(scheme)?.applyLuminance(color)
     }
-    return xmlAttr("idx")?.let { theme.colors[it] }
+    firstByLocalTag("prstClr")?.let { color ->
+        return color.xmlAttr("val")?.presetColorOrNull()?.applyLuminance(color)
+    }
+    return xmlAttr("idx")?.let { theme.color(it) }
 }
 
 private fun Int.applyLuminance(colorElement: Element): Int {
@@ -1873,6 +2306,26 @@ private fun String.toColorOrNull(): Int? {
     return runCatching { Color.rgb(clean.substring(0, 2).toInt(16), clean.substring(2, 4).toInt(16), clean.substring(4, 6).toInt(16)) }.getOrNull()
 }
 
+private fun String.presetColorOrNull(): Int? {
+    return when (lowercase(Locale.ROOT)) {
+        "black" -> Color.BLACK
+        "white" -> Color.WHITE
+        "red" -> Color.RED
+        "green" -> Color.GREEN
+        "blue" -> Color.BLUE
+        "yellow" -> Color.YELLOW
+        "cyan" -> Color.CYAN
+        "magenta" -> Color.MAGENTA
+        "gray", "grey" -> Color.GRAY
+        "dkgray", "dkgrey" -> Color.DKGRAY
+        "ltgray", "ltgrey" -> Color.LTGRAY
+        "orange" -> Color.rgb(255, 165, 0)
+        "purple" -> Color.rgb(128, 0, 128)
+        "brown" -> Color.rgb(165, 42, 42)
+        else -> null
+    }
+}
+
 private fun File.contentHash(): String {
     return runCatching {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -1892,7 +2345,7 @@ private fun File.contentHash(): String {
 }
 
 private fun String?.isTruthyXmlFlag(): Boolean {
-    return this == "1" || equals("true", ignoreCase = true)
+    return this == "1" || equals("true", ignoreCase = true) || equals("on", ignoreCase = true)
 }
 
 private fun String.placeholderFamily(): String {
