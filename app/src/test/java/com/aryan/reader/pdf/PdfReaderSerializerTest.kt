@@ -33,7 +33,9 @@ class PdfReaderSerializerTest {
                         PdfPoint(0.2f, 0.3f, 11L)
                     ),
                     color = Color(0xFF336699),
-                    strokeWidth = 0.0125f
+                    strokeWidth = 0.0125f,
+                    id = "ink-1",
+                    note = "Desktop note"
                 )
             ),
             2 to listOf(
@@ -53,6 +55,8 @@ class PdfReaderSerializerTest {
         assertEquals(setOf(0, 2), decoded.keys)
         val first = decoded.getValue(0).single()
         assertEquals(AnnotationType.INK, first.type)
+        assertEquals("ink-1", first.id)
+        assertEquals("Desktop note", first.note)
         assertEquals(InkType.FOUNTAIN_PEN, first.inkType)
         assertEquals(Color(0xFF336699).toArgb(), first.color.toArgb())
         assertEquals(0.0125f, first.strokeWidth, 0.00001f)
@@ -81,6 +85,7 @@ class PdfReaderSerializerTest {
 
         assertEquals(AnnotationType.INK, decoded.type)
         assertEquals(InkType.PENCIL, decoded.inkType)
+        assertTrue(decoded.id.isNotBlank())
         assertEquals(0L, decoded.points.single().timestamp)
         assertTrue(AnnotationSerializer.fromJson("not json").isEmpty())
         assertTrue(AnnotationSerializer.fromJson("").isEmpty())

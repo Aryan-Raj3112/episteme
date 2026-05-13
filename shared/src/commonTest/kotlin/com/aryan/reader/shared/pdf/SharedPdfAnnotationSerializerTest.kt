@@ -41,10 +41,12 @@ class SharedPdfAnnotationSerializerTest {
               "ink": [
                 {
                   "pageIndex": 1,
+                  "id": "ink-1",
                   "annotationType": "INK",
                   "inkType": "PENCIL",
                   "color": -16777216,
                   "strokeWidth": 0.008,
+                  "note": "Desktop-only ink note",
                   "points": [{"x":0.1,"y":0.2,"t":10},{"x":0.3,"y":0.4,"t":12}]
                 }
               ],
@@ -81,8 +83,11 @@ class SharedPdfAnnotationSerializerTest {
 
         assertNotNull(data[SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS])
         assertEquals(listOf(PdfAnnotationKind.INK, PdfAnnotationKind.TEXT, PdfAnnotationKind.HIGHLIGHT), annotations.map { it.kind })
+        assertEquals("ink-1", annotations[0].id)
         assertEquals(PdfInkTool.PENCIL, annotations[0].tool)
+        assertEquals("Desktop-only ink note", annotations[0].note)
         assertEquals(16f, annotations[1].fontSize, 0.001f)
+        assertEquals(0.032f, annotations[1].pageRelativeFontSize ?: 0f, 0.0001f)
         assertTrue(annotations[1].isBold)
         assertEquals("Keep this", annotations[2].note)
         assertEquals(4, annotations[2].rangeStartIndex)
@@ -110,7 +115,8 @@ class SharedPdfAnnotationSerializerTest {
                 text = "Desktop text",
                 colorArgb = 0xFF112233.toInt(),
                 backgroundArgb = 0x66112233,
-                fontSize = 20f
+                fontSize = 20f,
+                pageRelativeFontSize = 0.031f
             ),
             SharedPdfAnnotation(
                 id = "highlight-1",
@@ -141,13 +147,70 @@ class SharedPdfAnnotationSerializerTest {
         assertEquals("FOUNTAIN_PEN", legacy.getValue("ink").jsonArray[0].jsonObject.getValue("inkType").jsonPrimitive.content)
         assertEquals(1, legacy.getValue("textBoxes").jsonArray.size)
         assertEquals(
-            0.04,
+            0.031,
             legacy.getValue("textBoxes").jsonArray[0].jsonObject.getValue("fontSize").jsonPrimitive.content.toDouble(),
             0.0001
         )
         assertEquals(1, legacy.getValue("highlights").jsonArray.size)
+        assertEquals("BLUE", legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("color").jsonPrimitive.content)
         assertEquals("Synced note", legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("note").jsonPrimitive.content)
         assertEquals(22, legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("rangeEnd").jsonPrimitive.content.toInt())
+    }
+
+    @Test
+    fun `sidecar codec treats canonical annotations as authoritative for android legacy expansion`() {
+        val canonicalAnnotation = SharedPdfAnnotation(
+            id = "desktop-ink",
+            pageIndex = 0,
+            kind = PdfAnnotationKind.INK,
+            tool = PdfInkTool.PEN,
+            points = listOf(PdfPagePoint(0.1f, 0.2f, 100L)),
+            note = "Edited on desktop",
+            colorArgb = 0xFF112233.toInt(),
+            strokeWidth = 0.01f
+        )
+        val payload = testJson.encodeToString(
+            JsonElement.serializer(),
+            JsonObject(
+                mapOf(
+                    SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS to
+                        SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(listOf(canonicalAnnotation)),
+                    "ink" to testJson.parseToJsonElement(
+                        """[{"id":"stale","pageIndex":9,"annotationType":"INK","inkType":"PENCIL","color":0,"strokeWidth":1,"points":[{"x":0.9,"y":0.9}]}]"""
+                    )
+                )
+            )
+        )
+
+        val legacy = testJson.parseToJsonElement(
+            SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(payload)
+        ).jsonObject
+        val ink = legacy.getValue("ink").jsonArray.single().jsonObject
+
+        assertEquals("desktop-ink", ink.getValue("id").jsonPrimitive.content)
+        assertEquals("Edited on desktop", ink.getValue("note").jsonPrimitive.content)
+        assertEquals(0, ink.getValue("pageIndex").jsonPrimitive.content.toInt())
+    }
+
+    @Test
+    fun `sidecar codec expands empty canonical annotations to empty android legacy arrays`() {
+        val payload = testJson.encodeToString(
+            JsonElement.serializer(),
+            JsonObject(
+                mapOf(
+                    SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS to
+                        SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(emptyList())
+                )
+            )
+        )
+
+        val legacy = testJson.parseToJsonElement(
+            SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(payload)
+        ).jsonObject
+
+        assertEquals(0, legacy.getValue("ink").jsonArray.size)
+        assertEquals(0, legacy.getValue("textBoxes").jsonArray.size)
+        assertEquals(0, legacy.getValue("highlights").jsonArray.size)
     }
 
     @Test

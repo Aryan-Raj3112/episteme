@@ -236,6 +236,7 @@ import com.aryan.reader.shared.pdf.PdfVisiblePageLayout
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfBookmarkSerializer
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
@@ -776,7 +777,13 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun syncBookSidecars(book: BookItem) {
-        if (book.sourceFolder.isNullOrBlank()) return
+        if (book.sourceFolder.isNullOrBlank()) {
+            logDesktopFolderSync("bookSidecars.skipNoFolder book=${book.id}")
+            return
+        }
+        logDesktopFolderSync(
+            "bookSidecars.request book=${book.id} sourceFolder=\"${book.sourceFolder.orEmpty().folderSyncPreview()}\""
+        )
         scope.launch(Dispatchers.IO) {
             DesktopLocalFolderSync.saveBookSidecars(book)
         }
@@ -1123,8 +1130,18 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
-    fun syncLocalFolders(targetFolder: File? = null, showBanner: Boolean = true) {
+    fun syncLocalFolders(
+        targetFolder: File? = null,
+        showBanner: Boolean = true,
+        metadataOnly: Boolean = false
+    ) {
+        val mode = if (metadataOnly) "metadata" else "full"
+        logDesktopFolderSync(
+            "ui.sync.request mode=$mode target=\"${targetFolder?.absolutePath?.folderSyncPreview() ?: "ALL"}\" " +
+                "showBanner=$showBanner linkedFolders=${state.syncedFolders.size} books=${state.rawLibraryBooks.size}"
+        )
         if (targetFolder == null && state.syncedFolders.isEmpty()) {
+            logDesktopFolderSync("ui.sync.skipNoFolders mode=$mode")
             updateState(state.withBanner("No local folders are linked yet.", isError = true))
             return
         }
@@ -1132,7 +1149,12 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         val snapshotState = state
         val snapshotShelfRefs = shelfRefs
         if (showBanner) {
-            updateState(state.withBanner("Folder sync: scanning local folders..."))
+            val message = if (metadataOnly) {
+                "Folder sync: updating metadata..."
+            } else {
+                "Folder sync: scanning local folders..."
+            }
+            updateState(state.withBanner(message))
         }
 
         scope.launch {
@@ -1140,7 +1162,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 DesktopLocalFolderSync.sync(
                     state = snapshotState,
                     shelfRefs = snapshotShelfRefs,
-                    targetFolder = targetFolder
+                    targetFolder = targetFolder,
+                    metadataOnly = metadataOnly
                 )
             }
             val failedCount = result.failedFolders.size
@@ -1151,9 +1174,16 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                     "Folder sync failed for $failedCount folder(s)."
                 failedCount > 0 ->
                     "Folder sync finished with $failedCount folder(s) skipped."
+                metadataOnly ->
+                    "Folder metadata sync complete."
                 else ->
                     "Folder sync complete: ${stats.newBooks} new, ${stats.updatedBooks + stats.remoteMetadataUpdates + metadataStats.updatedBooks} updated, ${stats.removedBooks} removed."
             }
+            logDesktopFolderSync(
+                "ui.sync.result mode=$mode failed=$failedCount message=\"${message.folderSyncPreview()}\" " +
+                    "new=${stats.newBooks} updated=${stats.updatedBooks} remoteUpdates=${stats.remoteMetadataUpdates} " +
+                    "removed=${stats.removedBooks} metadataExtracted=${metadataStats.updatedBooks}"
+            )
             val completedState = if (showBanner || failedCount > 0) {
                 result.state.withBanner(message, isError = failedCount > 0)
             } else {
@@ -1175,8 +1205,18 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
+    fun syncFolderMetadata(showBanner: Boolean = true) {
+        syncLocalFolders(showBanner = showBanner, metadataOnly = true)
+    }
+
+    fun scanSyncedFolders(showBanner: Boolean = true) {
+        syncLocalFolders(showBanner = showBanner, metadataOnly = false)
+    }
+
     fun importFolder(folder: File) {
+        logDesktopFolderSync("ui.importFolder.request folder=\"${folder.absolutePath.folderSyncPreview()}\"")
         if (!DesktopLocalFolderSync.hasSupportedFiles(folder)) {
+            logDesktopFolderSync("ui.importFolder.skipNoSupportedFiles folder=\"${folder.absolutePath.folderSyncPreview()}\"")
             updateState(state.withBanner("That folder does not contain any supported desktop reader files.", isError = true))
             return
         }
@@ -1742,7 +1782,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
 
     LaunchedEffect(Unit) {
         if (state.syncedFolders.isNotEmpty()) {
-            syncLocalFolders(showBanner = false)
+            scanSyncedFolders(showBanner = false)
         }
     }
 
@@ -1807,8 +1847,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 onImportFiles = { importFiles(chooseFiles()) },
                 onImportFolder = { chooseFolder()?.let(::importFolder) },
                 onSyncRequested = {
-                    syncLocalFolders()
+                    scanSyncedFolders()
                 },
+                onFolderMetadataSyncRequested = { syncFolderMetadata() },
                 onAppThemeModeChange = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
                 onAppContrastOptionChange = { option -> updateState(state.reduce(AppAction.AppContrastChanged(option))) },
                 onAppTextDimFactorLightChange = { factor -> updateState(state.reduce(AppAction.AppTextDimFactorLightChanged(factor))) },
@@ -1945,6 +1986,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
                             onAddSelectedBooksToShelf = { showAddToShelfDialog = true },
+                            onSyncFolderMetadata = { syncFolderMetadata() },
+                            onScanFolders = { scanSyncedFolders() },
                             onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
                         )
 
@@ -2604,6 +2647,8 @@ private fun LibraryScreen(
     onTagSelectedBooks: () -> Unit,
     onAddSelectedBooksToShelf: () -> Unit,
     onImportFolder: () -> Unit,
+    onSyncFolderMetadata: () -> Unit,
+    onScanFolders: () -> Unit,
     onTogglePinned: (BookItem) -> Unit
 ) {
     SharedLibraryScreen(
@@ -2626,6 +2671,8 @@ private fun LibraryScreen(
         onTagSelectedBooks = onTagSelectedBooks,
         onAddSelectedBooksToShelf = onAddSelectedBooksToShelf,
         onImportFolder = onImportFolder,
+        onSyncFolderMetadata = onSyncFolderMetadata,
+        onScanFolders = onScanFolders,
         onTogglePinned = onTogglePinned
     )
 }
@@ -4242,7 +4289,7 @@ private fun PdfReaderScreen(
                     bounds = highlightBounds.firstOrNull(),
                     boundsList = highlightBounds,
                     text = selection.text,
-                    colorArgb = colorArgb,
+                    colorArgb = SharedPdfAndroidHighlightColors.nearestArgb(colorArgb),
                     rangeStartIndex = selection.startIndex,
                     rangeEndIndex = selection.endIndex,
                     createdAt = now
@@ -7979,7 +8026,7 @@ private fun DesktopPdfAnnotationEditor(
     onSearch: () -> Unit
 ) {
     val highlighterColors = remember(highlighterPalette) {
-        SharedPdfHighlighterPalette(highlighterPalette).sanitized().colors
+        SharedPdfAndroidHighlightColors.palette
     }
     var editingHighlighterSlot by remember(annotation.id, highlighterColors) { mutableStateOf<Int?>(null) }
     val isHighlighterAnnotation = annotation.kind == PdfAnnotationKind.HIGHLIGHT ||
@@ -8081,7 +8128,14 @@ private fun DesktopPdfAnnotationEditor(
                         Surface(
                             modifier = Modifier
                                 .size(26.dp)
-                                .clickable { onUpdate(annotation.copy(colorArgb = argb)) },
+                                .clickable {
+                                    val nextColor = if (isHighlighterAnnotation) {
+                                        SharedPdfAndroidHighlightColors.nearestArgb(argb)
+                                    } else {
+                                        argb
+                                    }
+                                    onUpdate(annotation.copy(colorArgb = nextColor))
+                                },
                             color = Color(argb),
                             shape = RoundedCornerShape(13.dp),
                             content = {}
@@ -8152,13 +8206,14 @@ private fun DesktopPdfAnnotationEditor(
             onDismiss = { editingHighlighterSlot = null },
             onSave = { color ->
                 val nextArgb = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
+                val syncedArgb = SharedPdfAndroidHighlightColors.nearestArgb(nextArgb)
                 onHighlighterPaletteChange(
                     SharedPdfHighlighterPalette(highlighterColors).withColorAt(
                         slotIndex = slot,
                         colorArgb = nextArgb
                     )
                 )
-                onUpdate(annotation.copy(colorArgb = nextArgb))
+                onUpdate(annotation.copy(colorArgb = syncedArgb))
                 editingHighlighterSlot = null
             }
         ) { liveColor ->
@@ -8601,7 +8656,7 @@ private fun PdfSelectionMenu(
     val anchor = menuOffset ?: return
     val selectionBounds = selection.canvasBounds(canvasSize)
     val paletteColors = remember(highlighterPalette) {
-        SharedPdfHighlighterPalette(highlighterPalette).sanitized().colors
+        SharedPdfAndroidHighlightColors.palette
     }
     var editingHighlighterSlot by remember(selection.startIndex, selection.endIndex, paletteColors) {
         mutableStateOf<Int?>(null)

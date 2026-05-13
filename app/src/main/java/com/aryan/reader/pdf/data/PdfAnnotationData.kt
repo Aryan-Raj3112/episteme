@@ -31,6 +31,7 @@ import com.aryan.reader.pdf.PdfUserHighlight
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.util.UUID
 
 data class PdfTextBox(
     val id: String,
@@ -54,7 +55,9 @@ data class PdfAnnotation(
     val pageIndex: Int,
     val points: List<PdfPoint>,
     val color: Color,
-    val strokeWidth: Float
+    val strokeWidth: Float,
+    val id: String = UUID.randomUUID().toString(),
+    val note: String? = null
 )
 
 object AnnotationSerializer {
@@ -63,11 +66,15 @@ object AnnotationSerializer {
         annotations.forEach { (_, list) ->
             list.forEach { annotation ->
                 val obj = JSONObject()
+                obj.put("id", annotation.id)
                 obj.put("pageIndex", annotation.pageIndex)
                 obj.put("annotationType", annotation.type.name)
                 obj.put("inkType", annotation.inkType.name)
                 obj.put("color", annotation.color.toArgb())
                 obj.put("strokeWidth", annotation.strokeWidth.toDouble())
+                if (!annotation.note.isNullOrBlank()) {
+                    obj.put("note", annotation.note)
+                }
 
                 val pointsArray = JSONArray()
                 annotation.points.forEach { p ->
@@ -123,7 +130,10 @@ object AnnotationSerializer {
                     pageIndex = pageIndex,
                     points = points,
                     color = Color(colorInt),
-                    strokeWidth = strokeWidth
+                    strokeWidth = strokeWidth,
+                    id = obj.optString("id").takeIf { it.isNotBlank() }
+                        ?: UUID.randomUUID().toString(),
+                    note = obj.optString("note").takeIf { it.isNotBlank() }
                 )
 
                 if (!resultMap.containsKey(pageIndex)) {

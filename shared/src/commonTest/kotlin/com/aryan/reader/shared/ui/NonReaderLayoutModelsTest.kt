@@ -230,6 +230,28 @@ class NonReaderLayoutModelsTest {
         assertTrue(model.showPrimaryNavigation)
     }
 
+    @Test
+    fun `collection cover stack uses Android cover order and limit`() {
+        val books = listOf(
+            book("one", coverImagePath = "/covers/one.png"),
+            book("two", coverImagePath = "/covers/two.png"),
+            book("three", coverImagePath = "/covers/three.png"),
+            book("four", coverImagePath = "/covers/four.png"),
+            book("five", coverImagePath = "/covers/five.png")
+        )
+
+        val coverBooks = collectionCoverStackBooks(
+            Shelf("manual", "Manual", ShelfType.MANUAL, books)
+        )
+
+        assertEquals(listOf("four", "three", "two", "one"), coverBooks.map { it.id })
+        assertEquals(
+            listOf("/covers/four.png", "/covers/three.png", "/covers/two.png", "/covers/one.png"),
+            coverBooks.map { it.coverImagePath }
+        )
+        assertTrue(collectionCoverStackBooks(Shelf("empty", "Empty", ShelfType.FOLDER, emptyList())).isEmpty())
+    }
+
     private fun book(
         id: String,
         title: String = id,
@@ -237,13 +259,15 @@ class NonReaderLayoutModelsTest {
         progress: Float? = null,
         tags: List<Tag> = emptyList(),
         sourceFolder: String? = null,
-        path: String? = "/books/$id.epub"
+        path: String? = "/books/$id.epub",
+        coverImagePath: String? = null
     ) = BookItem(
         id = id,
         path = path,
         type = type,
         displayName = "$id.epub",
         timestamp = 1L,
+        coverImagePath = coverImagePath,
         title = title,
         progressPercentage = progress,
         tags = tags,

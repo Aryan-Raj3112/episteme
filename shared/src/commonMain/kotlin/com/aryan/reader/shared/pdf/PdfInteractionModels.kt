@@ -52,6 +52,7 @@ data class SharedPdfAnnotation(
     val backgroundArgb: Int = 0x00FFFFFF,
     val strokeWidth: Float = 2f,
     val fontSize: Float = 16f,
+    val pageRelativeFontSize: Float? = null,
     val isBold: Boolean = false,
     val isItalic: Boolean = false,
     val isUnderline: Boolean = false,
@@ -198,6 +199,41 @@ data class SharedPdfHighlighterPalette(
         const val MaxColors: Int = 5
         val defaultColors: List<Int>
             get() = SharedPdfAnnotationDefaults.highlighterPalette.map { it.withPdfHighlighterAlpha() }
+    }
+}
+
+object SharedPdfAndroidHighlightColors {
+    const val StoredAlpha: Int = 0x8C
+    const val RenderAlpha: Float = 0.4f
+
+    val colorsByName: Map<String, Int> = mapOf(
+        "YELLOW" to 0xFFFBC02D.toInt(),
+        "GREEN" to 0xFF388E3C.toInt(),
+        "BLUE" to 0xFF1976D2.toInt(),
+        "RED" to 0xFFD32F2F.toInt()
+    )
+
+    val palette: List<Int>
+        get() = colorsByName.keys.map(::argbForName)
+
+    fun argbForName(name: String): Int {
+        val opaqueArgb = colorsByName[name.uppercase()] ?: colorsByName.getValue("YELLOW")
+        return (StoredAlpha shl 24) or (opaqueArgb and 0x00FFFFFF)
+    }
+
+    fun nearestName(argb: Int): String {
+        val rgb = argb and 0x00FFFFFF
+        return colorsByName.minByOrNull { (_, color) ->
+            val candidate = color and 0x00FFFFFF
+            val dr = ((rgb shr 16) and 0xFF) - ((candidate shr 16) and 0xFF)
+            val dg = ((rgb shr 8) and 0xFF) - ((candidate shr 8) and 0xFF)
+            val db = (rgb and 0xFF) - (candidate and 0xFF)
+            dr * dr + dg * dg + db * db
+        }?.key ?: "YELLOW"
+    }
+
+    fun nearestArgb(argb: Int): Int {
+        return argbForName(nearestName(argb))
     }
 }
 

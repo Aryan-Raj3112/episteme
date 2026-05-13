@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,6 +55,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -296,6 +298,8 @@ fun SharedLibraryScreen(
     onTagSelectedBooks: () -> Unit = {},
     onAddSelectedBooksToShelf: () -> Unit = {},
     onImportFolder: () -> Unit = {},
+    onSyncFolderMetadata: () -> Unit = {},
+    onScanFolders: () -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -371,6 +375,8 @@ fun SharedLibraryScreen(
                             onRenameShelf = onRenameShelf,
                             onDeleteShelf = onDeleteShelf,
                             onRemoveFolder = onRemoveFolder,
+                            onSyncFolderMetadata = onSyncFolderMetadata,
+                            onScanFolders = onScanFolders,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -410,6 +416,8 @@ fun SharedLibraryScreen(
                         onRenameShelf = onRenameShelf,
                         onDeleteShelf = onDeleteShelf,
                         onRemoveFolder = onRemoveFolder,
+                        onSyncFolderMetadata = onSyncFolderMetadata,
+                        onScanFolders = onScanFolders,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -908,6 +916,8 @@ private fun LibraryContent(
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
     onRemoveFolder: (Shelf) -> Unit,
+    onSyncFolderMetadata: () -> Unit,
+    onScanFolders: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1025,22 +1035,55 @@ private fun LibraryContent(
                 modifier = Modifier.weight(1f)
             )
 
-            NonReaderLibraryTab.FOLDERS -> ShelfCollection(
-                shelves = state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null },
-                selectedBookIds = state.selectedBookIds,
-                pinnedBookIds = state.pinnedLibraryBookIds,
-                onOpenBook = onOpenBook,
-                onToggleSelection = onToggleSelection,
-                onShowBookInfo = onShowBookInfo,
-                onEditBook = onEditBook,
-                onTogglePinned = onTogglePinned,
-                onRemoveFolder = onRemoveFolder,
-                emptyTitle = "No folders yet",
-                emptyBody = "Imported folder metadata will appear here when available.",
-                modifier = Modifier.weight(1f)
-            )
+            NonReaderLibraryTab.FOLDERS -> {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (state.syncedFolders.isNotEmpty()) {
+                        FolderSyncActionRow(
+                            onSyncFolderMetadata = onSyncFolderMetadata,
+                            onScanFolders = onScanFolders
+                        )
+                    }
+                    ShelfCollection(
+                        shelves = state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null },
+                        selectedBookIds = state.selectedBookIds,
+                        pinnedBookIds = state.pinnedLibraryBookIds,
+                        onOpenBook = onOpenBook,
+                        onToggleSelection = onToggleSelection,
+                        onShowBookInfo = onShowBookInfo,
+                        onEditBook = onEditBook,
+                        onTogglePinned = onTogglePinned,
+                        onRemoveFolder = onRemoveFolder,
+                        emptyTitle = "No folders yet",
+                        emptyBody = "Imported folder metadata will appear here when available.",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
 
             else -> Unit
+        }
+    }
+}
+
+@Composable
+private fun FolderSyncActionRow(
+    onSyncFolderMetadata: () -> Unit,
+    onScanFolders: () -> Unit
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        OutlinedButton(onClick = onSyncFolderMetadata) {
+            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Sync metadata")
+        }
+        Button(onClick = onScanFolders) {
+            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Full scan")
         }
     }
 }
@@ -1763,6 +1806,69 @@ private fun ShelfSection(
 
 @Composable
 private fun CollectionCoverStack(shelf: Shelf) {
+    val booksForCovers = collectionCoverStackBooks(shelf)
+    if (booksForCovers.isEmpty()) {
+        EmptyCollectionCoverStack(shelf)
+        return
+    }
+
+    val coverWidth = 38.dp
+    val coverHeight = 56.dp
+    val horizontalOffset = 7.dp
+    val stackWidth = coverWidth + (horizontalOffset * (booksForCovers.size - 1))
+
+    Box(
+        modifier = Modifier.size(width = 54.dp, height = 66.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .width(stackWidth)
+                .height(coverHeight)
+        ) {
+            booksForCovers.forEachIndexed { index, book ->
+                CollectionCoverBook(
+                    book = book,
+                    contentDescription = if (booksForCovers.size == 1) shelf.name else null,
+                    modifier = Modifier
+                        .size(width = coverWidth, height = coverHeight)
+                        .align(Alignment.CenterEnd)
+                        .offset(x = -horizontalOffset * index)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollectionCoverBook(
+    book: BookItem,
+    contentDescription: String?,
+    modifier: Modifier = Modifier
+) {
+    val coverPath = book.coverImagePath?.takeIf { it.isNotBlank() }
+    Surface(
+        modifier = modifier,
+        color = fileTypeColor(book.type),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(7.dp),
+        shadowElevation = 3.dp
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(18.dp))
+            if (coverPath != null) {
+                LocalBookCoverImage(
+                    path = coverPath,
+                    contentDescription = contentDescription,
+                    modifier = Modifier.matchParentSize()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyCollectionCoverStack(shelf: Shelf) {
     Box(Modifier.size(width = 54.dp, height = 66.dp)) {
         val colors = listOf(
             MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
@@ -1783,6 +1889,17 @@ private fun CollectionCoverStack(shelf: Shelf) {
         Icon(shelf.type.icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.Center).size(22.dp))
     }
 }
+
+internal fun collectionCoverStackBooks(shelf: Shelf): List<BookItem> {
+    val booksForCovers = shelf.books.take(CollectionCoverStackBookLimit).reversed()
+    return if (booksForCovers.size <= 1) {
+        listOfNotNull(shelf.topBook)
+    } else {
+        booksForCovers
+    }
+}
+
+private const val CollectionCoverStackBookLimit = 4
 
 @Composable
 private fun SortMenu(

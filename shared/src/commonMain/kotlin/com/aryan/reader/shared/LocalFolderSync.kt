@@ -17,8 +17,29 @@ import kotlinx.serialization.json.longOrNull
 
 const val LOCAL_FOLDER_SYNC_DATA_DIR = "EpistemeSyncData"
 const val LOCAL_FOLDER_ANNOTATION_SUFFIX = "_annotations"
+const val LOCAL_FOLDER_SIDECAR_HASH_PREFIX = "book_"
 
 internal expect fun localFolderSyncSha256ShortHex(value: String): String
+
+fun localFolderSyncSidecarStem(bookId: String): String {
+    return LOCAL_FOLDER_SIDECAR_HASH_PREFIX + localFolderSyncSha256ShortHex(bookId)
+}
+
+fun localFolderSyncMetadataFileName(bookId: String): String {
+    return ".${localFolderSyncSidecarStem(bookId)}.json"
+}
+
+fun localFolderSyncMetadataTempFileName(bookId: String): String {
+    return ".${localFolderSyncSidecarStem(bookId)}.tmp"
+}
+
+fun localFolderSyncAnnotationFileName(bookId: String): String {
+    return ".${localFolderSyncSidecarStem(bookId)}$LOCAL_FOLDER_ANNOTATION_SUFFIX.json"
+}
+
+fun localFolderSyncAnnotationTempFileName(bookId: String): String {
+    return ".${localFolderSyncSidecarStem(bookId)}$LOCAL_FOLDER_ANNOTATION_SUFFIX.tmp"
+}
 
 data class SharedFolderBookMetadata(
     val bookId: String,

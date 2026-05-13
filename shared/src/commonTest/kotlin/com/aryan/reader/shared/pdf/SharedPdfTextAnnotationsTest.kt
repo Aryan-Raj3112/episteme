@@ -35,7 +35,8 @@ class SharedPdfTextAnnotationsTest {
         assertEquals(PdfAnnotationKind.TEXT, annotation.kind)
         assertEquals(PdfInkTool.TEXT, annotation.tool)
         assertEquals("Styled note", annotation.text)
-        assertEquals(style, annotation.sharedPdfTextStyle())
+        assertEquals(style.copy(pageRelativeFontSize = 0.04f), annotation.sharedPdfTextStyle())
+        assertEquals(0.04f, annotation.pageRelativeFontSize ?: 0f, 0.0001f)
         assertEquals(99L, annotation.createdAt)
         assertTrue(annotation.bounds!!.left >= 0f)
         assertTrue(annotation.bounds.right <= 1f)
@@ -72,7 +73,28 @@ class SharedPdfTextAnnotationsTest {
         assertEquals("Keep me", updated.text)
         assertEquals(original.bounds, updated.bounds)
         assertEquals(5L, updated.createdAt)
-        assertEquals(style, updated.sharedPdfTextStyle())
+        assertEquals(style.copy(pageRelativeFontSize = 0.048f), updated.sharedPdfTextStyle())
+    }
+
+    @Test
+    fun `page relative font size drives Android-compatible text rendering size`() {
+        val canvasSize = IntSize(1_000, 1_500)
+        val style = SharedPdfTextStyleConfig(fontSize = 20f, pageRelativeFontSize = 0.03f)
+
+        assertEquals(45f, style.sharedPdfTextFontSizePx(canvasSize), 0.0001f)
+
+        val annotation = SharedPdfAnnotation(
+            id = "text-android-size",
+            pageIndex = 0,
+            kind = PdfAnnotationKind.TEXT,
+            bounds = PdfPageBounds(0.1f, 0.1f, 0.4f, 0.2f),
+            text = "Sized like Android",
+            colorArgb = 0xFF000000.toInt(),
+            fontSize = 20f,
+            pageRelativeFontSize = 0.03f
+        )
+
+        assertEquals(45f, annotation.sharedPdfTextFontSizePx(canvasSize), 0.0001f)
     }
 
     @Test
@@ -118,7 +140,7 @@ class SharedPdfTextAnnotationsTest {
         assertEquals(PdfAnnotationKind.TEXT, annotation.kind)
         assertEquals(PdfInkTool.TEXT, annotation.tool)
         assertEquals("Inline note", annotation.text)
-        assertEquals(style, annotation.sharedPdfTextStyle())
+        assertEquals(style.copy(pageRelativeFontSize = 0.036f), annotation.sharedPdfTextStyle())
         assertEquals(draft.bounds, annotation.bounds)
     }
 

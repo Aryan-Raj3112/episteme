@@ -16,15 +16,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import kotlin.math.pow
 
 object SharedPdfAnnotationSidecarCodec {
     const val KEY_PDF_ANNOTATIONS = "pdfAnnotations"
     const val KEY_LEGACY_INK = "ink"
     const val KEY_LEGACY_TEXT_BOXES = "textBoxes"
     const val KEY_LEGACY_HIGHLIGHTS = "highlights"
-
-    private const val LEGACY_TEXT_BOX_FONT_REFERENCE_DP = 500f
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -56,7 +53,7 @@ object SharedPdfAnnotationSidecarCodec {
     fun withCanonicalAnnotations(data: JsonObject): JsonObject {
         if (data[KEY_PDF_ANNOTATIONS] != null) return data
         val annotations = annotationsFromData(data)
-        if (annotations.isEmpty()) return data
+        if (annotations.isEmpty() && !data.hasLegacyAndroidAnnotationPayload()) return data
         return JsonObject(data + (KEY_PDF_ANNOTATIONS to encodeAnnotationsElement(annotations)))
     }
 
@@ -69,16 +66,17 @@ object SharedPdfAnnotationSidecarCodec {
         annotations: List<SharedPdfAnnotation>,
         existingData: JsonObject = JsonObject(emptyMap())
     ): JsonObject {
-        if (annotations.isEmpty()) return existingData
-
         val next = existingData.toMutableMap()
-        if (!existingData[KEY_LEGACY_INK].isLegacyAndroidInkArray()) {
+        val replaceLegacyFromCanonical = existingData[KEY_PDF_ANNOTATIONS] != null
+        if (annotations.isEmpty() && !replaceLegacyFromCanonical) return existingData
+
+        if (replaceLegacyFromCanonical || !existingData[KEY_LEGACY_INK].isLegacyAndroidInkArray()) {
             next[KEY_LEGACY_INK] = annotations.toLegacyAndroidInkArray()
         }
-        if (!existingData[KEY_LEGACY_TEXT_BOXES].isJsonArray()) {
+        if (replaceLegacyFromCanonical || !existingData[KEY_LEGACY_TEXT_BOXES].isJsonArray()) {
             next[KEY_LEGACY_TEXT_BOXES] = annotations.toLegacyAndroidTextBoxArray()
         }
-        if (!existingData[KEY_LEGACY_HIGHLIGHTS].isJsonArray()) {
+        if (replaceLegacyFromCanonical || !existingData[KEY_LEGACY_HIGHLIGHTS].isJsonArray()) {
             next[KEY_LEGACY_HIGHLIGHTS] = annotations.toLegacyAndroidHighlightArray()
         }
         return JsonObject(next)
@@ -87,7 +85,7 @@ object SharedPdfAnnotationSidecarCodec {
     fun legacyAndroidDataJsonFromCanonical(rawDataJson: String): String {
         val data = parseObjectOrNull(rawDataJson) ?: return rawDataJson
         val annotations = annotationsFromData(data)
-        if (annotations.isEmpty()) return rawDataJson
+        if (annotations.isEmpty() && data[KEY_PDF_ANNOTATIONS] == null) return rawDataJson
         return json.encodeToString(
             JsonElement.serializer(),
             legacyAndroidDataFromAnnotations(annotations, data)
@@ -128,6 +126,7 @@ object SharedPdfAnnotationSidecarCodec {
                 kind = PdfAnnotationKind.INK,
                 tool = tool.toPdfInkTool(),
                 points = points,
+                note = obj.string("note"),
                 colorArgb = obj.int("color") ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).colorArgb,
                 strokeWidth = obj.float("strokeWidth") ?: SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).strokeWidth,
                 createdAt = points.firstOrNull()?.timestamp ?: 0L
@@ -151,7 +150,8 @@ object SharedPdfAnnotationSidecarCodec {
                 colorArgb = obj.int("color") ?: 0xFF000000.toInt(),
                 backgroundArgb = obj.int("backgroundColor") ?: 0x00000000,
                 strokeWidth = SharedPdfAnnotationDefaults.configFor(PdfInkTool.TEXT).strokeWidth,
-                fontSize = rawFontSize.legacyTextBoxFontSizeToShared(),
+                fontSize = SharedPdfTextAnnotationDefaults.pageRelativeFontSizeToDisplay(rawFontSize),
+                pageRelativeFontSize = SharedPdfTextAnnotationDefaults.legacyFontSizeToPageRelative(rawFontSize),
                 isBold = obj.boolean("isBold") ?: false,
                 isItalic = obj.boolean("isItalic") ?: false,
                 isUnderline = obj.boolean("isUnderline") ?: false,
@@ -189,7 +189,7 @@ object SharedPdfAnnotationSidecarCodec {
                 boundsList = boundsList,
                 text = obj.string("text").orEmpty(),
                 note = obj.string("note"),
-                colorArgb = colorName.toSharedHighlightArgb(),
+                colorArgb = SharedPdfAndroidHighlightColors.argbForName(colorName),
                 rangeStartIndex = rangeStart,
                 rangeEndIndex = inclusiveRangeEnd
             )
@@ -208,6 +208,7 @@ object SharedPdfAnnotationSidecarCodec {
                             put("inkType", JsonPrimitive(annotation.tool.name))
                             put("color", JsonPrimitive(annotation.colorArgb))
                             put("strokeWidth", JsonPrimitive(annotation.strokeWidth.toDouble()))
+                            annotation.note?.takeIf { it.isNotBlank() }?.let { put("note", JsonPrimitive(it)) }
                             put(
                                 "points",
                                 JsonArray(
@@ -240,7 +241,7 @@ object SharedPdfAnnotationSidecarCodec {
                             put("text", JsonPrimitive(annotation.text))
                             put("color", JsonPrimitive(annotation.colorArgb))
                             put("backgroundColor", JsonPrimitive(annotation.backgroundArgb))
-                            put("fontSize", JsonPrimitive(annotation.fontSize.sharedFontSizeToLegacyTextBox().toDouble()))
+                            put("fontSize", JsonPrimitive(annotation.sharedPdfTextPageRelativeFontSize().toDouble()))
                             put("isBold", JsonPrimitive(annotation.isBold))
                             put("isItalic", JsonPrimitive(annotation.isItalic))
                             put("isUnderline", JsonPrimitive(annotation.isUnderline))
@@ -262,7 +263,7 @@ object SharedPdfAnnotationSidecarCodec {
                         buildMap {
                             put("id", JsonPrimitive(annotation.id))
                             put("pageIndex", JsonPrimitive(annotation.pageIndex))
-                            put("color", JsonPrimitive(annotation.colorArgb.toLegacyHighlightColorName()))
+                            put("color", JsonPrimitive(SharedPdfAndroidHighlightColors.nearestName(annotation.colorArgb)))
                             put("text", JsonPrimitive(annotation.text))
                             val rangeStart = annotation.rangeStartIndex ?: 0
                             val rangeEnd = annotation.rangeEndIndex?.plus(1)?.coerceAtLeast(rangeStart) ?: rangeStart
@@ -304,6 +305,12 @@ object SharedPdfAnnotationSidecarCodec {
     }
 
     private fun JsonElement?.isJsonArray(): Boolean = this?.jsonArrayOrNull() != null
+
+    private fun JsonObject.hasLegacyAndroidAnnotationPayload(): Boolean {
+        return this[KEY_LEGACY_INK] != null ||
+            this[KEY_LEGACY_TEXT_BOXES] != null ||
+            this[KEY_LEGACY_HIGHLIGHTS] != null
+    }
 
     private fun JsonElement.jsonArrayOrNull(): JsonArray? {
         if (this is JsonNull) return null
@@ -378,38 +385,4 @@ object SharedPdfAnnotationSidecarCodec {
         return runCatching { PdfInkTool.valueOf(this) }.getOrDefault(PdfInkTool.PEN)
     }
 
-    private fun Float.legacyTextBoxFontSizeToShared(): Float {
-        return if (this in 0f..1f) {
-            (this * LEGACY_TEXT_BOX_FONT_REFERENCE_DP).coerceIn(8f, 48f)
-        } else {
-            coerceIn(8f, 96f)
-        }
-    }
-
-    private fun Float.sharedFontSizeToLegacyTextBox(): Float {
-        return (this / LEGACY_TEXT_BOX_FONT_REFERENCE_DP).coerceIn(0.012f, 0.12f)
-    }
-
-    private fun String.toSharedHighlightArgb(): Int {
-        val opaqueArgb = legacyHighlightColors[uppercase()] ?: legacyHighlightColors.getValue("YELLOW")
-        return 0x8C000000.toInt() or (opaqueArgb and 0x00FFFFFF)
-    }
-
-    private fun Int.toLegacyHighlightColorName(): String {
-        val rgb = this and 0x00FFFFFF
-        return legacyHighlightColors.minByOrNull { (_, color) ->
-            val candidate = color and 0x00FFFFFF
-            val dr = ((rgb shr 16) and 0xFF) - ((candidate shr 16) and 0xFF)
-            val dg = ((rgb shr 8) and 0xFF) - ((candidate shr 8) and 0xFF)
-            val db = (rgb and 0xFF) - (candidate and 0xFF)
-            dr.toDouble().pow(2) + dg.toDouble().pow(2) + db.toDouble().pow(2)
-        }?.key ?: "YELLOW"
-    }
-
-    private val legacyHighlightColors = mapOf(
-        "YELLOW" to 0xFFFBC02D.toInt(),
-        "GREEN" to 0xFF388E3C.toInt(),
-        "BLUE" to 0xFF1976D2.toInt(),
-        "RED" to 0xFFD32F2F.toInt()
-    )
 }

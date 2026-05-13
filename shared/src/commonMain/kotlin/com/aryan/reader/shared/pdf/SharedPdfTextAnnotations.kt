@@ -9,6 +9,7 @@ data class SharedPdfTextStyleConfig(
     val colorArgb: Int = 0xFF000000.toInt(),
     val backgroundColorArgb: Int = 0x00000000,
     val fontSize: Float = 16f,
+    val pageRelativeFontSize: Float? = null,
     val isBold: Boolean = false,
     val isItalic: Boolean = false,
     val isUnderline: Boolean = false,
@@ -46,6 +47,10 @@ data class SharedPdfTextDraft(
 )
 
 object SharedPdfTextAnnotationDefaults {
+    private const val AndroidTextBoxFontReferencePx = 500f
+    private const val MinPageRelativeFontSize = 0.012f
+    private const val MaxPageRelativeFontSize = 0.12f
+
     val fontSizes: List<Float> = listOf(12f, 14f, 16f, 18f, 20f, 24f, 30f)
 
     val fontPresets: List<SharedPdfTextFontPreset> = listOf(
@@ -97,6 +102,7 @@ object SharedPdfTextAnnotationDefaults {
             backgroundArgb = style.backgroundColorArgb,
             strokeWidth = SharedPdfAnnotationDefaults.configFor(PdfInkTool.TEXT).strokeWidth,
             fontSize = style.fontSize,
+            pageRelativeFontSize = style.sharedPdfTextPageRelativeFontSize(),
             isBold = style.isBold,
             isItalic = style.isItalic,
             isUnderline = style.isUnderline,
@@ -133,9 +139,10 @@ object SharedPdfTextAnnotationDefaults {
     ): PdfPageBounds {
         val widthPx = canvasSize.width.coerceAtLeast(1).toFloat()
         val heightPx = canvasSize.height.coerceAtLeast(1).toFloat()
-        val widthNorm = estimateWidthNorm(text, style, widthPx).coerceIn(0.18f, 0.62f)
-        val lineCount = estimateLineCount(text, style.fontSize, widthPx * widthNorm)
-        val heightNorm = (((style.fontSize * 1.35f * lineCount) + 14f) / heightPx).coerceIn(0.04f, 0.36f)
+        val fontSizePx = style.sharedPdfTextFontSizePx(canvasSize)
+        val widthNorm = estimateWidthNorm(text, fontSizePx, widthPx).coerceIn(0.18f, 0.62f)
+        val lineCount = estimateLineCount(text, fontSizePx, widthPx * widthNorm)
+        val heightNorm = (((fontSizePx * 1.35f * lineCount) + 14f) / heightPx).coerceIn(0.04f, 0.36f)
         val left = anchor.x.coerceIn(0f, 1f - widthNorm)
         val top = anchor.y.coerceIn(0f, 1f - heightNorm)
         return PdfPageBounds(
@@ -158,12 +165,33 @@ object SharedPdfTextAnnotationDefaults {
 
     private fun estimateWidthNorm(
         text: String,
-        style: SharedPdfTextStyleConfig,
+        fontSizePx: Float,
         pageWidthPx: Float
     ): Float {
         val longestLine = text.lineSequence().maxOfOrNull { it.length } ?: 0
-        val estimatedTextWidth = (longestLine.coerceAtLeast(12) * style.fontSize * 0.55f) + 18f
+        val estimatedTextWidth = (longestLine.coerceAtLeast(12) * fontSizePx * 0.55f) + 18f
         return (estimatedTextWidth / pageWidthPx).coerceAtLeast(0.28f)
+    }
+
+    internal fun displayFontSizeToPageRelative(fontSize: Float): Float {
+        return (fontSize / AndroidTextBoxFontReferencePx)
+            .coerceIn(MinPageRelativeFontSize, MaxPageRelativeFontSize)
+    }
+
+    internal fun pageRelativeFontSizeToDisplay(fontSize: Float): Float {
+        return if (fontSize in 0f..1f) {
+            (fontSize * AndroidTextBoxFontReferencePx).coerceIn(8f, 48f)
+        } else {
+            fontSize.coerceIn(8f, 96f)
+        }
+    }
+
+    internal fun legacyFontSizeToPageRelative(fontSize: Float): Float {
+        return if (fontSize in 0f..1f) {
+            fontSize.coerceIn(MinPageRelativeFontSize, MaxPageRelativeFontSize)
+        } else {
+            displayFontSizeToPageRelative(fontSize)
+        }
     }
 }
 
@@ -225,6 +253,7 @@ fun SharedPdfTextDraft.toAnnotation(): SharedPdfAnnotation {
         backgroundArgb = style.backgroundColorArgb,
         strokeWidth = SharedPdfAnnotationDefaults.configFor(PdfInkTool.TEXT).strokeWidth,
         fontSize = style.fontSize,
+        pageRelativeFontSize = style.sharedPdfTextPageRelativeFontSize(),
         isBold = style.isBold,
         isItalic = style.isItalic,
         isUnderline = style.isUnderline,
@@ -316,6 +345,7 @@ fun SharedPdfAnnotation.sharedPdfTextStyle(): SharedPdfTextStyleConfig {
         colorArgb = colorArgb,
         backgroundColorArgb = backgroundArgb,
         fontSize = fontSize,
+        pageRelativeFontSize = pageRelativeFontSize,
         isBold = isBold,
         isItalic = isItalic,
         isUnderline = isUnderline,
@@ -330,6 +360,7 @@ fun SharedPdfAnnotation.withSharedPdfTextStyle(style: SharedPdfTextStyleConfig):
         colorArgb = style.colorArgb,
         backgroundArgb = style.backgroundColorArgb,
         fontSize = style.fontSize,
+        pageRelativeFontSize = style.sharedPdfTextPageRelativeFontSize(),
         isBold = style.isBold,
         isItalic = style.isItalic,
         isUnderline = style.isUnderline,
@@ -337,6 +368,35 @@ fun SharedPdfAnnotation.withSharedPdfTextStyle(style: SharedPdfTextStyleConfig):
         fontPath = style.fontPath,
         fontName = style.fontName
     )
+}
+
+fun SharedPdfTextStyleConfig.withSharedPdfTextFontSize(fontSize: Float): SharedPdfTextStyleConfig {
+    return copy(
+        fontSize = fontSize,
+        pageRelativeFontSize = SharedPdfTextAnnotationDefaults.displayFontSizeToPageRelative(fontSize)
+    )
+}
+
+fun SharedPdfTextStyleConfig.sharedPdfTextPageRelativeFontSize(): Float {
+    return pageRelativeFontSize
+        ?.let { SharedPdfTextAnnotationDefaults.legacyFontSizeToPageRelative(it) }
+        ?: SharedPdfTextAnnotationDefaults.displayFontSizeToPageRelative(fontSize)
+}
+
+fun SharedPdfTextStyleConfig.sharedPdfTextFontSizePx(canvasSize: IntSize): Float {
+    val pageHeightPx = canvasSize.height.coerceAtLeast(1).toFloat()
+    return (sharedPdfTextPageRelativeFontSize() * pageHeightPx).coerceAtLeast(1f)
+}
+
+fun SharedPdfAnnotation.sharedPdfTextPageRelativeFontSize(): Float {
+    return pageRelativeFontSize
+        ?.let { SharedPdfTextAnnotationDefaults.legacyFontSizeToPageRelative(it) }
+        ?: SharedPdfTextAnnotationDefaults.displayFontSizeToPageRelative(fontSize)
+}
+
+fun SharedPdfAnnotation.sharedPdfTextFontSizePx(canvasSize: IntSize): Float {
+    val pageHeightPx = canvasSize.height.coerceAtLeast(1).toFloat()
+    return (sharedPdfTextPageRelativeFontSize() * pageHeightPx).coerceAtLeast(1f)
 }
 
 private fun PdfPageBounds.coercedToPage(): PdfPageBounds {

@@ -21,6 +21,17 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `local folder sidecar filenames stay short for long book ids`() {
+        val bookId = "local_" + "Very Long Book Name ".repeat(20) + ".pdf"
+
+        assertEquals(".book_37739e3be68f.json", localFolderSyncMetadataFileName(bookId))
+        assertEquals(".book_37739e3be68f.tmp", localFolderSyncMetadataTempFileName(bookId))
+        assertEquals(".book_37739e3be68f_annotations.json", localFolderSyncAnnotationFileName(bookId))
+        assertEquals(".book_37739e3be68f_annotations.tmp", localFolderSyncAnnotationTempFileName(bookId))
+        assertTrue(localFolderSyncAnnotationFileName(bookId).length < 80)
+    }
+
+    @Test
     fun `sync imports scanned folder books with remote metadata`() {
         val state = SharedReaderScreenState()
         val folder = syncedFolder()

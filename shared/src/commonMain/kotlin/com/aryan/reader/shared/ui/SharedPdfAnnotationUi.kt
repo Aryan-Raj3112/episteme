@@ -92,6 +92,7 @@ import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderData
@@ -103,8 +104,10 @@ import com.aryan.reader.shared.pdf.SharedPdfTextResizeHandle
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.movedBy
 import com.aryan.reader.shared.pdf.resizedBy
+import com.aryan.reader.shared.pdf.sharedPdfTextFontSizePx
 import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
+import com.aryan.reader.shared.pdf.withSharedPdfTextFontSize
 import kotlin.math.roundToInt
 
 val SharedPdfAnnotationDefaultTools: List<PdfInkTool> = listOf(
@@ -459,6 +462,8 @@ fun SharedPdfTextBoxEditorOverlay(
         }
     }
 
+    val fontSizePx = style.sharedPdfTextFontSizePx(canvasSize)
+
     Box(modifier = modifier.fillMaxSize()) {
         BasicTextField(
             value = textFieldValue,
@@ -470,8 +475,8 @@ fun SharedPdfTextBoxEditorOverlay(
             },
             textStyle = TextStyle(
                 color = textColor,
-                fontSize = style.fontSize.sp,
-                lineHeight = (style.fontSize * 1.25f).sp,
+                fontSize = with(density) { fontSizePx.toSp() },
+                lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },
                 fontWeight = if (style.isBold) FontWeight.Bold else FontWeight.Normal,
                 fontStyle = if (style.isItalic) FontStyle.Italic else FontStyle.Normal,
                 fontFamily = sharedPdfFontFamily(style.fontName ?: style.fontPath),
@@ -665,7 +670,7 @@ fun SharedPdfTextStyleControls(
                             selected = style.fontSize.toInt() == size.toInt(),
                             selectedBackground = selectedBackground,
                             unselectedBackground = unselectedBackground,
-                            onClick = { onStyleChange(style.copy(fontSize = size)) }
+                            onClick = { onStyleChange(style.withSharedPdfTextFontSize(size)) }
                         ) {
                             Text(
                                 text = size.toInt().toString(),
@@ -765,10 +770,9 @@ fun SharedPdfAnnotationOverlay(
                         val highlightBounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
                         highlightBounds.forEach { bounds ->
                             drawRect(
-                                color = Color(annotation.colorArgb),
+                                color = Color(annotation.colorArgb).copy(alpha = SharedPdfAndroidHighlightColors.RenderAlpha),
                                 topLeft = bounds.topLeft(canvasSize),
                                 size = bounds.size(canvasSize),
-                                blendMode = BlendMode.Multiply
                             )
                         }
                     }
@@ -821,17 +825,18 @@ fun SharedPdfAnnotationOverlay(
                 val topPx = bounds.top * canvasSize.height
                 val widthPx = ((bounds.right - bounds.left) * canvasSize.width).coerceAtLeast(24f)
                 val heightPx = ((bounds.bottom - bounds.top) * canvasSize.height).coerceAtLeast(18f)
+                val fontSizePx = annotation.sharedPdfTextFontSizePx(canvasSize)
                 Text(
                     text = annotation.text,
                     color = Color(annotation.colorArgb),
-                    fontSize = annotation.fontSize.sp,
-                    lineHeight = (annotation.fontSize * 1.25f).sp,
+                    fontSize = with(density) { fontSizePx.toSp() },
+                    lineHeight = with(density) { (fontSizePx * 1.25f).toSp() },
                     fontWeight = if (annotation.isBold) FontWeight.Bold else FontWeight.Normal,
                     fontStyle = if (annotation.isItalic) FontStyle.Italic else FontStyle.Normal,
                     fontFamily = annotation.sharedPdfTextFontFamily(),
                     textDecoration = annotation.textDecoration,
                     overflow = TextOverflow.Ellipsis,
-                    maxLines = SharedPdfTextAnnotationDefaults.estimateLineCount(annotation.text, annotation.fontSize, widthPx),
+                    maxLines = SharedPdfTextAnnotationDefaults.estimateLineCount(annotation.text, fontSizePx, widthPx),
                     modifier = Modifier
                         .offset { IntOffset(leftPx.roundToInt(), topPx.roundToInt()) }
                         .width(with(density) { widthPx.toDp() })

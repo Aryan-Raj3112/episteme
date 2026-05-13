@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.TextFields
@@ -97,6 +98,7 @@ fun SharedAppShell(
     onImportFiles: () -> Unit,
     onImportFolder: () -> Unit = {},
     onSyncRequested: () -> Unit,
+    onFolderMetadataSyncRequested: (() -> Unit)? = null,
     onAppThemeModeChange: (AppThemeMode) -> Unit = {},
     onAppContrastOptionChange: (AppContrastOption) -> Unit = {},
     onAppTextDimFactorLightChange: (Float) -> Unit = {},
@@ -185,6 +187,12 @@ fun SharedAppShell(
                     onSyncRequested = {
                         showToolsPanel = false
                         onSyncRequested()
+                    },
+                    onFolderMetadataSyncRequested = onFolderMetadataSyncRequested?.let { syncMetadata ->
+                        {
+                            showToolsPanel = false
+                            syncMetadata()
+                        }
                     },
                     onAppThemeRequested = {
                         showToolsPanel = false
@@ -356,6 +364,7 @@ private fun SharedToolsPanel(
     onImportFiles: () -> Unit,
     onImportFolder: () -> Unit,
     onSyncRequested: () -> Unit,
+    onFolderMetadataSyncRequested: (() -> Unit)?,
     onAppThemeRequested: () -> Unit,
     onAiSettingsRequested: () -> Unit,
     onOpenTab: (SharedAppTab) -> Unit,
@@ -412,10 +421,17 @@ private fun SharedToolsPanel(
                         }
                     }
                     if (SharedAppToolAction.SYNC in toolActions) {
-                        FilledTonalButton(onClick = onSyncRequested, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Sync folders")
+                        if (onFolderMetadataSyncRequested == null) {
+                            FilledTonalButton(onClick = onSyncRequested, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Sync folders")
+                            }
+                        } else {
+                            SharedToolRow(Icons.Default.Sync, "Sync metadata", onFolderMetadataSyncRequested)
+                            SharedToolRow(Icons.Default.Search, "Full scan") {
+                                onSyncRequested()
+                            }
                         }
                     }
                 }

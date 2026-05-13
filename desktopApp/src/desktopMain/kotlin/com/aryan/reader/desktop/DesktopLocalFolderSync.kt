@@ -4,6 +4,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LOCAL_FOLDER_ANNOTATION_SUFFIX
+import com.aryan.reader.shared.LOCAL_FOLDER_SIDECAR_HASH_PREFIX
 import com.aryan.reader.shared.LOCAL_FOLDER_SYNC_DATA_DIR
 import com.aryan.reader.shared.LocalFolderSyncEngine
 import com.aryan.reader.shared.LocalFolderSyncStats
@@ -13,6 +14,11 @@ import com.aryan.reader.shared.SharedFolderBookMetadata
 import com.aryan.reader.shared.SharedFolderScannedFile
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SyncedFolder
+import com.aryan.reader.shared.localFolderSyncAnnotationFileName
+import com.aryan.reader.shared.localFolderSyncAnnotationTempFileName
+import com.aryan.reader.shared.localFolderSyncMetadataFileName
+import com.aryan.reader.shared.localFolderSyncMetadataTempFileName
+import com.aryan.reader.shared.localFolderSyncSidecarStem
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
@@ -24,6 +30,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -60,9 +67,16 @@ object DesktopLocalFolderSync {
         state: SharedReaderScreenState,
         shelfRefs: List<BookShelfRef>,
         targetFolder: File? = null,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        metadataOnly: Boolean = false
     ): DesktopLocalFolderSyncResult {
         val requestedFolders = foldersToSync(state, targetFolder, nowMillis)
+        val mode = if (metadataOnly) "metadata" else "full"
+        logDesktopFolderSync(
+            "sync.start mode=$mode target=\"${targetFolder?.absolutePath?.folderSyncPreview() ?: "ALL"}\" " +
+                "requestedFolders=${requestedFolders.size} linkedFolders=${state.syncedFolders.size} " +
+                "books=${state.rawLibraryBooks.size}"
+        )
         var nextState = state
         var nextShelfRefs = shelfRefs
         var totalStats = LocalFolderSyncStats()
@@ -74,18 +88,36 @@ object DesktopLocalFolderSync {
         requestedFolders.forEach { folder ->
             val root = File(folder.uriString)
             if (!root.isDirectory) {
+                logDesktopFolderSync(
+                    "folder.skipMissing mode=$mode name=\"${folder.name.folderSyncPreview()}\" " +
+                        "root=\"${root.absolutePath.folderSyncPreview()}\""
+                )
                 failedFolders += folder.name
                 return@forEach
             }
 
-            val scannedFiles = scanFolder(root = root, sourceFolder = folder.uriString)
+            logDesktopFolderSync(
+                "folder.start mode=$mode name=\"${folder.name.folderSyncPreview()}\" " +
+                    "root=\"${root.absolutePath.folderSyncPreview()}\" allowed=${folder.allowedFileTypes.sortedBy { it.name }}"
+            )
+            val scannedFiles = if (metadataOnly) {
+                emptyList()
+            } else {
+                scanFolder(root = root, sourceFolder = folder.uriString)
+            }
             val remoteMetadata = readAllMetadata(root)
+            logDesktopFolderSync(
+                "folder.inputs mode=$mode name=\"${folder.name.folderSyncPreview()}\" " +
+                    "scanned=${scannedFiles.size} supported=${scannedFiles.count { it.type in folder.allowedFileTypes }} " +
+                    "remoteMetadata=${remoteMetadata.size}"
+            )
             val syncResult = LocalFolderSyncEngine.syncFolder(
                 state = nextState,
                 folder = folder,
                 files = scannedFiles,
                 remoteMetadata = remoteMetadata,
-                nowMillis = nowMillis
+                nowMillis = nowMillis,
+                metadataOnly = metadataOnly
             )
             nextState = syncResult.state
             nextShelfRefs = LocalFolderSyncEngine.applyIdMigrationsToShelfRefs(
@@ -95,25 +127,46 @@ object DesktopLocalFolderSync {
             allMigrations += syncResult.idMigrations
             allRemovedBookIds += syncResult.removedBookIds
             totalStats += syncResult.stats
+            logDesktopFolderSync(
+                "folder.engine mode=$mode name=\"${folder.name.folderSyncPreview()}\" " +
+                    "new=${syncResult.stats.newBooks} updated=${syncResult.stats.updatedBooks} " +
+                    "remoteUpdates=${syncResult.stats.remoteMetadataUpdates} removed=${syncResult.stats.removedBooks} " +
+                    "migrated=${syncResult.stats.migratedBooks} idMigrations=${syncResult.idMigrations.size}"
+            )
 
             var syncedBooks = nextState.rawLibraryBooks.filter { it.sourceFolder == folder.uriString }
-            importAnnotationSidecars(root, syncedBooks)
-            val metadataResult = DesktopFolderMetadataExtractor.enrichFolderBooks(
-                books = nextState.rawLibraryBooks,
-                sourceFolder = folder.uriString
+            logDesktopFolderSync(
+                "folder.sidecars.importCheck mode=$mode name=\"${folder.name.folderSyncPreview()}\" books=${syncedBooks.size}"
             )
-            if (metadataResult.stats.updatedBooks > 0) {
-                nextState = nextState.copy(rawLibraryBooks = metadataResult.books)
-                syncedBooks = nextState.rawLibraryBooks.filter { it.sourceFolder == folder.uriString }
+            importAnnotationSidecars(root, syncedBooks)
+            if (!metadataOnly) {
+                val metadataResult = DesktopFolderMetadataExtractor.enrichFolderBooks(
+                    books = nextState.rawLibraryBooks,
+                    sourceFolder = folder.uriString
+                )
+                if (metadataResult.stats.updatedBooks > 0) {
+                    nextState = nextState.copy(rawLibraryBooks = metadataResult.books)
+                    syncedBooks = nextState.rawLibraryBooks.filter { it.sourceFolder == folder.uriString }
+                }
+                totalMetadataStats += metadataResult.stats
+                logDesktopFolderSync(
+                    "folder.metadataExtraction name=\"${folder.name.folderSyncPreview()}\" " +
+                        "updated=${metadataResult.stats.updatedBooks} covers=${metadataResult.stats.coversUpdated}"
+                )
             }
-            totalMetadataStats += metadataResult.stats
             syncedBooks.forEach { book ->
                 saveBookMetadata(book)
-                savePdfAnnotationSidecar(book)
+                if (!metadataOnly) {
+                    savePdfAnnotationSidecar(book)
+                }
             }
+            logDesktopFolderSync(
+                "folder.done mode=$mode name=\"${folder.name.folderSyncPreview()}\" " +
+                    "savedCandidates=${syncedBooks.size}"
+            )
         }
 
-        return DesktopLocalFolderSyncResult(
+        val result = DesktopLocalFolderSyncResult(
             state = nextState,
             shelfRefs = nextShelfRefs,
             stats = totalStats,
@@ -122,6 +175,12 @@ object DesktopLocalFolderSync {
             removedBookIds = allRemovedBookIds,
             failedFolders = failedFolders
         )
+        logDesktopFolderSync(
+            "sync.done mode=$mode failed=${failedFolders.size} new=${totalStats.newBooks} " +
+                "updated=${totalStats.updatedBooks} remoteUpdates=${totalStats.remoteMetadataUpdates} " +
+                "removed=${totalStats.removedBooks} metadataExtracted=${totalMetadataStats.updatedBooks}"
+        )
+        return result
     }
 
     fun saveBookSidecars(book: BookItem) {
@@ -130,18 +189,56 @@ object DesktopLocalFolderSync {
     }
 
     fun saveBookMetadata(book: BookItem) {
-        val metadata = book.toSharedFolderBookMetadata() ?: return
-        val root = book.sourceFolder?.let(::File)?.takeIf { it.isDirectory } ?: return
+        val metadata = book.toSharedFolderBookMetadata()
+        if (metadata == null) {
+            logDesktopFolderSync(
+                "metadata.export.skipClean book=${book.id} title=\"${book.title.orEmpty().folderSyncPreview()}\" " +
+                    "progress=${book.progressPercentage} recent=${book.isRecent} bookmarks=${book.readerBookmarks.size} " +
+                    "highlights=${book.readerHighlights.size}"
+            )
+            return
+        }
+        val root = book.sourceFolder?.let(::File)?.takeIf { it.isDirectory }
+        if (root == null) {
+            logDesktopFolderSync(
+                "metadata.export.skipNoFolder book=${book.id} sourceFolder=\"${book.sourceFolder.orEmpty().folderSyncPreview()}\""
+            )
+            return
+        }
+        logDesktopFolderSync(
+            "metadata.export.request book=${book.id} timestamp=${metadata.lastModifiedTimestamp} " +
+                "progress=${metadata.progressPercentage} recent=${metadata.isRecent} " +
+                "root=\"${root.absolutePath.folderSyncPreview()}\""
+        )
         saveMetadataToFolder(root, metadata)
     }
 
     fun savePdfAnnotationSidecar(book: BookItem) {
-        val path = book.path?.takeIf { it.isNotBlank() } ?: return
-        if (book.type != FileType.PDF) return
-        val root = book.sourceFolder?.let(::File)?.takeIf { it.isDirectory } ?: return
+        val path = book.path?.takeIf { it.isNotBlank() }
+        if (path == null) {
+            logDesktopFolderSync("annotation.export.skipNoPath book=${book.id}")
+            return
+        }
+        if (book.type != FileType.PDF) {
+            logDesktopFolderSync("annotation.export.skipNonPdf book=${book.id} type=${book.type}")
+            return
+        }
+        val root = book.sourceFolder?.let(::File)?.takeIf { it.isDirectory }
+        if (root == null) {
+            logDesktopFolderSync(
+                "annotation.export.skipNoFolder book=${book.id} sourceFolder=\"${book.sourceFolder.orEmpty().folderSyncPreview()}\""
+            )
+            return
+        }
         val annotationFile = desktopPdfAnnotationFile(path)
         val bookmarkFile = desktopPdfBookmarkFile(path)
         val richTextFile = desktopPdfRichTextFile(path)
+        logDesktopFolderSync(
+            "annotation.export.check book=${book.id} root=\"${root.absolutePath.folderSyncPreview()}\" " +
+                "pdfPath=\"${path.folderSyncPreview()}\" hasAnnotations=${annotationFile.isFile} " +
+                "hasBookmarks=${bookmarkFile.isFile} hasText=${richTextFile.isFile} " +
+                "localTs=${maxOf(annotationFile.lastModifiedIfFile(), bookmarkFile.lastModifiedIfFile(), richTextFile.lastModifiedIfFile())}"
+        )
         val data = buildMap {
             if (annotationFile.isFile) {
                 val annotationJson = annotationFile.readText().trim()
@@ -175,6 +272,9 @@ object DesktopLocalFolderSync {
             }
         }
         if (data.isEmpty()) {
+            logDesktopFolderSync(
+                "annotation.export.skipNoLocalData book=${book.id} pdfPath=\"${path.folderSyncPreview()}\""
+            )
             SharedPdfRichTextLog.d("desktop.sync.exportSkipNoSidecarData book=${book.id} pdfPath=\"${path.richSyncPreview()}\"")
             return
         }
@@ -187,6 +287,10 @@ object DesktopLocalFolderSync {
         val dataJson = desktopFolderSyncJson.encodeToString(
             JsonElement.serializer(),
             JsonObject(data)
+        )
+        logDesktopFolderSync(
+            "annotation.export.request book=${book.id} timestamp=$timestamp keys=${data.keys.sorted()} " +
+                "root=\"${root.absolutePath.folderSyncPreview()}\""
         )
         if (data.containsKey("text")) {
             SharedPdfRichTextLog.d(
@@ -249,35 +353,64 @@ object DesktopLocalFolderSync {
 
     private fun readAllMetadata(root: File): Map<String, SharedFolderBookMetadata> {
         val syncDir = File(root, LOCAL_FOLDER_SYNC_DATA_DIR)
-        if (!syncDir.isDirectory) return emptyMap()
-        return syncDir.listFiles().orEmpty()
+        if (!syncDir.isDirectory) {
+            logDesktopFolderSync("metadata.read.noSyncDir root=\"${root.absolutePath.folderSyncPreview()}\"")
+            return emptyMap()
+        }
+        var candidates = 0
+        var parsed = 0
+        var failed = 0
+        val result = syncDir.listFiles().orEmpty()
             .asSequence()
-            .filter { it.isFile }
-            .mapNotNull { file -> file.metadataBookIdOrNull()?.let { it to file } }
-            .groupBy({ it.first }, { it.second })
-            .mapNotNull { (bookId, files) ->
-                val best = files
-                    .mapNotNull { file ->
-                        runCatching { SharedFolderBookMetadata.fromJsonString(file.readText()) }.getOrNull()
+            .filter { it.isFile && it.isMetadataSidecarCandidate() }
+            .mapNotNull { file ->
+                candidates++
+                runCatching { SharedFolderBookMetadata.fromJsonString(file.readText()) }
+                    .onSuccess { parsed++ }
+                    .onFailure { error ->
+                        failed++
+                        logDesktopFolderSync(
+                            "metadata.read.parseFailed file=\"${file.absolutePath.folderSyncPreview()}\" " +
+                                "error=${error.folderSyncSummary()}"
+                        )
                     }
-                    .filter { it.bookId == bookId }
-                    .maxByOrNull { it.lastModifiedTimestamp }
-                best?.let { bookId to it }
+                    .getOrNull()
             }
+            .groupBy { it.bookId }
+            .mapValues { (_, metadata) -> metadata.maxBy { it.lastModifiedTimestamp } }
             .toMap()
+        logDesktopFolderSync(
+            "metadata.read.done root=\"${root.absolutePath.folderSyncPreview()}\" " +
+                "candidates=$candidates parsed=$parsed failed=$failed winners=${result.size}"
+        )
+        return result
     }
 
     private fun saveMetadataToFolder(root: File, metadata: SharedFolderBookMetadata) {
         val syncDir = File(root, LOCAL_FOLDER_SYNC_DATA_DIR).apply { mkdirs() }
         val existing = resolveMetadataConflicts(syncDir, metadata.bookId, cleanup = true)
-        if (existing != null && existing.lastModifiedTimestamp > metadata.lastModifiedTimestamp) return
+        if (existing != null && existing.lastModifiedTimestamp > metadata.lastModifiedTimestamp) {
+            logDesktopFolderSync(
+                "metadata.save.skipNewerRemote book=${metadata.bookId} existingTs=${existing.lastModifiedTimestamp} " +
+                    "candidateTs=${metadata.lastModifiedTimestamp} root=\"${root.absolutePath.folderSyncPreview()}\""
+            )
+            return
+        }
 
-        val target = File(syncDir, ".${metadata.bookId}.json")
-        val temp = File(syncDir, ".${metadata.bookId}.tmp")
+        val target = File(syncDir, localFolderSyncMetadataFileName(metadata.bookId))
+        val temp = File(syncDir, uniqueFolderSyncTempName(localFolderSyncMetadataTempFileName(metadata.bookId)))
         runCatching {
             temp.writeText(metadata.toJsonString())
             moveReplacing(temp, target)
+            logDesktopFolderSync(
+                "metadata.save.done book=${metadata.bookId} timestamp=${metadata.lastModifiedTimestamp} " +
+                    "target=\"${target.absolutePath.folderSyncPreview()}\" bytes=${target.length()}"
+            )
         }.onFailure {
+            logDesktopFolderSync(
+                "metadata.save.failed book=${metadata.bookId} timestamp=${metadata.lastModifiedTimestamp} " +
+                    "target=\"${target.absolutePath.folderSyncPreview()}\" error=${it.folderSyncSummary()}"
+            )
             runCatching { temp.delete() }
         }
     }
@@ -287,18 +420,33 @@ object DesktopLocalFolderSync {
         bookId: String,
         cleanup: Boolean
     ): SharedFolderBookMetadata? {
+        val hashedStem = localFolderSyncSidecarStem(bookId)
         val candidates = syncDir.listFiles().orEmpty().filter { file ->
-            val normalized = file.name.removePrefix(".")
-            file.isFile && (
-                normalized == "$bookId.json" ||
-                    normalized.startsWith("$bookId.sync-conflict") ||
-                    normalized.startsWith("$bookId.json.sync-conflict")
-                )
+            val normalized = file.normalizedSidecarName()
+            file.isFile &&
+                file.isMetadataSidecarCandidate() &&
+                (
+                    normalized.matchesJsonSidecarStem(hashedStem) ||
+                        normalized.matchesJsonSidecarStem(bookId)
+                    )
         }
         if (candidates.isEmpty()) return null
+        if (candidates.size > 1) {
+            logDesktopFolderSync(
+                "metadata.conflicts book=$bookId candidates=${candidates.size} " +
+                    "dir=\"${syncDir.absolutePath.folderSyncPreview()}\" cleanup=$cleanup"
+            )
+        }
 
         val parsed = candidates.mapNotNull { file ->
-            val metadata = runCatching { SharedFolderBookMetadata.fromJsonString(file.readText()) }.getOrNull()
+            val metadata = runCatching { SharedFolderBookMetadata.fromJsonString(file.readText()) }
+                .onFailure { error ->
+                    logDesktopFolderSync(
+                        "metadata.conflict.parseFailed book=$bookId file=\"${file.absolutePath.folderSyncPreview()}\" " +
+                            "error=${error.folderSyncSummary()}"
+                    )
+                }
+                .getOrNull()
             metadata?.takeIf { it.bookId == bookId }?.let { file to it }
         }
         val winner = parsed.maxByOrNull { it.second.lastModifiedTimestamp } ?: return null
@@ -306,10 +454,21 @@ object DesktopLocalFolderSync {
         if (cleanup) {
             candidates
                 .filterNot { it == winner.first }
-                .forEach { runCatching { it.delete() } }
-            val correctName = ".${bookId}.json"
+                .forEach { file ->
+                    runCatching { file.delete() }
+                    logDesktopFolderSync(
+                        "metadata.conflict.deleteLoser book=$bookId file=\"${file.absolutePath.folderSyncPreview()}\""
+                    )
+                }
+            val correctName = localFolderSyncMetadataFileName(bookId)
             if (winner.first.name != correctName) {
-                runCatching { moveReplacing(winner.first, File(syncDir, correctName)) }
+                val target = File(syncDir, correctName)
+                runCatching { moveReplacing(winner.first, target) }
+                    .onSuccess {
+                        logDesktopFolderSync(
+                            "metadata.conflict.renameWinner book=$bookId target=\"${target.absolutePath.folderSyncPreview()}\""
+                        )
+                    }
             }
         }
 
@@ -318,30 +477,61 @@ object DesktopLocalFolderSync {
 
     private fun preloadAnnotationSidecars(root: File): Map<String, AnnotationSidecar> {
         val syncDir = File(root, LOCAL_FOLDER_SYNC_DATA_DIR)
-        if (!syncDir.isDirectory) return emptyMap()
-        return syncDir.listFiles().orEmpty()
+        if (!syncDir.isDirectory) {
+            logDesktopFolderSync("annotation.read.noSyncDir root=\"${root.absolutePath.folderSyncPreview()}\"")
+            return emptyMap()
+        }
+        var candidates = 0
+        var parsed = 0
+        val result = syncDir.listFiles().orEmpty()
             .asSequence()
-            .filter { it.isFile }
-            .mapNotNull { file -> file.annotationBookIdOrNull()?.let { it to file } }
-            .groupBy({ it.first }, { it.second })
-            .mapNotNull { (bookId, files) ->
-                val best = files
-                    .mapNotNull { it.readAnnotationSidecarOrNull() }
-                    .maxByOrNull { it.timestamp }
-                best?.let { bookId to it }
+            .filter { it.isFile && it.isAnnotationSidecarCandidate() }
+            .mapNotNull { file ->
+                candidates++
+                file.readAnnotationSidecarOrNull(fallbackBookId = file.legacyAnnotationBookIdOrNull())
+                    ?.also { parsed++ }
             }
+            .groupBy { it.bookId }
+            .mapValues { (_, sidecars) -> sidecars.maxBy { it.timestamp } }
             .toMap()
+        logDesktopFolderSync(
+            "annotation.read.done root=\"${root.absolutePath.folderSyncPreview()}\" " +
+                "candidates=$candidates parsed=$parsed winners=${result.size}"
+        )
+        return result
     }
 
     private fun importAnnotationSidecars(root: File, books: List<BookItem>) {
-        if (books.isEmpty()) return
+        if (books.isEmpty()) {
+            logDesktopFolderSync("annotation.import.skipNoBooks root=\"${root.absolutePath.folderSyncPreview()}\"")
+            return
+        }
         val sidecars = preloadAnnotationSidecars(root)
-        if (sidecars.isEmpty()) return
+        if (sidecars.isEmpty()) {
+            logDesktopFolderSync(
+                "annotation.import.skipNoSidecars root=\"${root.absolutePath.folderSyncPreview()}\" books=${books.size}"
+            )
+            return
+        }
 
         books.forEach { book ->
-            val path = book.path?.takeIf { it.isNotBlank() } ?: return@forEach
-            if (book.type != FileType.PDF) return@forEach
-            val sidecar = sidecars[book.id] ?: return@forEach
+            val path = book.path?.takeIf { it.isNotBlank() }
+            if (path == null) {
+                logDesktopFolderSync("annotation.import.skipNoPath book=${book.id}")
+                return@forEach
+            }
+            if (book.type != FileType.PDF) {
+                logDesktopFolderSync("annotation.import.skipNonPdf book=${book.id} type=${book.type}")
+                return@forEach
+            }
+            val sidecar = sidecars[book.id]
+            if (sidecar == null) {
+                logDesktopFolderSync(
+                    "annotation.import.skipNoMatchingSidecar book=${book.id} available=${sidecars.keys.size} " +
+                        "root=\"${root.absolutePath.folderSyncPreview()}\""
+                )
+                return@forEach
+            }
             val annotationFile = desktopPdfAnnotationFile(path)
             val bookmarkFile = desktopPdfBookmarkFile(path)
             val richTextFile = desktopPdfRichTextFile(path)
@@ -350,7 +540,14 @@ object DesktopLocalFolderSync {
                 bookmarkFile.lastModifiedIfFile(),
                 richTextFile.lastModifiedIfFile()
             )
+            logDesktopFolderSync(
+                "annotation.import.compare book=${book.id} remoteTs=${sidecar.timestamp} localTs=$localTimestamp " +
+                    "keys=${sidecar.data.keys.sorted()}"
+            )
             if (sidecar.timestamp <= localTimestamp + 1000L) {
+                logDesktopFolderSync(
+                    "annotation.import.skipOlder book=${book.id} remoteTs=${sidecar.timestamp} localTs=$localTimestamp"
+                )
                 if (sidecar.data.containsKey("text") || richTextFile.isFile) {
                     SharedPdfRichTextLog.d(
                         "desktop.sync.importSkipOlder book=${book.id} sidecarTs=${sidecar.timestamp} " +
@@ -365,11 +562,18 @@ object DesktopLocalFolderSync {
                 annotationFile.parentFile?.mkdirs()
                 annotationFile.writeText(SharedPdfAnnotationSerializer.encode(annotations))
                 annotationFile.setLastModified(sidecar.timestamp)
+                logDesktopFolderSync(
+                    "annotation.import.writeAnnotations book=${book.id} count=${annotations.size} " +
+                        "file=\"${annotationFile.absolutePath.folderSyncPreview()}\""
+                )
             }
             sidecar.data["bookmarks"]?.let { bookmarks ->
                 bookmarkFile.parentFile?.mkdirs()
                 bookmarkFile.writeText(desktopFolderSyncJson.encodeToString(JsonElement.serializer(), bookmarks))
                 bookmarkFile.setLastModified(sidecar.timestamp)
+                logDesktopFolderSync(
+                    "annotation.import.writeBookmarks book=${book.id} file=\"${bookmarkFile.absolutePath.folderSyncPreview()}\""
+                )
             }
             sidecar.data["text"]?.let { richText ->
                 val richDocument = SharedPdfRichTextSerializer.decodeElement(richText)
@@ -381,6 +585,10 @@ object DesktopLocalFolderSync {
                 richTextFile.parentFile?.mkdirs()
                 richTextFile.writeText(SharedPdfRichTextSerializer.encode(richDocument))
                 richTextFile.setLastModified(sidecar.timestamp)
+                logDesktopFolderSync(
+                    "annotation.import.writeText book=${book.id} textLen=${richDocument.text.length} " +
+                        "spans=${richDocument.spans.size} file=\"${richTextFile.absolutePath.folderSyncPreview()}\""
+                )
             }
         }
     }
@@ -392,9 +600,20 @@ object DesktopLocalFolderSync {
         timestamp: Long
     ) {
         val syncDir = File(root, LOCAL_FOLDER_SYNC_DATA_DIR).apply { mkdirs() }
-        val data = desktopFolderSyncJson.parseElementOrNull(jsonPayload)?.jsonObjectOrNull() ?: return
+        val data = desktopFolderSyncJson.parseElementOrNull(jsonPayload)?.jsonObjectOrNull()
+        if (data == null) {
+            logDesktopFolderSync(
+                "annotation.save.skipInvalidPayload book=$bookId timestamp=$timestamp " +
+                    "root=\"${root.absolutePath.folderSyncPreview()}\" payloadLen=${jsonPayload.length}"
+            )
+            return
+        }
         val existing = resolveAnnotationConflicts(syncDir, bookId, cleanup = true)
         if (existing != null && existing.timestamp >= timestamp) {
+            logDesktopFolderSync(
+                "annotation.save.skipNewerExisting book=$bookId existingTs=${existing.timestamp} " +
+                    "candidateTs=$timestamp root=\"${root.absolutePath.folderSyncPreview()}\" keys=${data.keys.sorted()}"
+            )
             if (data.containsKey("text")) {
                 SharedPdfRichTextLog.d(
                     "desktop.sync.saveSidecarSkipExisting book=$bookId existingTs=${existing.timestamp} " +
@@ -407,15 +626,20 @@ object DesktopLocalFolderSync {
         val wrapper = JsonObject(
             mapOf(
                 "version" to JsonPrimitive(1),
+                "bookId" to JsonPrimitive(bookId),
                 "timestamp" to JsonPrimitive(timestamp),
                 "data" to data
             )
         )
-        val target = File(syncDir, ".${bookId}${LOCAL_FOLDER_ANNOTATION_SUFFIX}.json")
-        val temp = File(syncDir, ".${bookId}${LOCAL_FOLDER_ANNOTATION_SUFFIX}.tmp")
+        val target = File(syncDir, localFolderSyncAnnotationFileName(bookId))
+        val temp = File(syncDir, uniqueFolderSyncTempName(localFolderSyncAnnotationTempFileName(bookId)))
         runCatching {
             temp.writeText(desktopFolderSyncJson.encodeToString(JsonElement.serializer(), wrapper))
             moveReplacing(temp, target)
+            logDesktopFolderSync(
+                "annotation.save.done book=$bookId timestamp=$timestamp keys=${data.keys.sorted()} " +
+                    "target=\"${target.absolutePath.folderSyncPreview()}\" bytes=${target.length()}"
+            )
             if (data.containsKey("text")) {
                 SharedPdfRichTextLog.d(
                     "desktop.sync.saveSidecar book=$bookId timestamp=$timestamp " +
@@ -423,6 +647,10 @@ object DesktopLocalFolderSync {
                 )
             }
         }.onFailure {
+            logDesktopFolderSync(
+                "annotation.save.failed book=$bookId timestamp=$timestamp keys=${data.keys.sorted()} " +
+                    "target=\"${target.absolutePath.folderSyncPreview()}\" error=${it.folderSyncSummary()}"
+            )
             if (data.containsKey("text")) {
                 SharedPdfRichTextLog.d(
                     "desktop.sync.saveSidecarFailed book=$bookId timestamp=$timestamp " +
@@ -438,22 +666,40 @@ object DesktopLocalFolderSync {
         bookId: String,
         cleanup: Boolean
     ): AnnotationSidecar? {
-        val candidates = syncDir.listFiles().orEmpty().filter { file ->
-            file.isFile && file.annotationBookIdOrNull() == bookId
-        }
-        if (candidates.isEmpty()) return null
-        val parsed = candidates.mapNotNull { file ->
-            file.readAnnotationSidecarOrNull()?.let { file to it }
+        val parsed = syncDir.listFiles().orEmpty()
+            .filter { file -> file.isFile && file.isAnnotationSidecarCandidate() }
+            .mapNotNull { file ->
+                file.readAnnotationSidecarOrNull(fallbackBookId = file.legacyAnnotationBookIdOrNull())
+                    ?.takeIf { it.bookId == bookId }
+                    ?.let { file to it }
+            }
+        if (parsed.isEmpty()) return null
+        if (parsed.size > 1) {
+            logDesktopFolderSync(
+                "annotation.conflicts book=$bookId candidates=${parsed.size} " +
+                    "dir=\"${syncDir.absolutePath.folderSyncPreview()}\" cleanup=$cleanup"
+            )
         }
         val winner = parsed.maxByOrNull { it.second.timestamp } ?: return null
 
         if (cleanup) {
-            candidates
+            parsed.map { it.first }
                 .filterNot { it == winner.first }
-                .forEach { runCatching { it.delete() } }
-            val correctName = ".${bookId}${LOCAL_FOLDER_ANNOTATION_SUFFIX}.json"
+                .forEach { file ->
+                    runCatching { file.delete() }
+                    logDesktopFolderSync(
+                        "annotation.conflict.deleteLoser book=$bookId file=\"${file.absolutePath.folderSyncPreview()}\""
+                    )
+                }
+            val correctName = localFolderSyncAnnotationFileName(bookId)
             if (winner.first.name != correctName) {
-                runCatching { moveReplacing(winner.first, File(syncDir, correctName)) }
+                val target = File(syncDir, correctName)
+                runCatching { moveReplacing(winner.first, target) }
+                    .onSuccess {
+                        logDesktopFolderSync(
+                            "annotation.conflict.renameWinner book=$bookId target=\"${target.absolutePath.folderSyncPreview()}\""
+                        )
+                    }
             }
         }
 
@@ -462,6 +708,7 @@ object DesktopLocalFolderSync {
 }
 
 private data class AnnotationSidecar(
+    val bookId: String,
     val timestamp: Long,
     val data: JsonObject
 )
@@ -485,25 +732,23 @@ private fun File.shouldSyncBookFile(): Boolean {
     return parentFile?.name != LOCAL_FOLDER_SYNC_DATA_DIR
 }
 
-private fun File.metadataBookIdOrNull(): String? {
+private fun File.isMetadataSidecarCandidate(): Boolean {
     val fileName = name
-    if (fileName.contains(LOCAL_FOLDER_ANNOTATION_SUFFIX)) return null
-    if (fileName.endsWith(".tmp") || fileName.contains(".syncthing.")) return null
-    if (!fileName.endsWith(".json") && !fileName.contains(".sync-conflict")) return null
-    val normalized = fileName.removePrefix(".")
-    val base = if (normalized.contains(".sync-conflict")) {
-        normalized.substringBefore(".sync-conflict")
-    } else {
-        normalized.substringBeforeLast(".json")
-    }
-    return base.removeSuffix(".json").takeIf { it.isNotBlank() }
+    if (fileName.contains(LOCAL_FOLDER_ANNOTATION_SUFFIX)) return false
+    if (fileName.contains(".tmp") || fileName.contains(".syncthing.")) return false
+    return fileName.endsWith(".json") || fileName.contains(".sync-conflict")
 }
 
-private fun File.annotationBookIdOrNull(): String? {
+private fun File.isAnnotationSidecarCandidate(): Boolean {
+    val fileName = name
+    if (!fileName.contains(LOCAL_FOLDER_ANNOTATION_SUFFIX)) return false
+    if (fileName.contains(".tmp") || fileName.contains(".syncthing.")) return false
+    return fileName.endsWith(".json") || fileName.contains(".sync-conflict")
+}
+
+private fun File.legacyAnnotationBookIdOrNull(): String? {
     var candidate = name
-    if (!candidate.contains(LOCAL_FOLDER_ANNOTATION_SUFFIX)) return null
-    if (!candidate.endsWith(".json") || candidate.endsWith(".tmp")) return null
-    if (candidate.contains(".syncthing.")) return null
+    if (!isAnnotationSidecarCandidate()) return null
     if (candidate.contains(".sync-conflict")) {
         candidate = candidate.substringBefore(".sync-conflict")
     }
@@ -511,15 +756,37 @@ private fun File.annotationBookIdOrNull(): String? {
     if (candidate.endsWith(LOCAL_FOLDER_ANNOTATION_SUFFIX)) {
         candidate = candidate.substring(0, candidate.length - LOCAL_FOLDER_ANNOTATION_SUFFIX.length)
     }
-    return candidate.removePrefix(".").takeIf { it.isNotBlank() }
+    val normalized = candidate.removePrefix(".")
+    if (normalized.startsWith(LOCAL_FOLDER_SIDECAR_HASH_PREFIX)) return null
+    return normalized.takeIf { it.isNotBlank() }
 }
 
-private fun File.readAnnotationSidecarOrNull(): AnnotationSidecar? {
+private fun File.normalizedSidecarName(): String {
+    return name.removePrefix(".")
+}
+
+private fun String.matchesJsonSidecarStem(stem: String): Boolean {
+    return this == "$stem.json" ||
+        startsWith("$stem.sync-conflict") ||
+        startsWith("$stem.json.sync-conflict")
+}
+
+private fun File.readAnnotationSidecarOrNull(fallbackBookId: String? = null): AnnotationSidecar? {
     return runCatching {
         val root = desktopFolderSyncJson.parseToJsonElement(readText()).jsonObject
+        val bookId = root["bookId"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?: fallbackBookId
+            ?: error("Missing annotation sidecar bookId")
         val timestamp = root["timestamp"]?.jsonPrimitive?.longOrNull ?: 0L
         val data = root["data"]?.jsonObjectOrNull() ?: error("Missing annotation sidecar data")
-        AnnotationSidecar(timestamp = timestamp, data = data)
+        AnnotationSidecar(bookId = bookId, timestamp = timestamp, data = data)
+    }.onFailure { error ->
+        logDesktopFolderSync(
+            "annotation.read.parseFailed file=\"${absolutePath.folderSyncPreview()}\" error=${error.folderSyncSummary()}"
+        )
     }.getOrNull()
 }
 
@@ -545,6 +812,12 @@ private fun File.canonicalOrAbsolute(): File {
 
 private fun File.lastModifiedIfFile(): Long {
     return if (isFile) lastModified() else 0L
+}
+
+private fun uniqueFolderSyncTempName(baseName: String): String {
+    val stem = baseName.removeSuffix(".tmp")
+    val nonce = "${System.currentTimeMillis()}_${Thread.currentThread().id}_${System.nanoTime().toString(36)}"
+    return "$stem.$nonce.tmp"
 }
 
 private fun String.richSyncPreview(maxLength: Int = 160): String {
