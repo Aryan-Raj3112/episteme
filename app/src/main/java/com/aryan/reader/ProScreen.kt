@@ -274,7 +274,7 @@ private fun ProTierCard(
 ) {
     val productDetails = proUpgradeState.productDetails
     val billingClientReady = proUpgradeState.billingClientReady
-    val localPurchaseExistsForOtherAccount = !isProUser && proUpgradeState.hasValidPurchase
+    val localPurchaseExistsForOtherAccount = !isProUser && proUpgradeState.hasAccountConflict
 
     var originalFormattedPrice by remember { mutableStateOf("$9.99") }
 
@@ -467,23 +467,6 @@ private fun ProTierCard(
                             Text(stringResource(R.string.verifying_purchase))
                         }
                     }
-                    localPurchaseExistsForOtherAccount -> {
-                        OutlinedButton(
-                            onClick = onShowExistingPurchaseDialog,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp),
-                            shape = MaterialTheme.shapes.medium
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = stringResource(R.string.info),
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                            AutoSizeText(stringResource(R.string.existing_purchase_found))
-                        }
-                    }
                     productDetails != null -> {
                         Button(
                             onClick = {
@@ -537,6 +520,17 @@ private fun ProTierCard(
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center
                         )
+                    }
+                    localPurchaseExistsForOtherAccount -> {
+                        TextButton(onClick = onShowExistingPurchaseDialog) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = stringResource(R.string.info),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.size(ButtonDefaults.IconSpacing))
+                            AutoSizeText(stringResource(R.string.existing_purchase_found))
+                        }
                     }
                     else -> {
                         LegalText(prefixText = stringResource(R.string.legal_by_purchasing))

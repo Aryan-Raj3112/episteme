@@ -120,6 +120,12 @@ val SharedPdfAnnotationDefaultTools: List<PdfInkTool> = listOf(
     PdfInkTool.ERASER
 )
 
+private enum class SharedPdfAnnotationSettingsPanel {
+    PEN,
+    HIGHLIGHTER,
+    ERASER
+}
+
 @Composable
 fun SharedPdfAnnotationToolDock(
     selectedTool: PdfInkTool,
@@ -136,45 +142,101 @@ fun SharedPdfAnnotationToolDock(
     isHighlighterSnapEnabled: Boolean = false,
     onHighlighterSnapChange: (Boolean) -> Unit = {}
 ) {
-    val strokeRange = selectedTool.sharedPdfStrokeWidthRange()
-    val sliderValue = strokeWidth.coerceIn(strokeRange.start, strokeRange.endInclusive)
-    val showColorPalette = selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER
-    val showStrokeSettings = selectedTool != PdfInkTool.TEXT
-    val palette = if (selectedTool.isHighlighter) {
-        highlighterPalette.ifEmpty { SharedPdfHighlighterPalette.defaultColors }
-    } else {
-        penPalette.ifEmpty { SharedPdfAnnotationDefaults.penPalette }
+    val availableTools = tools.distinct()
+    val penTools = listOf(PdfInkTool.FOUNTAIN_PEN, PdfInkTool.PEN, PdfInkTool.PENCIL)
+        .filter { it in availableTools }
+    val highlighterTools = listOf(PdfInkTool.HIGHLIGHTER, PdfInkTool.HIGHLIGHTER_ROUND)
+        .filter { it in availableTools }
+    var lastPenTool by remember { mutableStateOf(PdfInkTool.PEN) }
+    var lastHighlighterTool by remember { mutableStateOf(PdfInkTool.HIGHLIGHTER) }
+    var activeSettingsPanel by remember { mutableStateOf<SharedPdfAnnotationSettingsPanel?>(null) }
+
+    LaunchedEffect(selectedTool) {
+        when {
+            selectedTool in penTools -> lastPenTool = selectedTool
+            selectedTool in highlighterTools -> lastHighlighterTool = selectedTool
+            selectedTool != PdfInkTool.ERASER -> activeSettingsPanel = null
+        }
     }
 
-    Surface(
-        color = Color(0xFF1E1E1E),
-        contentColor = Color.White,
-        shape = RoundedCornerShape(24.dp),
-        shadowElevation = 8.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            color = Color(0xFF1E1E1E),
+            contentColor = Color.White,
+            shape = RoundedCornerShape(28.dp),
+            shadowElevation = 8.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            tools.distinct().chunked(4).forEach { rowTools ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    rowTools.forEach { tool ->
-                        SharedPdfToolButton(
-                            tool = tool,
-                            selectedTool = selectedTool,
-                            selectedColor = selectedColor,
-                            strokeWidth = strokeWidth,
-                            onToolSelected = onToolSelected
-                        )
-                    }
+            Row(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (penTools.isNotEmpty()) {
+                    val tool = selectedTool.takeIf { it in penTools } ?: lastPenTool.takeIf { it in penTools } ?: penTools.first()
+                    SharedPdfToolButton(
+                        tool = tool,
+                        selectedTool = selectedTool,
+                        selectedColor = selectedColor,
+                        strokeWidth = strokeWidth,
+                        onToolSelected = {
+                            onToolSelected(tool)
+                            activeSettingsPanel = SharedPdfAnnotationSettingsPanel.PEN
+                        }
+                    )
                 }
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (highlighterTools.isNotEmpty()) {
+                    val tool = selectedTool.takeIf { it in highlighterTools }
+                        ?: lastHighlighterTool.takeIf { it in highlighterTools }
+                        ?: highlighterTools.first()
+                    SharedPdfToolButton(
+                        tool = tool,
+                        selectedTool = selectedTool,
+                        selectedColor = selectedColor,
+                        strokeWidth = strokeWidth,
+                        onToolSelected = {
+                            onToolSelected(tool)
+                            activeSettingsPanel = SharedPdfAnnotationSettingsPanel.HIGHLIGHTER
+                        }
+                    )
+                }
+
+                if (PdfInkTool.TEXT in availableTools) {
+                    SharedPdfToolButton(
+                        tool = PdfInkTool.TEXT,
+                        selectedTool = selectedTool,
+                        selectedColor = selectedColor,
+                        strokeWidth = strokeWidth,
+                        onToolSelected = {
+                            activeSettingsPanel = null
+                            onToolSelected(PdfInkTool.TEXT)
+                        }
+                    )
+                }
+
+                if (PdfInkTool.ERASER in availableTools) {
+                    SharedPdfToolButton(
+                        tool = PdfInkTool.ERASER,
+                        selectedTool = selectedTool,
+                        selectedColor = selectedColor,
+                        strokeWidth = strokeWidth,
+                        onToolSelected = {
+                            onToolSelected(PdfInkTool.ERASER)
+                            activeSettingsPanel = SharedPdfAnnotationSettingsPanel.ERASER
+                        }
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(22.dp)
+                        .width(1.dp)
+                        .background(Color.White.copy(alpha = 0.18f))
+                )
+
                 DockCircleButton(onClick = onUndo) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Undo,
@@ -192,48 +254,161 @@ fun SharedPdfAnnotationToolDock(
                     )
                 }
             }
+        }
 
-            if (showColorPalette) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    palette.forEach { argb ->
-                        val selected = argb == selectedColor
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(Color(argb).copy(alpha = 1f))
-                                .border(
-                                    width = if (selected) 2.dp else 1.dp,
-                                    color = if (selected) Color.White else Color.White.copy(alpha = 0.22f),
-                                    shape = CircleShape
-                                )
-                                .clickable { onColorSelected(argb) }
+        activeSettingsPanel?.let { panel ->
+            val toolsForPanel = when (panel) {
+                SharedPdfAnnotationSettingsPanel.PEN -> penTools
+                SharedPdfAnnotationSettingsPanel.HIGHLIGHTER -> highlighterTools
+                SharedPdfAnnotationSettingsPanel.ERASER -> listOf(PdfInkTool.ERASER).filter { it in availableTools }
+            }
+            if (toolsForPanel.isNotEmpty()) {
+                val panelTool = when (panel) {
+                    SharedPdfAnnotationSettingsPanel.PEN -> selectedTool.takeIf { it in penTools } ?: lastPenTool
+                    SharedPdfAnnotationSettingsPanel.HIGHLIGHTER -> selectedTool.takeIf { it in highlighterTools } ?: lastHighlighterTool
+                    SharedPdfAnnotationSettingsPanel.ERASER -> PdfInkTool.ERASER
+                }
+                SharedPdfAnnotationToolSettingsPanel(
+                    panel = panel,
+                    tools = toolsForPanel,
+                    selectedTool = panelTool,
+                    selectedColor = selectedColor,
+                    strokeWidth = strokeWidth,
+                    penPalette = penPalette,
+                    highlighterPalette = highlighterPalette,
+                    onToolSelected = { tool ->
+                        when (panel) {
+                            SharedPdfAnnotationSettingsPanel.PEN -> lastPenTool = tool
+                            SharedPdfAnnotationSettingsPanel.HIGHLIGHTER -> lastHighlighterTool = tool
+                            SharedPdfAnnotationSettingsPanel.ERASER -> Unit
+                        }
+                        onToolSelected(tool)
+                    },
+                    onColorSelected = onColorSelected,
+                    onStrokeWidthChange = onStrokeWidthChange,
+                    isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+                    onHighlighterSnapChange = onHighlighterSnapChange
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedPdfAnnotationToolSettingsPanel(
+    panel: SharedPdfAnnotationSettingsPanel,
+    tools: List<PdfInkTool>,
+    selectedTool: PdfInkTool,
+    selectedColor: Int,
+    strokeWidth: Float,
+    penPalette: List<Int>,
+    highlighterPalette: List<Int>,
+    onToolSelected: (PdfInkTool) -> Unit,
+    onColorSelected: (Int) -> Unit,
+    onStrokeWidthChange: (Float) -> Unit,
+    isHighlighterSnapEnabled: Boolean,
+    onHighlighterSnapChange: (Boolean) -> Unit
+) {
+    val isEraser = panel == SharedPdfAnnotationSettingsPanel.ERASER
+    val isHighlighter = panel == SharedPdfAnnotationSettingsPanel.HIGHLIGHTER
+    val effectiveTool = if (isEraser) PdfInkTool.ERASER else selectedTool
+    val strokeRange = effectiveTool.sharedPdfStrokeWidthRange()
+    val sliderValue = strokeWidth.coerceIn(strokeRange.start, strokeRange.endInclusive)
+    val activeColor = if (isEraser) Color.White else Color(selectedColor)
+
+    Surface(
+        color = Color(0xFF1E1E1E),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(24.dp),
+        shadowElevation = 8.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (isEraser) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(104.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val diameter = (sliderValue * 800f).coerceIn(10f, 128f).dp
+                    Canvas(modifier = Modifier.size(diameter)) {
+                        drawCircle(
+                            color = Color.White.copy(alpha = 0.3f),
+                            radius = size.minDimension / 2f
+                        )
+                        drawCircle(
+                            color = Color.White,
+                            radius = size.minDimension / 2f,
+                            style = Stroke(width = 2.dp.toPx())
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    tools.forEach { tool ->
+                        SharedPdfToolButton(
+                            tool = tool,
+                            selectedTool = selectedTool,
+                            selectedColor = selectedColor,
+                            strokeWidth = strokeWidth,
+                            onToolSelected = onToolSelected
                         )
                     }
                 }
             }
 
-            if (showStrokeSettings) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Thickness ${sliderValue.sharedPdfStrokePercent(strokeRange)}",
-                        color = Color.White.copy(alpha = 0.86f),
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Slider(
-                        value = sliderValue,
-                        onValueChange = onStrokeWidthChange,
-                        valueRange = strokeRange,
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = if (selectedTool == PdfInkTool.ERASER) Color.White else Color(selectedColor).copy(alpha = 1f),
-                            inactiveTrackColor = Color.White.copy(alpha = 0.18f)
+            if (!isEraser) {
+                SharedPdfInkColorPalette(
+                    colors = if (isHighlighter) {
+                        highlighterPalette.ifEmpty { SharedPdfHighlighterPalette.defaultColors }
+                    } else {
+                        penPalette.ifEmpty { SharedPdfAnnotationDefaults.penPalette }
+                    },
+                    selectedColor = selectedColor,
+                    matchRgbOnly = isHighlighter,
+                    onColorSelected = { color ->
+                        onColorSelected(
+                            if (isHighlighter) {
+                                color.withSharedPdfAlpha(Color(selectedColor).alpha)
+                            } else {
+                                color
+                            }
                         )
-                    )
-                }
+                    }
+                )
             }
 
-            if (selectedTool.isHighlighter) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = if (isEraser) {
+                        "Eraser size ${sliderValue.sharedPdfStrokePercent(strokeRange)}"
+                    } else {
+                        "Thickness ${sliderValue.sharedPdfStrokePercent(strokeRange)}"
+                    },
+                    color = Color.White.copy(alpha = 0.86f),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Slider(
+                    value = sliderValue,
+                    onValueChange = onStrokeWidthChange,
+                    valueRange = strokeRange,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = activeColor.copy(alpha = 1f),
+                        inactiveTrackColor = Color.White.copy(alpha = 0.18f)
+                    )
+                )
+            }
+
+            if (isHighlighter) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -255,7 +430,57 @@ fun SharedPdfAnnotationToolDock(
                         )
                     )
                 }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val alpha = Color(selectedColor).alpha.coerceIn(0.1f, 1f)
+                    Text(
+                        text = "Opacity ${(alpha * 100f).roundToInt()}",
+                        color = Color.White.copy(alpha = 0.86f),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Slider(
+                        value = alpha,
+                        onValueChange = { nextAlpha ->
+                            onColorSelected(selectedColor.withSharedPdfAlpha(nextAlpha))
+                        },
+                        valueRange = 0.1f..1f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = Color(selectedColor).copy(alpha = 1f),
+                            inactiveTrackColor = Color.White.copy(alpha = 0.18f)
+                        )
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun SharedPdfInkColorPalette(
+    colors: List<Int>,
+    selectedColor: Int,
+    matchRgbOnly: Boolean,
+    onColorSelected: (Int) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        colors.forEach { argb ->
+            val selected = if (matchRgbOnly) {
+                (argb and 0x00FFFFFF) == (selectedColor and 0x00FFFFFF)
+            } else {
+                argb == selectedColor
+            }
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(Color(argb).copy(alpha = 1f))
+                    .border(
+                        width = if (selected) 2.dp else 1.dp,
+                        color = if (selected) Color.White else Color.White.copy(alpha = 0.22f),
+                        shape = CircleShape
+                    )
+                    .clickable { onColorSelected(argb) }
+            )
         }
     }
 }
@@ -742,6 +967,7 @@ fun SharedPdfTextStyleControls(
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun SharedPdfAnnotationOverlay(
     annotations: List<SharedPdfAnnotation>,
@@ -750,7 +976,10 @@ fun SharedPdfAnnotationOverlay(
     activeTool: PdfInkTool = PdfInkTool.PEN,
     activeStrokeColorArgb: Int = 0xFF1976D2.toInt(),
     activeStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).strokeWidth,
-    selectedAnnotationId: String? = null
+    selectedAnnotationId: String? = null,
+    eraserPosition: Offset? = null,
+    showEraserIndicator: Boolean = false,
+    eraserStrokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER).strokeWidth
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
     val density = LocalDensity.current
@@ -758,13 +987,6 @@ fun SharedPdfAnnotationOverlay(
     Box(Modifier.fillMaxSize()) {
         Canvas(Modifier.fillMaxSize()) {
             annotations.forEach { annotation ->
-                val isSelected = annotation.matchesSelectedAnnotation(selectedAnnotationId)
-                if (isSelected && annotation.kind == PdfAnnotationKind.INK) {
-                    SharedPdfInkRenderer.createRenderData(annotation, canvasSize)?.let { renderData ->
-                        drawInkRenderData(renderData, selectedOutline = true)
-                    }
-                }
-
                 when (annotation.kind) {
                     PdfAnnotationKind.HIGHLIGHT -> {
                         val highlightBounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
@@ -791,19 +1013,9 @@ fun SharedPdfAnnotationOverlay(
                         }
                     }
                 }
-
-                if (isSelected && annotation.kind != PdfAnnotationKind.INK) {
-                    val bounds = annotation.bounds ?: annotation.boundsList.firstOrNull() ?: return@forEach
-                    drawRect(
-                        color = Color(0xFF64B5F6),
-                        topLeft = bounds.topLeft(canvasSize),
-                        size = bounds.size(canvasSize),
-                        style = Stroke(width = 2f)
-                    )
-                }
             }
 
-            if (activeStroke.size > 1) {
+            if (activeStroke.isNotEmpty()) {
                 val activeAnnotation = SharedPdfAnnotation(
                     id = "active",
                     pageIndex = 0,
@@ -814,6 +1026,22 @@ fun SharedPdfAnnotationOverlay(
                     strokeWidth = activeStrokeWidth
                 )
                 SharedPdfInkRenderer.createRenderData(activeAnnotation, canvasSize)?.let(::drawInkRenderData)
+            }
+
+            if (showEraserIndicator && eraserPosition != null) {
+                val radius = SharedPdfInkRenderer.effectiveStrokeWidthPx(eraserStrokeWidth, canvasSize)
+                    .coerceAtLeast(8.dp.toPx())
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.3f),
+                    radius = radius,
+                    center = eraserPosition
+                )
+                drawCircle(
+                    color = Color.Black,
+                    radius = radius,
+                    center = eraserPosition,
+                    style = Stroke(width = 1.dp.toPx())
+                )
             }
         }
 
@@ -1426,11 +1654,6 @@ private fun DrawScope.drawInkPreview(
         ),
         blendMode = if (tool.isHighlighter) BlendMode.SrcOver else BlendMode.SrcOver
     )
-}
-
-private fun SharedPdfAnnotation.matchesSelectedAnnotation(selectedAnnotationId: String?): Boolean {
-    if (selectedAnnotationId == null) return false
-    return id == selectedAnnotationId || id.startsWith("${selectedAnnotationId}_line_")
 }
 
 private val PdfInkTool.isHighlighter: Boolean

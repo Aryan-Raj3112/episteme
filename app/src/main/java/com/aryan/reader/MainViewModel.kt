@@ -1711,10 +1711,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 return@launch
             }
 
+            val tokenHash = PurchaseAccountObfuscator.purchaseTokenHash(purchase.purchaseToken)
+            Timber.i(
+                "Verifying purchase. productId=$productId tokenHash=$tokenHash orderId=${purchase.orderId} " +
+                        "obfuscatedAccountId=${purchase.obfuscatedAccountId} uid=${_internalState.value.currentUser?.uid} " +
+                        "silent=$isSilentMigrationCheck"
+            )
+
             val result = cloudflareRepository.verifyPurchase(purchase.purchaseToken, productId)
 
             if (result.isSuccess) {
                 Timber.i("Backend verification successful. Firestore will update the app.")
+                billingClientWrapper.clearAccountConflict()
 
                 if (productId.startsWith("credits_")) {
                     billingClientWrapper.consumePurchase(purchase.purchaseToken)
@@ -1733,6 +1741,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.i("Migration/Refresh check: Purchase token is already claimed. Silently ignoring.")
                     if (productId.startsWith("credits_")) {
                         billingClientWrapper.consumePurchase(purchase.purchaseToken)
+                    } else {
+                        billingClientWrapper.markAccountConflict()
                     }
                 } else {
                     val errorMessage = appContext.getString(R.string.error_purchase_verification)
@@ -2922,7 +2932,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun launchPurchaseFlow(activity: android.app.Activity, productId: String = BillingClientWrapper.PRO_LIFETIME_PRODUCT_ID) {
         Timber.d("Attempting to launch purchase flow for $productId. Pro state is: ${proUpgradeState.value}")
-        billingClientWrapper.launchPurchaseFlow(activity, productId)
+        val currentUser = uiState.value.currentUser
+        if (currentUser == null) {
+            _internalState.update {
+                it.copy(bannerMessage = BannerMessage(appContext.getString(R.string.sign_in_to_purchase), isError = true))
+            }
+            return
+        }
+
+        billingClientWrapper.clearAccountConflict()
+        billingClientWrapper.launchPurchaseFlow(
+            activity = activity,
+            productId = productId,
+            obfuscatedAccountId = PurchaseAccountObfuscator.obfuscatedAccountId(currentUser.uid)
+        )
     }
 
     fun clearBillingError() {

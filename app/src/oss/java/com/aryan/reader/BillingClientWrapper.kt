@@ -14,6 +14,7 @@ data class ProUpgradeState(
     val creditProducts: List<ProductDetailsEntity> = emptyList(),
     val hasValidPurchase: Boolean = false,
     val activePurchases: List<PurchaseEntity> = emptyList(),
+    val hasAccountConflict: Boolean = false,
     val billingClientReady: Boolean = false,
     val error: String? = null,
     val isVerifying: Boolean = false
@@ -35,13 +36,25 @@ class BillingClientWrapper(
         // No-op
     }
 
-    fun launchPurchaseFlow(activity: Activity, productId: String = PRO_LIFETIME_PRODUCT_ID) {
+    fun launchPurchaseFlow(
+        activity: Activity,
+        productId: String = PRO_LIFETIME_PRODUCT_ID,
+        obfuscatedAccountId: String? = null
+    ) {
         _proUpgradeState.value = _proUpgradeState.value.copy(error = "Not available in Open Source version")
     }
     fun consumePurchase(purchaseToken: String) {}
 
     fun clearError() {
         _proUpgradeState.value = _proUpgradeState.value.copy(error = null)
+    }
+
+    fun markAccountConflict() {
+        _proUpgradeState.value = _proUpgradeState.value.copy(hasAccountConflict = true, isVerifying = false)
+    }
+
+    fun clearAccountConflict() {
+        _proUpgradeState.value = _proUpgradeState.value.copy(hasAccountConflict = false)
     }
 
     fun clearVerificationState() {

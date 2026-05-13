@@ -28,7 +28,8 @@ data class PurchaseEntity(
     val purchaseToken: String,
     val purchaseTime: Long,
     val isAcknowledged: Boolean,
-    val isAutoRenewing: Boolean
+    val isAutoRenewing: Boolean,
+    val obfuscatedAccountId: String? = null
 )
 
 /**

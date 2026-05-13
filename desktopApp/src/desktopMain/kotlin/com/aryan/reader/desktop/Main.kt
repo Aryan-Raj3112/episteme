@@ -3494,6 +3494,7 @@ private fun PdfReaderScreen(
     val verticalPageRootOffsets = remember(document.path) { mutableStateMapOf<Int, Offset>() }
     val paginatedRenderCache = remember(document.path) { mutableStateMapOf<Int, DesktopPdfCachedPageRender>() }
     var activeStroke by remember(document.path, pdfState.pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
+    var eraserPosition by remember(document.path, pdfState.pageIndex, pdfState.selectedTool) { mutableStateOf<Offset?>(null) }
     var isHighlighterSnapEnabled by remember(document.path) { mutableStateOf(false) }
     var selectionStartIndex by remember(document.path, pdfState.pageIndex) { mutableStateOf<Int?>(null) }
     var selectionEndIndex by remember(document.path, pdfState.pageIndex) { mutableStateOf<Int?>(null) }
@@ -3571,6 +3572,7 @@ private fun PdfReaderScreen(
 
     fun clearPdfInteractionState() {
         activeStroke = emptyList()
+        eraserPosition = null
         selectionStartIndex = null
         selectionEndIndex = null
         selectionStartHit = null
@@ -3711,16 +3713,19 @@ private fun PdfReaderScreen(
         SharedPdfRichTextLog.d(
             "desktop.tool.select tool=$tool richMode=$isRichTextMode page=${pdfState.pageIndex}"
         )
+        val previousTool = pdfState.selectedTool
         deactivateRichTextMode()
         if (tool != PdfInkTool.TEXT) {
             commitActiveTextDraft()
         }
-        if (tool == PdfInkTool.TEXT && pdfState.isTextSelectionMode) {
+        if (pdfState.isTextSelectionMode) {
             dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(false))
             clearPdfInteractionState()
         }
-        dispatchPdf(SharedPdfReaderAction.ToolSelected(tool))
-        if (tool.isDesktopHighlighter) {
+        if (previousTool != tool) {
+            dispatchPdf(SharedPdfReaderAction.ToolSelected(tool))
+        }
+        if (tool.isDesktopHighlighter && previousTool != tool) {
             pdfHighlighterPalette.sanitized().colors.firstOrNull()?.let { colorArgb ->
                 dispatchPdf(SharedPdfReaderAction.ColorSelected(colorArgb))
             }
@@ -3991,6 +3996,11 @@ private fun PdfReaderScreen(
             ?: textStyleConfig
     }
     val activePdfTtsChunk = pdfExtrasState.cloudTts.progress.currentChunk
+
+    LaunchedEffect(selectedTool) {
+        activeStroke = emptyList()
+        eraserPosition = null
+    }
 
     fun updatePdfHighlighterPalette(nextPalette: SharedPdfHighlighterPalette) {
         val previousSlot = pdfHighlighterPalette.sanitized().colors.indexOf(selectedColor)
@@ -6290,6 +6300,7 @@ private fun PdfReaderScreen(
                                             if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
                                             val start = down.position
                                             if (selectedTool == PdfInkTool.ERASER) {
+                                                eraserPosition = start
                                                 val annotationSnapshot = currentPdfAnnotations
                                                 val updatedAnnotations = annotationSnapshot.filterNot {
                                                     it.pageIndex == pageIndex && it.sharedPdfHitTest(
@@ -6312,12 +6323,14 @@ private fun PdfReaderScreen(
                                                 val event = awaitPointerEvent()
                                                 if (event.changes.size > 1) {
                                                     eraserPreviousPoint = null
+                                                    eraserPosition = null
                                                     activeStroke = emptyList()
                                                     return@awaitEachGesture
                                                 }
                                                 val change = event.changes.firstOrNull { it.id == pointerId }
                                                     ?: run {
                                                         eraserPreviousPoint = null
+                                                        eraserPosition = null
                                                         activeStroke = emptyList()
                                                         return@awaitEachGesture
                                                     }
@@ -6340,15 +6353,17 @@ private fun PdfReaderScreen(
                                                         )
                                                     }
                                                     eraserPreviousPoint = null
+                                                    eraserPosition = null
                                                     activeStroke = emptyList()
                                                     return@awaitEachGesture
                                                 }
                                                 if (!change.positionChanged()) continue
                                                 val distance = (change.position - start).getDistance()
-                                                if (!dragStarted && distance <= viewConfiguration.touchSlop) continue
+                                                if (selectedTool != PdfInkTool.ERASER && !dragStarted && distance <= viewConfiguration.touchSlop) continue
                                                 dragStarted = true
                                                 if (selectedTool == PdfInkTool.ERASER) {
                                                     val point = change.position
+                                                    eraserPosition = point
                                                     val previousPoint = eraserPreviousPoint
                                                     val annotationSnapshot = currentPdfAnnotations
                                                     val updatedAnnotations = annotationSnapshot.filterNot {
@@ -6416,7 +6431,10 @@ private fun PdfReaderScreen(
                                 activeTool = selectedTool,
                                 activeStrokeColorArgb = selectedColor,
                                 activeStrokeWidth = strokeWidth,
-                                selectedAnnotationId = selectedAnnotationId
+                                selectedAnnotationId = selectedAnnotationId,
+                                eraserPosition = eraserPosition,
+                                showEraserIndicator = selectedTool == PdfInkTool.ERASER,
+                                eraserStrokeWidth = strokeWidth
                             )
                             PdfTextSelectionHandles(
                                 selection = textSelection,
@@ -7382,6 +7400,7 @@ private fun DesktopVerticalPdfPage(
     var selectionMenuOffset by remember(document.path, pageIndex) { mutableStateOf<Offset?>(null) }
     var activeSelectionHandle by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfSelectionHandle?>(null) }
     var activeStroke by remember(document.path, pageIndex, selectedTool) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
+    var eraserPosition by remember(document.path, pageIndex, selectedTool) { mutableStateOf<Offset?>(null) }
     val currentTextSelection by rememberUpdatedState(textSelection)
     val currentAnnotations by rememberUpdatedState(annotations)
 
@@ -7398,6 +7417,7 @@ private fun DesktopVerticalPdfPage(
     fun clearInteractionState() {
         clearSelection()
         activeStroke = emptyList()
+        eraserPosition = null
     }
 
     LaunchedEffect(document.path, pageIndex, scale, shouldRender) {
@@ -7437,11 +7457,13 @@ private fun DesktopVerticalPdfPage(
             clearSelection()
         } else {
             activeStroke = emptyList()
+            eraserPosition = null
         }
     }
 
     LaunchedEffect(selectedTool) {
         activeStroke = emptyList()
+        eraserPosition = null
     }
 
     Column(
@@ -7754,6 +7776,7 @@ private fun DesktopVerticalPdfPage(
                                 onSelectPage(pageIndex)
                                 clearInteractionState()
                                 if (selectedTool == PdfInkTool.ERASER) {
+                                    eraserPosition = start
                                     val annotationSnapshot = currentAnnotations
                                     val updatedAnnotations = annotationSnapshot.filterNot {
                                         it.pageIndex == pageIndex && it.sharedPdfHitTest(
@@ -7778,12 +7801,14 @@ private fun DesktopVerticalPdfPage(
                                     val event = awaitPointerEvent()
                                     if (event.changes.size > 1) {
                                         eraserPreviousPoint = null
+                                        eraserPosition = null
                                         activeStroke = emptyList()
                                         return@awaitEachGesture
                                     }
                                     val change = event.changes.firstOrNull { it.id == pointerId }
                                         ?: run {
                                             eraserPreviousPoint = null
+                                            eraserPosition = null
                                             activeStroke = emptyList()
                                             return@awaitEachGesture
                                         }
@@ -7804,15 +7829,17 @@ private fun DesktopVerticalPdfPage(
                                             )
                                         }
                                         eraserPreviousPoint = null
+                                        eraserPosition = null
                                         activeStroke = emptyList()
                                         return@awaitEachGesture
                                     }
                                     if (!change.positionChanged()) continue
                                     val distance = (change.position - start).getDistance()
-                                    if (!dragStarted && distance <= viewConfiguration.touchSlop) continue
+                                    if (selectedTool != PdfInkTool.ERASER && !dragStarted && distance <= viewConfiguration.touchSlop) continue
                                     dragStarted = true
                                     if (selectedTool == PdfInkTool.ERASER) {
                                         val point = change.position
+                                        eraserPosition = point
                                         val previousPoint = eraserPreviousPoint
                                         val annotationSnapshot = currentAnnotations
                                         val updatedAnnotations = annotationSnapshot.filterNot {
@@ -7965,7 +7992,10 @@ private fun DesktopVerticalPdfPage(
                         activeTool = selectedTool,
                         activeStrokeColorArgb = selectedColor,
                         activeStrokeWidth = strokeWidth,
-                        selectedAnnotationId = selectedAnnotationId
+                        selectedAnnotationId = selectedAnnotationId,
+                        eraserPosition = eraserPosition,
+                        showEraserIndicator = selectedTool == PdfInkTool.ERASER,
+                        eraserStrokeWidth = strokeWidth
                     )
                     PdfTextSelectionHandles(
                         selection = textSelection,
