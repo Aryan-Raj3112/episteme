@@ -148,9 +148,7 @@ internal class DesktopAiByokStore(
         private const val LegacyGroqKey = "groqKey"
 
         fun defaultSettingsFile(): File {
-            val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
-            return File(baseDir, "Episteme/ai-byok.properties")
+            return File(desktopUserConfigRoot(), "ai-byok.properties")
         }
     }
 }

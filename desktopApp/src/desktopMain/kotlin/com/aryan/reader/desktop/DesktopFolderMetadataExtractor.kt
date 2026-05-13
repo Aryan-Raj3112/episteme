@@ -418,9 +418,7 @@ object DesktopFolderMetadataExtractor {
         if (!overridePath.isNullOrBlank()) {
             return File(overridePath).apply { mkdirs() }
         }
-        val root = DesktopLibraryDatabase.defaultDatabaseFile().parentFile
-            ?: File(System.getProperty("user.home"), "AppData/Roaming/Episteme")
-        return File(root, "cover_cache").apply { mkdirs() }
+        return File(desktopUserCacheRoot(), "cover_cache").apply { mkdirs() }
     }
 
     private fun ZipFile.readTextOrNull(path: String): String? {

@@ -118,9 +118,7 @@ class DesktopCustomFontStore(
             "Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/533.21.1 (KHTML, like Gecko) Version/5.0.5 Safari/533.21.1"
 
         fun defaultFontsDir(): File {
-            val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
-            return File(baseDir, "Episteme/custom_fonts")
+            return File(desktopUserDataRoot(), "custom_fonts")
         }
     }
 }

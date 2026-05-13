@@ -530,7 +530,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         }
                     }
                     settings {
-                        cachePath = File("cache").absolutePath
+                        cachePath = File(desktopUserCacheRoot(), "kcef").absolutePath
                     }
                 },
                 onError = { error ->
@@ -3121,9 +3121,7 @@ private object DesktopReaderTextures {
     }
 
     private fun readerTextureDirectory(): File {
-        val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-            ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
-        return File(baseDir, "Episteme/reader_textures")
+        return File(desktopUserDataRoot(), "reader_textures")
     }
 }
 
@@ -9186,31 +9184,23 @@ private const val DesktopPdfSelectionHandleTouchTopPx = 8f
 private const val DesktopPdfSelectionHandleTouchBottomPx = 40f
 
 internal fun desktopPdfAnnotationFile(documentPath: String): File {
-    val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-        ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
     val safeName = documentPath.hashCode().toString().replace("-", "n")
-    return File(baseDir, "Episteme/annotations/pdf_$safeName.json")
+    return File(desktopUserDataRoot(), "annotations/pdf_$safeName.json")
 }
 
 internal fun desktopPdfBookmarkFile(documentPath: String): File {
-    val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-        ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
     val safeName = documentPath.hashCode().toString().replace("-", "n")
-    return File(baseDir, "Episteme/annotations/pdf_${safeName}_bookmarks.json")
+    return File(desktopUserDataRoot(), "annotations/pdf_${safeName}_bookmarks.json")
 }
 
 internal fun desktopPdfRichTextFile(documentPath: String): File {
-    val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-        ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
     val safeName = documentPath.hashCode().toString().replace("-", "n")
-    return File(baseDir, "Episteme/annotations/pdf_${safeName}_rich_text.json")
+    return File(desktopUserDataRoot(), "annotations/pdf_${safeName}_rich_text.json")
 }
 
 private fun desktopPdfSearchIndexFile(documentPath: String): File {
-    val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-        ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
     val safeName = documentPath.hashCode().toString().replace("-", "n")
-    return File(baseDir, "Episteme/search/pdf_${safeName}_text_index.tsv")
+    return File(desktopUserCacheRoot(), "search/pdf_${safeName}_text_index.tsv")
 }
 
 private fun restoreDesktopPdfSearchIndex(document: DesktopPdfDocument, indexFile: File): Int {

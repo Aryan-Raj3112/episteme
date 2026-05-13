@@ -110,7 +110,7 @@ internal object DesktopComicArchive {
             .getOrElse { commandError ->
                 error(
                     "Could not open CBR with libarchive. " +
-                        "Bundle archive.dll/libarchive for desktop, or keep Windows tar/bsdtar available. " +
+                        "Bundle libarchive for this desktop platform, or keep tar/bsdtar available on PATH. " +
                         "Native: ${nativeResult.exceptionOrNull()?.shortMessage().orEmpty()} " +
                         "Command: ${commandError.shortMessage()}"
                 )
@@ -558,7 +558,7 @@ private object DesktopLibarchive {
                 .getOrNull()
         } ?: error(
             "Native libarchive was not found. Set READER_LIBARCHIVE_PATH/reader.libarchive.path " +
-                "or bundle archive.dll/libarchive for this platform."
+                "or bundle libarchive for this platform."
         )
     }
 

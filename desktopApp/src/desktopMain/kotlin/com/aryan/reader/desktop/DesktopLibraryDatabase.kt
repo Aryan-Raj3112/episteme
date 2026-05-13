@@ -19,9 +19,7 @@ class DesktopLibraryDatabase(
 
     companion object {
         fun defaultDatabaseFile(): File {
-            val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
-            return File(baseDir, "Episteme/library.json")
+            return File(desktopUserDataRoot(), "library.json")
         }
     }
 }

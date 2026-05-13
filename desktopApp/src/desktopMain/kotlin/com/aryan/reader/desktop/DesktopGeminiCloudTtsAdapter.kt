@@ -452,9 +452,7 @@ private suspend fun playCachedWav(file: File, player: DesktopStreamingPcmPlayer)
 }
 
 private fun defaultDesktopTtsCacheRoot(): File {
-    val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-        ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
-    return File(baseDir, "Episteme/TTS_Cache")
+    return File(desktopUserCacheRoot(), "TTS_Cache")
 }
 
 private fun buildGeminiTtsSetup(speakerId: String): String {

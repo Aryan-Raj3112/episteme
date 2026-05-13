@@ -82,9 +82,7 @@ class SharedJvmBookLoadCache(
         fun defaultCacheRoot(): File {
             val overridePath = System.getProperty("reader.book.load.cache.dir")
             if (!overridePath.isNullOrBlank()) return File(overridePath).apply { mkdirs() }
-            val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
-            return File(baseDir, "Episteme/book_load_cache").apply { mkdirs() }
+            return File(sharedJvmEpistemeCacheRoot(), "book_load_cache").apply { mkdirs() }
         }
     }
 }

@@ -169,9 +169,7 @@ class SharedEpubPaginationCache(
         fun defaultCacheRoot(): File {
             val overridePath = System.getProperty("reader.epub.pagination.cache.dir")
             if (!overridePath.isNullOrBlank()) return File(overridePath).apply { mkdirs() }
-            val baseDir = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                ?: File(System.getProperty("user.home"), "AppData/Roaming").absolutePath
-            return File(baseDir, "Episteme/epub_page_cache").apply { mkdirs() }
+            return File(sharedJvmEpistemeCacheRoot(), "epub_page_cache").apply { mkdirs() }
         }
     }
 }

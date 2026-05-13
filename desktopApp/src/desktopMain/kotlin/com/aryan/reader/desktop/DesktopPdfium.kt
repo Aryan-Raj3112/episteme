@@ -151,7 +151,7 @@ object DesktopPdfium {
     private val zoomSpec = DesktopPdfZoomSpec
     private val api: PdfiumLibrary by lazy {
         require(pdfiumDll.exists()) {
-            "Missing Pdfium DLL. Expected pdfium-v8-win-x64 under third_party/pdfium/win-x64-v8/bin/pdfium.dll."
+            missingPdfiumLibraryMessage(pdfiumDll)
         }
         Native.load(pdfiumDll.absolutePath, PdfiumLibrary::class.java)
     }
@@ -1066,14 +1066,21 @@ object DesktopPdfium {
     }
 
     private fun resolvePdfiumDll(): File {
-        val overridePath = System.getProperty("reader.pdfium.dll")
+        val overridePath = System.getProperty("reader.pdfium.path")
+            ?: System.getenv("READER_PDFIUM_PATH")
+            ?: System.getProperty("reader.pdfium.dll")
             ?: System.getenv("READER_PDFIUM_DLL")
         if (!overridePath.isNullOrBlank()) {
             return File(overridePath).absoluteFile
         }
 
-        val relativePath = listOf("third_party", "pdfium", "win-x64-v8", "bin", "pdfium.dll")
-            .joinToString(File.separator)
+        val platform = currentDesktopPlatform()
+        val relativePath = desktopPdfiumRelativePath(platform)
+        val resourceDir = System.getProperty(ComposeApplicationResourcesDirProperty)
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::File)
+        resourceDir?.resolve(relativePath)?.absoluteFile?.takeIf { it.exists() }?.let { return it }
+
         val roots = generateSequence(File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
             .take(6)
             .toList()
@@ -1082,6 +1089,22 @@ object DesktopPdfium {
             .map { File(it, relativePath).absoluteFile }
             .firstOrNull { it.exists() }
             ?: File(File(System.getProperty("user.dir")).absoluteFile, relativePath).absoluteFile
+    }
+
+    private fun desktopPdfiumRelativePath(platform: DesktopPlatform): String {
+        return listOf(
+            "third_party",
+            "pdfium",
+            platform.pdfiumDirectoryName,
+            platform.pdfiumLibraryDirectoryName,
+            platform.pdfiumLibraryFileName
+        ).joinToString(File.separator)
+    }
+
+    private fun missingPdfiumLibraryMessage(expectedFile: File): String {
+        val platform = currentDesktopPlatform()
+        return "Missing Pdfium library for ${platform.os.name.lowercase()}-${platform.architecture.resourceName}. " +
+            "Expected ${expectedFile.absolutePath}. You can also set reader.pdfium.path or READER_PDFIUM_PATH."
     }
 
     private fun Memory.toBufferedImage(width: Int, height: Int, stride: Int): BufferedImage {

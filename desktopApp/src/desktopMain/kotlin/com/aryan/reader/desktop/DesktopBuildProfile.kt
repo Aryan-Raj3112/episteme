@@ -48,22 +48,41 @@ internal fun ReaderAiByokSettings.withDesktopFeaturePolicy(
 }
 
 internal fun bundledDesktopWebViewDir(): File {
+    val platform = currentDesktopPlatform()
     val resourceDir = System.getProperty(ComposeApplicationResourcesDirProperty)
         ?.takeIf { it.isNotBlank() }
         ?.let(::File)
     return listOfNotNull(
         resourceDir?.resolve("kcef-bundle"),
         File(System.getProperty("user.dir"), "kcef-bundle"),
+        File(System.getProperty("user.dir"), "desktopApp/${platform.kcefBundleDirectoryName}"),
         File(System.getProperty("user.dir"), "desktopApp/kcef-bundle"),
+        File("desktopApp/${platform.kcefBundleDirectoryName}"),
         File("desktopApp/kcef-bundle"),
+        File(platform.kcefBundleDirectoryName),
         File("kcef-bundle")
     ).firstOrNull(::isBundledDesktopWebViewPresent)
         ?: resourceDir?.resolve("kcef-bundle")
-        ?: File("kcef-bundle")
+        ?: File(platform.kcefBundleDirectoryName)
 }
 
-internal fun isBundledDesktopWebViewPresent(dir: File): Boolean {
+internal fun isBundledDesktopWebViewPresent(
+    dir: File,
+    platform: DesktopPlatform = currentDesktopPlatform()
+): Boolean {
     return dir.isDirectory &&
-        dir.resolve("jcef.dll").isFile &&
-        dir.resolve("libcef.dll").isFile
+        bundledDesktopWebViewRequiredPaths(platform).all { requiredPath ->
+            dir.resolve(requiredPath).exists()
+        }
+}
+
+internal fun bundledDesktopWebViewRequiredPaths(
+    platform: DesktopPlatform = currentDesktopPlatform()
+): List<String> {
+    return when (platform.os) {
+        DesktopOperatingSystem.WINDOWS -> listOf("jcef.dll", "libcef.dll")
+        DesktopOperatingSystem.LINUX -> listOf("libcef.so", "chrome-sandbox", "icudtl.dat", "locales")
+        DesktopOperatingSystem.MACOS -> listOf("jcef Helper.app", "Chromium Embedded Framework.framework")
+        DesktopOperatingSystem.OTHER -> emptyList()
+    }
 }

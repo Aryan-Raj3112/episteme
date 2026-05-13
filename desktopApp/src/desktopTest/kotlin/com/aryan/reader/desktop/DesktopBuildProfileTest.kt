@@ -45,11 +45,30 @@ class DesktopBuildProfileTest {
     fun `bundled webview detection requires cef binaries`() {
         val dir = Files.createTempDirectory("episteme-kcef-test").toFile()
         try {
-            assertFalse(isBundledDesktopWebViewPresent(dir))
+            val windowsX64 = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+            assertFalse(isBundledDesktopWebViewPresent(dir, windowsX64))
             File(dir, "jcef.dll").writeText("jcef")
             File(dir, "libcef.dll").writeText("cef")
 
-            assertTrue(isBundledDesktopWebViewPresent(dir))
+            assertTrue(isBundledDesktopWebViewPresent(dir, windowsX64))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `linux bundled webview detection requires cef shared library and resources`() {
+        val dir = Files.createTempDirectory("episteme-linux-kcef-test").toFile()
+        try {
+            val linuxX64 = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+            assertFalse(isBundledDesktopWebViewPresent(dir, linuxX64))
+
+            File(dir, "libcef.so").writeText("cef")
+            File(dir, "chrome-sandbox").writeText("sandbox")
+            File(dir, "icudtl.dat").writeText("icu")
+            File(dir, "locales").mkdir()
+
+            assertTrue(isBundledDesktopWebViewPresent(dir, linuxX64))
         } finally {
             dir.deleteRecursively()
         }
