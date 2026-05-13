@@ -146,43 +146,15 @@ fun ReaderWorkspaceShell(
                         content()
                     }
 
-                    if (
-                        (leftPanelOpen && model.leftSections.isNotEmpty()) ||
-                        (rightPanelOpen && model.inspectorSections.isNotEmpty())
-                    ) {
-                        SharedReaderModalLayer(
-                            onDismiss = {
-                                leftPanelOpen = false
-                                rightPanelOpen = false
-                            },
-                            level = SharedReaderModalLevel.Panel
-                        ) {
-                            Box(Modifier.fillMaxSize()) {
-                                if (leftPanelOpen && model.leftSections.isNotEmpty()) {
-                                    ReaderWorkspaceOverlayPanel(
-                                        title = "Reader",
-                                        onClose = { leftPanelOpen = false },
-                                        modifier = Modifier
-                                            .align(Alignment.CenterStart)
-                                            .width(if (wide) 340.dp else 320.dp)
-                                    ) {
-                                        leftSidebar { leftPanelOpen = false }
-                                    }
-                                }
-                                if (rightPanelOpen && model.inspectorSections.isNotEmpty()) {
-                                    ReaderWorkspaceOverlayPanel(
-                                        title = "Tools",
-                                        onClose = { rightPanelOpen = false },
-                                        modifier = Modifier
-                                            .align(Alignment.CenterEnd)
-                                            .width(if (wide) 380.dp else 360.dp)
-                                    ) {
-                                        rightInspector()
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    ReaderWorkspacePanelOverlays(
+                        showLeftPanel = leftPanelOpen && model.leftSections.isNotEmpty(),
+                        showRightPanel = rightPanelOpen && model.inspectorSections.isNotEmpty(),
+                        wide = wide,
+                        onCloseLeftPanel = { leftPanelOpen = false },
+                        onCloseRightPanel = { rightPanelOpen = false },
+                        leftSidebar = leftSidebar,
+                        rightInspector = rightInspector
+                    )
                 }
 
                 Box(
@@ -194,6 +166,44 @@ fun ReaderWorkspaceShell(
                 ) {
                     bottomBar()
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderWorkspacePanelOverlays(
+    showLeftPanel: Boolean,
+    showRightPanel: Boolean,
+    wide: Boolean,
+    onCloseLeftPanel: () -> Unit,
+    onCloseRightPanel: () -> Unit,
+    leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
+    rightInspector: @Composable () -> Unit
+) {
+    if (!showLeftPanel && !showRightPanel) return
+
+    Box(Modifier.fillMaxSize()) {
+        if (showLeftPanel) {
+            ReaderWorkspaceOverlayPanel(
+                title = "Reader",
+                onClose = onCloseLeftPanel,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(if (wide) 340.dp else 320.dp)
+            ) {
+                leftSidebar(onCloseLeftPanel)
+            }
+        }
+        if (showRightPanel) {
+            ReaderWorkspaceOverlayPanel(
+                title = "Tools",
+                onClose = onCloseRightPanel,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .width(if (wide) 380.dp else 360.dp)
+            ) {
+                rightInspector()
             }
         }
     }

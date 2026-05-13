@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.calculateCentroid
@@ -114,9 +116,11 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isCtrlPressed as isPointerCtrlPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -6281,26 +6285,68 @@ private fun PdfReaderScreen(
                                         )
                                     } else {
                                         var eraserPreviousPoint: Offset? = null
-                                        detectDragGestures(
-                                            onDragStart = { start ->
-                                                if (selectedTool == PdfInkTool.ERASER) {
-                                                    val annotationSnapshot = currentPdfAnnotations
-                                                    val updatedAnnotations = annotationSnapshot.filterNot {
-                                                        it.pageIndex == pageIndex && it.sharedPdfHitTest(
-                                                            point = start,
-                                                            size = pageCanvasSize,
-                                                            eraserStrokeWidth = strokeWidth
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+                                            val start = down.position
+                                            if (selectedTool == PdfInkTool.ERASER) {
+                                                val annotationSnapshot = currentPdfAnnotations
+                                                val updatedAnnotations = annotationSnapshot.filterNot {
+                                                    it.pageIndex == pageIndex && it.sharedPdfHitTest(
+                                                        point = start,
+                                                        size = pageCanvasSize,
+                                                        eraserStrokeWidth = strokeWidth
+                                                    )
+                                                }
+                                                if (updatedAnnotations.size != annotationSnapshot.size) {
+                                                    dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(updatedAnnotations))
+                                                }
+                                                eraserPreviousPoint = start
+                                            } else {
+                                                activeStroke = listOf(start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis()))
+                                            }
+
+                                            val pointerId = down.id
+                                            var dragStarted = false
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                if (event.changes.size > 1) {
+                                                    eraserPreviousPoint = null
+                                                    activeStroke = emptyList()
+                                                    return@awaitEachGesture
+                                                }
+                                                val change = event.changes.firstOrNull { it.id == pointerId }
+                                                    ?: run {
+                                                        eraserPreviousPoint = null
+                                                        activeStroke = emptyList()
+                                                        return@awaitEachGesture
+                                                    }
+                                                if (change.changedToUp()) {
+                                                    change.consume()
+                                                    if (selectedTool != PdfInkTool.ERASER && activeStroke.isNotEmpty()) {
+                                                        dispatchPdf(
+                                                            SharedPdfReaderAction.AnnotationAdded(
+                                                                SharedPdfAnnotation(
+                                                                    id = "ink_${System.currentTimeMillis()}",
+                                                                    pageIndex = pageIndex,
+                                                                    kind = PdfAnnotationKind.INK,
+                                                                    tool = selectedTool,
+                                                                    points = activeStroke,
+                                                                    colorArgb = selectedColor,
+                                                                    strokeWidth = strokeWidth,
+                                                                    createdAt = System.currentTimeMillis()
+                                                                )
+                                                            )
                                                         )
                                                     }
-                                                    if (updatedAnnotations.size != annotationSnapshot.size) {
-                                                        dispatchPdf(SharedPdfReaderAction.AnnotationsChanged(updatedAnnotations))
-                                                    }
-                                                    eraserPreviousPoint = start
-                                                } else {
-                                                    activeStroke = listOf(start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis()))
+                                                    eraserPreviousPoint = null
+                                                    activeStroke = emptyList()
+                                                    return@awaitEachGesture
                                                 }
-                                            },
-                                            onDrag = { change, _ ->
+                                                if (!change.positionChanged()) continue
+                                                val distance = (change.position - start).getDistance()
+                                                if (!dragStarted && distance <= viewConfiguration.touchSlop) continue
+                                                dragStarted = true
                                                 if (selectedTool == PdfInkTool.ERASER) {
                                                     val point = change.position
                                                     val previousPoint = eraserPreviousPoint
@@ -6326,32 +6372,9 @@ private fun PdfReaderScreen(
                                                         timestamp = System.currentTimeMillis()
                                                     )
                                                 }
-                                            },
-                                            onDragEnd = {
-                                                eraserPreviousPoint = null
-                                                if (activeStroke.size > 1) {
-                                                    dispatchPdf(
-                                                        SharedPdfReaderAction.AnnotationAdded(
-                                                            SharedPdfAnnotation(
-                                                                id = "ink_${System.currentTimeMillis()}",
-                                                                pageIndex = pageIndex,
-                                                                kind = PdfAnnotationKind.INK,
-                                                                tool = selectedTool,
-                                                                points = activeStroke,
-                                                                colorArgb = selectedColor,
-                                                                strokeWidth = strokeWidth,
-                                                                createdAt = System.currentTimeMillis()
-                                                            )
-                                                        )
-                                                    )
-                                                }
-                                                activeStroke = emptyList()
-                                            },
-                                            onDragCancel = {
-                                                eraserPreviousPoint = null
-                                                activeStroke = emptyList()
+                                                change.consume()
                                             }
-                                        )
+                                        }
                                     }
                                 }
                         ) {
@@ -7724,30 +7747,70 @@ private fun DesktopVerticalPdfPage(
                             )
                         } else {
                             var eraserPreviousPoint: Offset? = null
-                            detectDragGestures(
-                                onDragStart = { start ->
-                                    onSelectPage(pageIndex)
-                                    clearInteractionState()
-                                    if (selectedTool == PdfInkTool.ERASER) {
-                                        val annotationSnapshot = currentAnnotations
-                                        val updatedAnnotations = annotationSnapshot.filterNot {
-                                            it.pageIndex == pageIndex && it.sharedPdfHitTest(
-                                                point = start,
-                                                size = pageCanvasSize,
-                                                eraserStrokeWidth = strokeWidth
-                                            )
-                                        }
-                                        if (updatedAnnotations.size != annotationSnapshot.size) {
-                                            onAnnotationsChanged(updatedAnnotations)
-                                        }
-                                        eraserPreviousPoint = start
-                                    } else {
-                                        activeStroke = listOf(
-                                            start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis())
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+                                val start = down.position
+                                onSelectPage(pageIndex)
+                                clearInteractionState()
+                                if (selectedTool == PdfInkTool.ERASER) {
+                                    val annotationSnapshot = currentAnnotations
+                                    val updatedAnnotations = annotationSnapshot.filterNot {
+                                        it.pageIndex == pageIndex && it.sharedPdfHitTest(
+                                            point = start,
+                                            size = pageCanvasSize,
+                                            eraserStrokeWidth = strokeWidth
                                         )
                                     }
-                                },
-                                onDrag = { change, _ ->
+                                    if (updatedAnnotations.size != annotationSnapshot.size) {
+                                        onAnnotationsChanged(updatedAnnotations)
+                                    }
+                                    eraserPreviousPoint = start
+                                } else {
+                                    activeStroke = listOf(
+                                        start.toSharedPdfPoint(pageCanvasSize, System.currentTimeMillis())
+                                    )
+                                }
+
+                                val pointerId = down.id
+                                var dragStarted = false
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (event.changes.size > 1) {
+                                        eraserPreviousPoint = null
+                                        activeStroke = emptyList()
+                                        return@awaitEachGesture
+                                    }
+                                    val change = event.changes.firstOrNull { it.id == pointerId }
+                                        ?: run {
+                                            eraserPreviousPoint = null
+                                            activeStroke = emptyList()
+                                            return@awaitEachGesture
+                                        }
+                                    if (change.changedToUp()) {
+                                        change.consume()
+                                        if (selectedTool != PdfInkTool.ERASER && activeStroke.isNotEmpty()) {
+                                            onAnnotationAdded(
+                                                SharedPdfAnnotation(
+                                                    id = "ink_${System.currentTimeMillis()}",
+                                                    pageIndex = pageIndex,
+                                                    kind = PdfAnnotationKind.INK,
+                                                    tool = selectedTool,
+                                                    points = activeStroke,
+                                                    colorArgb = selectedColor,
+                                                    strokeWidth = strokeWidth,
+                                                    createdAt = System.currentTimeMillis()
+                                                )
+                                            )
+                                        }
+                                        eraserPreviousPoint = null
+                                        activeStroke = emptyList()
+                                        return@awaitEachGesture
+                                    }
+                                    if (!change.positionChanged()) continue
+                                    val distance = (change.position - start).getDistance()
+                                    if (!dragStarted && distance <= viewConfiguration.touchSlop) continue
+                                    dragStarted = true
                                     if (selectedTool == PdfInkTool.ERASER) {
                                         val point = change.position
                                         val previousPoint = eraserPreviousPoint
@@ -7773,30 +7836,9 @@ private fun DesktopVerticalPdfPage(
                                             timestamp = System.currentTimeMillis()
                                         )
                                     }
-                                },
-                                onDragEnd = {
-                                    eraserPreviousPoint = null
-                                    if (activeStroke.size > 1) {
-                                        onAnnotationAdded(
-                                            SharedPdfAnnotation(
-                                                id = "ink_${System.currentTimeMillis()}",
-                                                pageIndex = pageIndex,
-                                                kind = PdfAnnotationKind.INK,
-                                                tool = selectedTool,
-                                                points = activeStroke,
-                                                colorArgb = selectedColor,
-                                                strokeWidth = strokeWidth,
-                                                createdAt = System.currentTimeMillis()
-                                            )
-                                        )
-                                    }
-                                    activeStroke = emptyList()
-                                },
-                                onDragCancel = {
-                                    eraserPreviousPoint = null
-                                    activeStroke = emptyList()
+                                    change.consume()
                                 }
-                            )
+                            }
                         }
                     }
                 },

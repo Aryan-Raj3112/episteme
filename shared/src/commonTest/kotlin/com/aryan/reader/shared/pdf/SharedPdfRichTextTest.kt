@@ -140,6 +140,35 @@ class SharedPdfRichTextTest {
     }
 
     @Test
+    fun `loaded rich text rescales font spans when real page height arrives`() {
+        val document = SharedPdfRichDocument(
+            text = "Stable size",
+            spans = listOf(
+                SharedPdfRichSpan(
+                    start = 0,
+                    end = 6,
+                    color = Color.Black.toArgb(),
+                    backgroundColor = Color.Transparent.toArgb(),
+                    fontSizeNorm = 0.02f,
+                    isBold = false,
+                    isItalic = false,
+                    isUnderline = false,
+                    isStrikethrough = false
+                )
+            )
+        )
+        val referenceHeight = 1_414f
+        val actualHeight = 1_000f
+        val loadedBeforeLayout = SharedPdfRichTextMapper.toAnnotatedString(document, referenceHeight)
+
+        val loadedAtActualHeight = loadedBeforeLayout.withScaledSharedPdfRichFontSizes(actualHeight / referenceHeight)
+        val savedAgain = SharedPdfRichTextMapper.fromAnnotatedString(loadedAtActualHeight, actualHeight)
+
+        assertEquals(20.sp, loadedAtActualHeight.spanStyles.single().item.fontSize)
+        assertEquals(0.02f, savedAgain.spans.single().fontSizeNorm, 0.0001f)
+    }
+
+    @Test
     fun `serializer returns empty document for blank and corrupt payloads`() {
         assertEquals(SharedPdfRichDocument(), SharedPdfRichTextSerializer.decode(""))
         assertEquals(SharedPdfRichDocument(), SharedPdfRichTextSerializer.decode("{not json"))

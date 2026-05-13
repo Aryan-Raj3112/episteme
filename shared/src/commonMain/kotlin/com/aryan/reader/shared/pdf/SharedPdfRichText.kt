@@ -45,6 +45,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.math.abs
 
 const val SHARED_PDF_PAGE_BREAK_CHAR: Char = '\u000C'
 
@@ -616,10 +617,26 @@ class SharedPdfRichTextController(
 
     fun updateLayoutConfig(width: Float, height: Float, density: Density, measurer: TextMeasurer) {
         if (lastPageWidth != width || lastPageHeight != height || lastDensity != density || lastTextMeasurer != measurer) {
+            val previousPageHeight = lastPageHeight
+            val fontScale = if (previousPageHeight > 0f && height > 0f) {
+                height / previousPageHeight
+            } else {
+                1f
+            }
+            val shouldScaleFonts = abs(fontScale - 1f) > 0.001f
             SharedPdfRichTextLog.d(
                 "controller.layoutConfig width=${width.richLogFloat()} height=${height.richLogFloat()} " +
-                    "density=${density.density.richLogFloat()} old=${lastPageWidth.richLogFloat()}x${lastPageHeight.richLogFloat()}"
+                    "density=${density.density.richLogFloat()} old=${lastPageWidth.richLogFloat()}x${previousPageHeight.richLogFloat()} " +
+                    "fontScale=${fontScale.richLogFloat()}"
             )
+            if (shouldScaleFonts) {
+                saveJob?.cancel()
+                globalTextFieldValue = globalTextFieldValue.withScaledSharedPdfRichFontSizes(fontScale)
+                localTextFieldValue = localTextFieldValue.withScaledSharedPdfRichFontSizes(fontScale)
+                if (globalTextFieldValue.text.isNotEmpty()) {
+                    debouncedSave(globalTextFieldValue)
+                }
+            }
             lastPageWidth = width
             lastPageHeight = height
             lastDensity = density
@@ -1527,6 +1544,45 @@ fun SharedPdfTextStyleConfig.toSharedPdfRichSpanStyle(): SpanStyle {
         fontStyle = if (isItalic) FontStyle.Italic else FontStyle.Normal,
         textDecoration = richTextDecoration(isUnderline, isStrikeThrough)
     )
+}
+
+internal fun AnnotatedString.withScaledSharedPdfRichFontSizes(scale: Float): AnnotatedString {
+    if (!scale.isFinite() || scale <= 0f || abs(scale - 1f) <= 0.001f) return this
+    if (spanStyles.none { it.item.fontSize.isSp }) return this
+
+    val builder = AnnotatedString.Builder(text)
+    spanStyles.forEach { range ->
+        val style = range.item
+        builder.addStyle(
+            style = if (style.fontSize.isSp) {
+                style.copy(fontSize = (style.fontSize.value * scale).sp)
+            } else {
+                style
+            },
+            start = range.start,
+            end = range.end
+        )
+    }
+    paragraphStyles.forEach { range ->
+        builder.addStyle(range.item, range.start, range.end)
+    }
+    getStringAnnotations(
+        tag = SHARED_PDF_RICH_FONT_PATH_TAG,
+        start = 0,
+        end = length
+    ).forEach { annotation ->
+        builder.addStringAnnotation(
+            tag = annotation.tag,
+            annotation = annotation.item,
+            start = annotation.start,
+            end = annotation.end
+        )
+    }
+    return builder.toAnnotatedString()
+}
+
+private fun TextFieldValue.withScaledSharedPdfRichFontSizes(scale: Float): TextFieldValue {
+    return copy(annotatedString = annotatedString.withScaledSharedPdfRichFontSizes(scale))
 }
 
 fun SharedPdfRichTextController.currentSharedPdfTextStyleConfig(): SharedPdfTextStyleConfig {
