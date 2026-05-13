@@ -34,11 +34,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
+import kotlin.math.roundToInt
 
 @Composable
 fun ReaderWorkspaceShell(
@@ -82,23 +85,47 @@ fun ReaderWorkspaceShell(
 
         CompositionLocalProvider(LocalSharedReaderModalAnchorBounds provides modalAnchorBounds) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(start = 8.dp, top = 8.dp, end = 8.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(start = 8.dp, top = 8.dp, end = 8.dp)
+                    .onGloballyPositioned { coordinates ->
+                        logReaderGapLayout(
+                            layer = "shell_column",
+                            bounds = coordinates.boundsInWindow(),
+                            details = "padding=start8 top8 end8 bottom0 verticalGap=6"
+                        )
+                    },
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                ReaderWorkspaceTopChrome(
-                    title = title,
-                    subtitle = subtitle,
-                    progressLabel = progressLabel,
-                    hasLeftPanel = model.leftSections.isNotEmpty(),
-                    hasRightPanel = model.inspectorSections.isNotEmpty(),
-                    leftPanelOpen = leftPanelOpen,
-                    rightPanelOpen = rightPanelOpen,
-                    onReturnToLibrary = onReturnToLibrary,
-                    onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                    onToggleRightPanel = { rightPanelOpen = !rightPanelOpen }
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coordinates ->
+                            logReaderGapLayout("top_chrome_slot", coordinates.boundsInWindow())
+                        }
+                ) {
+                    ReaderWorkspaceTopChrome(
+                        title = title,
+                        subtitle = subtitle,
+                        progressLabel = progressLabel,
+                        hasLeftPanel = model.leftSections.isNotEmpty(),
+                        hasRightPanel = model.inspectorSections.isNotEmpty(),
+                        leftPanelOpen = leftPanelOpen,
+                        rightPanelOpen = rightPanelOpen,
+                        onReturnToLibrary = onReturnToLibrary,
+                        onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
+                        onToggleRightPanel = { rightPanelOpen = !rightPanelOpen }
+                    )
+                }
 
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coordinates ->
+                            logReaderGapLayout("content_slot", coordinates.boundsInWindow())
+                        }
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -158,7 +185,44 @@ fun ReaderWorkspaceShell(
                     }
                 }
 
-                bottomBar()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coordinates ->
+                            logReaderGapLayout("bottom_bar_slot", coordinates.boundsInWindow())
+                        }
+                ) {
+                    bottomBar()
+                }
+            }
+        }
+    }
+}
+
+private const val ReaderGapLogTag = "EpistemeReaderGap"
+
+private fun logReaderGapLayout(
+    layer: String,
+    bounds: Rect,
+    details: String = ""
+) {
+    logSharedReaderDiagnostic(ReaderGapLogTag) {
+        buildString {
+            append("compose_shell layer=")
+            append(layer)
+            append(" x=")
+            append(bounds.left.roundToInt())
+            append(" y=")
+            append(bounds.top.roundToInt())
+            append(" w=")
+            append(bounds.width.roundToInt())
+            append(" h=")
+            append(bounds.height.roundToInt())
+            append(" bottom=")
+            append(bounds.bottom.roundToInt())
+            if (details.isNotBlank()) {
+                append(' ')
+                append(details)
             }
         }
     }

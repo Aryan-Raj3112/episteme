@@ -9294,6 +9294,11 @@ private fun ReaderScreen(
                 .clip(RoundedCornerShape(8.dp))
                 .onSizeChanged { size ->
                     val next = ReaderViewportSpec(size.width, size.height)
+                    logReaderGap(
+                        "desktop_webview_surface size=${size.width}x${size.height} " +
+                            "mode=${session.reader.settings.readingMode} " +
+                            "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)}"
+                    )
                     if (next != readerViewport) {
                         logEpubPagination(
                             "viewport_changed width=${next.widthPx} height=${next.heightPx} " +
@@ -9532,6 +9537,17 @@ private fun DesktopEpubWebView(
                 logEpubPagination(message.params.readerPaginationLogMessageOrNull() ?: message.params.logPreview(900))
             }
         }
+        val gapLayoutLogHandler = object : IJsMessageHandler {
+            override fun methodName(): String = "readerGapLayoutLog"
+
+            override fun handle(
+                message: JsMessage,
+                navigator: WebViewNavigator?,
+                callback: (String) -> Unit
+            ) {
+                logReaderGap(message.params.readerPaginationLogMessageOrNull() ?: message.params.logPreview(900))
+            }
+        }
         val linkHandler = object : IJsMessageHandler {
             override fun methodName(): String = "readerLinkClicked"
 
@@ -9561,6 +9577,7 @@ private fun DesktopEpubWebView(
         bridge.register(ttsHighlightLogHandler)
         bridge.register(selectionDebugLogHandler)
         bridge.register(paginationLayoutLogHandler)
+        bridge.register(gapLayoutLogHandler)
         bridge.register(linkHandler)
         onDispose {
             bridge.unregister(highlightHandler)
@@ -9571,6 +9588,7 @@ private fun DesktopEpubWebView(
             bridge.unregister(ttsHighlightLogHandler)
             bridge.unregister(selectionDebugLogHandler)
             bridge.unregister(paginationLayoutLogHandler)
+            bridge.unregister(gapLayoutLogHandler)
             bridge.unregister(linkHandler)
         }
     }
@@ -10702,6 +10720,7 @@ private const val PdfZoomPerfLogTag = "EpistemePdfZoomPerf"
 private const val PdfLinkLogTag = "EpistemePdfLink"
 private const val EpubLinkLogTag = "EpistemeEpubLink"
 private const val EpubPaginationLogTag = "EpistemeEpubPagination"
+private const val ReaderGapLogTag = "EpistemeReaderGap"
 private const val EpubSelectionDebugLogTag = "EPUB_SELECTION_DEBUG"
 private const val ExternalLinkLogTag = "EpistemeExternalLink"
 
@@ -10726,6 +10745,10 @@ private fun logEpubLink(message: String) {
 
 private fun logEpubPagination(message: String) {
     logDesktopDiagnostic(EpubPaginationLogTag) { message }
+}
+
+private fun logReaderGap(message: String) {
+    logDesktopDiagnostic(ReaderGapLogTag) { message }
 }
 
 private fun logEpubSelectionDebug(message: String) {

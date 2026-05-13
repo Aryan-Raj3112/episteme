@@ -17,7 +17,7 @@ import java.security.MessageDigest
 import java.util.Locale
 
 private const val SharedEpubPaginationCacheSchemaVersion = 1
-private const val SharedEpubPaginationProcessingVersion = 3
+private const val SharedEpubPaginationProcessingVersion = 6
 private const val SharedEpubPaginationPageCacheVersion = 1
 
 data class SharedEpubPaginationCacheKey(

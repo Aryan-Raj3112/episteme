@@ -309,6 +309,9 @@ object ReaderHtmlDocumentBuilder {
                   margin-bottom: 0;
                   overflow: hidden;
                 }
+                body.reader-paginated .reader-content > :last-child {
+                  margin-bottom: 0 !important;
+                }
                 .reader-spread {
                   display: grid;
                   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -606,12 +609,27 @@ object ReaderHtmlDocumentBuilder {
                       try { console.log(line); } catch (error) {}
                     }
                   }
+                  function readerGapLog(message) {
+                    var line = 'EpistemeReaderGap ' + message;
+                    var delivered = false;
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerGapLayoutLog', JSON.stringify({ message: message }));
+                        delivered = true;
+                      } catch (error) {}
+                    }
+                    if (!delivered) {
+                      try { console.log(line); } catch (error) {}
+                    }
+                  }
                   function readerPaginationLayoutLog(reason) {
                     if (!document.body || !document.body.classList.contains('reader-paginated')) return;
                     var pages = Array.prototype.slice.call(document.querySelectorAll('.page[data-reader-page-index]'));
                     var mode = document.querySelector('.reader-spread') ? 'spread' : 'single';
                     var bodyStyle = window.getComputedStyle(document.body);
-                    var bodyPaddingY = (parseFloat(bodyStyle.paddingTop) || 0) + (parseFloat(bodyStyle.paddingBottom) || 0);
+                    var bodyPaddingTop = parseFloat(bodyStyle.paddingTop) || 0;
+                    var bodyPaddingBottom = parseFloat(bodyStyle.paddingBottom) || 0;
+                    var bodyPaddingY = bodyPaddingTop + bodyPaddingBottom;
                     pages.forEach(function (page) {
                       var content = page.querySelector('.reader-content') || page;
                       var pageRect = page.getBoundingClientRect();
@@ -625,6 +643,10 @@ object ReaderHtmlDocumentBuilder {
                       var contentOverflow = contentRect.bottom - pageRect.bottom;
                       var lastOverflow = lastRect ? (lastRect.bottom + lastMarginBottom - pageRect.bottom) : 0;
                       var overflowPx = Math.ceil(Math.max(0, pageOverflow, contentOverflow, lastOverflow));
+                      var lastBottomWithMargin = lastRect ? lastRect.bottom + lastMarginBottom : contentRect.bottom;
+                      var contentTopGap = contentRect.top - pageRect.top;
+                      var contentBottomGap = pageRect.bottom - contentRect.bottom;
+                      var lastBottomGap = pageRect.bottom - lastBottomWithMargin;
                       var pageIndex = numberAttribute(page, 'data-reader-page-index', -1);
                       var chapterIndex = numberAttribute(page, 'data-reader-chapter-index', -1);
                       var startOffset = numberAttribute(page, 'data-reader-page-start', -1);
@@ -648,6 +670,29 @@ object ReaderHtmlDocumentBuilder {
                         ' bodyPaddingY=' + Math.round(bodyPaddingY) +
                         ' textChars=' + contentText.length +
                         ' lastText="' + lastText.replace(/"/g, '\\"') + '"'
+                      );
+                      readerGapLog(
+                        'web_page layer=paginated_dom reason=' + (reason || 'load') +
+                        ' mode=' + mode +
+                        ' page=' + (pageIndex + 1) +
+                        ' chapter=' + chapterIndex +
+                        ' viewport=' + window.innerWidth + 'x' + window.innerHeight +
+                        ' documentClient=' + document.documentElement.clientWidth + 'x' + document.documentElement.clientHeight +
+                        ' bodyClient=' + document.body.clientWidth + 'x' + document.body.clientHeight +
+                        ' bodyScroll=' + document.body.scrollWidth + 'x' + document.body.scrollHeight +
+                        ' bodyPaddingTop=' + Math.round(bodyPaddingTop) +
+                        ' bodyPaddingBottom=' + Math.round(bodyPaddingBottom) +
+                        ' pageTop=' + Math.round(pageRect.top) +
+                        ' pageBottom=' + Math.round(pageRect.bottom) +
+                        ' pageHeight=' + Math.round(pageRect.height) +
+                        ' pageClient=' + page.clientWidth + 'x' + page.clientHeight +
+                        ' pageScroll=' + page.scrollWidth + 'x' + page.scrollHeight +
+                        ' contentTopGap=' + Math.round(contentTopGap) +
+                        ' contentBottomGap=' + Math.round(contentBottomGap) +
+                        ' lastBottomGap=' + Math.round(lastBottomGap) +
+                        ' lastMarginBottom=' + Math.round(lastMarginBottom) +
+                        ' overflowPx=' + overflowPx +
+                        ' range=' + startOffset + '..' + endOffset
                       );
                     });
                   }

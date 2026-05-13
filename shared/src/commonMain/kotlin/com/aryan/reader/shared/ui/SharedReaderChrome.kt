@@ -80,6 +80,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.luminance
@@ -90,6 +91,8 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -141,6 +144,7 @@ import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.appearanceSignature
 import com.aryan.reader.shared.reader.layoutSignature
+import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -373,7 +377,15 @@ fun SharedReaderScreen(
         },
         bottomBar = {
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coordinates ->
+                        logReaderGapChrome(
+                            layer = "bottom_nav_surface",
+                            bounds = coordinates.boundsInWindow(),
+                            details = "sliderVisible=${toolbarPreferences.isVisible(ReaderTool.SLIDER)} pageInfoBottom=${shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM}"
+                        )
+                    },
                 shape = RoundedCornerShape(6.dp),
                 color = background,
                 contentColor = foreground,
@@ -381,7 +393,7 @@ fun SharedReaderScreen(
                 shadowElevation = 1.dp,
                 border = BorderStroke(1.dp, foreground.copy(alpha = 0.12f))
             ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                     SharedReaderCompactNavigation(
                         session = session,
                         showSlider = toolbarPreferences.isVisible(ReaderTool.SLIDER),
@@ -403,7 +415,18 @@ fun SharedReaderScreen(
                 sidebarNavigationHighlightId = null
             }
         }
-        Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { coordinates ->
+                    logReaderGapChrome(
+                        layer = "reader_content_column",
+                        bounds = coordinates.boundsInWindow(),
+                        details = "mode=${settings.readingMode} columnGap=12 pageInfoTop=${shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP}"
+                    )
+                },
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP) {
                 Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -2681,6 +2704,35 @@ private fun SharedReaderThemeChoice(
     }
 }
 
+private const val ReaderGapChromeLogTag = "EpistemeReaderGap"
+
+private fun logReaderGapChrome(
+    layer: String,
+    bounds: Rect,
+    details: String = ""
+) {
+    logSharedReaderDiagnostic(ReaderGapChromeLogTag) {
+        buildString {
+            append("compose_reader layer=")
+            append(layer)
+            append(" x=")
+            append(bounds.left.roundToInt())
+            append(" y=")
+            append(bounds.top.roundToInt())
+            append(" w=")
+            append(bounds.width.roundToInt())
+            append(" h=")
+            append(bounds.height.roundToInt())
+            append(" bottom=")
+            append(bounds.bottom.roundToInt())
+            if (details.isNotBlank()) {
+                append(' ')
+                append(details)
+            }
+        }
+    }
+}
+
 @Composable
 private fun SharedReaderCompactNavigation(
     session: ReaderSessionState,
@@ -2694,18 +2746,29 @@ private fun SharedReaderCompactNavigation(
     contentColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .onGloballyPositioned { coordinates ->
+                logReaderGapChrome(
+                    layer = "bottom_nav_row",
+                    bounds = coordinates.boundsInWindow(),
+                    details = "showSlider=$showSlider pageInfo=${pageInfoText != null} canPrev=$canGoPrevious canNext=$canGoNext"
+                )
+            },
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(
             enabled = canGoPrevious,
-            onClick = onPrevious
+            onClick = onPrevious,
+            modifier = Modifier.size(36.dp)
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.NavigateBefore,
                 contentDescription = "Previous page",
-                tint = contentColor.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+                tint = contentColor.copy(alpha = if (canGoPrevious) 0.78f else 0.32f),
+                modifier = Modifier.size(22.dp)
             )
         }
         if (showSlider) {
@@ -2726,12 +2789,14 @@ private fun SharedReaderCompactNavigation(
         }
         IconButton(
             enabled = canGoNext,
-            onClick = onNext
+            onClick = onNext,
+            modifier = Modifier.size(36.dp)
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.NavigateNext,
                 contentDescription = "Next page",
-                tint = contentColor.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                tint = contentColor.copy(alpha = if (canGoNext) 0.78f else 0.32f),
+                modifier = Modifier.size(22.dp)
             )
         }
     }
