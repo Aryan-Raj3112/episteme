@@ -1,5 +1,8 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -327,6 +330,7 @@ import com.aryan.reader.shared.ui.SharedReaderScreen
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
 import com.aryan.reader.shared.ui.SharedReaderTtsReplacementControls
+import com.aryan.reader.shared.ui.SharedPdfVerticalScrollbar
 import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
@@ -3615,6 +3619,8 @@ private fun PdfReaderScreen(
     var activeSelectionHandle by remember(document.path, pdfState.pageIndex) { mutableStateOf<DesktopPdfSelectionHandle?>(null) }
     var pageScrubPreview by remember(document.path) { mutableStateOf<Int?>(null) }
     var pageScrubStartPage by remember(document.path) { mutableStateOf<Int?>(null) }
+    var showPdfZoomIndicator by remember(document.path) { mutableStateOf(false) }
+    var isPdfZoomIndicatorInitialized by remember(document.path) { mutableStateOf(false) }
     var jumpHistory by remember(document.path) { mutableStateOf(SharedPdfJumpHistory()) }
     var externalLinkDialogUrl by remember(document.path) { mutableStateOf<String?>(null) }
     var pdfExtrasState by remember(document.path) {
@@ -3864,6 +3870,22 @@ private fun PdfReaderScreen(
     val scale = pdfState.zoom
     val displayMode = pdfState.displayMode
     val zoomControlScale = pdfZoomPreview?.zoom ?: scale
+    val shouldShowPdfZoomIndicator = abs(zoomControlScale - 1f) > 0.001f
+
+    LaunchedEffect(zoomControlScale, document.path) {
+        if (!isPdfZoomIndicatorInitialized) {
+            isPdfZoomIndicatorInitialized = true
+            showPdfZoomIndicator = false
+            return@LaunchedEffect
+        }
+        if (shouldShowPdfZoomIndicator) {
+            showPdfZoomIndicator = true
+            delay(1_500)
+            showPdfZoomIndicator = false
+        } else {
+            showPdfZoomIndicator = false
+        }
+    }
 
     fun verticalZoomAnchorItem(anchor: Offset) = verticalListState.layoutInfo.visibleItemsInfo
         .firstOrNull { item ->
@@ -6045,7 +6067,6 @@ private fun PdfReaderScreen(
                                     it.displayMode == PdfDisplayMode.VERTICAL_SCROLL
                                 },
                                 zoomViewportRootOffset = pdfZoomViewportRootOffset,
-                                showPageNumberOverlay = !isFullscreen,
                                 onSelectPage = {
                                     goToPage(
                                         target = it,
@@ -6075,6 +6096,13 @@ private fun PdfReaderScreen(
                             )
                         }
                     }
+                    SharedPdfVerticalScrollbar(
+                        listState = verticalListState,
+                        pageCount = document.pageCount,
+                        currentPage = pageIndex,
+                        isDarkMode = pdfThemeStyle.viewerBackgroundColor.luminance() < 0.5f,
+                        modifier = Modifier.align(Alignment.CenterEnd)
+                    )
                     DesktopPdfPageScrubOverlay(
                         pageIndex = pageScrubPreview,
                         pageCount = document.pageCount
@@ -6644,12 +6672,10 @@ private fun PdfReaderScreen(
                                 canvasSize = pageCanvasSize,
                                 selectedAnnotationId = selectedEmbeddedAnnotationId
                             )
-                            if (!isFullscreen) {
-                                SharedPdfPageNumberOverlay(
-                                    pageIndex = pageIndex,
-                                    pageCount = document.pageCount
-                                )
-                            }
+                            SharedPdfPageNumberOverlay(
+                                pageIndex = pageIndex,
+                                pageCount = document.pageCount
+                            )
                             if (textSelection != null && selectionMenuOffset != null) {
                                 Box(
                                     modifier = Modifier
@@ -6706,6 +6732,22 @@ private fun PdfReaderScreen(
                         pageIndex = pageScrubPreview,
                         pageCount = document.pageCount
                     )
+            }
+            AnimatedVisibility(
+                visible = showPdfZoomIndicator,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 16.dp, end = 16.dp),
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                DesktopPdfZoomPercentageIndicator(
+                    percentage = (zoomControlScale * 100).roundToInt(),
+                    onResetZoomClick = {
+                        cancelPendingPdfZoomPreview()
+                        dispatchPdf(SharedPdfReaderAction.ZoomChanged(1f))
+                    }
+                )
             }
             when {
                 selectedTextHighlight != null -> {
@@ -6800,6 +6842,45 @@ private fun DesktopPdfFullscreenBottomChrome(
                 Icons.AutoMirrored.Filled.NavigateNext,
                 contentDescription = "Next page",
                 tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfZoomPercentageIndicator(
+    percentage: Int,
+    onResetZoomClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.8f)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = "$percentage%",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(16.dp)
+                    .background(Color.White.copy(alpha = 0.5f))
+            )
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Default.ZoomOut,
+                contentDescription = "Reset zoom",
+                tint = Color.White,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onResetZoomClick)
             )
         }
     }
