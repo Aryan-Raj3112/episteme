@@ -126,6 +126,18 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `bubble prefetch only includes current page and nearby pages`() {
+        assertEquals(listOf(10, 11, 9), buildPdfBubblePrefetchOrder(currentPage = 10, totalPages = 100))
+    }
+
+    @Test
+    fun `bubble prefetch clamps current page and respects edges`() {
+        assertEquals(listOf(0, 1), buildPdfBubblePrefetchOrder(currentPage = -4, totalPages = 5))
+        assertEquals(listOf(4, 3), buildPdfBubblePrefetchOrder(currentPage = 99, totalPages = 5))
+        assertEquals(emptyList<Int>(), buildPdfBubblePrefetchOrder(currentPage = 0, totalPages = 0))
+    }
+
+    @Test
     fun `canUsePdfSidecarsForBook only accepts loaded sidecars for active book`() {
         assertTrue(canUsePdfSidecarsForBook("book-a", "book-a", areSidecarsLoaded = true))
         assertEquals(false, canUsePdfSidecarsForBook("book-a", "book-b", areSidecarsLoaded = true))

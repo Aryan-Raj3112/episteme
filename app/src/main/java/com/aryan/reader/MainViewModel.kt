@@ -80,6 +80,7 @@ import com.aryan.reader.epub.SingleFileImporter
 import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.ml.ISpeechBubbleDetector
 import com.aryan.reader.ml.SpeechBubble
+import com.aryan.reader.ml.SpeechBubbleDetector
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
@@ -215,7 +216,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val modelFile = File(context.getExternalFilesDir(null), "best_float16.tflite")
             if (modelFile.exists()) {
                 try {
-                    val clazz = Class.forName("com.aryan.reader.ml.ComicPanelDetector")
+                    val clazz = Class.forName(
+                        "com.aryan.reader.ml.ComicPanelDetector",
+                        false,
+                        context.classLoader
+                    )
                     panelDetector = clazz.getConstructor(File::class.java).newInstance(modelFile) as com.aryan.reader.ml.IPanelDetector
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to instantiate ComicPanelDetector via reflection")
@@ -232,10 +237,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val modelFile = File(context.getExternalFilesDir(null), "manga_speech_bubble_v3.ort")
             if (modelFile.exists()) {
                 try {
-                    val clazz = Class.forName("com.aryan.reader.ml.SpeechBubbleDetector")
-                    speechBubbleDetector = clazz.getConstructor(File::class.java).newInstance(modelFile) as ISpeechBubbleDetector
+                    speechBubbleDetector = SpeechBubbleDetector(modelFile)
                 } catch (t: Throwable) {
-                    Timber.e(t, "Failed to instantiate SpeechBubbleDetector via reflection. Deleting corrupted model.")
+                    Timber.e(t, "Failed to instantiate SpeechBubbleDetector. Deleting corrupted model.")
                     modelFile.delete()
                 }
             } else {
@@ -5220,7 +5224,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         speechBubbleDetector?.close()
         speechBubbleDetector = null
         speechBubbleCache.clear()
+        speechBubbleDetectionJobs.values.forEach { it.cancel() }
         speechBubbleDetectionJobs.clear()
+        mlDispatcher.close()
 
         ttsController.release()
 
@@ -5607,7 +5613,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (cachedInsideLock != null) {
                 detectionJob = CompletableDeferred(cachedInsideLock)
             } else {
-                detectionJob = speechBubbleDetectionJobs[key] ?: viewModelScope.async {
+                detectionJob = speechBubbleDetectionJobs[key] ?: viewModelScope.async(mlDispatcher) {
                     val detected = runSpeechBubbleDetection(bitmap, context)
                     val normalized = normalizeSpeechBubbles(detected, bitmap.width, bitmap.height)
                     speechBubbleCache[key] = normalized

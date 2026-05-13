@@ -989,16 +989,10 @@ fun PdfViewerScreen(
     }
 
     fun buildSpeechBubblePrefetchOrder(): List<Int> {
-        if (totalDisplayPages <= 0) return emptyList()
-        val ordered = LinkedHashSet<Int>()
-        ordered += currentPage.coerceIn(0, totalDisplayPages - 1)
-        for (distance in 1 until totalDisplayPages) {
-            val next = currentPage + distance
-            val previous = currentPage - distance
-            if (next in 0 until totalDisplayPages) ordered += next
-            if (previous in 0 until totalDisplayPages) ordered += previous
-        }
-        return ordered.toList()
+        return buildPdfBubblePrefetchOrder(
+            currentPage = currentPage,
+            totalPages = totalDisplayPages
+        )
     }
 
     suspend fun detectSpeechBubblesForPage(
