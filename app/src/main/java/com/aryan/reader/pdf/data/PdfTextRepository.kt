@@ -56,6 +56,11 @@ class PdfTextRepository(context: Context) {
     private val dao = db.pdfTextDao()
     private val metaDao = db.pdfMetaDao()
 
+    private suspend fun replacePageText(bookId: String, pageIndex: Int, content: String) {
+        dao.deletePageText(bookId, pageIndex)
+        dao.insertPageText(PdfSearchIndex(bookId = bookId, pageIndex = pageIndex, content = content))
+    }
+
     suspend fun getPageRatios(bookId: String): List<Float>? {
         return withContext(Dispatchers.IO) {
             val meta = metaDao.getMetadata(bookId)
@@ -251,7 +256,7 @@ class PdfTextRepository(context: Context) {
                     Timber.tag(TAG).e("Page $pageIndex: Cleaning might have failed. Text still looks like path: $snippetClean")
                 } else if (text.isNotBlank()) {
                     Timber.tag(TAG).v("Page $pageIndex: Inserting valid text ($cleanedLength chars).")
-                    dao.insertPageText(PdfSearchIndex(bookId = bookId, pageIndex = pageIndex, content = text))
+                    replacePageText(bookId = bookId, pageIndex = pageIndex, content = text)
                 } else {
                     Timber.tag(TAG).i("Page $pageIndex: Text became empty after cleaning. Skipping insertion.")
                 }
@@ -336,7 +341,7 @@ class PdfTextRepository(context: Context) {
 
             val cleaned = cleanIndexedText(text)
             if (cleaned.isNotBlank()) {
-                dao.insertPageText(PdfSearchIndex(bookId = bookId, pageIndex = pageIndex, content = cleaned))
+                replacePageText(bookId = bookId, pageIndex = pageIndex, content = cleaned)
             }
 
             ocrUsed && cleaned.isNotEmpty()

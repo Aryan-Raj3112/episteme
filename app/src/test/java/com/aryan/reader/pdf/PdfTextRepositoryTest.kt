@@ -11,7 +11,9 @@ import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.SmartSearchResult
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
+import io.mockk.match
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
@@ -103,6 +105,25 @@ class PdfTextRepositoryTest {
         assertEquals(0, matches[0].occurrenceIndexInLocation)
         assertEquals(1, matches[1].occurrenceIndexInLocation)
         assertEquals("needle", matches[0].query)
+    }
+
+    @Test
+    fun `indexReaderPage replaces existing page text before inserting new text`() = runTest {
+        val document = mockk<ReaderDocument>()
+        val page = mockk<ReaderPage>(relaxed = true)
+        val textPage = mockk<ReaderTextPage>(relaxed = true)
+
+        coEvery { document.openPage(0) } returns page
+        coEvery { page.openTextPage() } returns textPage
+        coEvery { textPage.textPageCountChars() } returns 11
+        coEvery { textPage.textPageGetText(0, 11) } returns "hello world"
+
+        repository.indexReaderPage("book", document, 0)
+
+        coVerifyOrder {
+            dao.deletePageText("book", 0)
+            dao.insertPageText(match { it.bookId == "book" && it.pageIndex == 0 && it.content == "hello world" })
+        }
     }
 
     @Test

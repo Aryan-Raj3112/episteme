@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemContentType
-import androidx.paging.compose.itemKey
 import com.aryan.reader.R
 import com.aryan.reader.SearchResult
 
@@ -154,9 +153,10 @@ fun PdfSearchResultsPanel(
                 HorizontalDivider()
 
                 LazyColumn(modifier = Modifier.testTag("SearchResultsList")) {
-                    items(count = lazyResults.itemCount, key = lazyResults.itemKey {
-                        "${it.locationInSource}_${it.occurrenceIndexInLocation}"
-                    }, contentType = lazyResults.itemContentType { "SearchResult" }) { index ->
+                    items(
+                        count = lazyResults.itemCount,
+                        contentType = lazyResults.itemContentType { "SearchResult" }
+                    ) { index ->
                         val result = lazyResults[index]
                         if (result != null) {
                             ListItem(

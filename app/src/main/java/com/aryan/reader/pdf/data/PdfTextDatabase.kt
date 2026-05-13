@@ -114,6 +114,9 @@ interface PdfTextDao {
     @Query("SELECT pageIndex FROM pdf_search_index WHERE bookId = :bookId")
     suspend fun getIndexedPageIndices(bookId: String): List<Int>
 
+    @Query("DELETE FROM pdf_search_index WHERE bookId = :bookId AND pageIndex = :pageIndex")
+    suspend fun deletePageText(bookId: String, pageIndex: Int)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPageText(entity: PdfSearchIndex)
 
