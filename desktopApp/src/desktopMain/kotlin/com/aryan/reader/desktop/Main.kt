@@ -35,7 +35,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -370,6 +369,8 @@ import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.Component
+import java.awt.KeyEventDispatcher
+import java.awt.KeyboardFocusManager
 import java.awt.datatransfer.DataFlavor
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTarget
@@ -377,6 +378,7 @@ import java.awt.dnd.DropTargetAdapter
 import java.awt.dnd.DropTargetDragEvent
 import java.awt.dnd.DropTargetEvent
 import java.awt.dnd.DropTargetDropEvent
+import java.awt.event.KeyEvent as AwtKeyEvent
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URI
@@ -387,8 +389,6 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.imageio.ImageIO
-import javax.swing.JOptionPane
-import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
 import kotlin.math.abs
 import kotlin.math.exp
@@ -444,7 +444,7 @@ fun main() {
                 window.minimumSize = windowDefaults.minimumSize
                 onDispose {}
             }
-            EpistemeDesktopApp(window)
+            EpistemeDesktopApp(window = window)
         }
     }
 }
@@ -460,6 +460,99 @@ internal fun configureComposeSwingInterop() {
         System.setProperty(ComposeInteropBlendingProperty, ComposeInteropBlendingEnabled)
     }
 }
+
+@Composable
+private fun DesktopReaderFullscreenEffect(
+    window: Component?,
+    enabled: Boolean
+) {
+    val awtWindow = window as? java.awt.Window ?: return
+    val previousFrameState = remember(awtWindow) {
+        AtomicReference<Int?>()
+    }
+
+    LaunchedEffect(awtWindow, enabled) {
+        delay(if (enabled) 180L else 80L)
+        EventQueue.invokeLater {
+            if (enabled) {
+                awtWindow.focusableWindowState = true
+                if (awtWindow is Frame) {
+                    previousFrameState.compareAndSet(null, awtWindow.extendedState)
+                    awtWindow.extendedState =
+                        (awtWindow.extendedState and Frame.ICONIFIED.inv()) or Frame.MAXIMIZED_BOTH
+                }
+                awtWindow.refreshDesktopReaderWindowFocus()
+            } else {
+                val restoredState = previousFrameState.getAndSet(null)
+                if (awtWindow is Frame && restoredState != null) {
+                    awtWindow.extendedState = restoredState and Frame.ICONIFIED.inv()
+                }
+            }
+        }
+        delay(120L)
+        EventQueue.invokeLater {
+            awtWindow.refreshDesktopReaderWindowFocus()
+        }
+    }
+
+    DisposableEffect(awtWindow) {
+        onDispose {
+            EventQueue.invokeLater {
+                val restoredState = previousFrameState.getAndSet(null)
+                if (awtWindow is Frame && restoredState != null) {
+                    awtWindow.extendedState = restoredState and Frame.ICONIFIED.inv()
+                }
+            }
+        }
+    }
+}
+
+private fun java.awt.Window.refreshDesktopReaderWindowFocus() {
+    if (!isDisplayable) return
+    if (this is Frame && extendedState and Frame.ICONIFIED != 0) {
+        extendedState = extendedState and Frame.ICONIFIED.inv()
+    }
+    toFront()
+    requestFocus()
+    requestFocusInWindow()
+    focusOwner?.requestFocus()
+}
+
+@Composable
+private fun DesktopReaderFullscreenKeyEffect(
+    enabled: Boolean,
+    onKeyPressed: (AwtKeyEvent) -> Boolean
+) {
+    val currentOnKeyPressed by rememberUpdatedState(onKeyPressed)
+    DisposableEffect(enabled) {
+        if (!enabled) {
+            onDispose {}
+        } else {
+            val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+            val dispatcher = KeyEventDispatcher { event ->
+                val modalWindowActive = focusManager.activeWindow?.isDesktopReaderModalWindow() == true
+                !modalWindowActive && event.id == AwtKeyEvent.KEY_PRESSED && currentOnKeyPressed(event)
+            }
+            focusManager.addKeyEventDispatcher(dispatcher)
+            onDispose {
+                focusManager.removeKeyEventDispatcher(dispatcher)
+            }
+        }
+    }
+}
+
+private fun java.awt.Window.isDesktopReaderModalWindow(): Boolean {
+    val windowTitle = when (this) {
+        is java.awt.Dialog -> title
+        is Frame -> title
+        else -> ""
+    }
+    return name?.startsWith(DesktopReaderModalWindowNamePrefix) == true ||
+        windowTitle.startsWith("Reader Panel") ||
+        windowTitle.startsWith("Reader Popup")
+}
+
+private const val DesktopReaderModalWindowNamePrefix = "shared-reader-modal:"
 
 private data class DesktopWebViewRuntimeState(
     val initialized: Boolean = false,
@@ -508,7 +601,17 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     val scope = rememberCoroutineScope()
     var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
     var readerCustomTextureIds by remember { mutableStateOf(DesktopReaderTextures.importedTextureIds()) }
+    var readerFullscreen by remember { mutableStateOf(false) }
     val webViewBundleDir = remember { bundledDesktopWebViewDir() }
+
+    EpistemeDesktopWindowDecorationEffect(
+        window = window,
+        hideDecoration = readerFullscreen
+    )
+    DesktopReaderFullscreenEffect(
+        window = window,
+        enabled = readerFullscreen
+    )
 
     LaunchedEffect(webViewBundleDir) {
         if (!isBundledDesktopWebViewPresent(webViewBundleDir)) {
@@ -2103,7 +2206,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId } }
                                         ?.let { book -> resolvedDesktopReaderSettings(book, state.readerDefaultSettings) }
                                         ?: state.readerDefaultSettings,
-                                    onReturnToLibrary = { selectedTab = SharedAppTab.LIBRARY },
+                                    onReturnToLibrary = {
+                                        readerFullscreen = false
+                                        selectedTab = SharedAppTab.LIBRARY
+                                    },
+                                    onFullscreenChange = { enabled -> readerFullscreen = enabled },
                                     onPageStateChange = { page, progress ->
                                         updateActiveBookReadingState(page, progress)
                                     },
@@ -2140,7 +2247,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                             session = updated
                                         )
                                     },
-                                    onReturnToLibrary = { selectedTab = SharedAppTab.LIBRARY },
+                                    onReturnToLibrary = {
+                                        readerFullscreen = false
+                                        selectedTab = SharedAppTab.LIBRARY
+                                    },
+                                    onFullscreenChange = { enabled -> readerFullscreen = enabled },
                                     toolbarPreferences = state.readerToolbarPreferences,
                                     onToolbarPreferencesChange = { preferences ->
                                         updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
@@ -3441,6 +3552,7 @@ private fun PdfReaderScreen(
     initialPageIndex: Int,
     initialReaderSettings: ReaderSettings? = null,
     onReturnToLibrary: (() -> Unit)? = null,
+    onFullscreenChange: (Boolean) -> Unit = {},
     onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
     onReaderSettingsChange: (ReaderSettings) -> Unit = {},
     pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
@@ -3523,10 +3635,16 @@ private fun PdfReaderScreen(
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
     val pdfScope = rememberCoroutineScope()
+    var isFullscreen by remember(document.path) { mutableStateOf(false) }
+    val currentPdfFullscreen by rememberUpdatedState(isFullscreen)
+    val currentOnPdfFullscreenChange by rememberUpdatedState(onFullscreenChange)
     DisposableEffect(document.path) {
         onDispose {
             zoomCommitJob.getAndSet(null)?.cancel()
             zoomAnchorJob.getAndSet(null)?.cancel()
+            if (currentPdfFullscreen) {
+                currentOnPdfFullscreenChange(false)
+            }
         }
     }
     var isRichTextMode by remember(document.path) { mutableStateOf(false) }
@@ -3568,6 +3686,13 @@ private fun PdfReaderScreen(
     val currentPdfScale by rememberUpdatedState(pdfState.zoom)
     val currentPdfDisplayMode by rememberUpdatedState(pdfState.displayMode)
 
+    LaunchedEffect(isFullscreen, document.path) {
+        repeat(if (isFullscreen) 4 else 1) { attempt ->
+            delay(if (attempt == 0) 80L else 120L)
+            runCatching { pdfReaderFocusRequester.requestFocus() }
+        }
+    }
+
     fun clearPdfInteractionState() {
         activeStroke = emptyList()
         eraserPosition = null
@@ -3587,6 +3712,11 @@ private fun PdfReaderScreen(
         if (next.pageIndex != previousPage) {
             clearPdfInteractionState()
         }
+    }
+
+    fun setPdfFullscreen(enabled: Boolean) {
+        isFullscreen = enabled
+        onFullscreenChange(enabled)
     }
 
     fun updatePdfReaderSettings(settings: ReaderSettings) {
@@ -4020,6 +4150,19 @@ private fun PdfReaderScreen(
         url = externalLinkDialogUrl,
         onDismiss = { externalLinkDialogUrl = null }
     )
+
+    val pdfPopupActive =
+        externalLinkDialogUrl != null ||
+            selectedTextHighlight != null ||
+            selectedEmbeddedAnnotation != null ||
+            pdfExtrasState.aiResult.hasContent ||
+            (textSelection != null && selectionMenuOffset != null)
+    LaunchedEffect(pdfPopupActive, document.path) {
+        if (!pdfPopupActive) {
+            delay(120L)
+            runCatching { pdfReaderFocusRequester.requestFocus() }
+        }
+    }
 
     LaunchedEffect(aiByokSettings) {
         pdfExtrasState = pdfExtrasState.copy(
@@ -4972,6 +5115,10 @@ private fun PdfReaderScreen(
 
     fun handlePdfReaderKeyEvent(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
         if (event.type != KeyEventType.KeyDown) return false
+        if (isFullscreen && event.key == Key.Escape) {
+            setPdfFullscreen(false)
+            return true
+        }
         val isEditingTextAnnotation =
             activeTextDraft != null ||
                 (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
@@ -5028,6 +5175,79 @@ private fun PdfReaderScreen(
             else -> false
         }
     }
+
+    fun handlePdfReaderAwtKeyEvent(event: AwtKeyEvent): Boolean {
+        if (event.id != AwtKeyEvent.KEY_PRESSED) return false
+        if (isFullscreen && event.keyCode == AwtKeyEvent.VK_ESCAPE) {
+            setPdfFullscreen(false)
+            return true
+        }
+        val isEditingTextAnnotation =
+            activeTextDraft != null ||
+                (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
+        if ((isEditingTextAnnotation || isRichTextMode) && !event.isControlDown) {
+            return false
+        }
+        fun scrollVertically(delta: Float): Boolean {
+            pdfScope.launch {
+                if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
+                    verticalListState.scrollBy(delta)
+                } else {
+                    pageVerticalScrollState.scrollBy(delta)
+                }
+            }
+            return true
+        }
+        return when (event.keyCode) {
+            AwtKeyEvent.VK_LEFT -> {
+                goToPage(pageIndex - 1)
+                true
+            }
+            AwtKeyEvent.VK_RIGHT -> {
+                goToPage(pageIndex + 1)
+                true
+            }
+            AwtKeyEvent.VK_UP -> scrollVertically(-96f)
+            AwtKeyEvent.VK_DOWN -> scrollVertically(96f)
+            AwtKeyEvent.VK_PAGE_UP -> {
+                goToPage(pageIndex - 1)
+                true
+            }
+            AwtKeyEvent.VK_PAGE_DOWN -> {
+                goToPage(pageIndex + 1)
+                true
+            }
+            AwtKeyEvent.VK_HOME -> {
+                goToPage(0)
+                true
+            }
+            AwtKeyEvent.VK_END -> {
+                goToPage(document.pageCount - 1)
+                true
+            }
+            AwtKeyEvent.VK_EQUALS,
+            AwtKeyEvent.VK_PLUS,
+            AwtKeyEvent.VK_ADD -> {
+                if (!event.isControlDown) return false
+                cancelPendingPdfZoomPreview()
+                dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
+                true
+            }
+            AwtKeyEvent.VK_MINUS,
+            AwtKeyEvent.VK_SUBTRACT -> {
+                if (!event.isControlDown) return false
+                cancelPendingPdfZoomPreview()
+                dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
+                true
+            }
+            else -> false
+        }
+    }
+
+    DesktopReaderFullscreenKeyEffect(
+        enabled = isFullscreen && !pdfPopupActive,
+        onKeyPressed = { event -> handlePdfReaderAwtKeyEvent(event) }
+    )
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
@@ -5449,6 +5669,10 @@ private fun PdfReaderScreen(
         subtitle = "${document.formatLabel} - Page ${pageIndex + 1} of ${document.pageCount}",
         progressLabel = "${progressPercent.toInt()}%",
         onReturnToLibrary = onReturnToLibrary,
+        isFullscreen = isFullscreen,
+        onFullscreenChange = ::setPdfFullscreen,
+        isBookmarked = bookmarks.any { it.pageIndex == pageIndex },
+        onToggleBookmark = { toggleBookmark(pageIndex) },
         modifier = Modifier
             .focusRequester(pdfReaderFocusRequester)
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
@@ -5536,12 +5760,6 @@ private fun PdfReaderScreen(
                         }
                     }
                     item {
-                        val isBookmarked = bookmarks.any { it.pageIndex == pageIndex }
-                        TextButton(onClick = { toggleBookmark(pageIndex) }) {
-                            Text(if (isBookmarked) "Remove bookmark" else "Bookmark page")
-                        }
-                    }
-                    item {
                         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         SharedReaderThemeControls(
                             settings = pdfReaderSettings,
@@ -5550,60 +5768,6 @@ private fun PdfReaderScreen(
                             onImportTexture = onImportTexture,
                             onSettingsChange = ::updatePdfReaderSettings
                         )
-                    }
-                    if (bookmarks.isNotEmpty()) {
-                        item {
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            Text("Bookmarks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        }
-                        items(bookmarks, key = { "bookmark_${it.pageIndex}" }) { bookmark ->
-                            Surface(
-                                color = if (bookmark.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth().clickable { goToPage(bookmark.pageIndex, recordJump = true) }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    TextButton(onClick = { toggleBookmark(bookmark.pageIndex) }) {
-                                        Text("Remove")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (document.toc.isNotEmpty()) {
-                        item {
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                            Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        }
-                        itemsIndexed(document.toc, key = { index, entry -> "toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }) { _, entry ->
-                            Surface(
-                                color = if (entry.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth().clickable { goToPage(entry.pageIndex, recordJump = true) }
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .padding(start = (entry.nestLevel * 12).dp)
-                                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        entry.title,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Text("p. ${entry.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
                     }
                     item {
                         Text("Zoom", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -5805,7 +5969,18 @@ private fun PdfReaderScreen(
                 }
             }
         },
-        bottomBar = { PdfBottomChrome() }
+        bottomBar = { PdfBottomChrome() },
+        fullscreenBottomBar = {
+            DesktopPdfFullscreenBottomChrome(
+                pageIndex = pageIndex,
+                pageCount = document.pageCount,
+                themeStyle = pdfThemeStyle,
+                onPrevious = { goToPage(pageIndex - 1) },
+                onNext = { goToPage(pageIndex + 1) },
+                onPageScrub = ::updatePdfPageScrub,
+                onPageScrubFinished = ::finishPdfPageScrub
+            )
+        }
     ) {
         SharedPdfRichTextHiddenInput(
             controller = richTextController,
@@ -5870,6 +6045,7 @@ private fun PdfReaderScreen(
                                     it.displayMode == PdfDisplayMode.VERTICAL_SCROLL
                                 },
                                 zoomViewportRootOffset = pdfZoomViewportRootOffset,
+                                showPageNumberOverlay = !isFullscreen,
                                 onSelectPage = {
                                     goToPage(
                                         target = it,
@@ -6468,10 +6644,12 @@ private fun PdfReaderScreen(
                                 canvasSize = pageCanvasSize,
                                 selectedAnnotationId = selectedEmbeddedAnnotationId
                             )
-                            SharedPdfPageNumberOverlay(
-                                pageIndex = pageIndex,
-                                pageCount = document.pageCount
-                            )
+                            if (!isFullscreen) {
+                                SharedPdfPageNumberOverlay(
+                                    pageIndex = pageIndex,
+                                    pageCount = document.pageCount
+                                )
+                            }
                             if (textSelection != null && selectionMenuOffset != null) {
                                 Box(
                                     modifier = Modifier
@@ -6573,6 +6751,56 @@ private fun PdfReaderScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfFullscreenBottomChrome(
+    pageIndex: Int,
+    pageCount: Int,
+    themeStyle: DesktopPdfThemeStyle,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onPageScrub: (Float) -> Unit,
+    onPageScrubFinished: () -> Unit
+) {
+    val chromeBackground = themeStyle.viewerBackgroundColor
+    val chromeContent = themeStyle.theme.textColor.takeIf { it.isSpecified }
+        ?: if (chromeBackground.luminance() < 0.5f) Color.White else Color.Black
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val canGoPrevious = pageIndex > 0
+        val canGoNext = pageIndex < pageCount - 1
+        IconButton(onClick = onPrevious, enabled = canGoPrevious) {
+            Icon(
+                Icons.AutoMirrored.Filled.NavigateBefore,
+                contentDescription = "Previous page",
+                tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+            )
+        }
+        ReaderMinimalSlider(
+            value = pageIndex.toFloat(),
+            onValueChange = onPageScrub,
+            onValueChangeFinished = onPageScrubFinished,
+            valueRange = 0f..(pageCount - 1).coerceAtLeast(0).toFloat(),
+            enabled = pageCount > 1,
+            activeColor = chromeContent.copy(alpha = 0.62f),
+            inactiveColor = chromeContent.copy(alpha = 0.18f),
+            thumbColor = chromeContent.copy(alpha = 0.86f),
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = onNext, enabled = canGoNext) {
+            Icon(
+                Icons.AutoMirrored.Filled.NavigateNext,
+                contentDescription = "Next page",
+                tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+            )
         }
     }
 }
@@ -7364,6 +7592,7 @@ private fun DesktopVerticalPdfPage(
     shouldRender: Boolean,
     zoomPreview: DesktopPdfZoomPreview?,
     zoomViewportRootOffset: Offset,
+    showPageNumberOverlay: Boolean = true,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
     onHighlightSelection: (Int, DesktopPdfTextSelection, IntSize, Int) -> Unit,
@@ -8029,10 +8258,12 @@ private fun DesktopVerticalPdfPage(
                         canvasSize = pageCanvasSize,
                         selectedAnnotationId = selectedEmbeddedAnnotationId
                     )
-                    SharedPdfPageNumberOverlay(
-                        pageIndex = pageIndex,
-                        pageCount = document.pageCount
-                    )
+                    if (showPageNumberOverlay) {
+                        SharedPdfPageNumberOverlay(
+                            pageIndex = pageIndex,
+                            pageCount = document.pageCount
+                        )
+                    }
                     if (textSelection != null && selectionMenuOffset != null) {
                         Box(
                             modifier = Modifier
@@ -9268,6 +9499,7 @@ private fun ReaderScreen(
     readerEngine: ReaderEngine,
     onSessionChange: (ReaderSessionState) -> Unit,
     onReturnToLibrary: (() -> Unit)? = null,
+    onFullscreenChange: (Boolean) -> Unit = {},
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     highlightPalette: ReaderHighlightPalette,
@@ -9323,11 +9555,46 @@ private fun ReaderScreen(
     val latestOnSessionChange by rememberUpdatedState(onSessionChange)
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
     var lastHandledLink by remember { mutableStateOf<DesktopEpubHandledLink?>(null) }
+    var isFullscreen by remember(session.reader.book.id) { mutableStateOf(false) }
+    val currentReaderFullscreen by rememberUpdatedState(isFullscreen)
+    val currentOnReaderFullscreenChange by rememberUpdatedState(onFullscreenChange)
+
+    fun setReaderFullscreen(enabled: Boolean) {
+        isFullscreen = enabled
+        onFullscreenChange(enabled)
+    }
 
     DesktopExternalLinkDialog(
         url = externalLinkDialogUrl,
         onDismiss = { externalLinkDialogUrl = null }
     )
+
+    fun handleReaderFullscreenAwtKeyEvent(event: AwtKeyEvent): Boolean {
+        val action = event.desktopReaderKeyNavigationOrNull(fullscreen = isFullscreen) ?: return false
+        val currentSession = latestSession
+        when (action) {
+            DesktopReaderKeyNavigation.NEXT -> latestOnSessionChange(currentSession.reduce(ReaderAction.NextPage, readerEngine))
+            DesktopReaderKeyNavigation.PREVIOUS -> latestOnSessionChange(currentSession.reduce(ReaderAction.PreviousPage, readerEngine))
+            DesktopReaderKeyNavigation.FIRST -> latestOnSessionChange(currentSession.reduce(ReaderAction.JumpToPage(0), readerEngine))
+            DesktopReaderKeyNavigation.LAST -> latestOnSessionChange(currentSession.reduce(ReaderAction.JumpToPage(currentSession.reader.pages.lastIndex), readerEngine))
+            DesktopReaderKeyNavigation.SEARCH -> latestOnSessionChange(currentSession.reduce(ReaderAction.SearchOpened, readerEngine))
+            DesktopReaderKeyNavigation.NEXT_SEARCH -> latestOnSessionChange(currentSession.reduce(ReaderAction.JumpToNextSearchResult, readerEngine))
+            DesktopReaderKeyNavigation.EXIT_FULLSCREEN -> if (isFullscreen) setReaderFullscreen(false)
+        }
+        return true
+    }
+    DesktopReaderFullscreenKeyEffect(
+        enabled = isFullscreen && externalLinkDialogUrl == null,
+        onKeyPressed = { event -> handleReaderFullscreenAwtKeyEvent(event) }
+    )
+
+    DisposableEffect(session.reader.book.id) {
+        onDispose {
+            if (currentReaderFullscreen) {
+                currentOnReaderFullscreenChange(false)
+            }
+        }
+    }
 
     LaunchedEffect(
         session.reader.book.id,
@@ -9376,6 +9643,8 @@ private fun ReaderScreen(
         readerEngine = readerEngine,
         onSessionChange = onSessionChange,
         onReturnToLibrary = onReturnToLibrary,
+        isFullscreen = isFullscreen,
+        onFullscreenChange = ::setReaderFullscreen,
         toolbarPreferences = toolbarPreferences,
         onToolbarPreferencesChange = onToolbarPreferencesChange,
         highlightPalette = highlightPalette,
@@ -9435,6 +9704,7 @@ private fun ReaderScreen(
                         onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
                     },
                     onHighlightSelected = onHighlightSelected,
+                    isFullscreen = isFullscreen,
                     onKeyboardNavigation = { action ->
                         when (action) {
                             DesktopReaderKeyNavigation.NEXT -> onSessionChange(session.reduce(ReaderAction.NextPage, readerEngine))
@@ -9443,6 +9713,7 @@ private fun ReaderScreen(
                             DesktopReaderKeyNavigation.LAST -> onSessionChange(session.reduce(ReaderAction.JumpToPage(session.reader.pages.lastIndex), readerEngine))
                             DesktopReaderKeyNavigation.SEARCH -> onSessionChange(session.reduce(ReaderAction.SearchOpened, readerEngine))
                             DesktopReaderKeyNavigation.NEXT_SEARCH -> onSessionChange(session.reduce(ReaderAction.JumpToNextSearchResult, readerEngine))
+                            DesktopReaderKeyNavigation.EXIT_FULLSCREEN -> if (isFullscreen) setReaderFullscreen(false)
                         }
                     },
                     onSelectionAction = { action, text ->
@@ -9514,6 +9785,7 @@ private fun DesktopEpubWebView(
     highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
     onHighlightSelected: (String) -> Unit,
+    isFullscreen: Boolean,
     onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
     onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
@@ -9759,6 +10031,7 @@ private fun DesktopEpubWebView(
                     else if (event.key === 'ArrowLeft' || event.key === 'PageUp') action = 'previous';
                     else if (event.key === 'Home') action = 'first';
                     else if (event.key === 'End') action = 'last';
+                    else if (event.key === 'Escape' && window.readerDesktopFullscreen) action = 'exitFullscreen';
                     if (!action || !window.kmpJsBridge || !window.kmpJsBridge.callNative) return;
                     event.preventDefault();
                     event.stopPropagation();
@@ -9767,6 +10040,11 @@ private fun DesktopEpubWebView(
                 })();
                 """.trimIndent()
             )
+        }
+
+        LaunchedEffect(isFullscreen, state.loadingState) {
+            if (state.loadingState !is LoadingState.Finished) return@LaunchedEffect
+            navigator.evaluateJavaScript("window.readerDesktopFullscreen = ${if (isFullscreen) "true" else "false"};")
         }
 
         LaunchedEffect(html, state.loadingState) {
@@ -9882,7 +10160,30 @@ private enum class DesktopReaderKeyNavigation {
     FIRST,
     LAST,
     SEARCH,
-    NEXT_SEARCH
+    NEXT_SEARCH,
+    EXIT_FULLSCREEN
+}
+
+private fun AwtKeyEvent.desktopReaderKeyNavigationOrNull(fullscreen: Boolean): DesktopReaderKeyNavigation? {
+    if (id != AwtKeyEvent.KEY_PRESSED) return null
+    if (fullscreen && keyCode == AwtKeyEvent.VK_ESCAPE) {
+        return DesktopReaderKeyNavigation.EXIT_FULLSCREEN
+    }
+    if (isControlDown && keyCode == AwtKeyEvent.VK_F) {
+        return DesktopReaderKeyNavigation.SEARCH
+    }
+    if (isControlDown && keyCode == AwtKeyEvent.VK_G) {
+        return DesktopReaderKeyNavigation.NEXT_SEARCH
+    }
+    return when (keyCode) {
+        AwtKeyEvent.VK_RIGHT,
+        AwtKeyEvent.VK_PAGE_DOWN -> DesktopReaderKeyNavigation.NEXT
+        AwtKeyEvent.VK_LEFT,
+        AwtKeyEvent.VK_PAGE_UP -> DesktopReaderKeyNavigation.PREVIOUS
+        AwtKeyEvent.VK_HOME -> DesktopReaderKeyNavigation.FIRST
+        AwtKeyEvent.VK_END -> DesktopReaderKeyNavigation.LAST
+        else -> null
+    }
 }
 
 private data class DesktopReaderSelectionActionPayload(
@@ -10015,6 +10316,7 @@ private fun String.readerKeyNavigationOrNull(): DesktopReaderKeyNavigation? {
             "last" -> DesktopReaderKeyNavigation.LAST
             "search" -> DesktopReaderKeyNavigation.SEARCH
             "nextSearch" -> DesktopReaderKeyNavigation.NEXT_SEARCH
+            "exitFullscreen" -> DesktopReaderKeyNavigation.EXIT_FULLSCREEN
             else -> null
         }
     }.getOrNull()
@@ -10734,60 +11036,61 @@ private fun DesktopExternalLinkDialog(
     val clipboardManager = LocalClipboardManager.current
     LaunchedEffect(url) {
         logExternalLink("dialog_show url=\"${url.logPreview()}\"")
-        when (withContext(Dispatchers.IO) { showNativeExternalLinkDialog(url) }) {
-            DesktopExternalLinkAction.COPY -> {
-                logExternalLink("dialog_copy url=\"${url.logPreview()}\"")
-                clipboardManager.setText(AnnotatedString(url))
-            }
-            DesktopExternalLinkAction.OPEN -> {
-                logExternalLink("dialog_open url=\"${url.logPreview()}\"")
-                openExternalUrl(url)
-            }
-            DesktopExternalLinkAction.DISMISS -> {
-                logExternalLink("dialog_dismiss url=\"${url.logPreview()}\"")
-            }
-        }
+    }
+    fun dismiss() {
+        logExternalLink("dialog_dismiss url=\"${url.logPreview()}\"")
         onDismiss()
     }
-}
-
-private enum class DesktopExternalLinkAction {
-    COPY,
-    OPEN,
-    DISMISS
-}
-
-private fun showNativeExternalLinkDialog(url: String): DesktopExternalLinkAction {
-    val result = AtomicReference(DesktopExternalLinkAction.DISMISS)
-    val options = arrayOf("Copy", "Open", "Cancel")
-    val showDialog = {
-        val pane = JOptionPane(
-            "You clicked on an external link:\n\n$url\n\nWhat would you like to do?",
-            JOptionPane.QUESTION_MESSAGE,
-            JOptionPane.DEFAULT_OPTION,
-            null,
-            options,
-            options[1]
+    DesktopReaderBottomSheet(
+        title = "External link",
+        onDismiss = ::dismiss
+    ) {
+        Text(
+            "You clicked an external link.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
         )
-        val dialog = pane.createDialog(null as Component?, "External Link")
-        dialog.isModal = true
-        dialog.isAlwaysOnTop = true
-        dialog.isVisible = true
-        result.set(
-            when (pane.value) {
-                options[0] -> DesktopExternalLinkAction.COPY
-                options[1] -> DesktopExternalLinkAction.OPEN
-                else -> DesktopExternalLinkAction.DISMISS
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Text(
+                url,
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = ::dismiss) {
+                Text("Cancel")
             }
-        )
-        dialog.dispose()
+            TextButton(
+                onClick = {
+                    logExternalLink("dialog_copy url=\"${url.logPreview()}\"")
+                    clipboardManager.setText(AnnotatedString(url))
+                    onDismiss()
+                }
+            ) {
+                Text("Copy")
+            }
+            TextButton(
+                onClick = {
+                    logExternalLink("dialog_open url=\"${url.logPreview()}\"")
+                    openExternalUrl(url)
+                    onDismiss()
+                }
+            ) {
+                Text("Open")
+            }
+        }
     }
-    if (SwingUtilities.isEventDispatchThread()) {
-        showDialog()
-    } else {
-        SwingUtilities.invokeAndWait { showDialog() }
-    }
-    return result.get()
 }
 
 private fun openExternalUrl(url: String) {

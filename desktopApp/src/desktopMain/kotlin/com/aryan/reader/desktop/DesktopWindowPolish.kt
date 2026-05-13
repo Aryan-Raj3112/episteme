@@ -2,6 +2,8 @@ package com.aryan.reader.desktop
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -17,8 +19,10 @@ import java.awt.Dimension
 import java.awt.EventQueue
 import java.awt.Color as AwtColor
 import java.awt.Window as AwtWindow
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.RootPaneContainer
 import javax.swing.SwingUtilities
+import kotlinx.coroutines.delay
 
 internal const val EpistemeDesktopWindowTitle = "Episteme"
 internal const val EpistemeDesktopWindowIconResource = "episteme_icon.png"
@@ -82,6 +86,33 @@ internal fun EpistemeDesktopWindowChromeEffect(
     }
 }
 
+@Composable
+internal fun EpistemeDesktopWindowDecorationEffect(
+    window: Component?,
+    hideDecoration: Boolean
+) {
+    val originalStyle = remember(window) { AtomicReference<Int?>(null) }
+    LaunchedEffect(window, hideDecoration) {
+        delay(if (hideDecoration) 120L else 80L)
+        applyWindowsDesktopWindowDecoration(
+            window = window,
+            hideDecoration = hideDecoration,
+            originalStyle = originalStyle
+        )
+    }
+    DisposableEffect(window, hideDecoration) {
+        onDispose {
+            if (hideDecoration) {
+                applyWindowsDesktopWindowDecoration(
+                    window = window,
+                    hideDecoration = false,
+                    originalStyle = originalStyle
+                )
+            }
+        }
+    }
+}
+
 internal fun isWindowsDesktop(osName: String = System.getProperty("os.name").orEmpty()): Boolean {
     return osName.startsWith("Windows", ignoreCase = true)
 }
@@ -112,6 +143,49 @@ private fun applyWindowsDesktopWindowChrome(
         val awtWindow = window.toAwtWindowOrNull() ?: return@runOnEventDispatchThread
         val hwnd = runCatching { Native.getWindowPointer(awtWindow) }.getOrNull() ?: return@runOnEventDispatchThread
         WindowsDwmApi.applyWindowChrome(hwnd, colors)
+    }
+}
+
+private fun applyWindowsDesktopWindowDecoration(
+    window: Component?,
+    hideDecoration: Boolean,
+    originalStyle: AtomicReference<Int?>,
+    osName: String = System.getProperty("os.name").orEmpty()
+) {
+    if (!isWindowsDesktop(osName)) return
+    EventQueue.invokeLater decoration@{
+        val awtWindow = window.toAwtWindowOrNull() ?: return@decoration
+        val hwnd = runCatching { Native.getWindowPointer(awtWindow) }.getOrNull() ?: return@decoration
+        val api = runCatching { User32Api.INSTANCE }.getOrNull() ?: return@decoration
+        if (hideDecoration) {
+            val style = api.GetWindowLongW(hwnd, GWL_STYLE)
+            originalStyle.compareAndSet(null, style)
+            val fullscreenStyle = style and WS_CAPTION.inv() and WS_THICKFRAME.inv()
+            if (fullscreenStyle != style) {
+                api.SetWindowLongW(hwnd, GWL_STYLE, fullscreenStyle)
+                api.SetWindowPos(
+                    hwnd,
+                    null,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE or SWP_NOSIZE or SWP_NOZORDER or SWP_NOACTIVATE or SWP_FRAMECHANGED
+                )
+            }
+        } else {
+            val restoredStyle = originalStyle.getAndSet(null) ?: return@decoration
+            api.SetWindowLongW(hwnd, GWL_STYLE, restoredStyle)
+            api.SetWindowPos(
+                hwnd,
+                null,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE or SWP_NOSIZE or SWP_NOZORDER or SWP_NOACTIVATE or SWP_FRAMECHANGED
+            )
+        }
     }
 }
 
@@ -148,6 +222,15 @@ private fun Color.toWindowsColorRef(): Int {
     return red or (green shl 8) or (blue shl 16)
 }
 
+private const val GWL_STYLE = -16
+private const val WS_CAPTION = 0x00C00000
+private const val WS_THICKFRAME = 0x00040000
+private const val SWP_NOSIZE = 0x0001
+private const val SWP_NOMOVE = 0x0002
+private const val SWP_NOZORDER = 0x0004
+private const val SWP_NOACTIVATE = 0x0010
+private const val SWP_FRAMECHANGED = 0x0020
+
 private object WindowsDwmApi {
     private const val DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
     private const val DWMWA_USE_IMMERSIVE_DARK_MODE = 20
@@ -181,6 +264,26 @@ private interface DwmApi : StdCallLibrary {
     companion object {
         val INSTANCE: DwmApi by lazy {
             Native.load("dwmapi", DwmApi::class.java) as DwmApi
+        }
+    }
+}
+
+private interface User32Api : StdCallLibrary {
+    fun GetWindowLongW(hwnd: Pointer, index: Int): Int
+    fun SetWindowLongW(hwnd: Pointer, index: Int, value: Int): Int
+    fun SetWindowPos(
+        hwnd: Pointer,
+        insertAfter: Pointer?,
+        x: Int,
+        y: Int,
+        cx: Int,
+        cy: Int,
+        flags: Int
+    ): Boolean
+
+    companion object {
+        val INSTANCE: User32Api by lazy {
+            Native.load("user32", User32Api::class.java) as User32Api
         }
     }
 }

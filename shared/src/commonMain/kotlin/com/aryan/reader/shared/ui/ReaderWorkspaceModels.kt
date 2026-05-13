@@ -33,6 +33,7 @@ enum class ReaderWorkspaceTopAction {
     CONTENTS,
     SEARCH,
     BOOKMARK,
+    FULL_SCREEN,
     APPEARANCE,
     READ_ALOUD,
     AI,
@@ -103,6 +104,7 @@ fun epubReaderWorkspaceModel(
         if (ReaderWorkspaceLeftSection.CONTENTS in leftSections) add(ReaderWorkspaceTopAction.CONTENTS)
         if (preferences.isVisible(ReaderTool.SEARCH)) add(ReaderWorkspaceTopAction.SEARCH)
         if (preferences.isVisible(ReaderTool.BOOKMARK)) add(ReaderWorkspaceTopAction.BOOKMARK)
+        add(ReaderWorkspaceTopAction.FULL_SCREEN)
         if (ReaderWorkspaceInspectorSection.APPEARANCE in inspectorSections) add(ReaderWorkspaceTopAction.APPEARANCE)
         if (cloudTtsAvailable && preferences.isVisible(ReaderTool.TTS_CONTROLS)) add(ReaderWorkspaceTopAction.READ_ALOUD)
         if (aiAvailable && preferences.isVisible(ReaderTool.AI_FEATURES)) add(ReaderWorkspaceTopAction.AI)
@@ -186,6 +188,7 @@ fun pdfReaderWorkspaceModel(
         add(ReaderWorkspaceTopAction.CONTENTS)
         add(ReaderWorkspaceTopAction.SEARCH)
         add(ReaderWorkspaceTopAction.BOOKMARK)
+        add(ReaderWorkspaceTopAction.FULL_SCREEN)
         add(ReaderWorkspaceTopAction.APPEARANCE)
         if (cloudTtsAvailable) add(ReaderWorkspaceTopAction.READ_ALOUD)
         if (aiAvailable) add(ReaderWorkspaceTopAction.AI)

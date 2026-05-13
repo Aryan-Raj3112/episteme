@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -11,6 +12,7 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.Window as ComposeWindow
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.delay
+import java.awt.EventQueue
 import java.awt.KeyboardFocusManager
 import java.awt.Window as AwtWindow
 
@@ -54,6 +56,11 @@ internal actual fun SharedReaderModalLayer(
         state.position = dialogPosition
         state.size = dialogSize
     }
+    DisposableEffect(ownerWindow) {
+        onDispose {
+            ownerWindow?.restoreFocusAfterSharedReaderModal()
+        }
+    }
 
     ComposeWindow(
         onCloseRequest = onDismiss,
@@ -81,6 +88,19 @@ internal actual fun SharedReaderModalLayer(
 }
 
 private const val SharedReaderModalWindowNamePrefix = "shared-reader-modal:"
+
+private fun AwtWindow.restoreFocusAfterSharedReaderModal() {
+    EventQueue.invokeLater {
+        if (!isDisplayable || !isShowing) return@invokeLater
+        if (this is java.awt.Frame && extendedState and java.awt.Frame.ICONIFIED != 0) {
+            extendedState = extendedState and java.awt.Frame.ICONIFIED.inv()
+        }
+        toFront()
+        requestFocus()
+        requestFocusInWindow()
+        focusOwner?.requestFocus()
+    }
+}
 
 private fun currentNonModalOwnerWindow(): AwtWindow? {
     val activeWindow = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow

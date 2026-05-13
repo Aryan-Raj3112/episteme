@@ -66,6 +66,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -74,6 +75,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -189,6 +191,8 @@ fun SharedReaderScreen(
     readerEngine: ReaderEngine,
     onSessionChange: (ReaderSessionState) -> Unit,
     onReturnToLibrary: (() -> Unit)? = null,
+    isFullscreen: Boolean = false,
+    onFullscreenChange: (Boolean) -> Unit = {},
     toolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
@@ -239,6 +243,8 @@ fun SharedReaderScreen(
     val navigationLocator = session.navigationLocator ?: session.activeSearchResult?.locator ?: readerState.currentPageLocator()
     val effectiveCloudTtsAvailable = cloudTtsControlsAvailable && byokSettings.isCloudTtsAvailable
     val readerFocusRequester = remember(session.reader.book.id) { FocusRequester() }
+    val currentIsFullscreen by rememberUpdatedState(isFullscreen)
+    val currentOnFullscreenChange by rememberUpdatedState(onFullscreenChange)
     var selectedHighlightId by remember(session.reader.book.id) { mutableStateOf<String?>(null) }
     var sidebarNavigationHighlightId by remember(session.reader.book.id) { mutableStateOf<String?>(null) }
     val selectedHighlight = remember(session.highlights, selectedHighlightId) {
@@ -246,6 +252,9 @@ fun SharedReaderScreen(
     }
     fun dispatch(action: ReaderAction) {
         onSessionChange(session.reduce(action, readerEngine))
+    }
+    fun setFullscreen(enabled: Boolean) {
+        onFullscreenChange(enabled)
     }
     val workspaceModel = epubReaderWorkspaceModel(
         session = session,
@@ -273,18 +282,50 @@ fun SharedReaderScreen(
         runCatching { readerFocusRequester.requestFocus() }
     }
 
+    LaunchedEffect(isFullscreen, session.reader.book.id) {
+        repeat(if (isFullscreen) 4 else 1) { attempt ->
+            delay(if (attempt == 0) 80L else 120L)
+            runCatching { readerFocusRequester.requestFocus() }
+        }
+    }
+
+    val readerPopupActive = selectedHighlight != null || readerExtrasState.aiResult.hasContent
+    LaunchedEffect(readerPopupActive, session.reader.book.id) {
+        if (!readerPopupActive) {
+            delay(120L)
+            runCatching { readerFocusRequester.requestFocus() }
+        }
+    }
+
+    DisposableEffect(session.reader.book.id) {
+        onDispose {
+            if (currentIsFullscreen) {
+                currentOnFullscreenChange(false)
+            }
+        }
+    }
+
     ReaderWorkspaceShell(
         model = workspaceModel,
         title = readerState.book.title,
         subtitle = listOfNotNull(readerState.book.author, page?.chapterTitle).joinToString(" - "),
         progressLabel = "${readerState.progress.toInt()}%",
         onReturnToLibrary = onReturnToLibrary,
+        isFullscreen = isFullscreen,
+        onFullscreenChange = ::setFullscreen,
+        isBookmarked = session.currentBookmark != null,
+        onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
         modifier = Modifier
             .fillMaxSize()
             .focusRequester(readerFocusRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when {
+                    isFullscreen && event.key == Key.Escape -> {
+                        setFullscreen(false)
+                        true
+                    }
+
                     event.key == Key.DirectionRight || event.key == Key.PageDown -> {
                         dispatch(ReaderAction.NextPage)
                         true
@@ -407,6 +448,15 @@ fun SharedReaderScreen(
                     )
                 }
             }
+        },
+        fullscreenBottomBar = {
+            SharedReaderFullscreenNavigation(
+                session = session,
+                onPrevious = { dispatch(ReaderAction.PreviousPage) },
+                onNext = { dispatch(ReaderAction.NextPage) },
+                onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) },
+                contentColor = foreground
+            )
         }
     ) {
         LaunchedEffect(sidebarNavigationHighlightId) {
@@ -427,7 +477,7 @@ fun SharedReaderScreen(
                 },
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP) {
+            if (!isFullscreen && shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP) {
                 Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
@@ -944,7 +994,7 @@ private fun SharedReaderControlPanel(
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderAction: (ReaderAction) -> Unit
 ) {
-    val sections = toolbarPreferences.availableReaderControlSections()
+    val sections = toolbarPreferences.availableReaderControlSections(session)
     if (sections.isEmpty()) return
     val defaultSection = if (session.isSearchActive && ReaderControlSection.SEARCH in sections) {
         ReaderControlSection.SEARCH
@@ -1059,10 +1109,12 @@ private enum class ReaderControlSection(val title: String) {
     TOOLBAR("Toolbar")
 }
 
-private fun ReaderToolbarPreferences.availableReaderControlSections(): List<ReaderControlSection> {
+private fun ReaderToolbarPreferences.availableReaderControlSections(session: ReaderSessionState): List<ReaderControlSection> {
     return buildList {
         if (isVisible(ReaderTool.SEARCH)) add(ReaderControlSection.SEARCH)
-        if (isVisible(ReaderTool.BOOKMARK)) add(ReaderControlSection.PAGE)
+        if (session.jumpHistory.backLocator != null || session.jumpHistory.forwardLocator != null) {
+            add(ReaderControlSection.PAGE)
+        }
         if (isVisible(ReaderTool.FORMAT) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.FORMAT)
         if (isVisible(ReaderTool.THEME)) add(ReaderControlSection.THEME)
         if (
@@ -1085,12 +1137,8 @@ private fun SharedReaderPageControls(
     onReaderAction: (ReaderAction) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Current page", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        TextButton(onClick = { onReaderAction(ReaderAction.ToggleBookmark) }) {
-            Text(if (session.currentBookmark != null) "Remove bookmark" else "Add bookmark")
-        }
         if (session.jumpHistory.backLocator != null || session.jumpHistory.forwardLocator != null) {
-            HorizontalDivider()
+            Text("Jump history", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             SharedReaderJumpHistoryBar(
                 session = session,
                 onBack = { onReaderAction(ReaderAction.JumpBack) },
@@ -2796,6 +2844,74 @@ private fun SharedReaderCompactNavigation(
                 Icons.AutoMirrored.Filled.NavigateNext,
                 contentDescription = "Next page",
                 tint = contentColor.copy(alpha = if (canGoNext) 0.78f else 0.32f),
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderFullscreenNavigation(
+    session: ReaderSessionState,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onPageNumberChange: (Int) -> Unit,
+    contentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val readerState = session.reader
+    val totalPages = readerState.pages.size.coerceAtLeast(1)
+    val sliderSteps = ReaderSpreadLayout.sliderStepCount(totalPages, readerState.settings)
+    val sliderMax = sliderSteps.coerceAtLeast(2)
+    val currentSliderPosition = ReaderSpreadLayout.sliderPositionForPage(
+        pageIndex = readerState.currentPageIndex,
+        pageCount = totalPages,
+        settings = readerState.settings
+    )
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(
+            enabled = readerState.canGoPrevious,
+            onClick = onPrevious
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.NavigateBefore,
+                contentDescription = "Previous page",
+                tint = contentColor.copy(alpha = if (readerState.canGoPrevious) 0.78f else 0.32f),
+                modifier = Modifier.size(22.dp)
+            )
+        }
+        ReaderMinimalSlider(
+            value = currentSliderPosition.toFloat(),
+            onValueChange = { value ->
+                onPageNumberChange(
+                    ReaderSpreadLayout.pageNumberForSliderPosition(
+                        position = value.roundToInt(),
+                        pageCount = totalPages,
+                        settings = readerState.settings
+                    )
+                )
+            },
+            valueRange = 1f..sliderMax.toFloat(),
+            enabled = sliderSteps > 1,
+            activeColor = contentColor.copy(alpha = 0.62f),
+            inactiveColor = contentColor.copy(alpha = 0.18f),
+            thumbColor = contentColor.copy(alpha = 0.86f),
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(
+            enabled = readerState.canGoNext,
+            onClick = onNext
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.NavigateNext,
+                contentDescription = "Next page",
+                tint = contentColor.copy(alpha = if (readerState.canGoNext) 0.78f else 0.32f),
                 modifier = Modifier.size(22.dp)
             )
         }

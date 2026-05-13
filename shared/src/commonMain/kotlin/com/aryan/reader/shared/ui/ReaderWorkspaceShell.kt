@@ -1,5 +1,10 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +21,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
@@ -27,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -40,7 +49,9 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 @Composable
@@ -51,9 +62,15 @@ fun ReaderWorkspaceShell(
     progressLabel: String,
     modifier: Modifier = Modifier,
     onReturnToLibrary: (() -> Unit)? = null,
+    isFullscreen: Boolean = false,
+    onFullscreenChange: ((Boolean) -> Unit)? = null,
+    fullscreenExitMessage: String = "Esc to exit",
+    isBookmarked: Boolean = false,
+    onToggleBookmark: (() -> Unit)? = null,
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
+    fullscreenBottomBar: (@Composable () -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     var leftPanelOpen by remember(model.kind, model.panelDefaults.leftOpen) {
@@ -63,6 +80,17 @@ fun ReaderWorkspaceShell(
         mutableStateOf(model.panelDefaults.inspectorOpen)
     }
     var modalAnchorBounds by remember { mutableStateOf<SharedReaderModalAnchorBounds?>(null) }
+    var fullscreenBannerVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isFullscreen) {
+        if (isFullscreen) {
+            fullscreenBannerVisible = true
+            delay(2_600)
+            fullscreenBannerVisible = false
+        } else {
+            fullscreenBannerVisible = false
+        }
+    }
 
     LaunchedEffect(model.kind, model.chrome.forceVisibleReasons) {
         val reasons = model.chrome.forceVisibleReasons
@@ -87,35 +115,49 @@ fun ReaderWorkspaceShell(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(start = 8.dp, top = 8.dp, end = 8.dp)
+                    .padding(
+                        start = if (isFullscreen) 0.dp else 8.dp,
+                        top = if (isFullscreen) 0.dp else 8.dp,
+                        end = if (isFullscreen) 0.dp else 8.dp
+                    )
                     .onGloballyPositioned { coordinates ->
                         logReaderGapLayout(
                             layer = "shell_column",
                             bounds = coordinates.boundsInWindow(),
-                            details = "padding=start8 top8 end8 bottom0 verticalGap=6"
+                            details = if (isFullscreen) {
+                                "fullscreen=true padding=0 verticalGap=0"
+                            } else {
+                                "fullscreen=false padding=start8 top8 end8 bottom0 verticalGap=6"
+                            }
                         )
                     },
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(if (isFullscreen) 0.dp else 6.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onGloballyPositioned { coordinates ->
-                            logReaderGapLayout("top_chrome_slot", coordinates.boundsInWindow())
-                        }
-                ) {
-                    ReaderWorkspaceTopChrome(
-                        title = title,
-                        subtitle = subtitle,
-                        progressLabel = progressLabel,
-                        hasLeftPanel = model.leftSections.isNotEmpty(),
-                        hasRightPanel = model.inspectorSections.isNotEmpty(),
-                        leftPanelOpen = leftPanelOpen,
-                        rightPanelOpen = rightPanelOpen,
-                        onReturnToLibrary = onReturnToLibrary,
-                        onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                        onToggleRightPanel = { rightPanelOpen = !rightPanelOpen }
-                    )
+                if (!isFullscreen) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coordinates ->
+                                logReaderGapLayout("top_chrome_slot", coordinates.boundsInWindow())
+                            }
+                    ) {
+                        ReaderWorkspaceTopChrome(
+                            title = title,
+                            subtitle = subtitle,
+                            progressLabel = progressLabel,
+                            topActions = model.topActions,
+                            hasLeftPanel = model.leftSections.isNotEmpty(),
+                            hasRightPanel = model.inspectorSections.isNotEmpty(),
+                            leftPanelOpen = leftPanelOpen,
+                            rightPanelOpen = rightPanelOpen,
+                            isBookmarked = isBookmarked,
+                            onReturnToLibrary = onReturnToLibrary,
+                            onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
+                            onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                            onToggleBookmark = onToggleBookmark,
+                            onEnterFullscreen = onFullscreenChange?.let { change -> { change(true) } }
+                        )
+                    }
                 }
 
                 Box(
@@ -147,8 +189,8 @@ fun ReaderWorkspaceShell(
                     }
 
                     ReaderWorkspacePanelOverlays(
-                        showLeftPanel = leftPanelOpen && model.leftSections.isNotEmpty(),
-                        showRightPanel = rightPanelOpen && model.inspectorSections.isNotEmpty(),
+                        showLeftPanel = !isFullscreen && leftPanelOpen && model.leftSections.isNotEmpty(),
+                        showRightPanel = !isFullscreen && rightPanelOpen && model.inspectorSections.isNotEmpty(),
                         wide = wide,
                         onCloseLeftPanel = { leftPanelOpen = false },
                         onCloseRightPanel = { rightPanelOpen = false },
@@ -164,10 +206,22 @@ fun ReaderWorkspaceShell(
                             logReaderGapLayout("bottom_bar_slot", coordinates.boundsInWindow())
                         }
                 ) {
-                    bottomBar()
+                    key(isFullscreen) {
+                        val immersiveBottomBar = fullscreenBottomBar
+                        if (isFullscreen && immersiveBottomBar != null) {
+                            immersiveBottomBar()
+                        } else {
+                            bottomBar()
+                        }
+                    }
                 }
             }
         }
+
+        ReaderWorkspaceTopBanner(
+            bannerMessage = if (fullscreenBannerVisible) BannerMessage(fullscreenExitMessage) else null,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
     }
 }
 
@@ -243,13 +297,17 @@ private fun ReaderWorkspaceTopChrome(
     title: String,
     subtitle: String,
     progressLabel: String,
+    topActions: List<ReaderWorkspaceTopAction>,
     hasLeftPanel: Boolean,
     hasRightPanel: Boolean,
     leftPanelOpen: Boolean,
     rightPanelOpen: Boolean,
+    isBookmarked: Boolean,
     onReturnToLibrary: (() -> Unit)?,
     onToggleLeftPanel: () -> Unit,
-    onToggleRightPanel: () -> Unit
+    onToggleRightPanel: () -> Unit,
+    onToggleBookmark: (() -> Unit)?,
+    onEnterFullscreen: (() -> Unit)?
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -277,10 +335,64 @@ private fun ReaderWorkspaceTopChrome(
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(progressLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (ReaderWorkspaceTopAction.BOOKMARK in topActions && onToggleBookmark != null) {
+                IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = if (isBookmarked) "Remove bookmark" else "Add bookmark"
+                    )
+                }
+            }
+            if (ReaderWorkspaceTopAction.FULL_SCREEN in topActions && onEnterFullscreen != null) {
+                IconButton(onClick = onEnterFullscreen, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Fullscreen, contentDescription = "Enter full screen")
+                }
+            }
             if (hasRightPanel) {
                 IconButton(onClick = onToggleRightPanel, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.Tune, contentDescription = if (rightPanelOpen) "Hide reader tools" else "Show reader tools")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderWorkspaceTopBanner(
+    bannerMessage: BannerMessage?,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = bannerMessage != null,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Surface(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = if (bannerMessage?.isError == true) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.secondaryContainer
+                },
+                shape = MaterialTheme.shapes.medium,
+                shadowElevation = 8.dp
+            ) {
+                Text(
+                    text = bannerMessage?.message.orEmpty(),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    color = if (bannerMessage?.isError == true) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
