@@ -25,6 +25,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.core.net.toUri
 import com.aryan.reader.ReaderPerfLog
+import com.aryan.reader.scaledToCanvasLimit
 import timber.log.Timber
 import com.aryan.reader.BookImporter
 import com.aryan.reader.paginatedreader.Locator
@@ -561,9 +562,16 @@ class RecentFilesRepository(private val context: Context) {
         val filename = "cover_${uri.toString().hashCode()}.png"
         val file = File(cacheDir, filename)
         var fos: FileOutputStream? = null
+        var scaledCopy: Bitmap? = null
         try {
+            val bitmapToSave = bitmap.scaledToCanvasLimit(
+                maxBytes = 8L * 1024L * 1024L,
+                maxDimension = 1200
+            ).also {
+                if (it !== bitmap) scaledCopy = it
+            }
             fos = FileOutputStream(file)
-            bitmap.compress(Bitmap.CompressFormat.PNG, 90, fos)
+            bitmapToSave.compress(Bitmap.CompressFormat.PNG, 90, fos)
             Timber.d("Saved cover image to: ${file.absolutePath}")
             return@withContext file.absolutePath
         } catch (e: Exception) {
@@ -572,6 +580,7 @@ class RecentFilesRepository(private val context: Context) {
             return@withContext null
         } finally {
             fos?.close()
+            scaledCopy?.recycle()
         }
     }
 

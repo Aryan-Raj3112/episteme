@@ -21,7 +21,13 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import kotlin.random.Random
+
+private const val PDF_PREVIEW_MAX_WIDTH_PX = 1080
+private const val PDF_PREVIEW_MAX_HEIGHT_PX = 2048
+private const val PDF_PREVIEW_MAX_BYTES = 16L * 1024L * 1024L
 
 object PdfiumCoreProvider {
     val core: PdfiumCoreKt by lazy {
@@ -156,14 +162,34 @@ internal suspend fun renderPageToBitmap(doc: ReaderDocument, pageIndex: Int): Bi
             page = doc.openPage(pageIndex)
             if (page == null) return@withContext null
 
-            val bitmapWidth = 1080
+            val pageWidth = page.getPageWidthPoint()
+            val pageHeight = page.getPageHeightPoint()
+            if (pageWidth <= 0 || pageHeight <= 0) {
+                Timber.e("Invalid page size for page $pageIndex: ${pageWidth}x${pageHeight}")
+                return@withContext null
+            }
+
             val aspectRatio =
-                page.getPageWidthPoint().toFloat() / page.getPageHeightPoint().toFloat()
+                pageWidth.toFloat() / pageHeight.toFloat()
             if (aspectRatio.isNaN() || aspectRatio <= 0) {
                 Timber.e("Invalid aspect ratio for page $pageIndex")
                 return@withContext null
             }
-            val bitmapHeight = (bitmapWidth / aspectRatio).toInt()
+
+            var bitmapWidth = PDF_PREVIEW_MAX_WIDTH_PX
+            var bitmapHeight = (bitmapWidth / aspectRatio).roundToInt()
+
+            if (bitmapHeight > PDF_PREVIEW_MAX_HEIGHT_PX) {
+                bitmapHeight = PDF_PREVIEW_MAX_HEIGHT_PX
+                bitmapWidth = (bitmapHeight * aspectRatio).roundToInt().coerceAtLeast(1)
+            }
+
+            val requestedBytes = bitmapWidth.toLong() * bitmapHeight.toLong() * 4L
+            if (requestedBytes > PDF_PREVIEW_MAX_BYTES) {
+                val scale = sqrt(PDF_PREVIEW_MAX_BYTES.toDouble() / requestedBytes.toDouble())
+                bitmapWidth = (bitmapWidth * scale).roundToInt().coerceAtLeast(1)
+                bitmapHeight = (bitmapHeight * scale).roundToInt().coerceAtLeast(1)
+            }
 
             if (bitmapHeight <= 0) {
                 Timber.e("Invalid calculated bitmap height for page $pageIndex")

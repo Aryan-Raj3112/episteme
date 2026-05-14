@@ -123,6 +123,7 @@ import androidx.core.graphics.scale
 import androidx.core.graphics.set
 import com.aryan.reader.R
 import com.aryan.reader.SearchResult
+import com.aryan.reader.isCanvasSafeBitmap
 import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -243,6 +244,8 @@ private fun Throwable.readablePdfErrorDetail(): String {
 
 private const val PDF_TILE_SIZE_DP = 256
 private const val PDF_MAX_TILE_BITMAP_SIZE_PX = 3072
+private const val PDF_MAX_DRAW_BITMAP_BYTES = 64L * 1024L * 1024L
+private const val PDF_MAX_DRAW_BITMAP_DIMENSION_PX = 4096
 private const val PDF_TILE_SCALE_TOLERANCE = 0.06f
 private const val PDF_TILE_IDLE_RENDER_DELAY_MS = 90L
 private const val PDF_PAGINATION_PAN_FLING_MIN_VELOCITY = 600f
@@ -310,17 +313,22 @@ private suspend fun renderExpandedBubbleBitmap(
     }
 
     document.openPage(pageIndex)?.use { page ->
-        val cropWidth = (bubbleBounds.width() * renderScale).roundToInt().coerceAtLeast(1)
-        val cropHeight = (bubbleBounds.height() * renderScale).roundToInt().coerceAtLeast(1)
+        val safeRenderScale = safePdfBitmapRenderScale(
+            contentWidth = bubbleBounds.width(),
+            contentHeight = bubbleBounds.height(),
+            requestedScale = renderScale
+        )
+        val cropWidth = (bubbleBounds.width() * safeRenderScale).roundToInt().coerceAtLeast(1)
+        val cropHeight = (bubbleBounds.height() * safeRenderScale).roundToInt().coerceAtLeast(1)
         val bitmap = createBitmap(cropWidth, cropHeight)
 
         try {
             page.renderPageBitmap(
                 bitmap = bitmap,
-                startX = (-bubbleBounds.left * renderScale).roundToInt(),
-                startY = (-bubbleBounds.top * renderScale).roundToInt(),
-                drawSizeX = (pageWidth * renderScale).roundToInt().coerceAtLeast(cropWidth),
-                drawSizeY = (pageHeight * renderScale).roundToInt().coerceAtLeast(cropHeight),
+                startX = (-bubbleBounds.left * safeRenderScale).roundToInt(),
+                startY = (-bubbleBounds.top * safeRenderScale).roundToInt(),
+                drawSizeX = (pageWidth * safeRenderScale).roundToInt().coerceAtLeast(cropWidth),
+                drawSizeY = (pageHeight * safeRenderScale).roundToInt().coerceAtLeast(cropHeight),
                 renderAnnot = true
             )
             bitmap
@@ -330,6 +338,23 @@ private suspend fun renderExpandedBubbleBitmap(
             null
         }
     }
+}
+
+private fun safePdfBitmapRenderScale(
+    contentWidth: Float,
+    contentHeight: Float,
+    requestedScale: Float
+): Float {
+    if (contentWidth <= 0f || contentHeight <= 0f || requestedScale <= 0f) return 1f
+
+    val requestedWidth = contentWidth * requestedScale
+    val requestedHeight = contentHeight * requestedScale
+    val requestedBytes = requestedWidth.toDouble() * requestedHeight.toDouble() * 4.0
+    val byteScale = sqrt(PDF_MAX_DRAW_BITMAP_BYTES.toDouble() / requestedBytes.coerceAtLeast(1.0))
+    val dimensionScale = PDF_MAX_DRAW_BITMAP_DIMENSION_PX.toDouble() /
+        max(requestedWidth, requestedHeight).toDouble().coerceAtLeast(1.0)
+    val limiter = min(1.0, min(byteScale, dimensionScale)).coerceAtLeast(0.01)
+    return (requestedScale.toDouble() * limiter).coerceAtLeast(0.01).toFloat()
 }
 
 object PdfInkGeometry {
@@ -4462,7 +4487,13 @@ private fun PdfBitmapLayer(
     Canvas(modifier = Modifier.fillMaxSize().graphicsLayer()) {
         translate(left = centeringOffsetX, top = centeringOffsetY) {
             clipRect(left = 0f, top = 0f, right = targetWidth.toFloat(), bottom = targetHeight.toFloat()) {
-                if (bitmapState != null && !bitmapState.isRecycled) {
+                if (
+                    bitmapState != null &&
+                    bitmapState.isCanvasSafeBitmap(
+                        maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
+                        maxDimension = PDF_MAX_DRAW_BITMAP_DIMENSION_PX
+                    )
+                ) {
                     val dstW = if (targetWidth > 0) targetWidth else bitmapState.width
                     val dstH = if (targetHeight > 0) targetHeight else bitmapState.height
                     val srcSize = IntSize(bitmapState.width, bitmapState.height)
@@ -4507,7 +4538,12 @@ private fun PdfBitmapLayer(
                     val needsTiling = effectiveScale > 1f || targetWidth > 3000 || targetHeight > 3000
                     if (needsTiling) {
                         tiles.forEach { tile ->
-                            if (!tile.bitmap.isRecycled) {
+                            if (
+                                tile.bitmap.isCanvasSafeBitmap(
+                                    maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
+                                    maxDimension = PDF_MAX_DRAW_BITMAP_DIMENSION_PX
+                                )
+                            ) {
                                 drawImage(
                                     image = tile.bitmap.asImageBitmap(),
                                     srcOffset = IntOffset.Zero,
@@ -5702,6 +5738,21 @@ private fun PdfPageRenderer(
                     }
 
                     if (animatingBubbleIndex in detectedBubbles.indices && staticData.bitmap.item != null && bubbleExpansionProgress > 0f) {
+                        val baseBitmap = staticData.bitmap.item ?: return@Canvas
+                        if (
+                            !baseBitmap.isCanvasSafeBitmap(
+                                maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
+                                maxDimension = PDF_MAX_DRAW_BITMAP_DIMENSION_PX
+                            )
+                        ) {
+                            return@Canvas
+                        }
+                        val safeExpandedBubbleRender = expandedBubbleRender?.takeIf {
+                            it.bitmap.isCanvasSafeBitmap(
+                                maxBytes = PDF_MAX_DRAW_BITMAP_BYTES,
+                                maxDimension = PDF_MAX_DRAW_BITMAP_DIMENSION_PX
+                            )
+                        }
                         val bubble = detectedBubbles[animatingBubbleIndex]
                         val left = bubble.bounds.left + staticData.centeringOffsetX
                         val top = bubble.bounds.top + staticData.centeringOffsetY
@@ -5709,7 +5760,7 @@ private fun PdfPageRenderer(
                         val logicalHeight = bubble.bounds.height()
                         val pivotX = left + logicalWidth / 2f
                         val pivotY = top + logicalHeight / 2f
-                        val targetZoomFactor = expandedBubbleRender?.zoomFactor ?: computeDynamicBubbleZoomFactor(
+                        val targetZoomFactor = safeExpandedBubbleRender?.zoomFactor ?: computeDynamicBubbleZoomFactor(
                             bubbleBounds = bubble.bounds,
                             viewportWidth = staticData.canvasWidth,
                             viewportHeight = staticData.canvasHeight
@@ -5722,8 +5773,8 @@ private fun PdfPageRenderer(
                             val dstOffset = IntOffset(left.toInt(), top.toInt())
                             val dstSize = IntSize(logicalWidth.toInt(), logicalHeight.toInt())
 
-                            val renderScaleX = staticData.bitmap.item.width.toFloat() / staticData.targetWidth.toFloat()
-                            val renderScaleY = staticData.bitmap.item.height.toFloat() / staticData.targetHeight.toFloat()
+                            val renderScaleX = baseBitmap.width.toFloat() / staticData.targetWidth.toFloat()
+                            val renderScaleY = baseBitmap.height.toFloat() / staticData.targetHeight.toFloat()
 
                             val srcOffset = IntOffset(
                                 (bubble.bounds.left * renderScaleX).toInt(),
@@ -5760,12 +5811,12 @@ private fun PdfPageRenderer(
                                 )
                                 drawContext.canvas.saveLayer(rect, androidx.compose.ui.graphics.Paint())
                                 drawImage(
-                                    image = (expandedBubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
-                                    srcOffset = if (expandedBubbleRender != null) IntOffset.Zero else srcOffset,
-                                    srcSize = if (expandedBubbleRender != null) {
+                                    image = (safeExpandedBubbleRender?.bitmap ?: baseBitmap).asImageBitmap(),
+                                    srcOffset = if (safeExpandedBubbleRender != null) IntOffset.Zero else srcOffset,
+                                    srcSize = if (safeExpandedBubbleRender != null) {
                                         IntSize(
-                                            expandedBubbleRender.bitmap.width,
-                                            expandedBubbleRender.bitmap.height)
+                                            safeExpandedBubbleRender.bitmap.width,
+                                            safeExpandedBubbleRender.bitmap.height)
                                     } else {
                                         srcSize
                                     },
@@ -5784,12 +5835,12 @@ private fun PdfPageRenderer(
                             } else {
                                 clipRect(left, top, left + logicalWidth, top + logicalHeight) {
                                     drawImage(
-                                        image = (expandedBubbleRender?.bitmap ?: staticData.bitmap.item).asImageBitmap(),
-                                        srcOffset = if (expandedBubbleRender != null) IntOffset.Zero else srcOffset,
-                                        srcSize = if (expandedBubbleRender != null) {
+                                        image = (safeExpandedBubbleRender?.bitmap ?: baseBitmap).asImageBitmap(),
+                                        srcOffset = if (safeExpandedBubbleRender != null) IntOffset.Zero else srcOffset,
+                                        srcSize = if (safeExpandedBubbleRender != null) {
                                             IntSize(
-                                                expandedBubbleRender.bitmap.width,
-                                                expandedBubbleRender.bitmap.height)
+                                                safeExpandedBubbleRender.bitmap.width,
+                                                safeExpandedBubbleRender.bitmap.height)
                                         } else {
                                             srcSize
                                         },

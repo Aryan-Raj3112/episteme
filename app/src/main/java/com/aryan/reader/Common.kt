@@ -4,6 +4,7 @@
 package com.aryan.reader
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.security.keystore.KeyGenParameterSpec
@@ -209,6 +210,7 @@ import javax.crypto.spec.GCMParameterSpec
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 const val aiServerBasePath = BuildConfig.AI_WORKER_URL
 const val summarizeEndpoint = "/summarize"
@@ -2487,11 +2489,75 @@ fun importReaderTexture(context: Context, uri: Uri): String? {
     }
 }
 
+private const val DEFAULT_CANVAS_SAFE_BITMAP_BYTES = 64L * 1024L * 1024L
+private const val DEFAULT_CANVAS_SAFE_BITMAP_DIMENSION = 4096
+private const val MAX_READER_TEXTURE_DIMENSION_PX = 1024
+
+fun Bitmap.safeAllocationByteCount(): Long {
+    return try {
+        allocationByteCount.toLong()
+    } catch (_: Exception) {
+        width.toLong() * height.toLong() * 4L
+    }
+}
+
+fun Bitmap.isCanvasSafeBitmap(
+    maxBytes: Long = DEFAULT_CANVAS_SAFE_BITMAP_BYTES,
+    maxDimension: Int = DEFAULT_CANVAS_SAFE_BITMAP_DIMENSION
+): Boolean {
+    return !isRecycled &&
+        width > 0 &&
+        height > 0 &&
+        width <= maxDimension &&
+        height <= maxDimension &&
+        safeAllocationByteCount() <= maxBytes
+}
+
+fun Bitmap.scaledToCanvasLimit(
+    maxBytes: Long = DEFAULT_CANVAS_SAFE_BITMAP_BYTES,
+    maxDimension: Int = DEFAULT_CANVAS_SAFE_BITMAP_DIMENSION
+): Bitmap {
+    if (isCanvasSafeBitmap(maxBytes, maxDimension)) return this
+
+    val byteScale = sqrt(maxBytes.toDouble() / safeAllocationByteCount().coerceAtLeast(1L).toDouble())
+    val dimensionScale = maxDimension.toDouble() / max(width, height).coerceAtLeast(1).toDouble()
+    val scale = min(1.0, min(byteScale, dimensionScale)).coerceAtLeast(0.01)
+    val targetWidth = (width * scale).roundToInt().coerceAtLeast(1)
+    val targetHeight = (height * scale).roundToInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(this, targetWidth, targetHeight, true)
+}
+
+private fun decodeSampledBitmapFile(path: String, maxDimension: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    val options = BitmapFactory.Options().apply {
+        inSampleSize = calculateBitmapSampleSize(bounds.outWidth, bounds.outHeight, maxDimension)
+    }
+    return BitmapFactory.decodeFile(path, options)
+}
+
+private fun calculateBitmapSampleSize(width: Int, height: Int, maxDimension: Int): Int {
+    var sampleSize = 1
+    var sampledWidth = width
+    var sampledHeight = height
+    while (sampledWidth / 2 >= maxDimension || sampledHeight / 2 >= maxDimension) {
+        sampleSize *= 2
+        sampledWidth /= 2
+        sampledHeight /= 2
+    }
+    return sampleSize.coerceAtLeast(1)
+}
+
 fun loadReaderTextureBitmap(context: Context, textureId: String?): ImageBitmap? {
     if (textureId == null) return null
     return try {
         val bitmap = if (textureId.startsWith(TEXTURE_FILE_PREFIX)) {
-            BitmapFactory.decodeFile(textureId.removePrefix(TEXTURE_FILE_PREFIX))
+            decodeSampledBitmapFile(
+                path = textureId.removePrefix(TEXTURE_FILE_PREFIX),
+                maxDimension = MAX_READER_TEXTURE_DIMENSION_PX
+            )
         } else {
             val texture = ReaderTexture.entries.find { it.id == textureId } ?: return null
             when {
@@ -2500,7 +2566,14 @@ fun loadReaderTextureBitmap(context: Context, textureId: String?): ImageBitmap? 
                 else -> null
             }
         }
-        bitmap?.asImageBitmap()
+        val safeBitmap = bitmap?.scaledToCanvasLimit(
+            maxBytes = DEFAULT_CANVAS_SAFE_BITMAP_BYTES,
+            maxDimension = MAX_READER_TEXTURE_DIMENSION_PX
+        )
+        if (bitmap != null && safeBitmap !== bitmap && !bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+        safeBitmap?.asImageBitmap()
     } catch (e: Exception) {
         Timber.e(e, "Failed to load reader texture bitmap: $textureId")
         null
@@ -2513,8 +2586,24 @@ fun getReaderTextureDataUri(context: Context, textureId: String?): String? {
         var mimeType = "image/png"
         val bytes = if (textureId.startsWith(TEXTURE_FILE_PREFIX)) {
             val file = File(textureId.removePrefix(TEXTURE_FILE_PREFIX))
-            mimeType = imageMimeTypeForExtension(file.extension)
-            file.readBytes()
+            mimeType = "image/png"
+            val decodedBitmap = decodeSampledBitmapFile(file.absolutePath, MAX_READER_TEXTURE_DIMENSION_PX)
+                ?: return null
+            val bitmap = decodedBitmap.scaledToCanvasLimit(
+                maxBytes = DEFAULT_CANVAS_SAFE_BITMAP_BYTES,
+                maxDimension = MAX_READER_TEXTURE_DIMENSION_PX
+            )
+            try {
+                ByteArrayOutputStream().use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, out)
+                    out.toByteArray()
+                }
+            } finally {
+                if (bitmap !== decodedBitmap && !decodedBitmap.isRecycled) {
+                    decodedBitmap.recycle()
+                }
+                bitmap.recycle()
+            }
         } else {
             val texture = ReaderTexture.entries.find { it.id == textureId } ?: return null
             when {

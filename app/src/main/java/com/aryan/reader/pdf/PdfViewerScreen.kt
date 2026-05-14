@@ -244,6 +244,7 @@ import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.saveReaderScreenOrientationMode
 import com.aryan.reader.savePdfRightToLeftPagination
 import com.aryan.reader.saveTtsReplacementPreferences
+import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
@@ -4149,7 +4150,12 @@ fun PdfViewerScreen(
                                                     detectSpeechBubblesForPage(sourcePageIndex, bitmap)
                                                 },
                                                 onShowPanelPopup = { bitmapWithRects ->
-                                                    poppedUpPanelBitmap = bitmapWithRects
+                                                    val safeBitmap = bitmapWithRects.scaledToCanvasLimit()
+                                                    if (safeBitmap !== bitmapWithRects && !bitmapWithRects.isRecycled) {
+                                                        bitmapWithRects.recycle()
+                                                    }
+                                                    poppedUpPanelBitmap?.takeUnless { it.isRecycled }?.recycle()
+                                                    poppedUpPanelBitmap = safeBitmap
                                                 },
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
@@ -6496,6 +6502,17 @@ fun PdfViewerScreen(
 
     // --- PANEL POPUP ---
     if (poppedUpPanelBitmap != null) {
+        val sourcePanelBitmap = poppedUpPanelBitmap
+        val displayPanelBitmap = remember(sourcePanelBitmap) {
+            sourcePanelBitmap?.scaledToCanvasLimit()
+        }
+        DisposableEffect(sourcePanelBitmap, displayPanelBitmap) {
+            onDispose {
+                if (displayPanelBitmap != null && displayPanelBitmap !== sourcePanelBitmap && !displayPanelBitmap.isRecycled) {
+                    displayPanelBitmap.recycle()
+                }
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -6509,15 +6526,17 @@ fun PdfViewerScreen(
                 },
             contentAlignment = Alignment.Center
         ) {
-            Image(
-                bitmap = poppedUpPanelBitmap!!.asImageBitmap(),
-                contentDescription = stringResource(R.string.content_desc_annotated_page),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-                contentScale = ContentScale.Fit
-            )
+            displayPanelBitmap?.takeUnless { it.isRecycled }?.let { panelBitmap ->
+                Image(
+                    bitmap = panelBitmap.asImageBitmap(),
+                    contentDescription = stringResource(R.string.content_desc_annotated_page),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Fit
+                )
+            }
 
             IconButton(
                 onClick = {
