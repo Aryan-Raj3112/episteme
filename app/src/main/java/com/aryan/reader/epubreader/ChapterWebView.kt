@@ -29,6 +29,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Rect
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -90,6 +91,34 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 private const val TAG_LINK_NAV = "LINK_NAV"
+private val READER_WEB_VIEW_JS_INTERFACES = arrayOf(
+    "PageInfoReporter",
+    "ProgressReporter",
+    "ContentBridge",
+    "HighlightBridge",
+    "AutoScrollBridge",
+    "CfiBridge",
+    "SnippetBridge",
+    "TtsBridge",
+    "AiBridge",
+    "FootnoteBridge",
+    "LinkNavBridge"
+)
+
+private fun WebView.releaseReaderResources() {
+    try {
+        stopLoading()
+        READER_WEB_VIEW_JS_INTERFACES.forEach { removeJavascriptInterface(it) }
+        webChromeClient = null
+        webViewClient = WebViewClient()
+        loadDataWithBaseURL(null, "", "text/html", "UTF-8", null)
+        clearHistory()
+        removeAllViews()
+        destroy()
+    } catch (e: Exception) {
+        Timber.w(e, "Failed to fully release EPUB WebView resources")
+    }
+}
 
 private fun getFontCssInjection(): String {
     return """
@@ -386,6 +415,7 @@ fun ChapterWebView(
     activeHighlightPalette: List<HighlightColor>,
     onUpdatePalette: (Int, HighlightColor) -> Unit,
     onInternalLinkClick: (String) -> Unit,
+    onWebViewDisposed: (WebView) -> Unit = {},
     activeTextureId: String? = null,
     activeTextureAlpha: Float = 0.55f
 ) {
@@ -556,7 +586,7 @@ fun ChapterWebView(
                         }, "AutoScrollBridge"
                     )
 
-                    webChromeClient = object : android.webkit.WebChromeClient() {
+                    webChromeClient = object : WebChromeClient() {
                         override fun onConsoleMessage(consoleMessage: android.webkit.ConsoleMessage?): Boolean {
                             consoleMessage?.let {
                                 val message = it.message()
@@ -942,10 +972,19 @@ fun ChapterWebView(
                     loadDataWithBaseURL(baseUrl, initialHtmlContent, "text/html", "UTF-8", null)
                 }
                 webView
-            }, update = { webView ->
-                Timber.d(
-                    "WebView update. Setting Font: ${currentFontFamily.fontFamilyName}"
-                )
+            },
+            modifier = Modifier.fillMaxSize(),
+            onRelease = { releasedWebView ->
+                if (localWebViewRef === releasedWebView) {
+                    localWebViewRef = null
+                }
+                customMenuState?.finishActionModeCallback?.invoke()
+                customMenuState = null
+                onWebViewDisposed(releasedWebView)
+                releasedWebView.releaseReaderResources()
+            },
+            update = { webView ->
+                Timber.d("WebView update. Setting Font: ${currentFontFamily.fontFamilyName}")
                 localWebViewRef = webView
                 onWebViewInstanceCreated(webView)
                 val fontCss = getFontCssInjection().replace("\n", " ")
@@ -981,7 +1020,7 @@ fun ChapterWebView(
                     "javascript:window.CURRENT_HIGHLIGHTS = '${escapedHighlights}'; window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);",
                     null
                 )
-                }, modifier = Modifier.fillMaxSize()
+            }
             )
         }
 

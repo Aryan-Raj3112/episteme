@@ -61,6 +61,11 @@ class InteractiveWebView(
     private var scrollStopRunnable: Runnable? = null
     private var mCustomCallback: ActionMode.Callback? = null
 
+    private fun clearPendingSelectionWork() {
+        scrollStopRunnable?.let { scrollStopHandler.removeCallbacks(it) }
+        scrollStopRunnable = null
+    }
+
     private val gestureDetector =
         GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean {
@@ -316,7 +321,7 @@ class InteractiveWebView(
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
 
-        scrollStopRunnable?.let { scrollStopHandler.removeCallbacks(it) }
+        clearPendingSelectionWork()
         scrollStopRunnable = Runnable {
             evaluateJavascript("(function() { return window.getSelection().toString(); })();") { result ->
                 val selectedText = result?.removeSurrounding("\"")
@@ -329,5 +334,16 @@ class InteractiveWebView(
             }
         }
         scrollStopRunnable?.let { scrollStopHandler.postDelayed(it, 250) }
+    }
+
+    override fun onDetachedFromWindow() {
+        clearPendingSelectionWork()
+        super.onDetachedFromWindow()
+    }
+
+    override fun destroy() {
+        clearPendingSelectionWork()
+        mCustomCallback = null
+        super.destroy()
     }
 }

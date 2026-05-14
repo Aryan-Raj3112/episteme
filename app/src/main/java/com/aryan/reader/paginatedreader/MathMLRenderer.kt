@@ -29,7 +29,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.aryan.reader.BuildConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -44,6 +43,8 @@ class MathMLRenderer(private val context: Context) {
 
     private var webView: WebView? = null
     private val handler = Handler(Looper.getMainLooper())
+    @Volatile
+    private var isDestroyed = false
     private var isMathJaxReady = false
     private val readySignal = CompletableDeferred<Boolean>()
 
@@ -59,11 +60,14 @@ class MathMLRenderer(private val context: Context) {
 
     init {
         handler.post {
-            setupWebView()
+            if (!isDestroyed) {
+                setupWebView()
+            }
         }
     }
 
     suspend fun awaitReady(): Boolean {
+        if (isDestroyed) return false
         Timber.d("awaitReady: Waiting for WebView and MathJax initialization...")
         return withTimeoutOrNull(10_000) {
             readySignal.await()
@@ -76,9 +80,7 @@ class MathMLRenderer(private val context: Context) {
 
     private fun setupWebView() {
         try {
-            if (BuildConfig.DEBUG) {
-                WebView.setWebContentsDebuggingEnabled(true)
-            }
+            if (isDestroyed) return
 
             webView = WebView(context).apply {
                 @SuppressLint("SetJavaScriptEnabled")
@@ -114,6 +116,9 @@ class MathMLRenderer(private val context: Context) {
     }
 
     suspend fun render(mathML: String, originalAltText: String): RenderResult {
+        if (isDestroyed) {
+            return RenderResult.Failure(originalAltText)
+        }
         if (!awaitReady()) {
             Timber.e("WebView is not available or failed to initialize. Failing render.")
             return RenderResult.Failure(originalAltText)
@@ -140,6 +145,10 @@ class MathMLRenderer(private val context: Context) {
     }
 
     private fun processNextJob() {
+        if (isDestroyed) {
+            isProcessing = false
+            return
+        }
         synchronized(jobQueue) {
             if (jobQueue.isEmpty()) {
                 isProcessing = false
@@ -153,6 +162,10 @@ class MathMLRenderer(private val context: Context) {
     }
 
     private fun executeRender() {
+        if (isDestroyed) {
+            isProcessing = false
+            return
+        }
         if (!isMathJaxReady) {
             Timber.d("executeRender called but MathJax not ready yet. Retrying...")
             handler.postDelayed({ executeRender() }, 100)
@@ -208,14 +221,43 @@ class MathMLRenderer(private val context: Context) {
     }
 
     fun destroy() {
+        isDestroyed = true
+        if (!readySignal.isCompleted) {
+            readySignal.complete(false)
+        }
+        val pendingJobs = synchronized(jobQueue) {
+            val copy = jobQueue.toList()
+            jobQueue.clear()
+            isProcessing = false
+            copy
+        }
+        pendingJobs.forEach { job ->
+            job.continuation(RenderResult.Failure(extractAltText(job.mathML)))
+        }
+        handler.removeCallbacksAndMessages(null)
         handler.post {
-            webView?.destroy()
+            webView?.releaseMathRendererResources()
             webView = null
             Timber.d("MathMLRenderer WebView destroyed.")
         }
-        synchronized(jobQueue) {
-            jobQueue.clear()
-            isProcessing = false
+    }
+
+    private fun extractAltText(mathML: String): String =
+        mathML.substringAfter("alttext=\"", "").substringBefore("\"")
+            .ifBlank { "MathML rendering failed" }
+
+    private fun WebView.releaseMathRendererResources() {
+        try {
+            stopLoading()
+            removeJavascriptInterface("AndroidBridge")
+            webChromeClient = null
+            webViewClient = WebViewClient()
+            loadDataWithBaseURL(null, "", "text/html", "UTF-8", null)
+            clearHistory()
+            removeAllViews()
+            destroy()
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to fully release MathML WebView resources")
         }
     }
 
@@ -229,7 +271,7 @@ class MathMLRenderer(private val context: Context) {
             } else {
                 Timber.e("onSvgReady FAILURE. Received empty SVG.")
                 val job = synchronized(jobQueue) { jobQueue.firstOrNull() }
-                val altText = job?.mathML?.substringAfter("alttext=\"", "")?.substringBefore("\"") ?: "MathML rendering failed"
+                val altText = job?.mathML?.let(::extractAltText) ?: "MathML rendering failed"
                 completeCurrentJob(RenderResult.Failure(altText))
             }
         }

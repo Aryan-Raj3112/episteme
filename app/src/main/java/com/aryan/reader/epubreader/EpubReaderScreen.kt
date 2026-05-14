@@ -1939,6 +1939,13 @@ fun EpubReaderHost(
     DisposableEffect(Unit) {
         onDispose {
             Timber.d("Disposing reader. Last known chapter was ${latestChapterIndex}. Position saved periodically.")
+            webViewRefForTts = null
+            chapterHead = ""
+            chapterChunks = emptyList()
+            startPageThumbnail?.recycle()
+            startPageThumbnail = null
+            autoScrollResumeJob.value?.cancel()
+            autoScrollResumeJob.value = null
         }
     }
 
@@ -4048,6 +4055,11 @@ fun EpubReaderHost(
                                                     "javascript:window.setViewportPadding(${topPaddingPx}, 0);",
                                                     null
                                                 )
+                                            },
+                                            onWebViewDisposed = { webView ->
+                                                if (webViewRefForTts === webView) {
+                                                    webViewRefForTts = null
+                                                }
                                             },
                                             onScrollFinished = { success ->
                                                 Timber.tag("BookmarkDiagnosis").d("Scroll finished callback. Success: $success")
