@@ -20,9 +20,15 @@
 package com.aryan.reader.tts
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -30,13 +36,16 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.aryan.reader.R
 import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadAiByokSettings
 import com.aryan.reader.tts.TtsPlaybackManager.TtsMode
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import timber.log.Timber
@@ -229,6 +238,11 @@ class InputStreamDataSource : androidx.media3.datasource.BaseDataSource(true) {
     }
 }
 
+private const val TTS_FOREGROUND_CHANNEL_ID = "tts_playback"
+// Keep this aligned with Media3's default notification ID so playback updates replace the fallback.
+private const val TTS_FOREGROUND_NOTIFICATION_ID = 1001
+private const val TTS_FOREGROUND_IDLE_GRACE_MS = 15_000L
+
 @UnstableApi
 class TtsService : MediaSessionService() {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -237,6 +251,24 @@ class TtsService : MediaSessionService() {
     private lateinit var playbackManager: TtsPlaybackManager
     private lateinit var baseTtsSynthesizer: BaseTtsSynthesizer
     private lateinit var cacheManager: TtsCacheManager
+    private var foregroundNotificationShown = false
+    private var foregroundPlaybackExpected = false
+    private var foregroundIdleJob: Job? = null
+    private var foregroundBookTitle: String? = null
+    private var foregroundChapterTitle: String? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val result = super.onStartCommand(intent, flags, startId)
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "onStartCommand. action=${intent?.action}, startId=$startId, result=$result"
+        )
+        val hasPreparedMedia = ::player.isInitialized && player.mediaItemCount > 0
+        if (!hasPreparedMedia) {
+            showPreparingForegroundNotification("onStartCommand")
+            scheduleForegroundIdleStop(startId)
+        }
+        return result
+    }
 
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
         val hasNotificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
@@ -252,19 +284,131 @@ class TtsService : MediaSessionService() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-
-            if (startInForegroundRequired) {
-                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Notification permission missing while foreground is required. Calling stopSelf().")
-                stopSelf()
-            } else {
-                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Notification permission missing. Skipping notification update.")
-            }
-
-            return
+            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w(
+                "POST_NOTIFICATIONS is missing, but MediaSession notifications are exempt. Delegating notification update."
+            )
         }
 
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Delegating notification update to MediaSessionService.")
         super.onUpdateNotification(session, startInForegroundRequired)
+    }
+
+    private fun showPreparingForegroundNotification(
+        reason: String,
+        bookTitle: String? = foregroundBookTitle,
+        chapterTitle: String? = foregroundChapterTitle
+    ) {
+        foregroundBookTitle = bookTitle
+        foregroundChapterTitle = chapterTitle
+        ensureTtsNotificationChannel()
+
+        try {
+            val notification = buildPreparingForegroundNotification(bookTitle, chapterTitle)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    TTS_FOREGROUND_NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(TTS_FOREGROUND_NOTIFICATION_ID, notification)
+            }
+            foregroundNotificationShown = true
+            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Fallback foreground notification shown. reason=$reason")
+        } catch (e: Exception) {
+            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).e(e, "Failed to show fallback foreground notification. reason=$reason")
+            stopSelf()
+        }
+    }
+
+    private fun buildPreparingForegroundNotification(bookTitle: String?, chapterTitle: String?): Notification {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val contentIntent = launchIntent?.let {
+            PendingIntent.getActivity(this, 0, it, pendingIntentFlags())
+        }
+        val title = bookTitle?.takeIf { it.isNotBlank() } ?: getString(R.string.app_name)
+        val text = chapterTitle?.takeIf { it.isNotBlank() }
+            ?.let { getString(R.string.tts_notification_preparing_chapter, it) }
+            ?: getString(R.string.tts_notification_preparing)
+
+        return NotificationCompat.Builder(this, TTS_FOREGROUND_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setOngoing(true)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .apply {
+                if (contentIntent != null) {
+                    setContentIntent(contentIntent)
+                }
+            }
+            .build()
+    }
+
+    private fun ensureTtsNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        val channel = NotificationChannel(
+            TTS_FOREGROUND_CHANNEL_ID,
+            getString(R.string.tts_notification_channel_name),
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = getString(R.string.tts_notification_channel_desc)
+            setShowBadge(false)
+        }
+        notificationManager.createNotificationChannel(channel)
+    }
+
+    private fun pendingIntentFlags(): Int {
+        return PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    }
+
+    private fun scheduleForegroundIdleStop(startId: Int) {
+        foregroundIdleJob?.cancel()
+        foregroundIdleJob = scope.launch {
+            delay(TTS_FOREGROUND_IDLE_GRACE_MS)
+            val playbackInactive = !::player.isInitialized ||
+                (!player.isPlaying && !player.playWhenReady && player.mediaItemCount == 0)
+            if (!foregroundPlaybackExpected && playbackInactive) {
+                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w(
+                    "Foreground service start did not become an active TTS session. Stopping fallback foreground."
+                )
+                stopTtsForeground()
+                stopSelf(startId)
+            }
+        }
+    }
+
+    private fun onPlaybackSessionPreparing(bookTitle: String?, chapterTitle: String?) {
+        foregroundPlaybackExpected = true
+        foregroundIdleJob?.cancel()
+        showPreparingForegroundNotification("START_TTS_COMMAND", bookTitle, chapterTitle)
+    }
+
+    private fun onPlaybackSessionStopped() {
+        foregroundPlaybackExpected = false
+        foregroundIdleJob?.cancel()
+        foregroundBookTitle = null
+        foregroundChapterTitle = null
+        stopTtsForeground()
+    }
+
+    private fun stopTtsForeground() {
+        if (!foregroundNotificationShown) return
+        try {
+            stopForeground(android.app.Service.STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w(e, "Failed to stop fallback foreground notification.")
+        } finally {
+            foregroundNotificationShown = false
+        }
     }
 
     private val okHttpClient = OkHttpClient.Builder().build()
@@ -668,7 +812,9 @@ class TtsService : MediaSessionService() {
         playbackManager = TtsPlaybackManager(
             player = player,
             generateAudioChunk = audioGenerator,
-            onResetContext = { liveClient.close() }
+            onResetContext = { liveClient.close() },
+            onPlaybackSessionPreparing = ::onPlaybackSessionPreparing,
+            onPlaybackSessionStopped = ::onPlaybackSessionStopped
         )
 
         mediaSession = MediaSession.Builder(this, player)
@@ -683,7 +829,7 @@ class TtsService : MediaSessionService() {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onTaskRemoved. playWhenReady=${if (::player.isInitialized) player.playWhenReady else null}, isPlaying=${if (::player.isInitialized) player.isPlaying else null}"
         )
-        if (!player.playWhenReady) {
+        if (!::player.isInitialized || !player.playWhenReady) {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Task removed while player is not playWhenReady. Calling stopSelf().")
             stopSelf()
         }
@@ -700,12 +846,25 @@ class TtsService : MediaSessionService() {
     override fun onDestroy() {
         Timber.d("TtsService is being destroyed.")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsService onDestroy.")
-        baseTtsSynthesizer.shutdown()
-        playbackManager.release()
-        mediaSession?.run {
-            player.release()
-            release()
+        foregroundIdleJob?.cancel()
+        stopTtsForeground()
+        if (::baseTtsSynthesizer.isInitialized) {
+            baseTtsSynthesizer.shutdown()
+        }
+        if (::playbackManager.isInitialized) {
+            playbackManager.release()
+        }
+        var playerReleased = false
+        mediaSession?.let { session ->
+            if (::player.isInitialized) {
+                player.release()
+                playerReleased = true
+            }
+            session.release()
             mediaSession = null
+        }
+        if (!playerReleased && ::player.isInitialized) {
+            player.release()
         }
         super.onDestroy()
     }

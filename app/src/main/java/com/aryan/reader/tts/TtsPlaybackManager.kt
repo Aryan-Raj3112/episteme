@@ -83,7 +83,9 @@ private const val PREFETCH_LOOKAHEAD = 3
 class TtsPlaybackManager(
     private val player: Player,
     private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
-    private val onResetContext: () -> Unit
+    private val onResetContext: () -> Unit,
+    private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?) -> Unit = { _, _ -> },
+    private val onPlaybackSessionStopped: () -> Unit = {}
 ) : MediaSession.Callback, Player.Listener {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -415,6 +417,8 @@ class TtsPlaybackManager(
             handleStopTts(clearState = false)
         }
 
+        onPlaybackSessionPreparing(bookTitle, chapterTitle)
+
         textChunks = chunks
         currentSpeakerId = speakerId
         currentTtsMode = ttsMode
@@ -550,6 +554,7 @@ class TtsPlaybackManager(
         val firstChunk = textChunks.getOrNull(startAtIndex)
         if (firstChunk == null) {
             _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "Error starting playback.")
+            onPlaybackSessionStopped()
             return
         }
 
@@ -627,6 +632,7 @@ class TtsPlaybackManager(
                 isLoading = false,
                 errorMessage = ttsAudioData.error ?: "Failed to load audio."
             )
+            onPlaybackSessionStopped()
         }
     }
 
@@ -667,6 +673,7 @@ class TtsPlaybackManager(
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "handleStopTts. clearState=$clearState, userInitiated=$userInitiated"
         )
+        onPlaybackSessionStopped()
         onResetContext()
         preparationJob?.cancel()
         wordTrackingJob?.cancel()

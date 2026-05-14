@@ -1173,6 +1173,11 @@
     <string name="section_files">Files</string>
 
     <!-- TTS settings sheet labels. TTS = Text-to-Speech. -->
+    <string name="tts_notification_channel_name">Text to speech</string>
+    <string name="tts_notification_channel_desc">Playback controls for text to speech.</string>
+    <string name="tts_notification_preparing">Preparing text to speech</string>
+    <!-- Notification text. %1$s = chapter title. -->
+    <string name="tts_notification_preparing_chapter">Preparing: %1$s</string>
     <string name="tts_active_engine">Active TTS Engine</string>
     <string name="tts_mode_cloud_ai">Cloud AI</string>
     <string name="tts_mode_device_native">Device Native</string>
