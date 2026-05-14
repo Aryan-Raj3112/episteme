@@ -112,10 +112,10 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -1131,7 +1131,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         Timber.d("ViewModel instance created.")
-        WorkManager.getInstance(application).cancelUniqueWork(FolderSyncWorker.WORK_NAME)
+        WorkManager.getInstance(application).apply {
+            cancelUniqueWork(FolderSyncWorker.WORK_NAME)
+            pruneWork()
+        }
 
         val locatorConverter = LocatorConverter(
             bookCacheDao,
@@ -2579,48 +2582,51 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         )
 
         viewModelScope.launch {
-            workManager.getWorkInfoByIdFlow(request.id).collect { workInfo ->
-                if (workInfo != null) {
-                    when (workInfo.state) {
-                        WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
-                            if (showFeedback) {
-                                val msg = if (metadataOnly) appContext.getString(R.string.banner_folder_sync_updating) else appContext.getString(R.string.banner_folder_sync_scanning)
-                                _internalState.update {
-                                    it.copy(
-                                        isLoading = false,
-                                        isRefreshing = true,
-                                        bannerMessage = BannerMessage(msg, isPersistent = true)
-                                    )
-                                }
-                            }
-                        }
-
-                        WorkInfo.State.SUCCEEDED -> {
+            workManager.getWorkInfoByIdFlow(request.id).filterNotNull().first { workInfo ->
+                when (workInfo.state) {
+                    WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
+                        if (showFeedback) {
+                            val msg = if (metadataOnly) appContext.getString(R.string.banner_folder_sync_updating) else appContext.getString(R.string.banner_folder_sync_scanning)
                             _internalState.update {
                                 it.copy(
                                     isLoading = false,
-                                    isRefreshing = false,
-                                    bannerMessage = if (showFeedback) BannerMessage(appContext.getString(R.string.banner_folder_sync_complete)) else it.bannerMessage,
-                                    lastFolderScanTime = System.currentTimeMillis(),
-                                    syncedFolders = loadSyncedFoldersFromPrefs()
+                                    isRefreshing = true,
+                                    bannerMessage = BannerMessage(msg, isPersistent = true)
                                 )
                             }
                         }
-
-                        WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
-                            _internalState.update {
-                                it.copy(
-                                    isLoading = false,
-                                    isRefreshing = false,
-                                    errorMessage = if (showFeedback) appContext.getString(R.string.error_sync_failed) else it.errorMessage,
-                                    bannerMessage = null
-                                )
-                            }
-                        }
-
-                        else -> Unit
                     }
+
+                    WorkInfo.State.SUCCEEDED -> {
+                        _internalState.update {
+                            it.copy(
+                                isLoading = false,
+                                isRefreshing = false,
+                                bannerMessage = if (showFeedback) BannerMessage(appContext.getString(R.string.banner_folder_sync_complete)) else it.bannerMessage,
+                                lastFolderScanTime = System.currentTimeMillis(),
+                                syncedFolders = loadSyncedFoldersFromPrefs()
+                            )
+                        }
+                    }
+
+                    WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
+                        _internalState.update {
+                            it.copy(
+                                isLoading = false,
+                                isRefreshing = false,
+                                errorMessage = if (showFeedback) appContext.getString(R.string.error_sync_failed) else it.errorMessage,
+                                bannerMessage = null
+                            )
+                        }
+                    }
+
+                    else -> Unit
                 }
+
+                if (workInfo.state.isFinished) {
+                    workManager.pruneWork()
+                }
+                workInfo.state.isFinished
             }
         }
     }
@@ -3857,11 +3863,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    val reflowWorkInfo: Flow<WorkInfo?> =
-        WorkManager.getInstance(appContext).getWorkInfosByTagFlow(ReflowWorker.WORK_NAME)
-            .map { list ->
-                list.find { !it.state.isFinished } ?: list.firstOrNull()
-            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    private val _reflowWorkInfo = MutableStateFlow<WorkInfo?>(null)
+    val reflowWorkInfo: StateFlow<WorkInfo?> = _reflowWorkInfo.asStateFlow()
 
     fun switchToFileSeamlessly(item: RecentFileItem, syncPosition: Int) {
         viewModelScope.launch {
@@ -4012,11 +4015,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 "reflow_$pdfBookId", ExistingWorkPolicy.KEEP, request
             )
 
+            val finalWorkInfo = CompletableDeferred<WorkInfo>()
+
+            launch {
+                workManager.getWorkInfoByIdFlow(request.id).filterNotNull().first { workInfo ->
+                    _reflowWorkInfo.value = workInfo
+                    if (workInfo.state.isFinished) {
+                        finalWorkInfo.complete(workInfo)
+                        workManager.pruneWork()
+                    }
+                    workInfo.state.isFinished
+                }
+            }
+
             if (autoOpenPage != null) {
                 launch {
                     importMutex.withLock {
-                        val finalInfo = workManager.getWorkInfoByIdFlow(request.id).filterNotNull()
-                            .first { it.state.isFinished }
+                        val finalInfo = finalWorkInfo.await()
 
                         if (finalInfo.state == WorkInfo.State.SUCCEEDED) {
                             var retries = 0
