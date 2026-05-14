@@ -165,6 +165,8 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.AppAction
+import com.aryan.reader.shared.AppContrastOption
+import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
@@ -197,6 +199,7 @@ import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderTextureFilePrefix
 import com.aryan.reader.shared.ReaderTheme
+import com.aryan.reader.shared.ReaderTtsCacheSummary
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsPlanner
@@ -431,6 +434,10 @@ private sealed interface DesktopReaderOpenResult {
 }
 
 fun main() {
+    launchEpistemeDesktopApplication()
+}
+
+internal fun launchEpistemeDesktopApplication(startupSplash: DesktopStartupSplash? = null) {
     configureComposeSwingInterop()
     application {
         val windowDefaults = remember { epistemeDesktopWindowDefaults() }
@@ -446,9 +453,92 @@ fun main() {
         ) {
             DisposableEffect(window, windowDefaults.minimumSize) {
                 window.minimumSize = windowDefaults.minimumSize
-                onDispose {}
+                onDispose {
+                    startupSplash?.close()
+                }
             }
-            EpistemeDesktopApp(window = window)
+            EpistemeDesktopStartupGate(
+                window = window,
+                startupSplash = startupSplash
+            )
+        }
+    }
+}
+
+@Composable
+private fun EpistemeDesktopStartupGate(
+    window: Component?,
+    startupSplash: DesktopStartupSplash?
+) {
+    var showApp by remember { mutableStateOf(false) }
+
+    DisposableEffect(startupSplash) {
+        onDispose {
+            startupSplash?.close()
+        }
+    }
+
+    if (showApp) {
+        EpistemeDesktopApp(window = window)
+    } else {
+        EpistemeDesktopStartupScreen(window = window)
+    }
+
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        startupSplash?.close()
+        delay(80L)
+        showApp = true
+    }
+}
+
+@Composable
+private fun EpistemeDesktopStartupScreen(window: Component?) {
+    SharedAppTheme(
+        appThemeMode = AppThemeMode.SYSTEM,
+        appContrastOption = AppContrastOption.STANDARD,
+        appTextDimFactorLight = 1.0f,
+        appTextDimFactorDark = 1.0f,
+        appSeedColor = null
+    ) {
+        EpistemeDesktopWindowChromeEffect(
+            window = window,
+            captionColor = MaterialTheme.colorScheme.surface,
+            textColor = MaterialTheme.colorScheme.onSurface,
+            borderColor = MaterialTheme.colorScheme.background
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.padding(32.dp)
+            ) {
+                Image(
+                    painter = painterResource(EpistemeDesktopWindowIconResource),
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp)
+                )
+                Text(
+                    text = EpistemeDesktopWindowTitle,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "Opening your library",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    strokeWidth = 3.dp
+                )
+            }
         }
     }
 }
@@ -558,12 +648,24 @@ private fun java.awt.Window.isDesktopReaderModalWindow(): Boolean {
 
 private const val DesktopReaderModalWindowNamePrefix = "shared-reader-modal:"
 
-private data class DesktopWebViewRuntimeState(
+internal data class DesktopWebViewRuntimeState(
     val initialized: Boolean = false,
     val restartRequired: Boolean = false,
     val downloadProgress: Float = -1f,
     val errorMessage: String? = null
 )
+
+internal fun shouldRequestDesktopWebViewRuntime(readerSurface: ReaderFeatureSurface?): Boolean {
+    return readerSurface == ReaderFeatureSurface.EPUB_READER ||
+        readerSurface == ReaderFeatureSurface.TEXT_READER
+}
+
+internal fun shouldStartDesktopWebViewRuntime(
+    requested: Boolean,
+    state: DesktopWebViewRuntimeState
+): Boolean {
+    return requested && !state.initialized && !state.restartRequired && state.errorMessage == null
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -604,9 +706,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     val initialLibrarySnapshot = remember { libraryDatabase.load() }
     val scope = rememberCoroutineScope()
     var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
+    var webViewRuntimeRequested by remember { mutableStateOf(false) }
     var readerCustomTextureIds by remember { mutableStateOf(DesktopReaderTextures.importedTextureIds()) }
     var readerFullscreen by remember { mutableStateOf(false) }
-    val webViewBundleDir = remember { bundledDesktopWebViewDir() }
 
     EpistemeDesktopWindowDecorationEffect(
         window = window,
@@ -616,39 +718,6 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         window = window,
         enabled = readerFullscreen
     )
-
-    LaunchedEffect(webViewBundleDir) {
-        if (!isBundledDesktopWebViewPresent(webViewBundleDir)) {
-            webViewRuntimeState = webViewRuntimeState.copy(
-                errorMessage = "Bundled embedded webview is missing from ${webViewBundleDir.absolutePath}."
-            )
-            return@LaunchedEffect
-        }
-        withContext(Dispatchers.IO) {
-            KCEF.init(
-                builder = {
-                    installDir(webViewBundleDir)
-                    progress {
-                        onDownloading {
-                            webViewRuntimeState = webViewRuntimeState.copy(downloadProgress = max(it, 0f))
-                        }
-                        onInitialized {
-                            webViewRuntimeState = webViewRuntimeState.copy(initialized = true, errorMessage = null)
-                        }
-                    }
-                    settings {
-                        cachePath = File(desktopUserCacheRoot(), "kcef").absolutePath
-                    }
-                },
-                onError = { error ->
-                    webViewRuntimeState = webViewRuntimeState.copy(errorMessage = error?.message ?: error.toString())
-                },
-                onRestartRequired = {
-                    webViewRuntimeState = webViewRuntimeState.copy(restartRequired = true)
-                }
-            )
-        }
-    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -702,16 +771,57 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         mutableStateOf(initialLibrarySnapshot.customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() })
     }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(webViewRuntimeRequested) {
+        if (!shouldStartDesktopWebViewRuntime(webViewRuntimeRequested, webViewRuntimeState)) {
+            return@LaunchedEffect
+        }
+
+        val webViewBundleDir = withContext(Dispatchers.IO) { bundledDesktopWebViewDir() }
+        val webViewBundlePresent = withContext(Dispatchers.IO) {
+            isBundledDesktopWebViewPresent(webViewBundleDir)
+        }
+        if (!webViewBundlePresent) {
+            webViewRuntimeState = webViewRuntimeState.copy(
+                errorMessage = "Bundled embedded webview is missing from ${webViewBundleDir.absolutePath}."
+            )
+            return@LaunchedEffect
+        }
+
+        runCatching {
+            withContext(Dispatchers.IO) {
+                KCEF.init(
+                    builder = {
+                        installDir(webViewBundleDir)
+                        progress {
+                            onDownloading {
+                                webViewRuntimeState = webViewRuntimeState.copy(downloadProgress = max(it, 0f))
+                            }
+                            onInitialized {
+                                webViewRuntimeState = webViewRuntimeState.copy(initialized = true, errorMessage = null)
+                            }
+                        }
+                        settings {
+                            cachePath = File(desktopUserCacheRoot(), "kcef").absolutePath
+                        }
+                    },
+                    onError = { error ->
+                        webViewRuntimeState = webViewRuntimeState.copy(errorMessage = error?.message ?: error.toString())
+                    },
+                    onRestartRequired = {
+                        webViewRuntimeState = webViewRuntimeState.copy(restartRequired = true)
+                    }
+                )
+            }
+        }.onFailure { error ->
+            webViewRuntimeState = webViewRuntimeState.copy(errorMessage = error.message ?: error.toString())
+        }
+    }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
     var readerExtrasState by remember {
         mutableStateOf(
             ReaderExtrasState(
                 cloudTts = ReaderCloudTtsState(
-                    isAvailable = aiByokSettings.isCloudTtsAvailable,
-                    cacheSummary = desktopTtsAdapter.cacheSummary(
-                        readerSession.reader.book.title,
-                        aiByokSettings.sanitized().ttsSpeakerId
-                    )
+                    isAvailable = aiByokSettings.isCloudTtsAvailable
                 )
             )
         )
@@ -841,7 +951,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     }
 
     fun currentReaderTtsCacheSummary() =
-        desktopTtsAdapter.cacheSummary(readerSession.reader.book.title, aiByokSettings.sanitized().ttsSpeakerId)
+        if (activeReaderBookId == null) {
+            ReaderTtsCacheSummary()
+        } else {
+            desktopTtsAdapter.cacheSummary(readerSession.reader.book.title, aiByokSettings.sanitized().ttsSpeakerId)
+        }
 
     fun readerCloudTtsStoppedState(statusMessage: String? = null, errorMessage: String? = null) = ReaderCloudTtsState(
         isAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
@@ -1521,6 +1635,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     fun openReader(book: BookItem) {
         val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
         if (openingReader?.bookId == book.id) return
+        if (shouldRequestDesktopWebViewRuntime(desktopReaderSurface)) {
+            webViewRuntimeRequested = true
+        }
 
         if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER) {
             val path = book.path

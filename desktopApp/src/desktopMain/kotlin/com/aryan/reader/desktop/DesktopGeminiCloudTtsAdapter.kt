@@ -54,9 +54,14 @@ private data class DesktopTtsSequenceChunk(
 class DesktopGeminiCloudTtsAdapter(
     private val settingsProvider: () -> ReaderAiByokSettings,
     private val networkAccess: () -> Boolean = { true },
-    private val httpClient: HttpClient = HttpClient.newHttpClient(),
+    httpClient: HttpClient? = null,
     private val cacheManager: ReaderTtsFileCacheManager = ReaderTtsFileCacheManager(defaultDesktopTtsCacheRoot())
 ) : TtsAdapter {
+    private val providedHttpClient = httpClient
+    private val httpClient: HttpClient by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        providedHttpClient ?: HttpClient.newHttpClient()
+    }
+
     @Volatile
     private var activeLine: SourceDataLine? = null
 

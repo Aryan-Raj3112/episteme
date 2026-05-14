@@ -382,7 +382,7 @@ kotlin {
 
 compose.desktop {
     application {
-        mainClass = "com.aryan.reader.desktop.MainKt"
+        mainClass = "com.aryan.reader.desktop.LauncherKt"
         desktopPackagingJavaHome?.let { javaHome = it }
 
         jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")

@@ -28,22 +28,25 @@ internal class DesktopAiByokStore(
         }
 
     fun load(): ReaderAiByokSettings {
+        val settingsFileExists = settingsFile.exists()
         logDesktopTts(
             "settings_load_start file=\"${settingsFile.absolutePath.desktopTtsPreview(220)}\" " +
-                "exists=${settingsFile.exists()} secureStorage=${secretCodec.isAvailable}"
+                "exists=$settingsFileExists secureStorage=${if (settingsFileExists) "checking" else "skipped"}"
         )
-        if (!settingsFile.exists()) {
+        if (!settingsFileExists) {
             logDesktopTts("settings_load_empty reason=file_missing")
             return ReaderAiByokSettings()
         }
+        val secureStorageAvailable = secretCodec.isAvailable
+        logDesktopTts("settings_load_secure_storage codec=${secretCodec.name} available=$secureStorageAvailable")
         val properties = Properties()
         return runCatching {
             settingsFile.inputStream().use(properties::load)
             val legacyGeminiKey = properties.getProperty(LegacyGeminiKey, "")
             val legacyGroqKey = properties.getProperty(LegacyGroqKey, "")
             val loadedSettings = ReaderAiByokSettings(
-                geminiKey = loadSecret(properties, GeminiKey, legacyGeminiKey),
-                groqKey = loadSecret(properties, GroqKey, legacyGroqKey),
+                geminiKey = loadSecret(properties, GeminiKey, legacyGeminiKey, secureStorageAvailable),
+                groqKey = loadSecret(properties, GroqKey, legacyGroqKey, secureStorageAvailable),
                 useOneModel = properties.getProperty("useOneModel", "true").toBooleanStrictOrNull() ?: true,
                 modelForAll = properties.getProperty("modelForAll", ""),
                 defineModel = properties.getProperty("defineModel", ""),
@@ -58,7 +61,7 @@ internal class DesktopAiByokStore(
             } else {
                 loadedSettings
             }
-            if (secretCodec.isAvailable &&
+            if (secureStorageAvailable &&
                 (legacyGeminiKey.isNotBlank() || legacyGroqKey.isNotBlank() || settings != loadedSettings)
             ) {
                 logDesktopTts(
@@ -107,7 +110,12 @@ internal class DesktopAiByokStore(
         )
     }
 
-    private fun loadSecret(properties: Properties, key: String, legacyPlaintext: String): String {
+    private fun loadSecret(
+        properties: Properties,
+        key: String,
+        legacyPlaintext: String,
+        secureStorageAvailable: Boolean
+    ): String {
         val protectedValue = properties.getProperty(key, "")
         val decrypted = protectedValue
             .takeIf { it.isNotBlank() }
@@ -118,7 +126,7 @@ internal class DesktopAiByokStore(
             }
             .orEmpty()
         if (decrypted.isNotBlank()) return decrypted
-        return legacyPlaintext.takeIf { secretCodec.isAvailable }.orEmpty()
+        return legacyPlaintext.takeIf { secureStorageAvailable }.orEmpty()
     }
 
     private fun Properties.setProtectedSecret(key: String, value: String) {

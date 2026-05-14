@@ -86,6 +86,17 @@ class DesktopAiByokStoreTest {
         assertEquals(GEMINI_CLOUD_TTS_MODEL_ID, loaded.ttsModel)
     }
 
+    @Test
+    fun `load does not probe secure storage when settings file is missing`() {
+        val settingsFile = Files.createTempDirectory("reader-ai-store-missing").resolve("ai-byok.properties")
+        val store = DesktopAiByokStore(settingsFile.toFile(), ThrowingAvailabilitySecretCodec)
+
+        val loaded = store.load()
+
+        assertEquals("", loaded.geminiKey)
+        assertEquals("", loaded.groqKey)
+    }
+
     private object ReversibleSecretCodec : DesktopSecretCodec {
         override val isAvailable: Boolean = true
 
@@ -100,6 +111,14 @@ class DesktopAiByokStoreTest {
 
     private object UnavailableSecretCodec : DesktopSecretCodec {
         override val isAvailable: Boolean = false
+        override fun protect(value: String): String = ""
+        override fun unprotect(value: String): String = ""
+    }
+
+    private object ThrowingAvailabilitySecretCodec : DesktopSecretCodec {
+        override val isAvailable: Boolean
+            get() = error("Secure storage should not be checked for a missing settings file.")
+
         override fun protect(value: String): String = ""
         override fun unprotect(value: String): String = ""
     }
