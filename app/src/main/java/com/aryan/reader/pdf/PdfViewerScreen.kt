@@ -120,7 +120,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -339,7 +338,6 @@ fun PdfViewerScreen(
     onNavigateToPro: () -> Unit,
     viewModel: MainViewModel
 ) {
-    SideEffect { Timber.tag("PdfDrawPerf").v("ROOT: PdfViewerScreen Recomposing") }
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         PdfFontCache.init(context.assets)
@@ -1174,13 +1172,29 @@ fun PdfViewerScreen(
 
     val sidecarsReadyForCurrentBook =
         canUsePdfSidecarsForBook(currentBookId, loadedSidecarBookId, areAnnotationsLoaded)
+    val textBoxesSnapshot by remember { derivedStateOf { textBoxes.toList() } }
+    val userHighlightsSnapshot by remember { derivedStateOf { userHighlights.toList() } }
     val visibleAllAnnotations = if (sidecarsReadyForCurrentBook) allAnnotations else emptyMap()
-    val visibleTextBoxes = if (sidecarsReadyForCurrentBook) textBoxes.toList() else emptyList()
-    val visibleUserHighlights = if (sidecarsReadyForCurrentBook) userHighlights.toList() else emptyList()
+    val visibleTextBoxes = if (sidecarsReadyForCurrentBook) textBoxesSnapshot else emptyList()
+    val visibleUserHighlights = if (sidecarsReadyForCurrentBook) userHighlightsSnapshot else emptyList()
+    val visibleTextBoxesByPage = remember(sidecarsReadyForCurrentBook, textBoxesSnapshot) {
+        if (sidecarsReadyForCurrentBook) {
+            textBoxesSnapshot.groupBy { it.pageIndex }
+        } else {
+            emptyMap()
+        }
+    }
+    val visibleUserHighlightsByPage = remember(sidecarsReadyForCurrentBook, userHighlightsSnapshot) {
+        if (sidecarsReadyForCurrentBook) {
+            userHighlightsSnapshot.groupBy { it.pageIndex }
+        } else {
+            emptyMap()
+        }
+    }
 
     val currentAnnotations by rememberUpdatedState(allAnnotations)
-    val currentTextBoxes by rememberUpdatedState(textBoxes.toList())
-    val currentHighlights by rememberUpdatedState(userHighlights.toList())
+    val currentTextBoxes by rememberUpdatedState(textBoxesSnapshot)
+    val currentHighlights by rememberUpdatedState(userHighlightsSnapshot)
     val currentLoadedSidecarBookId by rememberUpdatedState(loadedSidecarBookId)
     val currentAreAnnotationsLoaded by rememberUpdatedState(areAnnotationsLoaded)
     val currentBookmarks by rememberUpdatedState(bookmarks)
@@ -1317,8 +1331,8 @@ fun PdfViewerScreen(
 
     LaunchedEffect(
         allAnnotations,
-        textBoxes.toList(),
-        userHighlights.toList(),
+        textBoxesSnapshot,
+        userHighlightsSnapshot,
         bookmarks,
         currentPage,
         sidecarsReadyForCurrentBook
@@ -2178,10 +2192,10 @@ fun PdfViewerScreen(
     }
 
     var isRebuildingSyncedHighlightBounds by remember(currentBookId) { mutableStateOf(false) }
-    LaunchedEffect(pdfDocument, currentBookId, userHighlights.toList(), sidecarsReadyForCurrentBook) {
+    LaunchedEffect(pdfDocument, currentBookId, userHighlightsSnapshot, sidecarsReadyForCurrentBook) {
         val document = pdfDocument ?: return@LaunchedEffect
         if (!sidecarsReadyForCurrentBook || isRebuildingSyncedHighlightBounds) return@LaunchedEffect
-        val snapshot = userHighlights.toList()
+        val snapshot = userHighlightsSnapshot
         if (snapshot.none { it.bounds.isEmpty() && it.range.second > it.range.first }) return@LaunchedEffect
 
         isRebuildingSyncedHighlightBounds = true
@@ -3852,11 +3866,10 @@ fun PdfViewerScreen(
                                             beyondViewportPageCount = dynamicBeyondViewportPageCount,
                                             reverseLayout = rightToLeftPagination,
                                             userScrollEnabled = run {
-                                                val enabled = (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) && !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) && !isPageSliderVisible && paginationDraggingBoxId == null
-                                                SideEffect {
-                                                    Timber.tag("PdfZoomDebug").v("Pager Scroll Enabled: $enabled (Scale: $currentPageScale, Playing: ${ttsState.isPlaying}, Slider: $isPageSliderVisible, DraggingBox: $paginationDraggingBoxId)")
-                                                }
-                                                enabled
+                                                (currentPageScale == 1f || (isScrollLocked && displayMode == DisplayMode.PAGINATION)) &&
+                                                    !(ttsState.isPlaying || ttsState.isLoading || searchState.isSearchActive) &&
+                                                    !isPageSliderVisible &&
+                                                    paginationDraggingBoxId == null
                                             }
                                         ) { pageIndex ->
                                             val isVisiblePage = remember(pagerState.currentPage, pageIndex) {
@@ -4117,7 +4130,7 @@ fun PdfViewerScreen(
                                                 onOcrModelDownloading = {
                                                     isOcrModelDownloading = true
                                                 },
-                                                userHighlights = visibleUserHighlights.filter { it.pageIndex == pageIndex },
+                                                userHighlights = visibleUserHighlightsByPage[pageIndex].orEmpty(),
                                                 onHighlightAdd = onHighlightAdd,
                                                 onHighlightUpdate = onHighlightUpdate,
                                                 onHighlightDelete = onHighlightDelete,
@@ -4155,7 +4168,7 @@ fun PdfViewerScreen(
                                                 isAutoScrollPlaying = isAutoScrollPlaying,
                                                 isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                                                 isEditMode = isDrawingActive,
-                                                textBoxes = visibleTextBoxes.filter { it.pageIndex == pageIndex },
+                                                textBoxes = visibleTextBoxesByPage[pageIndex].orEmpty(),
                                                 selectedTextBoxId = selectedTextBoxId,
                                                 onTextBoxChange = { updatedBox ->
                                                     val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }
@@ -4522,6 +4535,7 @@ fun PdfViewerScreen(
                                             ttsHighlightData = ttsHighlightData,
                                             ttsReadingPage = ttsDisplayPageIndex,
                                             userHighlights = visibleUserHighlights,
+                                            userHighlightsByPage = visibleUserHighlightsByPage,
                                             onHighlightAdd = onHighlightAdd,
                                             onHighlightUpdate = onHighlightUpdate,
                                             onHighlightDelete = onHighlightDelete,
@@ -4577,6 +4591,7 @@ fun PdfViewerScreen(
                                             stylusButtonHovering = stylusButtonHovering,
                                             isEditMode = isDrawingActive,
                                             textBoxes = visibleTextBoxes,
+                                            textBoxesByPage = visibleTextBoxesByPage,
                                             selectedTextBoxId = selectedTextBoxId,
                                             onTextBoxChange = { updatedBox ->
                                                 val idx = textBoxes.indexOfFirst { it.id == updatedBox.id }

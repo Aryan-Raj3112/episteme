@@ -63,7 +63,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -101,7 +100,6 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -269,6 +267,7 @@ internal fun PdfVerticalReader(
     selectedTool: InkType,
     richTextController: RichTextController? = null,
     textBoxes: List<PdfTextBox> = emptyList(),
+    textBoxesByPage: Map<Int, List<PdfTextBox>> = emptyMap(),
     selectedTextBoxId: String? = null,
     onTextBoxChange: (PdfTextBox) -> Unit = {},
     onTextBoxSelect: (String) -> Unit = {},
@@ -284,6 +283,7 @@ internal fun PdfVerticalReader(
     stylusButtonHovering: Boolean = false,
     isHighlighterSnapEnabled: Boolean = false,
     userHighlights: List<PdfUserHighlight> = emptyList(),
+    userHighlightsByPage: Map<Int, List<PdfUserHighlight>> = emptyMap(),
     onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
     onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
     onHighlightDelete: (String) -> Unit = {},
@@ -299,7 +299,6 @@ internal fun PdfVerticalReader(
     isBubbleZoomModeActive: Boolean = false,
     onDetectBubbles: suspend (Int, Bitmap) -> List<SpeechBubble> = { _, _ -> emptyList() }
 ) {
-    SideEffect { Timber.tag("PdfDrawPerf").v("LIST: PdfVerticalReader Recomposing.") }
     DisposableEffect(state) {
         onDispose {
             state.scrollToPageHandler = null
@@ -321,6 +320,12 @@ internal fun PdfVerticalReader(
 
         val ratios = pageAspectRatios.item
         val bookmarkSet = bookmarks.item
+        val effectiveTextBoxesByPage = remember(textBoxes, textBoxesByPage) {
+            textBoxesByPage.ifEmpty { textBoxes.groupBy { it.pageIndex } }
+        }
+        val effectiveUserHighlightsByPage = remember(userHighlights, userHighlightsByPage) {
+            userHighlightsByPage.ifEmpty { userHighlights.groupBy { it.pageIndex } }
+        }
 
         val scope = rememberCoroutineScope()
 
@@ -1565,13 +1570,6 @@ internal fun PdfVerticalReader(
                                 }
                             }
 
-                            SideEffect {
-                                if (page.index == state.currentPage) {
-                                    Timber.tag("PdfDrawPerf")
-                                        .v("VERTICAL READER: Emitting Page ${page.index}")
-                                }
-                            }
-
                             val visibleScreenRectLambda = remember(page, screenWidth, screenHeight) {
                                 {
                                     val zoom = zoomAnimatable.value
@@ -1758,20 +1756,9 @@ internal fun PdfVerticalReader(
                                     translationX = px
                                     translationY = page.y * (z - 1f) + py
                                     transformOrigin = TransformOrigin(0f, 0f)
-
-                                    if (page.index < 2 && z > 1.1f) {
-                                        Timber.tag("PdfZoomDebug").v("Page ${page.index} Render: TransY=$translationY (PageY=${page.y}, GlobalY=${page.y + translationY})")
-                                    }
                                 }
                                 .clipToBounds()
-                                .onGloballyPositioned { coordinates ->
-                                    if (page.index == 0) {
-                                        val pos = coordinates.positionInWindow()
-                                        Timber.d(
-                                            "Page 0 Box | GlobalPos: $pos | Size: ${coordinates.size} | PageY: ${page.y}"
-                                        )
-                                    }
-                                }) {
+                            ) {
                                 PdfPageComposable(
                                     pdfDocument = pdfDocument,
                                     documentKey = documentKey,
@@ -1823,11 +1810,11 @@ internal fun PdfVerticalReader(
                                     isStylusOnlyMode = isStylusOnlyMode,
                                     stylusButtonHovering = stylusButtonHovering,
                                     isAutoScrollPlaying = isAutoScrollPlaying,
-                                    textBoxes = textBoxes.filter { it.pageIndex == page.index },
+                                    textBoxes = effectiveTextBoxesByPage[page.index].orEmpty(),
                                     selectedTextBoxId = selectedTextBoxId,
                                     onTextBoxChange = onTextBoxChange,
                                     onTextBoxSelect = onTextBoxSelect,
-                                    userHighlights = userHighlights.filter { it.pageIndex == page.index },
+                                    userHighlights = effectiveUserHighlightsByPage[page.index].orEmpty(),
                                     onHighlightAdd = onHighlightAdd,
                                     onHighlightUpdate = onHighlightUpdate,
                                     onHighlightDelete = onHighlightDelete,

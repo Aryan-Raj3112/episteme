@@ -3,6 +3,7 @@ import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.io.File
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -74,6 +75,138 @@ fun desktopPdfiumLibraryPath(
     }
 }
 
+fun desktopJdkToolName(toolName: String, osName: String = System.getProperty("os.name")): String {
+    return if (desktopOsId(osName) == "windows") "$toolName.exe" else toolName
+}
+
+fun File.asDesktopJdkHome(): File {
+    val absolute = absoluteFile
+    return when {
+        absolute.isFile && absolute.parentFile?.name?.equals("bin", ignoreCase = true) == true ->
+            absolute.parentFile?.parentFile ?: absolute
+
+        absolute.isDirectory && absolute.name.equals("bin", ignoreCase = true) ->
+            absolute.parentFile ?: absolute
+
+        absolute.resolve("Contents/Home/bin").isDirectory ->
+            absolute.resolve("Contents/Home")
+
+        else -> absolute
+    }
+}
+
+fun File.desktopJdkTool(toolName: String, osName: String = System.getProperty("os.name")): File {
+    return resolve("bin/${desktopJdkToolName(toolName, osName)}")
+}
+
+fun File.isDesktopPackagingJdk(osName: String = System.getProperty("os.name")): Boolean {
+    return desktopJdkTool("java", osName).isFile &&
+        desktopJdkTool("jlink", osName).isFile &&
+        desktopJdkTool("jpackage", osName).isFile
+}
+
+fun File.desktopJdkMajorVersion(): Int? {
+    val releaseFile = resolve("release")
+    if (!releaseFile.isFile) return null
+
+    val version = runCatching {
+        releaseFile.useLines { lines ->
+            lines.firstOrNull { it.startsWith("JAVA_VERSION=") }
+                ?.substringAfter("=")
+                ?.trim()
+                ?.trim('"')
+        }
+    }.getOrNull() ?: return null
+
+    return version.removePrefix("1.").substringBefore(".").toIntOrNull()
+}
+
+fun safeChildDirectories(root: File): List<File> {
+    return runCatching {
+        root.listFiles()?.filter { it.isDirectory }.orEmpty()
+    }.getOrDefault(emptyList())
+}
+
+fun stableDesktopJdkCandidates(candidates: List<File>, preferredMajorVersion: Int = 21): List<File> {
+    return candidates
+        .map { it.asDesktopJdkHome() }
+        .distinctBy { runCatching { it.canonicalPath }.getOrElse { _ -> it.absolutePath }.lowercase() }
+        .sortedWith(
+            compareBy<File> { if (it.desktopJdkMajorVersion() == preferredMajorVersion) 0 else 1 }
+                .thenBy { it.desktopJdkMajorVersion() ?: Int.MAX_VALUE }
+                .thenBy { it.absolutePath.lowercase() }
+        )
+}
+
+fun desktopPathJdkCandidates(osName: String = System.getProperty("os.name")): List<File> {
+    return System.getenv("PATH")
+        ?.split(File.pathSeparator)
+        .orEmpty()
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .map { File(it).resolve(desktopJdkToolName("jpackage", osName)) }
+        .filter { it.isFile }
+        .mapNotNull { it.parentFile?.parentFile }
+        .toList()
+}
+
+fun desktopGradleJdkCandidates(): List<File> {
+    val userHome = System.getProperty("user.home")?.let(::File) ?: return emptyList()
+    return stableDesktopJdkCandidates(safeChildDirectories(userHome.resolve(".gradle/jdks")))
+}
+
+fun desktopPlatformJdkCandidates(osName: String = System.getProperty("os.name")): List<File> {
+    val roots = when (desktopOsId(osName)) {
+        "windows" -> listOfNotNull(
+            System.getenv("ProgramFiles")?.let { File(it, "Java") },
+            System.getenv("ProgramFiles")?.let { File(it, "Eclipse Adoptium") },
+            System.getenv("ProgramFiles")?.let { File(it, "Microsoft") },
+            System.getenv("ProgramFiles(x86)")?.let { File(it, "Java") }
+        )
+
+        "linux" -> listOf(
+            File("/usr/lib/jvm"),
+            File("/usr/java"),
+            File("/opt/java"),
+            File("/opt/jdk")
+        )
+
+        "macos" -> listOfNotNull(
+            File("/Library/Java/JavaVirtualMachines"),
+            System.getProperty("user.home")?.let { File(it, "Library/Java/JavaVirtualMachines") }
+        )
+
+        else -> emptyList()
+    }
+
+    return stableDesktopJdkCandidates(roots + roots.flatMap(::safeChildDirectories))
+}
+
+fun findDesktopPackagingJavaHome(
+    explicitCandidates: List<String>,
+    implicitCandidates: List<File>,
+    osName: String = System.getProperty("os.name")
+): File? {
+    val explicitJavaHome = explicitCandidates.firstOrNull { it.isNotBlank() }
+    if (explicitJavaHome != null) {
+        val candidate = File(explicitJavaHome).asDesktopJdkHome()
+        if (!candidate.isDesktopPackagingJdk(osName)) {
+            throw GradleException(
+                "Desktop packaging JDK must include java, jlink, and jpackage under " +
+                    "${candidate.resolve("bin").absolutePath}. " +
+                    "Set -PdesktopPackagingJavaHome=<jdk-home> or DESKTOP_PACKAGING_JAVA_HOME to a full JDK."
+            )
+        }
+        return candidate
+    }
+
+    return implicitCandidates
+        .map { it.asDesktopJdkHome() }
+        .distinctBy { runCatching { it.canonicalPath }.getOrElse { _ -> it.absolutePath }.lowercase() }
+        .firstOrNull { it.isDesktopPackagingJdk(osName) }
+}
+
 val desktopFlavor = providers.gradleProperty("desktopFlavor").orElse("standard").get().lowercase()
 val isOssOfflineDesktop = desktopFlavor == "oss-offline"
 val desktopDiagnostics = providers.gradleProperty("desktopDiagnostics")
@@ -95,6 +228,24 @@ val desktopWindowsUpgradeUuid = if (isOssOfflineDesktop) {
 } else {
     "c04c5823-b25a-4f38-a1cf-0da7b02ac397"
 }
+val desktopPackagingJavaHome = findDesktopPackagingJavaHome(
+    explicitCandidates = listOfNotNull(
+        providers.gradleProperty("desktopPackagingJavaHome").orNull,
+        providers.environmentVariable("DESKTOP_PACKAGING_JAVA_HOME").orNull,
+        providers.environmentVariable("JPACKAGE_HOME").orNull
+    ),
+    implicitCandidates = buildList {
+        addAll(desktopGradleJdkCandidates())
+        providers.gradleProperty("org.gradle.java.home").orNull?.let { add(File(it)) }
+        providers.environmentVariable("GRADLE_LOCAL_JAVA_HOME").orNull?.let { add(File(it)) }
+        providers.environmentVariable("JAVA_HOME").orNull?.let { add(File(it)) }
+        providers.environmentVariable("JDK_HOME").orNull?.let { add(File(it)) }
+        add(File(System.getProperty("java.home")))
+        addAll(desktopPathJdkCandidates(desktopOsName))
+        addAll(desktopPlatformJdkCandidates(desktopOsName))
+    },
+    osName = desktopOsName
+)?.absolutePath
 
 val checkBundledWebViewRuntime by tasks.registering {
     val requiredPaths = bundledWebViewRequiredPaths(desktopOsName, desktopOsArch)
@@ -172,6 +323,7 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "com.aryan.reader.desktop.MainKt"
+        desktopPackagingJavaHome?.let { javaHome = it }
 
         jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
