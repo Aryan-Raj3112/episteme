@@ -1,14 +1,68 @@
 import org.gradle.api.GradleException
+import org.gradle.api.DefaultTask
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.work.DisableCachingByDefault
 import java.io.File
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
+}
+
+@DisableCachingByDefault(because = "Verification task has no outputs.")
+abstract class CheckBundledWebViewRuntimeTask : DefaultTask() {
+    @get:Input
+    abstract val bundleRootPath: Property<String>
+
+    @get:Input
+    abstract val osName: Property<String>
+
+    @get:Input
+    abstract val osArch: Property<String>
+
+    @get:Input
+    abstract val requiredPaths: ListProperty<String>
+
+    @TaskAction
+    fun checkRuntime() {
+        val bundleRoot = File(bundleRootPath.get())
+        val missingFiles = requiredPaths.get().filterNot { bundleRoot.resolve(it).exists() }
+        if (missingFiles.isNotEmpty()) {
+            throw GradleException(
+                "Missing bundled KCEF runtime at ${bundleRoot.absolutePath}. " +
+                    "Expected ${missingFiles.joinToString()} for ${osName.get()} ${osArch.get()} desktop packages."
+            )
+        }
+    }
+}
+
+@DisableCachingByDefault(because = "Verification task has no outputs.")
+abstract class CheckBundledPdfiumRuntimeTask : DefaultTask() {
+    @get:Input
+    abstract val bundleRootPath: Property<String>
+
+    @get:Input
+    abstract val libraryPath: Property<String>
+
+    @TaskAction
+    fun checkRuntime() {
+        val bundleRoot = File(bundleRootPath.get())
+        val library = bundleRoot.resolve(libraryPath.get())
+        if (!library.isFile) {
+            throw GradleException(
+                "Missing bundled Pdfium runtime at ${library.absolutePath}. " +
+                    "Expected ${libraryPath.get()} inside ${bundleRoot.absolutePath}."
+            )
+        }
+    }
 }
 
 fun desktopOsId(osName: String = System.getProperty("os.name")): String {
@@ -207,12 +261,40 @@ fun findDesktopPackagingJavaHome(
         .firstOrNull { it.isDesktopPackagingJdk(osName) }
 }
 
+fun normalizeDesktopPackageVersion(rawVersion: String): String {
+    val coreVersion = rawVersion.trim()
+        .substringBefore("-")
+        .substringBefore("+")
+        .takeIf { it.isNotBlank() }
+        ?: "1.0.0"
+    val parts = coreVersion.split(".")
+    val numericParts = parts.map { it.toIntOrNull() }
+    val normalizedParts = when {
+        parts.size in 1..3 && numericParts.all { it != null } ->
+            numericParts.map { it ?: 0 } + List(3 - parts.size) { 0 }
+
+        else -> throw GradleException(
+            "desktopPackageVersion must be numeric MAJOR[.MINOR[.BUILD]], but was '$rawVersion'."
+        )
+    }
+    val (major, minor, build) = normalizedParts
+    if (major !in 0..255 || minor !in 0..255 || build !in 0..65535) {
+        throw GradleException(
+            "desktopPackageVersion '$rawVersion' is outside the Windows package version range. " +
+                "Expected MAJOR 0..255, MINOR 0..255, BUILD 0..65535."
+        )
+    }
+    return "$major.$minor.$build"
+}
+
 val desktopFlavor = providers.gradleProperty("desktopFlavor").orElse("standard").get().lowercase()
 val isOssOfflineDesktop = desktopFlavor == "oss-offline"
 val desktopDiagnostics = providers.gradleProperty("desktopDiagnostics")
     .map { it.equals("true", ignoreCase = true) }
     .orElse(false)
-val desktopPackageVersion = providers.gradleProperty("desktopPackageVersion").orElse("1.0.0")
+val desktopPackageVersion = providers.gradleProperty("desktopPackageVersion")
+    .orElse("1.0.0")
+    .map(::normalizeDesktopPackageVersion)
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
@@ -247,48 +329,26 @@ val desktopPackagingJavaHome = findDesktopPackagingJavaHome(
     osName = desktopOsName
 )?.absolutePath
 
-val checkBundledWebViewRuntime by tasks.registering {
+val checkBundledWebViewRuntime by tasks.registering(CheckBundledWebViewRuntimeTask::class) {
     val requiredPaths = bundledWebViewRequiredPaths(desktopOsName, desktopOsArch)
-    inputs.dir(bundledWebViewDir).withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs.property("osName", desktopOsName)
-    inputs.property("osArch", desktopOsArch)
-    inputs.property("requiredPaths", requiredPaths)
-
-    doLast {
-        val bundleRoot = bundledWebViewDir.asFile
-        val missingFiles = requiredPaths.filterNot { bundleRoot.resolve(it).exists() }
-        if (missingFiles.isNotEmpty()) {
-            throw GradleException(
-                "Missing bundled KCEF runtime at ${bundleRoot.absolutePath}. " +
-                    "Expected ${missingFiles.joinToString()} for $desktopOsName $desktopOsArch desktop packages."
-            )
-        }
-    }
+    bundleRootPath.set(bundledWebViewDir.asFile.absolutePath)
+    osName.set(desktopOsName)
+    osArch.set(desktopOsArch)
+    this.requiredPaths.set(requiredPaths)
 }
 
-val checkBundledPdfiumRuntime by tasks.registering {
-    inputs.dir(bundledPdfiumDir).withPathSensitivity(PathSensitivity.RELATIVE)
-    inputs.property("libraryPath", bundledPdfiumLibraryPath)
-
-    doLast {
-        val bundleRoot = bundledPdfiumDir.asFile
-        val library = bundleRoot.resolve(bundledPdfiumLibraryPath)
-        if (!library.isFile) {
-            throw GradleException(
-                "Missing bundled Pdfium runtime at ${library.absolutePath}. " +
-                    "Expected $bundledPdfiumLibraryPath inside ${bundleRoot.absolutePath}."
-            )
-        }
-    }
+val checkBundledPdfiumRuntime by tasks.registering(CheckBundledPdfiumRuntimeTask::class) {
+    bundleRootPath.set(bundledPdfiumDir.asFile.absolutePath)
+    libraryPath.set(bundledPdfiumLibraryPath)
 }
 
 val prepareBundledDesktopResources by tasks.registering(Sync::class) {
     dependsOn(checkBundledWebViewRuntime, checkBundledPdfiumRuntime)
     from(bundledWebViewDir) {
-        into("kcef-bundle")
+        into("common/kcef-bundle")
     }
     from(bundledPdfiumDir) {
-        into("third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}")
+        into("common/third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}")
     }
     into(generatedDesktopResourcesDir)
 }
@@ -336,6 +396,7 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
+            modules("java.net.http")
             packageName = if (isOssOfflineDesktop) "Episteme OSS Offline" else "Episteme"
             packageVersion = desktopPackageVersion.get()
             description = if (isOssOfflineDesktop) {
@@ -348,6 +409,8 @@ compose.desktop {
             windows {
                 iconFile.set(desktopWindowsIconFile)
                 dirChooser = true
+                shortcut = true
+                menu = true
                 menuGroup = "Episteme"
                 perUserInstall = true
                 upgradeUuid = desktopWindowsUpgradeUuid
@@ -395,4 +458,7 @@ tasks.matching {
     )
 }.configureEach {
     dependsOn(prepareBundledDesktopResources)
+    inputs.dir(generatedDesktopResourcesDir)
+        .withPropertyName("bundledDesktopResources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
