@@ -26,12 +26,13 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ActionMode
 import android.view.Menu
-import android.view.MenuItem
+import android.view.MenuInflater
 import android.webkit.WebView
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.PopupMenu
 import org.json.JSONObject
 
 enum class DragOperation { NONE, PULLING_DOWN_FROM_TOP, PULLING_UP_FROM_BOTTOM }
@@ -59,11 +60,142 @@ class InteractiveWebView(
 
     private val scrollStopHandler = Handler(Looper.getMainLooper())
     private var scrollStopRunnable: Runnable? = null
-    private var mCustomCallback: ActionMode.Callback? = null
+    private var activeSelectionActionMode: ActionMode? = null
 
     private fun clearPendingSelectionWork() {
         scrollStopRunnable?.let { scrollStopHandler.removeCallbacks(it) }
         scrollStopRunnable = null
+    }
+
+    private fun startLocalSelectionActionMode(): ActionMode {
+        activeSelectionActionMode?.let { existingMode ->
+            showCustomSelectionMenuFromCurrentSelection(existingMode)
+            return existingMode
+        }
+
+        lateinit var localMode: ActionMode
+        localMode = LocalSelectionActionMode(this) {
+            if (activeSelectionActionMode === localMode) {
+                activeSelectionActionMode = null
+            }
+            onHideCustomSelectionMenu()
+        }
+        activeSelectionActionMode = localMode
+        showCustomSelectionMenuFromCurrentSelection(localMode)
+        return localMode
+    }
+
+    private fun finishLocalSelectionActionMode() {
+        activeSelectionActionMode?.finish()
+        activeSelectionActionMode = null
+    }
+
+    private fun showCustomSelectionMenuFromCurrentSelection(mode: ActionMode) {
+        val jsToGetSelectionDetails = """
+            (function() {
+                var selection = window.getSelection();
+                var selectedText = selection.toString().trim();
+                if (selectedText.length === 0 || selection.rangeCount === 0) {
+                    return null;
+                }
+                var range = selection.getRangeAt(0);
+                var rect = range.getBoundingClientRect();
+
+                // If getBoundingClientRect returns all zeros, try getClientRects()
+                if (rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0) {
+                    var clientRects = range.getClientRects();
+                    if (clientRects.length > 0) {
+                        rect = clientRects[0]; // Use the first rect
+                    } else {
+                        return null; // No valid rect found
+                    }
+                }
+
+                // Ensure the rect has some dimension
+                if (rect.width === 0 && rect.height === 0) {
+                    return null;
+                }
+
+                return JSON.stringify({
+                    text: selectedText,
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                    width: rect.width,
+                    height: rect.height
+                });
+            })();
+        """.trimIndent()
+
+        evaluateJavascript(jsToGetSelectionDetails) { jsonResult ->
+            if (activeSelectionActionMode !== mode) {
+                return@evaluateJavascript
+            }
+
+            if (jsonResult == null || jsonResult == "null" || jsonResult.equals("\"null\"", ignoreCase = true)) {
+                Timber.d("CustomSelection: JS returned null or invalid for selection details.")
+                mode.finish()
+                return@evaluateJavascript
+            }
+
+            try {
+                val unquotedJsonResult = jsonResult.removeSurrounding("\"")
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\")
+
+                val selectionDetails = JSONObject(unquotedJsonResult)
+                val selectedText = selectionDetails.getString("text")
+
+                if (selectedText.isBlank()) {
+                    Timber.d("CustomSelection: Selected text is blank after JS processing.")
+                    mode.finish()
+                    return@evaluateJavascript
+                }
+
+                val jsLeft = selectionDetails.getDouble("left")
+                val jsTop = selectionDetails.getDouble("top")
+                val jsRight = selectionDetails.getDouble("right")
+                val jsBottom = selectionDetails.getDouble("bottom")
+                val jsWidth = selectionDetails.getDouble("width")
+                val jsHeight = selectionDetails.getDouble("height")
+
+                if (jsWidth == 0.0 && jsHeight == 0.0) {
+                    Timber.d("CustomSelection: JS returned a zero-area rect (width=0, height=0). Left: $jsLeft, Top: $jsTop")
+                    mode.finish()
+                    return@evaluateJavascript
+                }
+
+                val density = context.resources.displayMetrics.density
+
+                val webViewLocation = IntArray(2)
+                getLocationOnScreen(webViewLocation)
+                val webViewX = webViewLocation[0]
+                val webViewY = webViewLocation[1]
+
+                val selectionRectScreen = Rect(
+                    (webViewX + jsLeft * density).toInt(),
+                    (webViewY + jsTop * density).toInt(),
+                    (webViewX + jsRight * density).toInt(),
+                    (webViewY + jsBottom * density).toInt()
+                )
+
+                if (selectionRectScreen.isEmpty || selectionRectScreen.width() <= 0 || selectionRectScreen.height() <= 0) {
+                    Timber.d("CustomSelection: Calculated selectionRectScreen is empty or invalid: $selectionRectScreen. JS LTRB: $jsLeft, $jsTop, $jsRight, $jsBottom. WebViewLoc: $webViewX, $webViewY")
+                    mode.finish()
+                    return@evaluateJavascript
+                }
+
+                Timber.d("CustomSelection: Selected text: '$selectedText', JS Rect: {L:$jsLeft, T:$jsTop, R:$jsRight, B:$jsBottom}, Screen Rect: $selectionRectScreen")
+
+                onShowCustomSelectionMenu(selectedText, selectionRectScreen) {
+                    mode.finish()
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "CustomSelection: Error parsing selection details from JS: '$jsonResult', raw: '$jsonResult'")
+                mode.finish()
+            }
+        }
     }
 
     private val gestureDetector =
@@ -172,148 +304,12 @@ class InteractiveWebView(
         return super.onTouchEvent(event)
     }
 
+    // MIUI can crash inside FloatingToolbar when WindowInsets are null, so WebView
+    // selections use the app's Compose popup without starting the platform toolbar.
     override fun startActionMode(originalCallback: ActionMode.Callback, type: Int): ActionMode? {
         if (type == ActionMode.TYPE_FLOATING) {
-            if (mCustomCallback == null) {
-                mCustomCallback = object : ActionMode.Callback2() {
-
-                    override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
-                        Timber.d("CustomSelection: onCreateActionMode")
-                        menu.clear()
-                        return true
-                    }
-
-                    override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
-                        Timber.d("CustomSelection: onPrepareActionMode")
-                        menu.clear()
-
-                        val jsToGetSelectionDetails = """
-                        (function() {
-                            var selection = window.getSelection();
-                            var selectedText = selection.toString().trim();
-                            if (selectedText.length === 0 || selection.rangeCount === 0) {
-                                return null;
-                            }
-                            var range = selection.getRangeAt(0);
-                            var rect = range.getBoundingClientRect();
-
-                            // If getBoundingClientRect returns all zeros, try getClientRects()
-                            if (rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0) {
-                                var clientRects = range.getClientRects();
-                                if (clientRects.length > 0) {
-                                    rect = clientRects[0]; // Use the first rect
-                                } else {
-                                    return null; // No valid rect found
-                                }
-                            }
-                            
-                            // Ensure the rect has some dimension
-                            if (rect.width === 0 && rect.height === 0) {
-                                return null;
-                            }
-
-                            return JSON.stringify({
-                                text: selectedText,
-                                left: rect.left,
-                                top: rect.top,
-                                right: rect.right,
-                                bottom: rect.bottom,
-                                width: rect.width,
-                                height: rect.height
-                            });
-                        })();
-                    """.trimIndent()
-
-                        this@InteractiveWebView.evaluateJavascript(jsToGetSelectionDetails) { jsonResult ->
-                            if (jsonResult == null || jsonResult == "null" || jsonResult.equals("\"null\"", ignoreCase = true)) {
-                                Timber.d("CustomSelection: JS returned null or invalid for selection details.")
-                                onHideCustomSelectionMenu()
-                                mode.finish()
-                                return@evaluateJavascript
-                            }
-
-                            try {
-                                val unquotedJsonResult = jsonResult.removeSurrounding("\"")
-                                    .replace("\\\"", "\"")
-                                    .replace("\\\\", "\\")
-
-                                val selectionDetails = JSONObject(unquotedJsonResult)
-                                val selectedText = selectionDetails.getString("text")
-
-                                if (selectedText.isBlank()) {
-                                    Timber.d("CustomSelection: Selected text is blank after JS processing.")
-                                    onHideCustomSelectionMenu()
-                                    mode.finish()
-                                    return@evaluateJavascript
-                                }
-
-                                val jsLeft = selectionDetails.getDouble("left")
-                                val jsTop = selectionDetails.getDouble("top")
-                                val jsRight = selectionDetails.getDouble("right")
-                                val jsBottom = selectionDetails.getDouble("bottom")
-                                val jsWidth = selectionDetails.getDouble("width")
-                                val jsHeight = selectionDetails.getDouble("height")
-
-                                if (jsWidth == 0.0 && jsHeight == 0.0) {
-                                    Timber.d("CustomSelection: JS returned a zero-area rect (width=0, height=0). Left: $jsLeft, Top: $jsTop")
-                                    onHideCustomSelectionMenu()
-                                    mode.finish()
-                                    return@evaluateJavascript
-                                }
-
-                                val density = context.resources.displayMetrics.density
-
-                                val webViewLocation = IntArray(2)
-                                this@InteractiveWebView.getLocationOnScreen(webViewLocation)
-                                val webViewX = webViewLocation[0]
-                                val webViewY = webViewLocation[1]
-
-                                val selectionRectScreen = Rect(
-                                    (webViewX + jsLeft * density).toInt(),
-                                    (webViewY + jsTop * density).toInt(),
-                                    (webViewX + jsRight * density).toInt(),
-                                    (webViewY + jsBottom * density).toInt()
-                                )
-
-                                if (selectionRectScreen.isEmpty || selectionRectScreen.width() <= 0 || selectionRectScreen.height() <= 0) {
-                                    Timber.d("CustomSelection: Calculated selectionRectScreen is empty or invalid: $selectionRectScreen. JS LTRB: $jsLeft, $jsTop, $jsRight, $jsBottom. WebViewLoc: $webViewX, $webViewY")
-                                    onHideCustomSelectionMenu()
-                                    mode.finish()
-                                    return@evaluateJavascript
-                                }
-
-                                Timber.d("CustomSelection: Selected text: '$selectedText', JS Rect: {L:$jsLeft, T:$jsTop, R:$jsRight, B:$jsBottom}, Screen Rect: $selectionRectScreen")
-
-                                onShowCustomSelectionMenu(selectedText, selectionRectScreen) {
-                                    mode.finish()
-                                }
-
-                            } catch (e: Exception) {
-                                Timber.e(e, "CustomSelection: Error parsing selection details from JS: '$jsonResult', raw: '$jsonResult'")
-                                onHideCustomSelectionMenu()
-                                mode.finish()
-                            }
-                        }
-                        return true
-                    }
-
-                    override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
-                        Timber.d("CustomSelection: onActionItemClicked (should not be called as menu is empty)")
-                        return false
-                    }
-
-                    override fun onDestroyActionMode(mode: ActionMode) {
-                        Timber.d("CustomSelection: onDestroyActionMode for mode: $mode")
-                        onHideCustomSelectionMenu()
-                    }
-
-                    override fun onGetContentRect(mode: ActionMode, view: View, outRect: Rect) {
-                        super.onGetContentRect(mode, view, outRect)
-                        Timber.d("CustomSelection: onGetContentRect called by system. outRect: $outRect")
-                    }
-                }
-            }
-            return super.startActionMode(mCustomCallback, type)
+            Timber.d("CustomSelection: handling floating action mode locally.")
+            return startLocalSelectionActionMode()
         }
         return super.startActionMode(originalCallback, type)
     }
@@ -327,9 +323,7 @@ class InteractiveWebView(
                 val selectedText = result?.removeSurrounding("\"")
                 if (!selectedText.isNullOrBlank()) {
                     Timber.d("Selection exists after scroll. Restarting action mode.")
-                    mCustomCallback?.let {
-                        startActionMode(it, ActionMode.TYPE_FLOATING)
-                    }
+                    startLocalSelectionActionMode()
                 }
             }
         }
@@ -338,12 +332,64 @@ class InteractiveWebView(
 
     override fun onDetachedFromWindow() {
         clearPendingSelectionWork()
+        finishLocalSelectionActionMode()
         super.onDetachedFromWindow()
     }
 
     override fun destroy() {
         clearPendingSelectionWork()
-        mCustomCallback = null
+        finishLocalSelectionActionMode()
         super.destroy()
+    }
+
+    private class LocalSelectionActionMode(
+        anchorView: View,
+        private val onFinished: () -> Unit
+    ) : ActionMode() {
+        private val modeContext = anchorView.context
+        private val menu: Menu = PopupMenu(modeContext, anchorView).menu
+        private val menuInflater = MenuInflater(modeContext)
+        private var title: CharSequence? = null
+        private var subtitle: CharSequence? = null
+        private var customView: View? = null
+        private var finished = false
+
+        override fun setTitle(title: CharSequence?) {
+            this.title = title
+        }
+
+        override fun setTitle(resId: Int) {
+            title = modeContext.getText(resId)
+        }
+
+        override fun setSubtitle(subtitle: CharSequence?) {
+            this.subtitle = subtitle
+        }
+
+        override fun setSubtitle(resId: Int) {
+            subtitle = modeContext.getText(resId)
+        }
+
+        override fun setCustomView(view: View?) {
+            customView = view
+        }
+
+        override fun invalidate() = Unit
+
+        override fun finish() {
+            if (finished) return
+            finished = true
+            onFinished()
+        }
+
+        override fun getMenu(): Menu = menu
+
+        override fun getTitle(): CharSequence? = title
+
+        override fun getSubtitle(): CharSequence? = subtitle
+
+        override fun getCustomView(): View? = customView
+
+        override fun getMenuInflater(): MenuInflater = menuInflater
     }
 }
