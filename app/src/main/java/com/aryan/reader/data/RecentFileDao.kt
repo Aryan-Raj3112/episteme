@@ -98,8 +98,10 @@ interface RecentFileDao {
             (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
             OR (type IN ('EPUB', 'MOBI', 'FB2') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
+        ORDER BY timestamp DESC
+        LIMIT :limit
     """)
-    suspend fun getFolderBooksNeedingTextMetadata(): List<RecentFileEntity>
+    suspend fun getFolderBooksNeedingTextMetadata(limit: Int): List<RecentFileEntity>
 
     @Query("""
         SELECT * FROM recent_files
@@ -109,8 +111,10 @@ interface RecentFileDao {
             (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
             OR (type IN ('EPUB', 'MOBI', 'FB2') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
+        ORDER BY timestamp DESC
+        LIMIT :limit
     """)
-    suspend fun getFolderBooksNeedingTextMetadata(sourceFolderUri: String): List<RecentFileEntity>
+    suspend fun getFolderBooksNeedingTextMetadata(sourceFolderUri: String, limit: Int): List<RecentFileEntity>
 
     @Query("""
         SELECT COUNT(*) FROM recent_files

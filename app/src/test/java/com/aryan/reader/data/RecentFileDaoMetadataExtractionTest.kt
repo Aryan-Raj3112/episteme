@@ -60,16 +60,29 @@ class RecentFileDaoMetadataExtractionTest {
         assertEquals(0, dao.countFolderBooksNeedingTextMetadata("content://folder"))
     }
 
+    @Test
+    fun `metadata candidate query respects batch limit`() = runTest {
+        dao.insertOrUpdateFile(recentFileEntity(bookId = "book-1", timestamp = 1_000L))
+        dao.insertOrUpdateFile(recentFileEntity(bookId = "book-2", timestamp = 2_000L))
+
+        val pending = dao.getFolderBooksNeedingTextMetadata("content://folder", limit = 1)
+
+        assertEquals(1, pending.size)
+        assertEquals("book-2", pending.single().bookId)
+    }
+
     private fun recentFileEntity(
-        folderTextMetadataParsed: Boolean,
-        folderCoverMetadataParsed: Boolean
+        bookId: String = "book-1",
+        timestamp: Long = 1_000L,
+        folderTextMetadataParsed: Boolean = false,
+        folderCoverMetadataParsed: Boolean = false
     ): RecentFileEntity {
         return RecentFileEntity(
-            bookId = "book-1",
-            uriString = "content://books/one",
+            bookId = bookId,
+            uriString = "content://books/$bookId",
             type = FileType.EPUB,
-            displayName = "One.epub",
-            timestamp = 1_000L,
+            displayName = "$bookId.epub",
+            timestamp = timestamp,
             coverImagePath = null,
             title = "One",
             author = "Author",
@@ -79,7 +92,7 @@ class RecentFileDaoMetadataExtractionTest {
             progressPercentage = null,
             isRecent = false,
             isAvailable = true,
-            lastModifiedTimestamp = 1_000L,
+            lastModifiedTimestamp = timestamp,
             isDeleted = false,
             locatorBlockIndex = null,
             locatorCharOffset = null,

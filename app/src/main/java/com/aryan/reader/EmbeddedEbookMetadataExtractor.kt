@@ -47,17 +47,33 @@ internal object EmbeddedEbookMetadataExtractor {
     }
 
     private fun extractEpub(openStream: () -> InputStream?, extractCover: Boolean): EmbeddedEbookMetadata {
-        val packageInfo = openStream()?.use(::readEpubPackageInfo) ?: return EmbeddedEbookMetadata()
-        val opfPath = packageInfo.containerXml
+        val containerXml = openStream()?.use { input ->
+            readFirstZipTextEntry(input, MAX_XML_ENTRY_BYTES) { name ->
+                name.equals("META-INF/container.xml", ignoreCase = true)
+            }?.text
+        }
+        val declaredOpfPath = containerXml
             ?.let(::parseEpubRootfilePath)
             ?.let(::normalizeZipPath)
             ?.takeIf { it.isNotBlank() }
-            ?: packageInfo.opfEntries.keys.firstOrNull()
-            ?: return EmbeddedEbookMetadata()
 
-        val opf = packageInfo.opfEntries[opfPath]
-            ?: packageInfo.opfEntries.entries.firstOrNull { it.key.equals(opfPath, ignoreCase = true) }?.value
+        val opfEntry = declaredOpfPath
+            ?.let { path ->
+                openStream()?.use { input ->
+                    readFirstZipTextEntry(input, MAX_XML_ENTRY_BYTES) { name ->
+                        name.equals(path, ignoreCase = true)
+                    }
+                }
+            }
+            ?: openStream()?.use { input ->
+                readFirstZipTextEntry(input, MAX_XML_ENTRY_BYTES) { name ->
+                    name.endsWith(".opf", ignoreCase = true)
+                }
+            }
             ?: return EmbeddedEbookMetadata()
+        val opfPath = opfEntry.path
+        val opf = opfEntry.text
+
         val basePath = opfPath.substringBeforeLast('/', missingDelimiterValue = "")
             .let { if (it.isBlank()) "" else "$it/" }
         val manifest = parseEpubManifest(opf)
@@ -85,34 +101,30 @@ internal object EmbeddedEbookMetadataExtractor {
         )
     }
 
-    private fun readEpubPackageInfo(input: InputStream): EpubPackageInfo {
-        val opfEntries = linkedMapOf<String, String>()
-        var containerXml: String? = null
-
+    private fun readFirstZipTextEntry(
+        input: InputStream,
+        maxBytes: Int,
+        matches: (String) -> Boolean
+    ): ZipTextEntry? {
+        var result: ZipTextEntry? = null
         ZipInputStream(input.buffered()).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
                 try {
                     if (entry.isDirectory) continue
                     val name = normalizeZipPath(entry.name)
-                    when {
-                        name.equals("META-INF/container.xml", ignoreCase = true) -> {
-                            containerXml = zip.readBytesLimited(MAX_XML_ENTRY_BYTES)
-                                ?.toString(Charsets.UTF_8)
-                        }
-                        name.endsWith(".opf", ignoreCase = true) -> {
-                            zip.readBytesLimited(MAX_XML_ENTRY_BYTES)
-                                ?.toString(Charsets.UTF_8)
-                                ?.let { opfEntries[name] = it }
-                        }
+                    if (matches(name)) {
+                        result = zip.readBytesLimited(maxBytes)
+                            ?.toString(Charsets.UTF_8)
+                            ?.let { ZipTextEntry(path = name, text = it) }
+                        break
                     }
                 } finally {
                     zip.closeEntry()
                 }
             }
         }
-
-        return EpubPackageInfo(containerXml = containerXml, opfEntries = opfEntries)
+        return result
     }
 
     private fun readZipEntryBytes(
@@ -121,19 +133,21 @@ internal object EmbeddedEbookMetadataExtractor {
         maxBytes: Int
     ): ByteArray? {
         return openStream()?.use { input ->
+            var result: ByteArray? = null
             ZipInputStream(input.buffered()).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
                     try {
                         if (!entry.isDirectory && normalizeZipPath(entry.name).equals(targetPath, ignoreCase = true)) {
-                            return zip.readBytesLimited(maxBytes)
+                            result = zip.readBytesLimited(maxBytes)
+                            break
                         }
                     } finally {
                         zip.closeEntry()
                     }
                 }
-                null
             }
+            result
         }
     }
 
@@ -654,9 +668,9 @@ internal object EmbeddedEbookMetadataExtractor {
             return extensionFromMimeType(mediaType)
         }
 
-    private data class EpubPackageInfo(
-        val containerXml: String?,
-        val opfEntries: LinkedHashMap<String, String>
+    private data class ZipTextEntry(
+        val path: String,
+        val text: String
     )
 
     private data class EpubManifestItem(

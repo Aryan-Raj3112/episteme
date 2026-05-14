@@ -6,7 +6,10 @@ import android.provider.OpenableColumns
 import android.util.Xml
 import androidx.core.net.toUri
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.WorkManager
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import io.legere.pdfiumandroid.PdfiumCore
@@ -28,6 +31,7 @@ class MetadataExtractionWorker(
         const val WORK_NAME = "MetadataExtractionWorker"
         const val KEY_SOURCE_FOLDER_URI = "key_source_folder_uri"
         private const val METADATA_DB_BATCH_SIZE = 100
+        private const val METADATA_WORKER_BOOK_BATCH_SIZE = 300
         private const val METADATA_PROGRESS_LOG_EVERY = 250
         private val TEXT_METADATA_TYPES = setOf(
             FileType.PDF,
@@ -54,7 +58,10 @@ class MetadataExtractionWorker(
         }
 
         try {
-            val filesToProcess = recentFilesRepository.getFolderBooksNeedingTextMetadata(sourceFolderUri)
+            val filesToProcess = recentFilesRepository.getFolderBooksNeedingTextMetadata(
+                sourceFolderUri = sourceFolderUri,
+                limit = METADATA_WORKER_BOOK_BATCH_SIZE
+            )
 
             if (filesToProcess.isEmpty()) {
                 ReaderPerfLog.d("MetadataWorker skipped: no metadata pending folder=${sourceFolderUri ?: "ALL"}")
@@ -62,7 +69,8 @@ class MetadataExtractionWorker(
             }
 
             ReaderPerfLog.i(
-                "MetadataWorker start mode=metadata books=${filesToProcess.size} folder=${sourceFolderUri ?: "ALL"}"
+                "MetadataWorker start mode=metadata books=${filesToProcess.size} " +
+                    "batchLimit=$METADATA_WORKER_BOOK_BATCH_SIZE folder=${sourceFolderUri ?: "ALL"}"
             )
 
             val pendingUpdates = mutableListOf<RecentFileItem>()
@@ -86,12 +94,14 @@ class MetadataExtractionWorker(
 
                 if (item.sourceFolderUri == null) return@forEach
 
+                var needsTextMetadata = item.type in TEXT_METADATA_TYPES && !item.folderTextMetadataParsed
+                var needsEmbeddedCover = false
+
                 try {
                     val uri = item.uriString?.toUri() ?: return@forEach
                     val fileSize = item.fileSize.takeIf { it > 0L } ?: queryFileSize(uri)
-                    val needsTextMetadata = item.type in TEXT_METADATA_TYPES && !item.folderTextMetadataParsed
                     val existingCoverIsAvailable = item.coverImagePath?.let { File(it).isFile } == true
-                    val needsEmbeddedCover = EmbeddedEbookMetadataExtractor.canExtractEmbeddedCover(item.type) &&
+                    needsEmbeddedCover = EmbeddedEbookMetadataExtractor.canExtractEmbeddedCover(item.type) &&
                         !item.folderCoverMetadataParsed &&
                         !existingCoverIsAvailable
 
@@ -125,7 +135,7 @@ class MetadataExtractionWorker(
                     val authorChanged = author != null && author != item.author
                     val coverPath = if (needsEmbeddedCover) {
                         metadata.cover?.let { cover ->
-                            recentFilesRepository.saveEmbeddedCoverToCache(cover.bytes, uri)
+                            recentFilesRepository.saveEmbeddedCoverToCache(cover.bytes, uri, cover.extension)
                         }
                     } else {
                         null
@@ -163,14 +173,32 @@ class MetadataExtractionWorker(
                 } catch (e: Exception) {
                     failed++
                     Timber.tag("MetadataWorker").e(e, "Failed metadata extraction for ${item.displayName}")
+                    if (needsTextMetadata || needsEmbeddedCover) {
+                        pendingUpdates.add(
+                            item.copy(
+                                folderTextMetadataParsed = item.folderTextMetadataParsed || needsTextMetadata,
+                                folderCoverMetadataParsed = item.folderCoverMetadataParsed || needsEmbeddedCover
+                            )
+                        )
+                        if (pendingUpdates.size >= METADATA_DB_BATCH_SIZE) {
+                            flushUpdates()
+                        }
+                    }
                 }
             }
 
             flushUpdates()
 
+            val nextBatchEnqueued = !isStopped &&
+                filesToProcess.size >= METADATA_WORKER_BOOK_BATCH_SIZE &&
+                recentFilesRepository.hasFolderBooksNeedingTextMetadata(sourceFolderUri)
+            if (nextBatchEnqueued) {
+                enqueueNextBatch(sourceFolderUri)
+            }
+
             ReaderPerfLog.i(
                 "MetadataWorker finished mode=metadata processed=$processed updated=$updated covers=$coversUpdated failed=$failed " +
-                    "elapsed=${ReaderPerfLog.elapsedMs(workerStart)}ms folder=${sourceFolderUri ?: "ALL"}"
+                    "nextBatch=$nextBatchEnqueued elapsed=${ReaderPerfLog.elapsedMs(workerStart)}ms folder=${sourceFolderUri ?: "ALL"}"
             )
 
             return@withContext Result.success()
@@ -178,6 +206,23 @@ class MetadataExtractionWorker(
             Timber.tag("MetadataWorker").e(e, "Metadata extraction failed")
             return@withContext Result.failure()
         }
+    }
+
+    private fun enqueueNextBatch(sourceFolderUri: String?) {
+        val data = androidx.work.Data.Builder().apply {
+            if (!sourceFolderUri.isNullOrBlank()) {
+                putString(KEY_SOURCE_FOLDER_URI, sourceFolderUri)
+            }
+        }.build()
+        val request = OneTimeWorkRequestBuilder<MetadataExtractionWorker>()
+            .setInputData(data)
+            .build()
+        WorkManager.getInstance(appContext).enqueueUniqueWork(
+            WORK_NAME,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            request
+        )
+        ReaderPerfLog.d("MetadataWorker enqueued next metadata batch folder=${sourceFolderUri ?: "ALL"}")
     }
 
     private fun queryFileSize(uri: android.net.Uri): Long {

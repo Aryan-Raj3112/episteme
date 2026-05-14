@@ -49,6 +49,9 @@ import java.util.UUID
 import androidx.core.content.edit
 
 private const val COVER_CACHE_DIR = "cover_cache"
+private const val DIRECT_EMBEDDED_COVER_MAX_BYTES = 8L * 1024L * 1024L
+private const val EMBEDDED_COVER_MAX_DIMENSION = 1200
+private val EMBEDDED_COVER_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
 
 class RecentFilesRepository(private val context: Context) {
 
@@ -450,11 +453,15 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun getFolderBooksNeedingTextMetadata(sourceFolderUri: String? = null): List<RecentFileItem> = withContext(Dispatchers.IO) {
+    suspend fun getFolderBooksNeedingTextMetadata(
+        sourceFolderUri: String? = null,
+        limit: Int = Int.MAX_VALUE
+    ): List<RecentFileItem> = withContext(Dispatchers.IO) {
+        val queryLimit = limit.coerceAtLeast(1)
         val entities = if (sourceFolderUri.isNullOrBlank()) {
-            recentFileDao.getFolderBooksNeedingTextMetadata()
+            recentFileDao.getFolderBooksNeedingTextMetadata(queryLimit)
         } else {
-            recentFileDao.getFolderBooksNeedingTextMetadata(sourceFolderUri)
+            recentFileDao.getFolderBooksNeedingTextMetadata(sourceFolderUri, queryLimit)
         }
         return@withContext entities.map { it.toRecentFileItem() }
     }
@@ -585,9 +592,10 @@ class RecentFilesRepository(private val context: Context) {
         var fos: FileOutputStream? = null
         var scaledCopy: Bitmap? = null
         try {
+            deleteCoverCacheVariants(uri)
             val bitmapToSave = bitmap.scaledToCanvasLimit(
                 maxBytes = 8L * 1024L * 1024L,
-                maxDimension = 1200
+                maxDimension = EMBEDDED_COVER_MAX_DIMENSION
             ).also {
                 if (it !== bitmap) scaledCopy = it
             }
@@ -605,15 +613,26 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
-    suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri): String? = withContext(Dispatchers.IO) {
+    suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri, extension: String): String? = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
 
+        val safeExtension = extension.lowercase().takeIf { it in EMBEDDED_COVER_EXTENSIONS } ?: "png"
+        if (
+            bytes.size.toLong() <= DIRECT_EMBEDDED_COVER_MAX_BYTES &&
+            bounds.outWidth <= EMBEDDED_COVER_MAX_DIMENSION &&
+            bounds.outHeight <= EMBEDDED_COVER_MAX_DIMENSION
+        ) {
+            return@withContext saveEmbeddedCoverBytesToCache(bytes, uri, safeExtension)
+        }
+
         var sampleSize = 1
-        val maxDimension = 1200
-        while ((bounds.outWidth / sampleSize) > maxDimension || (bounds.outHeight / sampleSize) > maxDimension) {
+        while (
+            (bounds.outWidth / sampleSize) > EMBEDDED_COVER_MAX_DIMENSION ||
+            (bounds.outHeight / sampleSize) > EMBEDDED_COVER_MAX_DIMENSION
+        ) {
             sampleSize *= 2
         }
 
@@ -629,6 +648,29 @@ class RecentFilesRepository(private val context: Context) {
         } finally {
             decoded.recycle()
         }
+    }
+
+    private fun saveEmbeddedCoverBytesToCache(bytes: ByteArray, uri: Uri, extension: String): String? {
+        val cacheDir = getCoverCacheDirInternal()
+        val filename = "cover_${uri.toString().hashCode()}.$extension"
+        val file = File(cacheDir, filename)
+        return try {
+            deleteCoverCacheVariants(uri)
+            FileOutputStream(file).use { output -> output.write(bytes) }
+            Timber.d("Saved embedded cover image to: ${file.absolutePath}")
+            file.absolutePath
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to save embedded cover image to cache for $uri")
+            file.delete()
+            null
+        }
+    }
+
+    private fun deleteCoverCacheVariants(uri: Uri) {
+        val prefix = "cover_${uri.toString().hashCode()}."
+        getCoverCacheDirInternal().listFiles()
+            ?.filter { it.isFile && it.name.startsWith(prefix) }
+            ?.forEach { runCatching { it.delete() } }
     }
 
     private fun deleteCachedCover(filePath: String): Boolean {
