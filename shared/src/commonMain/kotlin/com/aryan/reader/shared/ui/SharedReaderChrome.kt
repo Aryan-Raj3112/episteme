@@ -1,5 +1,10 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -9,6 +14,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -43,6 +49,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Psychology
@@ -253,6 +260,9 @@ fun SharedReaderScreen(
     fun dispatch(action: ReaderAction) {
         onSessionChange(session.reduce(action, readerEngine))
     }
+    fun dispatchAll(actions: List<ReaderAction>) {
+        onSessionChange(actions.fold(session) { state, action -> state.reduce(action, readerEngine) })
+    }
     fun setFullscreen(enabled: Boolean) {
         onFullscreenChange(enabled)
     }
@@ -315,6 +325,17 @@ fun SharedReaderScreen(
         onFullscreenChange = ::setFullscreen,
         isBookmarked = session.currentBookmark != null,
         onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
+        onSearchAction = { dispatch(ReaderAction.SearchOpened) },
+        topSearchBar = if (session.isSearchActive) {
+            {
+                SharedReaderSearchTopBar(
+                    session = session,
+                    onReaderAction = { action -> dispatch(action) }
+                )
+            }
+        } else {
+            null
+        },
         modifier = Modifier
             .fillMaxSize()
             .focusRequester(readerFocusRequester)
@@ -572,6 +593,20 @@ fun SharedReaderScreen(
                 }
             )
         }
+        SharedReaderSearchOverlay(
+            session = session,
+            onResultClick = { index ->
+                dispatchAll(
+                    listOf(
+                        ReaderAction.JumpToSearchResult(index),
+                        ReaderAction.SearchResultsPanelToggled
+                    )
+                )
+            },
+            onShowResults = { dispatch(ReaderAction.SearchResultsPanelToggled) },
+            onPrevious = { dispatch(ReaderAction.JumpToPreviousSearchResult) },
+            onNext = { dispatch(ReaderAction.JumpToNextSearchResult) }
+        )
         when {
             selectedHighlight != null -> {
                 SharedReaderHighlightSheet(
@@ -598,6 +633,211 @@ fun SharedReaderScreen(
                     result = readerExtrasState.aiResult,
                     onDismiss = onAiResultDismiss
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderSearchTopBar(
+    session: ReaderSessionState,
+    onReaderAction: (ReaderAction) -> Unit
+) {
+    val focusRequester = remember(session.reader.book.id) { FocusRequester() }
+
+    LaunchedEffect(session.isSearchActive) {
+        if (session.isSearchActive) {
+            delay(80)
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            IconButton(
+                onClick = { onReaderAction(ReaderAction.SearchClosed) },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.Default.Close, contentDescription = "Close search")
+            }
+            SharedStableOutlinedTextField(
+                value = session.searchQuery,
+                onValueChange = { onReaderAction(ReaderAction.SearchChanged(it)) },
+                placeholder = { Text("Search in book") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                trailingIcon = if (session.searchQuery.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { onReaderAction(ReaderAction.SearchChanged("")) }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                        }
+                    }
+                } else {
+                    null
+                },
+                selectionKey = session.reader.book.id
+            )
+            IconButton(
+                onClick = { onReaderAction(ReaderAction.SearchResultsPanelToggled) },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    if (session.showSearchResultsPanel) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (session.showSearchResultsPanel) "Hide search results" else "Show search results"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.SharedReaderSearchOverlay(
+    session: ReaderSessionState,
+    onResultClick: (Int) -> Unit,
+    onShowResults: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = session.isSearchActive && session.showSearchResultsPanel,
+        enter = slideInVertically { -it } + fadeIn(),
+        exit = slideOutVertically { -it } + fadeOut(),
+        modifier = Modifier.fillMaxSize().zIndex(30f)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            when {
+                session.searchQuery.isBlank() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Type to search this book", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                session.searchResults.isEmpty() -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                else -> {
+                    Column(Modifier.fillMaxSize()) {
+                        Text(
+                            "${session.searchResults.size} matches",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                        )
+                        HorizontalDivider()
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            itemsIndexed(
+                                items = session.searchResults,
+                                key = { index, result -> "${result.pageIndex}_${result.matchIndex}_$index" }
+                            ) { index, result ->
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth().clickable { onResultClick(index) },
+                                    color = if (index == session.activeSearchResultIndex) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surface
+                                    }
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            "Page ${result.pageIndex + 1} - ${result.chapterTitle}",
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            result.preview,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    AnimatedVisibility(
+        visible = session.isSearchActive && !session.showSearchResultsPanel && session.searchResults.isNotEmpty(),
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(end = 18.dp, bottom = 18.dp)
+            .zIndex(31f)
+    ) {
+        SharedReaderSearchNavigationPill(
+            session = session,
+            onShowResults = onShowResults,
+            onPrevious = onPrevious,
+            onNext = onNext
+        )
+    }
+}
+
+@Composable
+private fun SharedReaderSearchNavigationPill(
+    session: ReaderSessionState,
+    onShowResults: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            IconButton(
+                onClick = onPrevious,
+                enabled = session.canGoToPreviousSearchResult,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous search result")
+            }
+            Text(
+                text = if (session.activeSearchResultIndex in session.searchResults.indices) {
+                    "${session.activeSearchResultIndex + 1}/${session.searchResults.size}"
+                } else {
+                    "${session.searchResults.size} matches"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(onClick = onShowResults).padding(horizontal = 8.dp)
+            )
+            IconButton(
+                onClick = onNext,
+                enabled = session.canGoToNextSearchResult,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next search result")
             }
         }
     }
@@ -996,16 +1236,10 @@ private fun SharedReaderControlPanel(
 ) {
     val sections = toolbarPreferences.availableReaderControlSections(session)
     if (sections.isEmpty()) return
-    val defaultSection = if (session.isSearchActive && ReaderControlSection.SEARCH in sections) {
-        ReaderControlSection.SEARCH
-    } else {
-        sections.firstOrNull { it != ReaderControlSection.SEARCH } ?: sections.first()
-    }
+    val defaultSection = sections.first()
     var selectedSection by remember(sections) { mutableStateOf(defaultSection) }
-    LaunchedEffect(session.isSearchActive, sections) {
-        if (session.isSearchActive && ReaderControlSection.SEARCH in sections) {
-            selectedSection = ReaderControlSection.SEARCH
-        } else if (selectedSection !in sections) {
+    LaunchedEffect(sections) {
+        if (selectedSection !in sections) {
             selectedSection = defaultSection
         }
     }
@@ -1044,11 +1278,6 @@ private fun SharedReaderControlPanel(
             }
             item {
                 when (activeSection) {
-                    ReaderControlSection.SEARCH -> SharedReaderSearchControls(
-                        session = session,
-                        onReaderAction = onReaderAction
-                    )
-
                     ReaderControlSection.PAGE -> SharedReaderPageControls(
                         session = session,
                         onReaderAction = onReaderAction
@@ -1101,7 +1330,6 @@ private fun SharedReaderControlPanel(
 }
 
 private enum class ReaderControlSection(val title: String) {
-    SEARCH("Search"),
     PAGE("Page"),
     FORMAT("Format"),
     THEME("Theme"),
@@ -1111,7 +1339,6 @@ private enum class ReaderControlSection(val title: String) {
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(session: ReaderSessionState): List<ReaderControlSection> {
     return buildList {
-        if (isVisible(ReaderTool.SEARCH)) add(ReaderControlSection.SEARCH)
         if (session.jumpHistory.backLocator != null || session.jumpHistory.forwardLocator != null) {
             add(ReaderControlSection.PAGE)
         }
@@ -1145,114 +1372,6 @@ private fun SharedReaderPageControls(
                 onForward = { onReaderAction(ReaderAction.JumpForward) },
                 onClear = { onReaderAction(ReaderAction.JumpHistoryCleared) }
             )
-        }
-    }
-}
-
-@Composable
-private fun SharedReaderSearchControls(
-    session: ReaderSessionState,
-    onReaderAction: (ReaderAction) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Find in book", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            TextButton(
-                onClick = {
-                    onReaderAction(if (session.isSearchActive) ReaderAction.SearchClosed else ReaderAction.SearchOpened)
-                }
-            ) {
-                Text(if (session.isSearchActive) "Close" else "Open")
-            }
-        }
-
-        if (session.isSearchActive) {
-            SharedStableOutlinedTextField(
-                value = session.searchQuery,
-                onValueChange = { onReaderAction(ReaderAction.SearchChanged(it)) },
-                label = { Text("Search text") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.horizontalScroll(rememberScrollState())
-            ) {
-                FilterChip(
-                    selected = session.searchOptions.matchCase,
-                    onClick = {
-                        onReaderAction(ReaderAction.SearchOptionsChanged(session.searchOptions.copy(matchCase = !session.searchOptions.matchCase)))
-                    },
-                    label = { Text("Match case") }
-                )
-                FilterChip(
-                    selected = session.searchOptions.wholeWords,
-                    onClick = {
-                        onReaderAction(ReaderAction.SearchOptionsChanged(session.searchOptions.copy(wholeWords = !session.searchOptions.wholeWords)))
-                    },
-                    label = { Text("Whole words") }
-                )
-            }
-
-            if (session.searchQuery.isNotBlank()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        when {
-                            session.searchResults.isEmpty() -> "No matches"
-                            else -> "${session.activeSearchResultIndex + 1} of ${session.searchResults.size}"
-                        },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        enabled = session.canGoToPreviousSearchResult,
-                        onClick = { onReaderAction(ReaderAction.JumpToPreviousSearchResult) }
-                    ) {
-                        Text("Prev")
-                    }
-                    TextButton(
-                        enabled = session.canGoToNextSearchResult,
-                        onClick = { onReaderAction(ReaderAction.JumpToNextSearchResult) }
-                    ) {
-                        Text("Next")
-                    }
-                }
-
-                if (session.searchResults.isNotEmpty()) {
-                    TextButton(onClick = { onReaderAction(ReaderAction.SearchResultsPanelToggled) }) {
-                        Text(if (session.showSearchResultsPanel) "Hide results" else "Show results")
-                    }
-                }
-            }
-
-            if (session.searchQuery.isNotBlank() && session.showSearchResultsPanel) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    session.searchResults.forEachIndexed { index, result ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                onReaderAction(ReaderAction.JumpToSearchResult(index))
-                            }
-                        ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Text(
-                                    "Page ${result.pageIndex + 1} - ${result.chapterTitle}",
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

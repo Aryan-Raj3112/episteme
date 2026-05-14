@@ -3,6 +3,8 @@ package com.aryan.reader.desktop
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -22,6 +24,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,6 +41,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,8 +54,11 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
@@ -4227,6 +4234,8 @@ private fun PdfReaderScreen(
     }
 
     val searchQuery = pdfState.searchQuery
+    val isPdfSearchActive = pdfState.isSearchActive
+    val showPdfSearchResultsPanel = pdfState.showSearchResultsPanel
     val activeSearchIndex = pdfState.activeSearchResultIndex
     val searchHighlightMode = pdfState.searchHighlightMode
     val selectedTool = pdfState.selectedTool
@@ -5248,7 +5257,7 @@ private fun PdfReaderScreen(
         hasBookmarks = bookmarks.isNotEmpty(),
         hasAnnotations = sortedAnnotations.isNotEmpty(),
         hasEmbeddedComments = sortedEmbeddedAnnotations.isNotEmpty(),
-        searchActive = searchQuery.isNotBlank(),
+        searchActive = isPdfSearchActive || searchQuery.isNotBlank(),
         annotationEditing = activeTextDraft != null ||
             selectedAnnotation != null ||
             selectedTool != PdfInkTool.PEN ||
@@ -5309,6 +5318,10 @@ private fun PdfReaderScreen(
             }
             event.key == Key.MoveEnd -> {
                 goToPage(document.pageCount - 1)
+                true
+            }
+            event.isCtrlPressed && event.key == Key.F -> {
+                dispatchPdf(SharedPdfReaderAction.SearchOpened)
                 true
             }
             event.isCtrlPressed && event.key == Key.Equals -> {
@@ -5372,6 +5385,11 @@ private fun PdfReaderScreen(
             }
             AwtKeyEvent.VK_END -> {
                 goToPage(document.pageCount - 1)
+                true
+            }
+            AwtKeyEvent.VK_F -> {
+                if (!event.isControlDown) return false
+                dispatchPdf(SharedPdfReaderAction.SearchOpened)
                 true
             }
             AwtKeyEvent.VK_EQUALS,
@@ -5822,6 +5840,20 @@ private fun PdfReaderScreen(
         onFullscreenChange = ::setPdfFullscreen,
         isBookmarked = bookmarks.any { it.pageIndex == pageIndex },
         onToggleBookmark = { toggleBookmark(pageIndex) },
+        onSearchAction = { dispatchPdf(SharedPdfReaderAction.SearchOpened) },
+        topSearchBar = if (isPdfSearchActive) {
+            {
+                DesktopPdfSearchTopBar(
+                    query = searchQuery,
+                    showResultsPanel = showPdfSearchResultsPanel,
+                    onQueryChange = { dispatchPdf(SharedPdfReaderAction.SearchChanged(it)) },
+                    onClose = { dispatchPdf(SharedPdfReaderAction.SearchClosed) },
+                    onToggleResults = { dispatchPdf(SharedPdfReaderAction.SearchResultsPanelToggled) }
+                )
+            }
+        } else {
+            null
+        },
         modifier = Modifier
             .focusRequester(pdfReaderFocusRequester)
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
@@ -6037,79 +6069,6 @@ private fun PdfReaderScreen(
                             onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
                         )
                     }
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        SharedStableOutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = {
-                                dispatchPdf(SharedPdfReaderAction.SearchChanged(it))
-                            },
-                            label = { Text("Find in PDF") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    if (searchQuery.isNotBlank()) {
-                        item {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    when {
-                                        isSearchIndexing -> {
-                                            val progress = "Indexing ${indexedSearchPageCount.coerceAtMost(document.pageCount)}/${document.pageCount}"
-                                            if (searchResults.isEmpty()) progress else "${searchResults.size} matches - $progress"
-                                        }
-                                        searchResults.isEmpty() -> "No matches"
-                                        activeSearchIndex in searchResults.indices -> "${activeSearchIndex + 1} of ${searchResults.size}"
-                                        else -> "${searchResults.size} matches"
-                                    },
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(onClick = { goToSearchResult(activeSearchIndex - 1) }, enabled = searchResults.isNotEmpty()) {
-                                    Text("Prev")
-                                }
-                                TextButton(onClick = { goToSearchResult(activeSearchIndex + 1) }, enabled = searchResults.isNotEmpty()) {
-                                    Text("Next")
-                                }
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "Highlights",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                TextButton(
-                                    onClick = {
-                                        dispatchPdf(SharedPdfReaderAction.SearchHighlightModeToggled)
-                                    },
-                                    enabled = searchResults.isNotEmpty()
-                                ) {
-                                    Text(
-                                        when (searchHighlightMode) {
-                                            SearchHighlightMode.ALL -> "All"
-                                            SearchHighlightMode.FOCUSED -> "Focused"
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    items(searchResults, key = { "${it.pageIndex}_${it.matchIndex}_${it.preview}" }) { result ->
-                        Surface(
-                            color = if (result.pageIndex == pageIndex) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                goToSearchResult(searchResults.indexOf(result))
-                            }
-                        ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Text("Page ${result.pageIndex + 1}", fontWeight = FontWeight.SemiBold)
-                                Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
                     }
                     SharedReaderVerticalScrollbar(
                         listState = pdfInspectorListState,
@@ -6139,7 +6098,26 @@ private fun PdfReaderScreen(
                 .padding(start = 16.dp, bottom = 24.dp)
                 .zIndex(10f)
         )
-            if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
+        DesktopPdfSearchOverlay(
+            isSearchActive = isPdfSearchActive,
+            showResultsPanel = showPdfSearchResultsPanel,
+            query = searchQuery,
+            results = searchResults,
+            activeSearchIndex = activeSearchIndex,
+            highlightMode = searchHighlightMode,
+            isIndexing = isSearchIndexing,
+            indexedPageCount = indexedSearchPageCount,
+            pageCount = document.pageCount,
+            onResultClick = { index ->
+                goToSearchResult(index)
+                dispatchPdf(SharedPdfReaderAction.SearchResultsPanelToggled)
+            },
+            onShowResults = { dispatchPdf(SharedPdfReaderAction.SearchResultsPanelToggled) },
+            onPrevious = { goToSearchResult(activeSearchIndex - 1) },
+            onNext = { goToSearchResult(activeSearchIndex + 1) },
+            onToggleHighlightMode = { dispatchPdf(SharedPdfReaderAction.SearchHighlightModeToggled) }
+        )
+        if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -7009,6 +6987,250 @@ private fun DesktopPdfZoomPercentageIndicator(
                     .clip(RoundedCornerShape(4.dp))
                     .clickable(onClick = onResetZoomClick)
             )
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfSearchTopBar(
+    query: String,
+    showResultsPanel: Boolean,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    onToggleResults: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        delay(80)
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Close search")
+            }
+            SharedStableOutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                placeholder = { Text("Search in PDF") },
+                singleLine = true,
+                modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                trailingIcon = if (query.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { onQueryChange("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                        }
+                    }
+                } else {
+                    null
+                },
+                selectionKey = "desktop-pdf-search"
+            )
+            IconButton(onClick = onToggleResults, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    if (showResultsPanel) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (showResultsPanel) "Hide search results" else "Show search results"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.DesktopPdfSearchOverlay(
+    isSearchActive: Boolean,
+    showResultsPanel: Boolean,
+    query: String,
+    results: List<SharedPdfSearchResult>,
+    activeSearchIndex: Int,
+    highlightMode: SearchHighlightMode,
+    isIndexing: Boolean,
+    indexedPageCount: Int,
+    pageCount: Int,
+    onResultClick: (Int) -> Unit,
+    onShowResults: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onToggleHighlightMode: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = isSearchActive && showResultsPanel,
+        enter = slideInVertically { -it } + fadeIn(),
+        exit = slideOutVertically { -it } + fadeOut(),
+        modifier = Modifier.fillMaxSize().zIndex(30f)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                if (isIndexing) {
+                    val progress = indexedPageCount.toFloat() / pageCount.coerceAtLeast(1).toFloat()
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Text(
+                                "Indexing ${indexedPageCount.coerceAtMost(pageCount)}/$pageCount pages",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            LinearProgressIndicator(
+                                progress = { progress.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                            )
+                        }
+                    }
+                }
+
+                when {
+                    query.isBlank() -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("Type to search this PDF", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    results.isEmpty() -> {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                if (isIndexing) "No matches in indexed pages yet" else "No matches",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    else -> {
+                        Text(
+                            when {
+                                isIndexing -> "${results.size} matches so far"
+                                else -> "${results.size} matches"
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                        )
+                        HorizontalDivider()
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            itemsIndexed(
+                                items = results,
+                                key = { index, result -> "${result.pageIndex}_${result.matchIndex}_$index" }
+                            ) { index, result ->
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth().clickable { onResultClick(index) },
+                                    color = if (index == activeSearchIndex) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surface
+                                    }
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(
+                                            "Page ${result.pageIndex + 1}",
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            result.preview,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    AnimatedVisibility(
+        visible = isSearchActive && !showResultsPanel && results.isNotEmpty(),
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 18.dp)
+            .zIndex(31f)
+    ) {
+        DesktopPdfSearchNavigationPill(
+            activeSearchIndex = activeSearchIndex,
+            resultCount = results.size,
+            highlightMode = highlightMode,
+            onShowResults = onShowResults,
+            onPrevious = onPrevious,
+            onNext = onNext,
+            onToggleHighlightMode = onToggleHighlightMode
+        )
+    }
+}
+
+@Composable
+private fun DesktopPdfSearchNavigationPill(
+    activeSearchIndex: Int,
+    resultCount: Int,
+    highlightMode: SearchHighlightMode,
+    onShowResults: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onToggleHighlightMode: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            IconButton(onClick = onToggleHighlightMode, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    if (highlightMode == SearchHighlightMode.ALL) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    contentDescription = "Toggle search highlights",
+                    tint = if (highlightMode == SearchHighlightMode.ALL) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
+            IconButton(onClick = onPrevious, enabled = resultCount > 0, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous search result")
+            }
+            Text(
+                text = if (activeSearchIndex in 0 until resultCount) {
+                    "${activeSearchIndex + 1}/$resultCount"
+                } else {
+                    "$resultCount matches"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(onClick = onShowResults).padding(horizontal = 8.dp)
+            )
+            IconButton(onClick = onNext, enabled = resultCount > 0, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next search result")
+            }
         }
     }
 }
@@ -10931,122 +11153,6 @@ private fun List<ReaderPage>.samePageLayoutAs(other: List<ReaderPage>): Boolean 
 
 private fun CustomFontItem.toDesktopPreviewFontFamily(): FontFamily? {
     return runCatching { FontFamily(DesktopFont(File(path))) }.getOrNull()
-}
-
-@Composable
-private fun ReaderSidebar(
-    session: ReaderSessionState,
-    onSearchChange: (String) -> Unit,
-    onPreviousSearchResult: () -> Unit,
-    onNextSearchResult: () -> Unit,
-    onGoToChapter: (Int) -> Unit,
-    onGoToPage: (Int) -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .width(280.dp)
-            .fillMaxHeight(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        LazyColumn(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item {
-                Text("Contents", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-            items(session.reader.book.chapters.indices.toList()) { index ->
-                val chapter = session.reader.book.chapters[index]
-                val selected = session.reader.currentPage?.chapterIndex == index
-                Surface(
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.fillMaxWidth().clickable { onGoToChapter(index) }
-                ) {
-                    Text(
-                        chapter.title,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            item {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Text("Bookmarks", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-            if (session.bookmarks.isEmpty()) {
-                item {
-                    Text("No bookmarks yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                items(session.bookmarks, key = { it.id }) { bookmark ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth().clickable { onGoToPage(bookmark.pageIndex) }
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Text(bookmark.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(bookmark.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
-
-            item {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Text("Search", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                SharedStableOutlinedTextField(
-                    value = session.searchQuery,
-                    onValueChange = onSearchChange,
-                    label = { Text("Find in book") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (session.searchQuery.isNotBlank() && session.searchResults.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "${session.activeSearchResultIndex + 1} of ${session.searchResults.size}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = onPreviousSearchResult) {
-                            Text("Prev")
-                        }
-                        TextButton(onClick = onNextSearchResult) {
-                            Text("Next")
-                        }
-                    }
-                }
-            }
-            if (session.searchQuery.isNotBlank() && session.searchResults.isEmpty()) {
-                item {
-                    Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                items(session.searchResults, key = { "${it.pageIndex}_${it.matchIndex}_${it.preview}" }) { result ->
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth().clickable { onGoToPage(result.pageIndex) }
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Text("Page ${result.pageIndex + 1} - ${result.chapterTitle}", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(result.preview, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 @Composable

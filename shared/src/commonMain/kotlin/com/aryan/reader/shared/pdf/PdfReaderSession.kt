@@ -149,6 +149,8 @@ data class SharedPdfReaderState(
     val pageCount: Int = 0,
     val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
     val zoom: Float = PdfZoomSpec().default,
+    val isSearchActive: Boolean = false,
+    val showSearchResultsPanel: Boolean = true,
     val searchQuery: String = "",
     val activeSearchResultIndex: Int = -1,
     val searchHighlightMode: SearchHighlightMode = SearchHighlightMode.ALL,
@@ -208,6 +210,9 @@ sealed interface SharedPdfReaderAction {
     data class ZoomChanged(val zoom: Float) : SharedPdfReaderAction
     data class ZoomBy(val delta: Float) : SharedPdfReaderAction
     data class SearchChanged(val query: String) : SharedPdfReaderAction
+    data object SearchOpened : SharedPdfReaderAction
+    data object SearchClosed : SharedPdfReaderAction
+    data object SearchResultsPanelToggled : SharedPdfReaderAction
     data class SearchHighlightModeChanged(val mode: SearchHighlightMode) : SharedPdfReaderAction
     data object SearchHighlightModeToggled : SharedPdfReaderAction
     data class GoToSearchResult(
@@ -257,10 +262,26 @@ fun SharedPdfReaderState.reduce(
         )
         is SharedPdfReaderAction.ZoomChanged -> copy(zoom = zoomSpec.clamp(action.zoom))
         is SharedPdfReaderAction.ZoomBy -> copy(zoom = zoomSpec.clamp(zoom + action.delta))
-        is SharedPdfReaderAction.SearchChanged -> copy(
-            searchQuery = action.query,
+        is SharedPdfReaderAction.SearchChanged -> {
+            val normalized = action.query.trim()
+            copy(
+                isSearchActive = isSearchActive || normalized.isNotBlank(),
+                showSearchResultsPanel = showSearchResultsPanel || normalized.isNotBlank(),
+                searchQuery = action.query,
+                activeSearchResultIndex = -1
+            )
+        }
+        SharedPdfReaderAction.SearchOpened -> copy(
+            isSearchActive = true,
+            showSearchResultsPanel = true
+        )
+        SharedPdfReaderAction.SearchClosed -> copy(
+            isSearchActive = false,
+            showSearchResultsPanel = true,
+            searchQuery = "",
             activeSearchResultIndex = -1
         )
+        SharedPdfReaderAction.SearchResultsPanelToggled -> copy(showSearchResultsPanel = !showSearchResultsPanel)
         is SharedPdfReaderAction.SearchHighlightModeChanged -> copy(searchHighlightMode = action.mode)
         SharedPdfReaderAction.SearchHighlightModeToggled -> copy(
             searchHighlightMode = when (searchHighlightMode) {

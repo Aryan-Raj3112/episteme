@@ -574,17 +574,13 @@ class ReaderEngine(
     fun search(state: ReaderSessionState, query: String): ReaderSessionState {
         val normalized = query.trim()
         val results = searchResultsFor(state, normalized)
-        val activeIndex = results.indexOfFirst { it.pageIndex >= state.reader.currentPageIndex }
-            .takeIf { it >= 0 }
-            ?: if (results.isNotEmpty()) 0 else -1
-        val updated = state.copy(
+        return state.copy(
             isSearchActive = state.isSearchActive || normalized.isNotBlank(),
             showSearchResultsPanel = state.showSearchResultsPanel || normalized.isNotBlank(),
             searchQuery = query,
             searchResults = results,
-            activeSearchResultIndex = activeIndex
+            activeSearchResultIndex = -1
         )
-        return updated.activeSearchResult?.let { goToSearchResult(updated, activeIndex) } ?: updated
     }
 
     private fun refreshSearchResults(state: ReaderSessionState): ReaderSessionState {

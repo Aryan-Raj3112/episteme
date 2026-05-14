@@ -37,10 +37,14 @@ class ReaderActionReducerTest {
 
         val searched = chapterTwo.reduce(ReaderAction.SearchChanged("needle"), engine)
         assertTrue(searched.searchResults.size >= 2)
-        assertTrue(searched.activeSearchResultIndex >= 0)
+        assertEquals(-1, searched.activeSearchResultIndex)
+        assertEquals(chapterTwo.reader.currentPageIndex, searched.reader.currentPageIndex)
 
         val nextSearch = searched.reduce(ReaderAction.NextSearchResult, engine)
-        assertEquals(searched.activeSearchResultIndex + 1, nextSearch.activeSearchResultIndex)
+        assertEquals(
+            searched.searchResults.indexOfFirst { it.pageIndex >= searched.reader.currentPageIndex },
+            nextSearch.activeSearchResultIndex
+        )
 
         val directSearch = searched.reduce(ReaderAction.GoToSearchResult(0), engine)
         assertEquals(0, directSearch.activeSearchResultIndex)
@@ -86,11 +90,16 @@ class ReaderActionReducerTest {
         val closed = hiddenPanel.reduce(ReaderAction.SearchClosed, engine)
 
         assertTrue(opened.isSearchActive)
+        assertTrue(opened.showSearchResultsPanel)
         assertEquals(2, caseSensitive.searchResults.size)
+        assertEquals(-1, caseSensitive.activeSearchResultIndex)
+        assertEquals(session.reader.currentPageIndex, caseSensitive.reader.currentPageIndex)
         assertEquals(1, wholeWords.searchResults.size)
         assertEquals(false, hiddenPanel.showSearchResultsPanel)
         assertEquals("", closed.searchQuery)
         assertTrue(closed.searchResults.isEmpty())
+        assertEquals(-1, closed.activeSearchResultIndex)
+        assertTrue(closed.showSearchResultsPanel)
     }
 
     @Test

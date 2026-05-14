@@ -85,6 +85,7 @@ class ReaderEngineTest {
         assertEquals(3, searched.searchResults.size)
         assertEquals(listOf(0, 11, 23), searched.searchResults.map { it.matchIndex })
         assertTrue(searched.searchResults.all { it.pageIndex == 0 })
+        assertEquals(-1, searched.activeSearchResultIndex)
 
         val secondMatch = engine.goToSearchResult(searched, 1)
 

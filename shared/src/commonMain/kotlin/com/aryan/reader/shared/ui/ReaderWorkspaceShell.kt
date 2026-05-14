@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,6 +68,8 @@ fun ReaderWorkspaceShell(
     fullscreenExitMessage: String = "Esc to exit",
     isBookmarked: Boolean = false,
     onToggleBookmark: (() -> Unit)? = null,
+    onSearchAction: (() -> Unit)? = null,
+    topSearchBar: (@Composable () -> Unit)? = null,
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
@@ -94,7 +97,10 @@ fun ReaderWorkspaceShell(
 
     LaunchedEffect(model.kind, model.chrome.forceVisibleReasons) {
         val reasons = model.chrome.forceVisibleReasons
-        if (reasons.any { it == "search" || it == "rich-text" } && model.inspectorSections.isNotEmpty()) {
+        if (reasons.any { it == "search" }) {
+            leftPanelOpen = false
+            rightPanelOpen = false
+        } else if (reasons.any { it == "rich-text" } && model.inspectorSections.isNotEmpty()) {
             rightPanelOpen = true
         }
     }
@@ -133,7 +139,7 @@ fun ReaderWorkspaceShell(
                     },
                 verticalArrangement = Arrangement.spacedBy(if (isFullscreen) 0.dp else 6.dp)
             ) {
-                if (!isFullscreen) {
+                if (!isFullscreen || topSearchBar != null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -141,22 +147,27 @@ fun ReaderWorkspaceShell(
                                 logReaderGapLayout("top_chrome_slot", coordinates.boundsInWindow())
                             }
                     ) {
-                        ReaderWorkspaceTopChrome(
-                            title = title,
-                            subtitle = subtitle,
-                            progressLabel = progressLabel,
-                            topActions = model.topActions,
-                            hasLeftPanel = model.leftSections.isNotEmpty(),
-                            hasRightPanel = model.inspectorSections.isNotEmpty(),
-                            leftPanelOpen = leftPanelOpen,
-                            rightPanelOpen = rightPanelOpen,
-                            isBookmarked = isBookmarked,
-                            onReturnToLibrary = onReturnToLibrary,
-                            onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                            onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
-                            onToggleBookmark = onToggleBookmark,
-                            onEnterFullscreen = onFullscreenChange?.let { change -> { change(true) } }
-                        )
+                        if (topSearchBar != null) {
+                            topSearchBar()
+                        } else {
+                            ReaderWorkspaceTopChrome(
+                                title = title,
+                                subtitle = subtitle,
+                                progressLabel = progressLabel,
+                                topActions = model.topActions,
+                                hasLeftPanel = model.leftSections.isNotEmpty(),
+                                hasRightPanel = model.inspectorSections.isNotEmpty(),
+                                leftPanelOpen = leftPanelOpen,
+                                rightPanelOpen = rightPanelOpen,
+                                isBookmarked = isBookmarked,
+                                onReturnToLibrary = onReturnToLibrary,
+                                onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
+                                onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                                onToggleBookmark = onToggleBookmark,
+                                onSearchAction = onSearchAction,
+                                onEnterFullscreen = onFullscreenChange?.let { change -> { change(true) } }
+                            )
+                        }
                     }
                 }
 
@@ -307,6 +318,7 @@ private fun ReaderWorkspaceTopChrome(
     onToggleLeftPanel: () -> Unit,
     onToggleRightPanel: () -> Unit,
     onToggleBookmark: (() -> Unit)?,
+    onSearchAction: (() -> Unit)?,
     onEnterFullscreen: (() -> Unit)?
 ) {
     Surface(
@@ -335,6 +347,11 @@ private fun ReaderWorkspaceTopChrome(
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(progressLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (ReaderWorkspaceTopAction.SEARCH in topActions && onSearchAction != null) {
+                IconButton(onClick = onSearchAction, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Search, contentDescription = "Search in reader")
+                }
+            }
             if (ReaderWorkspaceTopAction.BOOKMARK in topActions && onToggleBookmark != null) {
                 IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
                     Icon(

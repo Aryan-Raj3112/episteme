@@ -68,14 +68,40 @@ class PdfReaderSessionTest {
             SharedPdfSearchResult(pageIndex = 3, preview = "second", matchIndex = 7)
         )
 
-        val state = SharedPdfReaderState.initial(pageCount = 5)
+        val changed = SharedPdfReaderState.initial(pageCount = 5)
             .reduce(SharedPdfReaderAction.GoToSearchResult(0, results))
+            .reduce(SharedPdfReaderAction.SearchHighlightModeChanged(SearchHighlightMode.FOCUSED))
             .reduce(SharedPdfReaderAction.SearchChanged("needle"))
+        val state = changed
             .reduce(SharedPdfReaderAction.GoToSearchResult(-1, results))
 
-        assertEquals("needle", state.searchQuery)
+        assertEquals("needle", changed.searchQuery)
+        assertEquals(-1, changed.activeSearchResultIndex)
+        assertEquals(SearchHighlightMode.FOCUSED, changed.searchHighlightMode)
+        assertEquals(1, changed.pageIndex)
         assertEquals(1, state.activeSearchResultIndex)
         assertEquals(3, state.pageIndex)
+    }
+
+    @Test
+    fun `search chrome actions open toggle and close shared state`() {
+        val opened = SharedPdfReaderState.initial(pageCount = 4)
+            .reduce(SharedPdfReaderAction.SearchOpened)
+        val typed = opened.reduce(SharedPdfReaderAction.SearchChanged("alpha"))
+        val hidden = typed.reduce(SharedPdfReaderAction.SearchResultsPanelToggled)
+        val closed = hidden.reduce(SharedPdfReaderAction.SearchClosed)
+
+        assertTrue(opened.isSearchActive)
+        assertTrue(opened.showSearchResultsPanel)
+        assertEquals("alpha", typed.searchQuery)
+        assertTrue(typed.isSearchActive)
+        assertTrue(typed.showSearchResultsPanel)
+        assertEquals(-1, typed.activeSearchResultIndex)
+        assertEquals(false, hidden.showSearchResultsPanel)
+        assertEquals(false, closed.isSearchActive)
+        assertTrue(closed.showSearchResultsPanel)
+        assertEquals("", closed.searchQuery)
+        assertEquals(-1, closed.activeSearchResultIndex)
     }
 
     @Test
@@ -236,6 +262,7 @@ class PdfReaderSessionTest {
         assertEquals(0, punctuationResults.single().matchIndex)
         assertEquals("hello,\nworld".length, punctuationResults.single().matchLength)
         assertEquals(listOf(0, 2), alphaResults.map { it.pageIndex })
+        assertEquals(listOf(3, 3), alphaResults.map { it.matchLength })
     }
 
     @Test
