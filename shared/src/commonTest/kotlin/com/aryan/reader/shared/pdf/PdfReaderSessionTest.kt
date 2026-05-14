@@ -63,6 +63,30 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `reader viewport clamps zoom pages and scroll offsets`() {
+        val viewport = SharedPdfReaderViewport(
+            pageIndex = 99,
+            displayMode = PdfDisplayMode.VERTICAL_SCROLL,
+            zoom = Float.NaN,
+            horizontalScrollOffset = -10,
+            paginatedVerticalScrollOffset = -20,
+            verticalFirstPageIndex = 40,
+            verticalFirstPageScrollOffset = -30
+        ).sanitized(
+            pageCount = 5,
+            zoomSpec = PdfZoomSpec(min = 0.5f, max = 4f, default = 1.25f)
+        )
+
+        assertEquals(PdfDisplayMode.VERTICAL_SCROLL, viewport.displayMode)
+        assertEquals(4, viewport.pageIndex)
+        assertEquals(4, viewport.verticalFirstPageIndex)
+        assertEquals(1.25f, viewport.zoom)
+        assertEquals(0, viewport.horizontalScrollOffset)
+        assertEquals(0, viewport.paginatedVerticalScrollOffset)
+        assertEquals(0, viewport.verticalFirstPageScrollOffset)
+    }
+
+    @Test
     fun `search query resets active result and result navigation wraps`() {
         val results = listOf(
             SharedPdfSearchResult(pageIndex = 1, preview = "first", matchIndex = 5),

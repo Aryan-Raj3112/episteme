@@ -144,6 +144,32 @@ data class SharedPdfJumpHistory(
     }
 }
 
+data class SharedPdfReaderViewport(
+    val pageIndex: Int = 0,
+    val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
+    val zoom: Float = PdfZoomSpec().default,
+    val horizontalScrollOffset: Int = 0,
+    val paginatedVerticalScrollOffset: Int = 0,
+    val verticalFirstPageIndex: Int = pageIndex,
+    val verticalFirstPageScrollOffset: Int = 0
+) {
+    fun sanitized(
+        pageCount: Int,
+        zoomSpec: PdfZoomSpec = PdfZoomSpec()
+    ): SharedPdfReaderViewport {
+        val lastPageIndex = (pageCount.coerceAtLeast(0) - 1).coerceAtLeast(0)
+        val safeZoom = if (zoom.isFinite() && zoom > 0f) zoom else zoomSpec.default
+        return copy(
+            pageIndex = pageIndex.coerceIn(0, lastPageIndex),
+            zoom = zoomSpec.clamp(safeZoom),
+            horizontalScrollOffset = horizontalScrollOffset.coerceAtLeast(0),
+            paginatedVerticalScrollOffset = paginatedVerticalScrollOffset.coerceAtLeast(0),
+            verticalFirstPageIndex = verticalFirstPageIndex.coerceIn(0, lastPageIndex),
+            verticalFirstPageScrollOffset = verticalFirstPageScrollOffset.coerceAtLeast(0)
+        )
+    }
+}
+
 data class SharedPdfReaderState(
     val pageIndex: Int = 0,
     val pageCount: Int = 0,

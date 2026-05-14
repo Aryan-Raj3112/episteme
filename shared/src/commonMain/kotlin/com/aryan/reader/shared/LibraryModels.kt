@@ -1,5 +1,6 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderSettings
 
@@ -91,7 +92,8 @@ data class BookItem(
     val lastPageIndex: Int? = null,
     val readerSettings: ReaderSettings? = null,
     val readerBookmarks: List<ReaderBookmark> = emptyList(),
-    val readerHighlights: List<UserHighlight> = emptyList()
+    val readerHighlights: List<UserHighlight> = emptyList(),
+    val pdfReaderViewport: SharedPdfReaderViewport? = null
 )
 
 data class Shelf(

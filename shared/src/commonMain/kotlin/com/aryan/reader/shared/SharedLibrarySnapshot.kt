@@ -17,6 +17,7 @@ import kotlinx.serialization.json.longOrNull
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -52,7 +53,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 14
+    private const val SCHEMA_VERSION = 15
 
     private val json = Json {
         prettyPrint = true
@@ -226,7 +227,8 @@ private fun BookItem.hasReaderFootprint(openedBookIds: Set<String>): Boolean {
         (progressPercentage ?: 0f) > 0f ||
         readerSettings != null ||
         readerBookmarks.isNotEmpty() ||
-        readerHighlights.isNotEmpty()
+        readerHighlights.isNotEmpty() ||
+        pdfReaderViewport != null
 }
 
 private fun JsonElement.asBookItemOrNull(): BookItem? {
@@ -254,7 +256,8 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         lastPageIndex = obj.int("lastPageIndex"),
         readerSettings = obj["readerSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
         readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() },
-        readerHighlights = obj.array("readerHighlights").mapNotNull { it.asReaderHighlightOrNull() }
+        readerHighlights = obj.array("readerHighlights").mapNotNull { it.asReaderHighlightOrNull() },
+        pdfReaderViewport = obj["pdfReaderViewport"]?.takeUnless { it is JsonNull }?.asSharedPdfReaderViewportOrNull()
     )
 }
 
@@ -346,7 +349,8 @@ private fun BookItem.toJsonObject(): JsonObject {
             "lastPageIndex" to lastPageIndex.asJson(),
             "readerSettings" to readerSettings.asJson(),
             "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() }),
-            "readerHighlights" to JsonArray(readerHighlights.map { it.toJsonObject() })
+            "readerHighlights" to JsonArray(readerHighlights.map { it.toJsonObject() }),
+            "pdfReaderViewport" to pdfReaderViewport.asJson()
         )
     )
 }
@@ -514,6 +518,24 @@ private fun JsonElement.asSharedPdfHighlighterPaletteOrNull(): SharedPdfHighligh
     return SharedPdfHighlighterPalette(colors = obj.intArray("colorsArgb")).sanitized()
 }
 
+private fun JsonElement.asSharedPdfReaderViewportOrNull(): SharedPdfReaderViewport? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    val defaults = SharedPdfReaderViewport()
+    return SharedPdfReaderViewport(
+        pageIndex = obj.int("pageIndex") ?: defaults.pageIndex,
+        displayMode = obj.string("displayMode")
+            ?.let { runCatching { PdfDisplayMode.valueOf(it) }.getOrNull() }
+            ?: defaults.displayMode,
+        zoom = obj.float("zoom") ?: defaults.zoom,
+        horizontalScrollOffset = obj.int("horizontalScrollOffset") ?: defaults.horizontalScrollOffset,
+        paginatedVerticalScrollOffset = obj.int("paginatedVerticalScrollOffset")
+            ?: defaults.paginatedVerticalScrollOffset,
+        verticalFirstPageIndex = obj.int("verticalFirstPageIndex") ?: defaults.verticalFirstPageIndex,
+        verticalFirstPageScrollOffset = obj.int("verticalFirstPageScrollOffset")
+            ?: defaults.verticalFirstPageScrollOffset
+    )
+}
+
 private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
     val pageIndex = obj.int("pageIndex") ?: return null
@@ -635,6 +657,21 @@ private fun SharedPdfHighlighterPalette.toJsonObject(): JsonObject {
     return JsonObject(
         mapOf(
             "colorsArgb" to sanitized().colors.asIntJsonArray()
+        )
+    )
+}
+
+private fun SharedPdfReaderViewport?.asJson(): JsonElement {
+    val viewport = this ?: return JsonNull
+    return JsonObject(
+        mapOf(
+            "pageIndex" to JsonPrimitive(viewport.pageIndex),
+            "displayMode" to JsonPrimitive(viewport.displayMode.name),
+            "zoom" to JsonPrimitive(viewport.zoom),
+            "horizontalScrollOffset" to JsonPrimitive(viewport.horizontalScrollOffset),
+            "paginatedVerticalScrollOffset" to JsonPrimitive(viewport.paginatedVerticalScrollOffset),
+            "verticalFirstPageIndex" to JsonPrimitive(viewport.verticalFirstPageIndex),
+            "verticalFirstPageScrollOffset" to JsonPrimitive(viewport.verticalFirstPageScrollOffset)
         )
     )
 }

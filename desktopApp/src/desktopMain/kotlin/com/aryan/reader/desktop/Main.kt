@@ -264,6 +264,7 @@ import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.pdf.SharedPdfRichDocument
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
@@ -371,6 +372,7 @@ import dev.datlag.kcef.KCEF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -1028,12 +1030,21 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         }
     }
 
-    fun updateActiveBookReadingState(pageIndex: Int, progress: Float, session: ReaderSessionState? = null) {
+    fun updateActiveBookReadingState(
+        pageIndex: Int,
+        progress: Float,
+        session: ReaderSessionState? = null,
+        pdfViewport: SharedPdfReaderViewport? = null
+    ) {
         activeReaderBookId?.let { bookId ->
             var updatedBook: BookItem? = null
+            var shouldSyncSidecars = false
             val next = state.copy(
                 rawLibraryBooks = state.rawLibraryBooks.map { book ->
                     if (book.id == bookId) {
+                        shouldSyncSidecars = session != null ||
+                            book.lastPageIndex != pageIndex ||
+                            book.progressPercentage != progress
                         book.copy(
                             progressPercentage = progress,
                             timestamp = System.currentTimeMillis(),
@@ -1041,7 +1052,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             lastPageIndex = pageIndex,
                             readerSettings = session?.reader?.settings ?: book.readerSettings,
                             readerBookmarks = session?.bookmarks ?: book.readerBookmarks,
-                            readerHighlights = session?.highlights ?: book.readerHighlights
+                            readerHighlights = session?.highlights ?: book.readerHighlights,
+                            pdfReaderViewport = pdfViewport ?: book.pdfReaderViewport
                         ).also { updatedBook = it }
                     } else {
                         book
@@ -1049,7 +1061,9 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                 }
             )
             updateState(next)
-            updatedBook?.let(::syncBookSidecars)
+            if (shouldSyncSidecars) {
+                updatedBook?.let(::syncBookSidecars)
+            }
         }
     }
 
@@ -2342,6 +2356,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     initialPageIndex = activeReaderBookId
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.lastPageIndex }
                                         ?: 0,
+                                    initialViewport = activeReaderBookId
+                                        ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId }?.pdfReaderViewport },
                                     initialReaderSettings = activeReaderBookId
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId } }
                                         ?.let { book -> resolvedDesktopReaderSettings(book, state.pdfReaderDefaultSettings) }
@@ -2351,8 +2367,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         selectedTab = SharedAppTab.LIBRARY
                                     },
                                     onFullscreenChange = { enabled -> readerFullscreen = enabled },
-                                    onPageStateChange = { page, progress ->
-                                        updateActiveBookReadingState(page, progress)
+                                    onPageStateChange = { page, progress, viewport ->
+                                        updateActiveBookReadingState(page, progress, pdfViewport = viewport)
                                     },
                                     onReaderSettingsChange = ::updateActiveBookReaderSettings,
                                     pdfHighlighterPalette = state.pdfHighlighterPalette,
@@ -3728,10 +3744,11 @@ private fun Modifier.desktopPdfZoomGestures(
 private fun PdfReaderScreen(
     document: DesktopPdfDocument,
     initialPageIndex: Int,
+    initialViewport: SharedPdfReaderViewport? = null,
     initialReaderSettings: ReaderSettings? = null,
     onReturnToLibrary: (() -> Unit)? = null,
     onFullscreenChange: (Boolean) -> Unit = {},
-    onPageStateChange: (pageIndex: Int, progress: Float) -> Unit,
+    onPageStateChange: (pageIndex: Int, progress: Float, viewport: SharedPdfReaderViewport) -> Unit,
     onReaderSettingsChange: (ReaderSettings) -> Unit = {},
     pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
     onPdfHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit = {},
@@ -3746,6 +3763,9 @@ private fun PdfReaderScreen(
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard
 ) {
     val zoomSpec = remember { DesktopPdfZoomSpec }
+    val restoredInitialViewport = remember(document.path, initialViewport) {
+        initialViewport?.sanitized(document.pageCount, zoomSpec)
+    }
     var pdfReaderSettings by remember(document.path) {
         mutableStateOf(initialReaderSettings.toDesktopPdfReaderSettings())
     }
@@ -3755,10 +3775,11 @@ private fun PdfReaderScreen(
         mutableStateOf(
             SharedPdfReaderState.initial(
                 pageCount = document.pageCount,
-                initialPageIndex = initialPageIndex,
+                initialPageIndex = restoredInitialViewport?.pageIndex ?: initialPageIndex,
                 zoomSpec = zoomSpec
             ).copy(
-                displayMode = DesktopDefaultPdfDisplayMode,
+                displayMode = restoredInitialViewport?.displayMode ?: DesktopDefaultPdfDisplayMode,
+                zoom = restoredInitialViewport?.zoom ?: zoomSpec.clamp(zoomSpec.default),
                 isTextSelectionMode = true,
                 selectedTool = defaultTool,
                 selectedColorArgb = defaultToolConfig.colorArgb,
@@ -3857,9 +3878,22 @@ private fun PdfReaderScreen(
             }
         )
     }
-    val pageVerticalScrollState = rememberScrollState()
-    val pageHorizontalScrollState = rememberScrollState()
-    val verticalListState = rememberLazyListState(initialFirstVisibleItemIndex = pdfState.pageIndex)
+    val pageVerticalScrollState = rememberScrollState(
+        initial = restoredInitialViewport?.paginatedVerticalScrollOffset ?: 0
+    )
+    val pageHorizontalScrollState = rememberScrollState(
+        initial = restoredInitialViewport?.horizontalScrollOffset ?: 0
+    )
+    val verticalListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = restoredInitialViewport
+            ?.takeIf { it.displayMode == PdfDisplayMode.VERTICAL_SCROLL }
+            ?.verticalFirstPageIndex
+            ?: pdfState.pageIndex,
+        initialFirstVisibleItemScrollOffset = restoredInitialViewport
+            ?.takeIf { it.displayMode == PdfDisplayMode.VERTICAL_SCROLL }
+            ?.verticalFirstPageScrollOffset
+            ?: 0
+    )
     val pdfReaderFocusRequester = remember(document.path) { FocusRequester() }
     val currentTextSelection by rememberUpdatedState(textSelection)
     val currentPdfAnnotations by rememberUpdatedState(pdfState.annotations)
@@ -4290,6 +4324,34 @@ private fun PdfReaderScreen(
     val canGoPrevious = pdfState.canGoPrevious
     val canGoNext = pdfState.canGoNext
     val progressPercent = pdfState.progressPercent
+    val latestOnPageStateChange by rememberUpdatedState(onPageStateChange)
+
+    fun pdfViewportSnapshot(): SharedPdfReaderViewport {
+        val state = pdfState
+        return SharedPdfReaderViewport(
+            pageIndex = state.pageIndex,
+            displayMode = state.displayMode,
+            zoom = pdfZoomPreview?.zoom ?: state.zoom,
+            horizontalScrollOffset = pageHorizontalScrollState.value,
+            paginatedVerticalScrollOffset = pageVerticalScrollState.value,
+            verticalFirstPageIndex = verticalListState.firstVisibleItemIndex,
+            verticalFirstPageScrollOffset = verticalListState.firstVisibleItemScrollOffset
+        ).sanitized(document.pageCount, zoomSpec)
+    }
+
+    fun pdfProgressPercentFor(pageIndex: Int): Float {
+        return ((pageIndex + 1).toFloat() / document.pageCount.coerceAtLeast(1)) * 100f
+    }
+
+    var latestPdfViewport by remember(document.path) {
+        mutableStateOf(restoredInitialViewport ?: pdfViewportSnapshot())
+    }
+
+    fun persistPdfViewport(viewport: SharedPdfReaderViewport = pdfViewportSnapshot()) {
+        latestPdfViewport = viewport
+        latestOnPageStateChange(viewport.pageIndex, pdfProgressPercentFor(viewport.pageIndex), viewport)
+    }
+
     val pdfThemeStyle = remember(pdfReaderSettings, displayMode) {
         pdfReaderSettings.toDesktopPdfThemeStyle(displayMode)
     }
@@ -5047,13 +5109,62 @@ private fun PdfReaderScreen(
         jumpHistory = jumpHistory.pruned(document.pageCount)
     }
 
-    LaunchedEffect(document.path, pageIndex, progressPercent) {
-        onPageStateChange(pageIndex, progressPercent)
+    LaunchedEffect(document.path, document.pageCount) {
+        snapshotFlow { pdfViewportSnapshot() }
+            .distinctUntilChanged()
+            .collectLatest { viewport ->
+                latestPdfViewport = viewport
+                delay(DesktopPdfViewportPersistDebounceMillis)
+                persistPdfViewport(viewport)
+            }
     }
 
+    DisposableEffect(document.path) {
+        onDispose {
+            persistPdfViewport()
+        }
+    }
+
+    var pendingInitialViewportRestore by remember(document.path) { mutableStateOf(restoredInitialViewport) }
     LaunchedEffect(document.path, displayMode) {
         if (displayMode == PdfDisplayMode.VERTICAL_SCROLL && pageIndex in 0 until document.pageCount) {
+            if (pendingInitialViewportRestore?.displayMode == PdfDisplayMode.VERTICAL_SCROLL) return@LaunchedEffect
             verticalListState.scrollToItem(pageIndex)
+        }
+    }
+
+    LaunchedEffect(
+        document.path,
+        pendingInitialViewportRestore,
+        displayMode,
+        renderedPageIndex,
+        renderedPageScale
+    ) {
+        val viewport = pendingInitialViewportRestore ?: return@LaunchedEffect
+        if (viewport.displayMode != displayMode) {
+            pendingInitialViewportRestore = null
+            return@LaunchedEffect
+        }
+        when (viewport.displayMode) {
+            PdfDisplayMode.PAGINATION -> {
+                if (renderedPageIndex != viewport.pageIndex) return@LaunchedEffect
+                withFrameNanos { }
+                pageHorizontalScrollState.scrollTo(viewport.horizontalScrollOffset)
+                pageVerticalScrollState.scrollTo(viewport.paginatedVerticalScrollOffset)
+                pendingInitialViewportRestore = null
+                latestPdfViewport = viewport
+            }
+
+            PdfDisplayMode.VERTICAL_SCROLL -> {
+                withFrameNanos { }
+                verticalListState.scrollToItem(
+                    viewport.verticalFirstPageIndex,
+                    viewport.verticalFirstPageScrollOffset
+                )
+                pageHorizontalScrollState.scrollTo(viewport.horizontalScrollOffset)
+                pendingInitialViewportRestore = null
+                latestPdfViewport = viewport
+            }
         }
     }
 
@@ -5890,7 +6001,12 @@ private fun PdfReaderScreen(
         title = document.title,
         subtitle = "${document.formatLabel} - Page ${pageIndex + 1} of ${document.pageCount}",
         progressLabel = "${progressPercent.toInt()}%",
-        onReturnToLibrary = onReturnToLibrary,
+        onReturnToLibrary = onReturnToLibrary?.let { returnToLibrary ->
+            {
+                persistPdfViewport()
+                returnToLibrary()
+            }
+        },
         isFullscreen = isFullscreen,
         onFullscreenChange = ::setPdfFullscreen,
         isBookmarked = bookmarks.any { it.pageIndex == pageIndex },
@@ -9981,6 +10097,7 @@ private const val DesktopPdfSelectionPreviewThrottleMillis = 32L
 private const val DesktopPdfZoomGestureFrameMillis = 16L
 private const val DesktopPdfZoomCommitDebounceMillis = 180L
 private const val DesktopPdfZoomRenderDebounceMillis = 300L
+private const val DesktopPdfViewportPersistDebounceMillis = 300L
 private const val DesktopPdfPaginationPrefetchDelayMillis = 450L
 internal const val DesktopPdfPaginationFastFirstRenderMaxScale = 2.0f
 private const val DesktopPdfRenderScaleTolerance = 0.01f

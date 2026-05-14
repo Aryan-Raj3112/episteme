@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -95,6 +96,15 @@ class SharedLibrarySnapshotJsonTest {
                                 cfi = "desktop:0:128:144"
                             )
                         )
+                    ),
+                    pdfReaderViewport = SharedPdfReaderViewport(
+                        pageIndex = 4,
+                        displayMode = PdfDisplayMode.VERTICAL_SCROLL,
+                        zoom = 1.8f,
+                        horizontalScrollOffset = 90,
+                        paginatedVerticalScrollOffset = 140,
+                        verticalFirstPageIndex = 3,
+                        verticalFirstPageScrollOffset = 44
                     )
                 )
             ),
