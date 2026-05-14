@@ -22,6 +22,7 @@ package com.aryan.reader.data
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.core.net.toUri
 import com.aryan.reader.ReaderPerfLog
@@ -169,10 +170,19 @@ class RecentFilesRepository(private val context: Context) {
         }
 
         val entityToInsert = if (existingItem != null) {
+            val folderFileChanged = item.sourceFolderUri != null &&
+                existingItem.sourceFolderUri == item.sourceFolderUri &&
+                item.fileSize > 0L &&
+                item.fileSize != existingItem.fileSize
+
             item.toRecentFileEntity().copy(
                 uriString = existingItem.uriString ?: item.uriString,
                 isAvailable = existingItem.isAvailable || item.isAvailable,
-                coverImagePath = item.coverImagePath ?: existingItem.coverImagePath,
+                coverImagePath = if (folderFileChanged) {
+                    item.coverImagePath
+                } else {
+                    item.coverImagePath ?: existingItem.coverImagePath
+                },
                 title = item.title ?: existingItem.title,
                 author = item.author ?: existingItem.author,
                 lastChapterIndex = item.lastChapterIndex ?: existingItem.lastChapterIndex,
@@ -190,7 +200,16 @@ class RecentFilesRepository(private val context: Context) {
                 seriesName = item.seriesName ?: existingItem.seriesName,
                 seriesIndex = item.seriesIndex ?: existingItem.seriesIndex,
                 description = item.description ?: existingItem.description,
-                folderTextMetadataParsed = item.folderTextMetadataParsed || existingItem.folderTextMetadataParsed
+                folderTextMetadataParsed = if (folderFileChanged) {
+                    item.folderTextMetadataParsed
+                } else {
+                    item.folderTextMetadataParsed || existingItem.folderTextMetadataParsed
+                },
+                folderCoverMetadataParsed = if (folderFileChanged) {
+                    item.folderCoverMetadataParsed
+                } else {
+                    item.folderCoverMetadataParsed || existingItem.folderCoverMetadataParsed
+                }
             )
         } else {
             item.toRecentFileEntity()
@@ -459,7 +478,9 @@ class RecentFilesRepository(private val context: Context) {
                         coverImagePath = item.coverImagePath,
                         title = item.title,
                         author = item.author,
-                        fileSize = item.fileSize
+                        fileSize = item.fileSize,
+                        textMetadataParsed = item.folderTextMetadataParsed,
+                        coverMetadataParsed = item.folderCoverMetadataParsed
                     )
                 }
             }
@@ -584,6 +605,32 @@ class RecentFilesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri): String? = withContext(Dispatchers.IO) {
+        if (bytes.isEmpty()) return@withContext null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+
+        var sampleSize = 1
+        val maxDimension = 1200
+        while ((bounds.outWidth / sampleSize) > maxDimension || (bounds.outHeight / sampleSize) > maxDimension) {
+            sampleSize *= 2
+        }
+
+        val decoded = BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        ) ?: return@withContext null
+
+        try {
+            return@withContext saveCoverToCache(decoded, uri)
+        } finally {
+            decoded.recycle()
+        }
+    }
+
     private fun deleteCachedCover(filePath: String): Boolean {
         val file = File(filePath)
         val deleted = file.delete()
@@ -630,10 +677,11 @@ class RecentFilesRepository(private val context: Context) {
 
     suspend fun clearLocalCachesForBook(bookId: String) = withContext(Dispatchers.IO) {
         try {
+            recentFileDao.getFileByBookId(bookId)?.coverImagePath?.let { deleteCachedCover(it) }
             pdfRichTextRepository.getFileForSync(bookId).delete()
             pageLayoutRepository.getLayoutFile(bookId).delete()
             ImportedFileCache.clearBookCache(context, bookId)
-            Timber.d("Cleared layout and text caches for modified book: $bookId")
+            Timber.d("Cleared local caches for modified book: $bookId")
         } catch (e: Exception) {
             Timber.e(e, "Error clearing caches for $bookId")
         }

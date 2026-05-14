@@ -94,8 +94,10 @@ interface RecentFileDao {
         SELECT * FROM recent_files
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
-        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
-        AND folderTextMetadataParsed = 0
+        AND (
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            OR (type IN ('EPUB', 'MOBI', 'FB2') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+        )
     """)
     suspend fun getFolderBooksNeedingTextMetadata(): List<RecentFileEntity>
 
@@ -103,8 +105,10 @@ interface RecentFileDao {
         SELECT * FROM recent_files
         WHERE sourceFolderUri = :sourceFolderUri
         AND isDeleted = 0
-        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
-        AND folderTextMetadataParsed = 0
+        AND (
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            OR (type IN ('EPUB', 'MOBI', 'FB2') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+        )
     """)
     suspend fun getFolderBooksNeedingTextMetadata(sourceFolderUri: String): List<RecentFileEntity>
 
@@ -112,8 +116,10 @@ interface RecentFileDao {
         SELECT COUNT(*) FROM recent_files
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
-        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
-        AND folderTextMetadataParsed = 0
+        AND (
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            OR (type IN ('EPUB', 'MOBI', 'FB2') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+        )
     """)
     suspend fun countFolderBooksNeedingTextMetadata(): Int
 
@@ -121,8 +127,10 @@ interface RecentFileDao {
         SELECT COUNT(*) FROM recent_files
         WHERE sourceFolderUri = :sourceFolderUri
         AND isDeleted = 0
-        AND type IN ('PDF', 'EPUB', 'ODT', 'FODT', 'DOCX')
-        AND folderTextMetadataParsed = 0
+        AND (
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            OR (type IN ('EPUB', 'MOBI', 'FB2') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
+        )
     """)
     suspend fun countFolderBooksNeedingTextMetadata(sourceFolderUri: String): Int
 
@@ -133,7 +141,8 @@ interface RecentFileDao {
             title = COALESCE(:title, title),
             author = COALESCE(:author, author),
             fileSize = CASE WHEN :fileSize > 0 THEN :fileSize ELSE fileSize END,
-            folderTextMetadataParsed = 1
+            folderTextMetadataParsed = CASE WHEN :textMetadataParsed = 1 THEN 1 ELSE folderTextMetadataParsed END,
+            folderCoverMetadataParsed = CASE WHEN :coverMetadataParsed = 1 THEN 1 ELSE folderCoverMetadataParsed END
         WHERE bookId = :bookId
     """)
     suspend fun updateExtractedMetadata(
@@ -141,7 +150,9 @@ interface RecentFileDao {
         coverImagePath: String?,
         title: String?,
         author: String?,
-        fileSize: Long
+        fileSize: Long,
+        textMetadataParsed: Boolean,
+        coverMetadataParsed: Boolean
     )
 
     @Query("UPDATE recent_files SET sourceFolderUri = NULL WHERE sourceFolderUri IS NOT NULL")

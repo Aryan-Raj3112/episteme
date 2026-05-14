@@ -403,13 +403,15 @@ class FolderSyncWorker(
                                             var needsUpdate = false
                                             var updatedItem = existingItem
 
-                                            if (existingItem.fileSize > 0L && size > 0L && existingItem.fileSize != size) {
+                                            if (size > 0L && existingItem.fileSize != size) {
                                                 Timber.tag("FolderSync").i("File size changed for $name (${existingItem.fileSize} -> $size).")
                                                 recentFilesRepository.clearLocalCachesForBook(stableId)
                                                 updatedItem = updatedItem.copy(
                                                     fileSize = size,
                                                     lastModifiedTimestamp = lastModified,
-                                                    folderTextMetadataParsed = false
+                                                    coverImagePath = null,
+                                                    folderTextMetadataParsed = false,
+                                                    folderCoverMetadataParsed = false
                                                 )
                                                 needsUpdate = true
                                             }
@@ -500,7 +502,7 @@ class FolderSyncWorker(
 
             if (!isStopped && !stoppedForUnlinkedFolder && !metadataOnly) {
                 if (recentFilesRepository.hasFolderBooksNeedingTextMetadata(folderUriString)) {
-                    ReaderPerfLog.i("FolderSync enqueue text metadata extraction folder=$folderUriString")
+                    ReaderPerfLog.i("FolderSync enqueue metadata extraction folder=$folderUriString")
                     val metaRequest = OneTimeWorkRequestBuilder<MetadataExtractionWorker>()
                         .setInputData(
                             androidx.work.Data.Builder()
@@ -514,7 +516,7 @@ class FolderSyncWorker(
                         metaRequest
                     )
                 } else {
-                    ReaderPerfLog.d("FolderSync text metadata extraction skipped: no pending books folder=$folderUriString")
+                    ReaderPerfLog.d("FolderSync metadata extraction skipped: no pending books folder=$folderUriString")
                 }
             }
 

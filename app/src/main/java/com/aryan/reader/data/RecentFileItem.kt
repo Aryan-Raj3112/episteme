@@ -50,6 +50,7 @@ data class RecentFileItem(
     val seriesIndex: Double? = null,
     val description: String? = null,
     val folderTextMetadataParsed: Boolean = false,
+    val folderCoverMetadataParsed: Boolean = false,
     val tags: List<TagEntity> = emptyList()
 )
 
@@ -82,7 +83,8 @@ fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
         seriesName = this.seriesName,
         seriesIndex = this.seriesIndex,
         description = this.description,
-        folderTextMetadataParsed = this.folderTextMetadataParsed
+        folderTextMetadataParsed = this.folderTextMetadataParsed,
+        folderCoverMetadataParsed = this.folderCoverMetadataParsed
     )
 }
 
@@ -115,7 +117,8 @@ fun RecentFileItem.toRecentFileEntity(): RecentFileEntity {
         seriesName = this.seriesName,
         seriesIndex = this.seriesIndex,
         description = this.description,
-        folderTextMetadataParsed = this.folderTextMetadataParsed
+        folderTextMetadataParsed = this.folderTextMetadataParsed,
+        folderCoverMetadataParsed = this.folderCoverMetadataParsed
     )
 }
 
