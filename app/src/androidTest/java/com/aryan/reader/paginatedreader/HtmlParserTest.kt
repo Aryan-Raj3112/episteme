@@ -353,6 +353,22 @@ class HtmlParserTest {
     }
 
     @Test
+    fun htmlToSemanticBlocks_veryLongInlineParagraph_splitsIntoBoundedParagraphs() {
+        val longText = "a".repeat(40_000)
+        val blocks = parse("<p>$longText</p>")
+        val paragraphs = blocks.filterIsInstance<SemanticParagraph>()
+
+        assertThat(paragraphs.size).isAtLeast(2)
+        assertThat(paragraphs.sumOf { it.text.length }).isEqualTo(longText.length)
+        assertThat(paragraphs.all { it.text.length <= 32_000 }).isTrue()
+        assertThat(
+            paragraphs.zipWithNext().all { (previous, next) ->
+                next.startCharOffsetInSource > previous.startCharOffsetInSource
+            }
+        ).isTrue()
+    }
+
+    @Test
     fun htmlToSemanticBlocks_imageWithRootRelativePath_resolvesCorrectly() {
         // SETUP
         val imageRootRelativeSrc = "images/test.jpg"
