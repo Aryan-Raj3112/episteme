@@ -388,9 +388,12 @@ import java.awt.Container
 import java.awt.EventQueue
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.GraphicsDevice
 import java.awt.Component
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
+import java.awt.Rectangle
+import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTarget
@@ -574,30 +577,36 @@ private fun DesktopReaderFullscreenEffect(
     enabled: Boolean
 ) {
     val awtWindow = window as? java.awt.Window ?: return
-    val previousFrameState = remember(awtWindow) {
-        AtomicReference<Int?>()
+    val fullscreenSnapshot = remember(awtWindow) {
+        AtomicReference<DesktopReaderFullscreenSnapshot?>()
+    }
+    val pendingExitSnapshot = remember(awtWindow) {
+        AtomicReference<DesktopReaderFullscreenSnapshot?>()
     }
 
     LaunchedEffect(awtWindow, enabled) {
+        if (!enabled && fullscreenSnapshot.get() == null) {
+            return@LaunchedEffect
+        }
+        if (enabled) {
+            EventQueue.invokeLater {
+                awtWindow.captureDesktopReaderFullscreenSnapshot(fullscreenSnapshot)
+            }
+        }
         delay(if (enabled) 180L else 80L)
         EventQueue.invokeLater {
             if (enabled) {
-                awtWindow.focusableWindowState = true
-                if (awtWindow is Frame) {
-                    previousFrameState.compareAndSet(null, awtWindow.extendedState)
-                    awtWindow.extendedState =
-                        (awtWindow.extendedState and Frame.ICONIFIED.inv()) or Frame.MAXIMIZED_BOTH
-                }
-                awtWindow.refreshDesktopReaderWindowFocus()
+                pendingExitSnapshot.set(null)
+                awtWindow.enterDesktopReaderFullscreen(fullscreenSnapshot)
             } else {
-                val restoredState = previousFrameState.getAndSet(null)
-                if (awtWindow is Frame && restoredState != null) {
-                    awtWindow.extendedState = restoredState and Frame.ICONIFIED.inv()
-                }
+                awtWindow.beginDesktopReaderFullscreenExit(fullscreenSnapshot, pendingExitSnapshot)
             }
         }
         delay(120L)
         EventQueue.invokeLater {
+            if (!enabled) {
+                awtWindow.restoreDesktopReaderFullscreenExitBounds(pendingExitSnapshot.getAndSet(null))
+            }
             awtWindow.refreshDesktopReaderWindowFocus()
         }
     }
@@ -605,13 +614,156 @@ private fun DesktopReaderFullscreenEffect(
     DisposableEffect(awtWindow) {
         onDispose {
             EventQueue.invokeLater {
-                val restoredState = previousFrameState.getAndSet(null)
-                if (awtWindow is Frame && restoredState != null) {
-                    awtWindow.extendedState = restoredState and Frame.ICONIFIED.inv()
-                }
+                awtWindow.beginDesktopReaderFullscreenExit(fullscreenSnapshot)
             }
         }
     }
+}
+
+private data class DesktopReaderFullscreenSnapshot(
+    val device: GraphicsDevice?,
+    val frameBounds: Rectangle?,
+    val alwaysOnTop: Boolean
+)
+
+private fun java.awt.Window.enterDesktopReaderFullscreen(
+    snapshotRef: AtomicReference<DesktopReaderFullscreenSnapshot?>
+) {
+    if (!isDisplayable) return
+    focusableWindowState = true
+    captureDesktopReaderFullscreenSnapshot(snapshotRef)
+    applyDesktopReaderBorderlessFullscreen(snapshotRef.get())
+    refreshDesktopReaderWindowFocus()
+}
+
+private fun java.awt.Window.captureDesktopReaderFullscreenSnapshot(
+    snapshotRef: AtomicReference<DesktopReaderFullscreenSnapshot?>
+) {
+    snapshotRef.compareAndSet(
+        null,
+        DesktopReaderFullscreenSnapshot(
+            device = graphicsConfiguration?.device,
+            frameBounds = bounds.desktopReaderCopy(),
+            alwaysOnTop = isAlwaysOnTop
+        )
+    )
+}
+
+private fun java.awt.Window.applyDesktopReaderBorderlessFullscreen(snapshot: DesktopReaderFullscreenSnapshot?) {
+    if (!isDisplayable) return
+    val device = snapshot?.device ?: graphicsConfiguration?.device
+    val frame = this as? Frame
+    focusableWindowState = true
+    if (frame != null) {
+        frame.extendedState = frame.extendedState and Frame.ICONIFIED.inv() and Frame.MAXIMIZED_BOTH.inv()
+        frame.state = Frame.NORMAL
+    }
+    device?.let { fullscreenDevice ->
+        runCatching {
+            if (fullscreenDevice.fullScreenWindow == this) {
+                fullscreenDevice.fullScreenWindow = null
+            }
+        }
+    }
+    runCatching {
+        bounds = device?.desktopReaderScreenBounds() ?: graphicsConfiguration?.bounds?.desktopReaderCopy() ?: bounds
+    }
+    runCatching {
+        isAlwaysOnTop = true
+    }
+}
+
+private fun java.awt.Window.beginDesktopReaderFullscreenExit(
+    snapshotRef: AtomicReference<DesktopReaderFullscreenSnapshot?>,
+    pendingExitSnapshotRef: AtomicReference<DesktopReaderFullscreenSnapshot?>? = null
+) {
+    val snapshot = snapshotRef.getAndSet(null)
+    if (snapshot == null) return
+    pendingExitSnapshotRef?.set(snapshot)
+    val device = snapshot.device ?: graphicsConfiguration?.device
+    device?.let { fullscreenDevice ->
+        runCatching {
+            if (fullscreenDevice.fullScreenWindow == this) {
+                fullscreenDevice.fullScreenWindow = null
+            }
+        }
+    }
+    runCatching {
+        isAlwaysOnTop = snapshot.alwaysOnTop
+    }
+    if (!isVisible) {
+        isVisible = true
+    }
+    (this as? Frame)?.let { frame ->
+        frame.state = Frame.NORMAL
+        frame.extendedState = Frame.NORMAL
+    }
+}
+
+private fun java.awt.Window.restoreDesktopReaderFullscreenExitBounds(snapshot: DesktopReaderFullscreenSnapshot?) {
+    if (snapshot == null) return
+    runCatching {
+        isAlwaysOnTop = snapshot.alwaysOnTop
+    }
+    if (!isVisible) {
+        isVisible = true
+    }
+    val frame = this as? Frame
+    if (frame == null) {
+        bounds = snapshot.frameBounds.desktopReaderRestoreBounds(snapshot.device)
+        return
+    }
+    frame.extendedState = Frame.NORMAL
+    frame.state = Frame.NORMAL
+    frame.bounds = snapshot.frameBounds.desktopReaderRestoreBounds(snapshot.device)
+    frame.toFront()
+    frame.requestFocus()
+    frame.validate()
+}
+
+private fun GraphicsDevice.desktopReaderScreenBounds(): Rectangle {
+    return defaultConfiguration.bounds.desktopReaderCopy()
+}
+
+private fun GraphicsDevice.desktopReaderUsableBounds(): Rectangle? {
+    val configuration = defaultConfiguration ?: return null
+    return runCatching {
+        val bounds = configuration.bounds
+        val insets = Toolkit.getDefaultToolkit().getScreenInsets(configuration)
+        Rectangle(
+            bounds.x + insets.left,
+            bounds.y + insets.top,
+            (bounds.width - insets.left - insets.right).coerceAtLeast(1),
+            (bounds.height - insets.top - insets.bottom).coerceAtLeast(1)
+        )
+    }.getOrNull()
+}
+
+private fun Rectangle?.desktopReaderRestoreBounds(device: GraphicsDevice?): Rectangle {
+    val usableBounds = device?.desktopReaderUsableBounds()
+        ?: return this?.desktopReaderCopy() ?: Rectangle(80, 80, 1280, 820)
+    val source = this ?: usableBounds
+    val width = source.width.coerceIn(640, usableBounds.width.coerceAtLeast(640))
+    val height = source.height.coerceIn(480, usableBounds.height.coerceAtLeast(480))
+    val looksFullscreen = source.x <= usableBounds.x &&
+        source.y <= usableBounds.y &&
+        source.width >= usableBounds.width &&
+        source.height >= usableBounds.height
+    if (looksFullscreen) {
+        return usableBounds.desktopReaderCopy()
+    }
+    val maxX = (usableBounds.x + usableBounds.width - width).coerceAtLeast(usableBounds.x)
+    val maxY = (usableBounds.y + usableBounds.height - height).coerceAtLeast(usableBounds.y)
+    return Rectangle(
+        source.x.coerceIn(usableBounds.x, maxX),
+        source.y.coerceIn(usableBounds.y, maxY),
+        width,
+        height
+    )
+}
+
+private fun Rectangle.desktopReaderCopy(): Rectangle {
+    return Rectangle(x, y, width, height)
 }
 
 private fun java.awt.Window.refreshDesktopReaderWindowFocus() {
@@ -7162,8 +7314,8 @@ private fun DesktopPdfFullscreenBottomChrome(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(6.dp),
+            .padding(start = 16.dp, top = 6.dp, end = 16.dp, bottom = 0.dp),
+        shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp),
         color = chromeBackground,
         contentColor = chromeContent,
         tonalElevation = 0.dp,
