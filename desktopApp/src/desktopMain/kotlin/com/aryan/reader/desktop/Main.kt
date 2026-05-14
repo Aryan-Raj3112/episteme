@@ -159,7 +159,9 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.aryan.reader.paginatedreader.SemanticBlock
@@ -453,13 +455,31 @@ fun main() {
     launchEpistemeDesktopApplication()
 }
 
+private fun SharedLibrarySnapshot.withDesktopDefaults(): SharedLibrarySnapshot {
+    return if (appSeedColor == null) {
+        copy(appSeedColor = DesktopDefaultAppSeedColor)
+    } else {
+        this
+    }
+}
+
 internal fun launchEpistemeDesktopApplication(startupSplash: DesktopStartupSplash? = null) {
     configureComposeSwingInterop()
     application {
         val windowDefaults = remember { epistemeDesktopWindowDefaults() }
+        val windowStateStore = remember { DesktopWindowStateStore() }
+        val restoredWindowState = remember { windowStateStore.load() }
         val windowState = rememberWindowState(
-            position = WindowPosition(Alignment.Center),
-            size = windowDefaults.defaultSize
+            placement = restoredWindowState?.toWindowPlacement()
+                ?: DesktopWindowStateSnapshot.default().toWindowPlacement(),
+            position = restoredWindowState?.toWindowPosition() ?: WindowPosition(Alignment.Center),
+            size = restoredWindowState?.toWindowSize(windowDefaults.defaultSize) ?: windowDefaults.defaultSize
+        )
+        var readerFullscreen by remember { mutableStateOf(false) }
+        DesktopWindowStatePersistenceEffect(
+            windowState = windowState,
+            store = windowStateStore,
+            enabled = !readerFullscreen
         )
         Window(
             onCloseRequest = ::exitApplication,
@@ -475,7 +495,10 @@ internal fun launchEpistemeDesktopApplication(startupSplash: DesktopStartupSplas
             }
             EpistemeDesktopStartupGate(
                 window = window,
-                startupSplash = startupSplash
+                startupSplash = startupSplash,
+                appWindowPlacement = windowState.placement,
+                readerFullscreen = readerFullscreen,
+                onReaderFullscreenChange = { readerFullscreen = it }
             )
         }
     }
@@ -484,7 +507,10 @@ internal fun launchEpistemeDesktopApplication(startupSplash: DesktopStartupSplas
 @Composable
 private fun EpistemeDesktopStartupGate(
     window: Component?,
-    startupSplash: DesktopStartupSplash?
+    startupSplash: DesktopStartupSplash?,
+    appWindowPlacement: WindowPlacement,
+    readerFullscreen: Boolean,
+    onReaderFullscreenChange: (Boolean) -> Unit
 ) {
     var showApp by remember { mutableStateOf(false) }
 
@@ -495,7 +521,12 @@ private fun EpistemeDesktopStartupGate(
     }
 
     if (showApp) {
-        EpistemeDesktopApp(window = window)
+        EpistemeDesktopApp(
+            window = window,
+            appWindowPlacement = appWindowPlacement,
+            readerFullscreen = readerFullscreen,
+            onReaderFullscreenChange = onReaderFullscreenChange
+        )
     } else {
         EpistemeDesktopStartupScreen(window = window)
     }
@@ -515,7 +546,7 @@ private fun EpistemeDesktopStartupScreen(window: Component?) {
         appContrastOption = AppContrastOption.STANDARD,
         appTextDimFactorLight = 1.0f,
         appTextDimFactorDark = 1.0f,
-        appSeedColor = null
+        appSeedColor = DesktopDefaultAppSeedColor
     ) {
         EpistemeDesktopWindowChromeEffect(
             window = window,
@@ -561,6 +592,8 @@ private fun EpistemeDesktopStartupScreen(window: Component?) {
 
 internal const val ComposeInteropBlendingProperty = "compose.interop.blending"
 internal const val ComposeInteropBlendingEnabled = "true"
+private const val DesktopWindowStatePersistDebounceMillis = 450L
+private val DesktopDefaultAppSeedColor = Color(0xFFFFB300)
 
 internal fun configureComposeSwingInterop() {
     // Must run before Compose creates the desktop window. Vertical EPUB embeds a Swing-backed
@@ -568,6 +601,28 @@ internal fun configureComposeSwingInterop() {
     // that reader surface is removed unless interop blending is enabled.
     if (System.getProperty(ComposeInteropBlendingProperty).isNullOrBlank()) {
         System.setProperty(ComposeInteropBlendingProperty, ComposeInteropBlendingEnabled)
+    }
+}
+
+@Composable
+private fun DesktopWindowStatePersistenceEffect(
+    windowState: WindowState,
+    store: DesktopWindowStateStore,
+    enabled: Boolean
+) {
+    val persistenceEnabled by rememberUpdatedState(enabled)
+    LaunchedEffect(windowState, store) {
+        snapshotFlow { DesktopWindowStateSnapshot.fromWindowState(windowState) }
+            .distinctUntilChanged()
+            .collectLatest { snapshot ->
+                if (!persistenceEnabled || snapshot == null) return@collectLatest
+                delay(DesktopWindowStatePersistDebounceMillis)
+                if (persistenceEnabled) {
+                    withContext(Dispatchers.IO) {
+                        store.save(snapshot)
+                    }
+                }
+            }
     }
 }
 
@@ -622,6 +677,7 @@ private fun DesktopReaderFullscreenEffect(
 
 private data class DesktopReaderFullscreenSnapshot(
     val device: GraphicsDevice?,
+    val frameState: Int?,
     val frameBounds: Rectangle?,
     val alwaysOnTop: Boolean
 )
@@ -643,6 +699,7 @@ private fun java.awt.Window.captureDesktopReaderFullscreenSnapshot(
         null,
         DesktopReaderFullscreenSnapshot(
             device = graphicsConfiguration?.device,
+            frameState = (this as? Frame)?.extendedState,
             frameBounds = bounds.desktopReaderCopy(),
             alwaysOnTop = isAlwaysOnTop
         )
@@ -713,9 +770,20 @@ private fun java.awt.Window.restoreDesktopReaderFullscreenExitBounds(snapshot: D
         bounds = snapshot.frameBounds.desktopReaderRestoreBounds(snapshot.device)
         return
     }
+    val restoreMaximized = snapshot.frameState?.let { state ->
+        state and Frame.MAXIMIZED_BOTH == Frame.MAXIMIZED_BOTH
+    } == true
     frame.extendedState = Frame.NORMAL
     frame.state = Frame.NORMAL
     frame.bounds = snapshot.frameBounds.desktopReaderRestoreBounds(snapshot.device)
+    if (restoreMaximized) {
+        frame.maximizedBounds = snapshot.device?.desktopReaderUsableBounds()
+        EventQueue.invokeLater {
+            if (frame.isDisplayable && frame.isShowing) {
+                frame.extendedState = Frame.MAXIMIZED_BOTH
+            }
+        }
+    }
     frame.toFront()
     frame.requestFocus()
     frame.validate()
@@ -834,7 +902,12 @@ internal fun shouldStartDesktopWebViewRuntime(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EpistemeDesktopApp(window: Component? = null) {
+private fun EpistemeDesktopApp(
+    window: Component? = null,
+    appWindowPlacement: WindowPlacement,
+    readerFullscreen: Boolean,
+    onReaderFullscreenChange: (Boolean) -> Unit
+) {
     val desktopBuildProfile = remember { currentDesktopBuildProfile() }
     val featurePolicy = desktopBuildProfile.featurePolicy
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
@@ -869,20 +942,20 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             networkAccess = { featurePolicy.networkAccess }
         )
     }
-    val initialLibrarySnapshot = remember { libraryDatabase.load() }
+    val initialLibrarySnapshot = remember { libraryDatabase.load().withDesktopDefaults() }
     val scope = rememberCoroutineScope()
     var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
     var webViewRuntimeRequested by remember { mutableStateOf(false) }
     var readerCustomTextureIds by remember { mutableStateOf(DesktopReaderTextures.importedTextureIds()) }
-    var readerFullscreen by remember { mutableStateOf(false) }
+    val appWindowFullscreen = appWindowPlacement == WindowPlacement.Fullscreen
 
     EpistemeDesktopWindowDecorationEffect(
         window = window,
-        hideDecoration = readerFullscreen
+        hideDecoration = readerFullscreen && !appWindowFullscreen
     )
     DesktopReaderFullscreenEffect(
         window = window,
-        enabled = readerFullscreen
+        enabled = readerFullscreen && !appWindowFullscreen
     )
 
     DisposableEffect(Unit) {
@@ -2515,10 +2588,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         ?.let { book -> resolvedDesktopReaderSettings(book, state.pdfReaderDefaultSettings) }
                                         ?: state.pdfReaderDefaultSettings,
                                     onReturnToLibrary = {
-                                        readerFullscreen = false
+                                        onReaderFullscreenChange(false)
                                         selectedTab = SharedAppTab.LIBRARY
                                     },
-                                    onFullscreenChange = { enabled -> readerFullscreen = enabled },
+                                    onFullscreenChange = onReaderFullscreenChange,
                                     onPageStateChange = { page, progress, viewport ->
                                         updateActiveBookReadingState(page, progress, pdfViewport = viewport)
                                     },
@@ -2556,10 +2629,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         )
                                     },
                                     onReturnToLibrary = {
-                                        readerFullscreen = false
+                                        onReaderFullscreenChange(false)
                                         selectedTab = SharedAppTab.LIBRARY
                                     },
-                                    onFullscreenChange = { enabled -> readerFullscreen = enabled },
+                                    onFullscreenChange = onReaderFullscreenChange,
                                     toolbarPreferences = state.readerToolbarPreferences,
                                     onToolbarPreferencesChange = { preferences ->
                                         updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
