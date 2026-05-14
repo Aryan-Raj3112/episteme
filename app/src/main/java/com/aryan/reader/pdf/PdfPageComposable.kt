@@ -460,16 +460,15 @@ internal object PdfBitmapPool {
     fun get(size: Int): Bitmap = get(size, size)
 
     fun recycle(bitmap: Bitmap) {
+        // Overflow bitmaps are left for GC; HWUI may still reference recently drawn bitmaps.
         if (!bitmap.isRecycled && pool.size < MAX_POOL_SIZE) {
             pool.offer(bitmap)
-        } else {
-            bitmap.recycle()
         }
     }
 
     fun clear() {
         while (!pool.isEmpty()) {
-            pool.poll()?.recycle()
+            pool.poll()
         }
     }
 }
@@ -588,6 +587,7 @@ internal fun PdfPageComposable(
     isScrolling: Boolean = false,
     lazyListState: LazyListState? = null,
     isVerticalScroll: Boolean = false,
+    showPageNumberOverlay: Boolean = true,
     visualScaleProvider: () -> Float = { 1f },
     clearSelectionTrigger: Long = 0L,
     resetZoomTrigger: Long = 0L,
@@ -1318,83 +1318,79 @@ internal fun PdfPageComposable(
                             val count = PdfiumEngineProvider.bridge.getAnnotCount(pagePtr)
                             Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
                             if (count > 0) {
-                                val count = PdfiumEngineProvider.bridge.getAnnotCount(pagePtr)
-                                Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
-                                if (count > 0) {
-                                    val allAnnots = (0 until count).mapNotNull { i ->
-                                        val subtype = PdfiumEngineProvider.bridge.getAnnotSubtype(pagePtr, i)
-                                        if (subtype == annotLink) return@mapNotNull null
+                                val allAnnots = (0 until count).mapNotNull { i ->
+                                    val subtype = PdfiumEngineProvider.bridge.getAnnotSubtype(pagePtr, i)
+                                    if (subtype == annotLink) return@mapNotNull null
 
-                                        var contents = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "Contents")
-                                        if (contents.isNullOrBlank()) {
-                                            contents = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "RC")
-                                        }
-
-                                        val name = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "NM")
-                                        val irt = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "IRT")
-                                        val author = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "T")
-
-                                        val pdfRectArray = PdfiumEngineProvider.bridge.getAnnotRect(pagePtr, i)
-                                        val pdfRectF = if (pdfRectArray != null) {
-                                            android.graphics.RectF(
-                                                min(pdfRectArray[0], pdfRectArray[2]),
-                                                max(pdfRectArray[1], pdfRectArray[3]),
-                                                max(pdfRectArray[0], pdfRectArray[2]),
-                                                min(pdfRectArray[1], pdfRectArray[3])
-                                            )
-                                        } else android.graphics.RectF()
-
-                                        EmbeddedAnnotation(i, subtype, pdfRectF, contents, author, name, irt)
+                                    var contents = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "Contents")
+                                    if (contents.isNullOrBlank()) {
+                                        contents = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "RC")
                                     }
 
-                                    val annotMap = allAnnots.associateBy { it.name }
-                                    val orphans = mutableListOf<EmbeddedAnnotation>()
+                                    val name = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "NM")
+                                    val irt = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "IRT")
+                                    val author = PdfiumEngineProvider.bridge.getAnnotString(pagePtr, i, "T")
 
-                                    allAnnots.forEach { annot ->
-                                        if (!annot.inReplyTo.isNullOrBlank() && annotMap.containsKey(annot.inReplyTo)) {
-                                            Timber.tag("PdfCommentDebug").i("Linking: ${annot.name} is a reply to ${annot.inReplyTo}")
-                                            annotMap[annot.inReplyTo]?.replies?.add(annot)
-                                        } else {
-                                            orphans.add(annot)
-                                        }
-                                    }
-
-                                    Timber.tag("PdfCommentDebug").d("After ID linking: Orphans count = ${orphans.size}")
-
-                                    val groupedRoots = mutableListOf<MutableList<EmbeddedAnnotation>>()
-                                    orphans.forEach { annot ->
-                                        val match = groupedRoots.find { group ->
-                                            val root = group.first()
-                                            val inflatedRoot = android.graphics.RectF(root.rect).apply { inset(-10f, -10f) }
-                                            android.graphics.RectF.intersects(inflatedRoot, annot.rect)
-                                        }
-                                        if (match != null) {
-                                            Timber.tag("PdfCommentDebug").w("Geometric grouping triggered for ${annot.name} with ${match.first().name}. This might flatten nested replies!")
-                                            match.add(annot)
-                                        } else {
-                                            groupedRoots.add(mutableListOf(annot))
-                                        }
-                                    }
-
-                                    val rootsWithReplies = groupedRoots.map { group ->
-                                        val root = group.first()
-                                        if (group.size > 1) {
-                                            root.replies.addAll(group.drop(1))
-                                        }
-                                        root
-                                    }
-
-                                    finalDisplayList = rootsWithReplies.filter {
-                                        !it.contents.isNullOrBlank() || it.replies.any { r -> !r.contents.isNullOrBlank() }
-                                    }
-
-                                    mappedAnnots = finalDisplayList.map { annot ->
-                                        val screenRect = pageWrapper.mapRectToDevice(
-                                            0, 0, actualBitmapWidthPx, actualBitmapHeightPx,
-                                            currentPageRotation, annot.rect
+                                    val pdfRectArray = PdfiumEngineProvider.bridge.getAnnotRect(pagePtr, i)
+                                    val pdfRectF = if (pdfRectArray != null) {
+                                        android.graphics.RectF(
+                                            min(pdfRectArray[0], pdfRectArray[2]),
+                                            max(pdfRectArray[1], pdfRectArray[3]),
+                                            max(pdfRectArray[0], pdfRectArray[2]),
+                                            min(pdfRectArray[1], pdfRectArray[3])
                                         )
-                                        annot to screenRect
+                                    } else android.graphics.RectF()
+
+                                    EmbeddedAnnotation(i, subtype, pdfRectF, contents, author, name, irt)
+                                }
+
+                                val annotMap = allAnnots.associateBy { it.name }
+                                val orphans = mutableListOf<EmbeddedAnnotation>()
+
+                                allAnnots.forEach { annot ->
+                                    if (!annot.inReplyTo.isNullOrBlank() && annotMap.containsKey(annot.inReplyTo)) {
+                                        Timber.tag("PdfCommentDebug").i("Linking: ${annot.name} is a reply to ${annot.inReplyTo}")
+                                        annotMap[annot.inReplyTo]?.replies?.add(annot)
+                                    } else {
+                                        orphans.add(annot)
                                     }
+                                }
+
+                                Timber.tag("PdfCommentDebug").d("After ID linking: Orphans count = ${orphans.size}")
+
+                                val groupedRoots = mutableListOf<MutableList<EmbeddedAnnotation>>()
+                                orphans.forEach { annot ->
+                                    val match = groupedRoots.find { group ->
+                                        val root = group.first()
+                                        val inflatedRoot = android.graphics.RectF(root.rect).apply { inset(-10f, -10f) }
+                                        android.graphics.RectF.intersects(inflatedRoot, annot.rect)
+                                    }
+                                    if (match != null) {
+                                        Timber.tag("PdfCommentDebug").w("Geometric grouping triggered for ${annot.name} with ${match.first().name}. This might flatten nested replies!")
+                                        match.add(annot)
+                                    } else {
+                                        groupedRoots.add(mutableListOf(annot))
+                                    }
+                                }
+
+                                val rootsWithReplies = groupedRoots.map { group ->
+                                    val root = group.first()
+                                    if (group.size > 1) {
+                                        root.replies.addAll(group.drop(1))
+                                    }
+                                    root
+                                }
+
+                                finalDisplayList = rootsWithReplies.filter {
+                                    !it.contents.isNullOrBlank() || it.replies.any { r -> !r.contents.isNullOrBlank() }
+                                }
+
+                                mappedAnnots = finalDisplayList.map { annot ->
+                                    val screenRect = pageWrapper.mapRectToDevice(
+                                        0, 0, actualBitmapWidthPx, actualBitmapHeightPx,
+                                        currentPageRotation, annot.rect
+                                    )
+                                    annot to screenRect
                                 }
                             }
                         } else {
@@ -3850,12 +3846,18 @@ internal fun PdfPageComposable(
                         1f / 1.414f
                     }
 
-                    var scaledWidth = viewContainerWidthPx
-                    var scaledHeight = (scaledWidth / pageAspect).toInt()
+                    val (scaledWidth, scaledHeight) = if (isVerticalScroll) {
+                        viewContainerWidthPx to viewContainerHeightPx
+                    } else {
+                        var fittedWidth = viewContainerWidthPx
+                        var fittedHeight = (fittedWidth / pageAspect).toInt()
 
-                    if (scaledHeight > viewContainerHeightPx) {
-                        scaledHeight = viewContainerHeightPx
-                        scaledWidth = (scaledHeight * pageAspect).toInt()
+                        if (fittedHeight > viewContainerHeightPx) {
+                            fittedHeight = viewContainerHeightPx
+                            fittedWidth = (fittedHeight * pageAspect).toInt()
+                        }
+
+                        fittedWidth to fittedHeight
                     }
 
                     if (scaledWidth == actualBitmapWidthPx &&
@@ -3923,12 +3925,18 @@ internal fun PdfPageComposable(
 
                                 val aspectRatio =
                                     originalWidthPdfUnits.toFloat() / originalHeightPdfUnits.toFloat()
-                                var scaledWidth = viewContainerWidthPx
-                                var scaledHeight = (scaledWidth / aspectRatio).toInt()
+                                val (scaledWidth, scaledHeight) = if (isVerticalScroll) {
+                                    viewContainerWidthPx to viewContainerHeightPx
+                                } else {
+                                    var fittedWidth = viewContainerWidthPx
+                                    var fittedHeight = (fittedWidth / aspectRatio).toInt()
 
-                                if (scaledHeight > viewContainerHeightPx) {
-                                    scaledHeight = viewContainerHeightPx
-                                    scaledWidth = (scaledHeight * aspectRatio).toInt()
+                                    if (fittedHeight > viewContainerHeightPx) {
+                                        fittedHeight = viewContainerHeightPx
+                                        fittedWidth = (fittedHeight * aspectRatio).toInt()
+                                    }
+
+                                    fittedWidth to fittedHeight
                                 }
 
                                 if (scaledWidth == actualBitmapWidthPx &&
@@ -4397,6 +4405,7 @@ internal fun PdfPageComposable(
                         contentToScreenCoordinates = contentToScreenCoordinates,
                         density = density,
                         isVerticalScroll = isVerticalScroll,
+                        showPageNumberOverlay = showPageNumberOverlay,
                         isScrolling = isScrolling,
                         isEditMode = isEditMode,
                         selectedTool = selectedTool,
@@ -5229,6 +5238,7 @@ private fun PdfPageRenderer(
     contentToScreenCoordinates: (Offset) -> Offset,
     density: Density,
     isVerticalScroll: Boolean,
+    showPageNumberOverlay: Boolean,
     isScrolling: Boolean,
     isEditMode: Boolean,
     selectedTool: InkType,
@@ -5425,7 +5435,7 @@ private fun PdfPageRenderer(
             }
 
             // Layer 4: Page Number Indicator
-            if (totalPages > 0) {
+            if (showPageNumberOverlay && totalPages > 0) {
                 val pageNumColor = if (staticData.isDarkMode) {
                     Color.White
                 } else {

@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.SearchHighlightMode
 import kotlin.test.Test
@@ -321,6 +322,38 @@ class PdfReaderSessionTest {
         )
 
         assertEquals(5, pageIndex)
+    }
+
+    @Test
+    fun `vertical page gap option keeps default spacing or removes it`() {
+        assertEquals(8.dp, pdfVerticalPageGapDp(isPageGapVisible = true, defaultGap = 8.dp))
+        assertEquals(0.dp, pdfVerticalPageGapDp(isPageGapVisible = false, defaultGap = 8.dp))
+    }
+
+    @Test
+    fun `vertical page layout removes fractional pixel seams when gap is hidden`() {
+        val layout = calculatePdfVerticalPageLayoutPx(
+            pageAspectRatios = listOf(0.707f, 0.721f, 0.69f),
+            viewportWidthPx = 1081,
+            viewportHeightPx = 1920,
+            pageGapPx = 0
+        )
+
+        layout.pages.zipWithNext().forEach { (previous, next) ->
+            assertEquals(previous.bottomPx, next.topPx)
+        }
+    }
+
+    @Test
+    fun `vertical page layout keeps exact configured page gap`() {
+        val layout = calculatePdfVerticalPageLayoutPx(
+            pageAspectRatios = listOf(0.707f, 0.721f),
+            viewportWidthPx = 1081,
+            viewportHeightPx = 1920,
+            pageGapPx = 12
+        )
+
+        assertEquals(layout.pages.first().bottomPx + 12, layout.pages.last().topPx)
     }
 
     private fun annotation(id: String, pageIndex: Int): SharedPdfAnnotation {

@@ -34,7 +34,7 @@ class SharedImportPlannerTest {
         assertEquals(listOf("existing.epub", "new.md", "new.md"), plan.supportedFiles.map { it.name })
         assertEquals(FileType.MD, plan.importedBooks.single().type)
         assertEquals(101L, plan.importedBooks.single().timestamp)
-        assertEquals("/books", plan.importedBooks.single().sourceFolder)
+        assertEquals(null, plan.importedBooks.single().sourceFolder)
         assertFalse(plan.importedBooks.single().isRecent)
         assertEquals(1, plan.importedCount)
         assertEquals(2, plan.duplicateCount)
@@ -56,6 +56,29 @@ class SharedImportPlannerTest {
         assertEquals("content://scan", book.id)
         assertEquals("content://scan", book.path)
         assertEquals("content://folder", book.sourceFolder)
+    }
+
+    @Test
+    fun `plan prefers prepared file id over storage path`() {
+        val plan = SharedImportPlanner.plan(
+            files = listOf(
+                ImportedBookFile(
+                    name = "novel.epub",
+                    uriString = null,
+                    localPath = "/app/books/copied.epub",
+                    size = 4L,
+                    id = "content-sha"
+                )
+            ),
+            existingBookIds = emptySet(),
+            platform = ReaderPlatform.DESKTOP,
+            nowMillis = 5L
+        )
+
+        val book = plan.importedBooks.single()
+        assertEquals("content-sha", book.id)
+        assertEquals("/app/books/copied.epub", book.path)
+        assertEquals(null, book.sourceFolder)
     }
 
     @Test

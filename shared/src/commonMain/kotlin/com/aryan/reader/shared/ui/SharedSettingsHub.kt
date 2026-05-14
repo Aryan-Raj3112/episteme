@@ -548,6 +548,24 @@ private fun SharedSettingsDetailPage(
                             onImportTexture = onImportReaderTexture,
                             onSettingsChange = onPdfSettingsChange
                         )
+                        HorizontalDivider()
+                        Text("Visual options", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        SharedPdfVisualOptionDefaultsSwitch(
+                            title = "Remove gap between pages",
+                            summary = "Applies to vertical PDF reading mode.",
+                            checked = !pdfSettings.pdfVerticalPageGapVisible,
+                            onCheckedChange = { removeGap ->
+                                onPdfSettingsChange(pdfSettings.copy(pdfVerticalPageGapVisible = !removeGap))
+                            }
+                        )
+                        SharedPdfVisualOptionDefaultsSwitch(
+                            title = "Hide page number overlay",
+                            summary = "Removes the small page count label from each PDF page.",
+                            checked = !pdfSettings.pdfPageNumberOverlayVisible,
+                            onCheckedChange = { hideOverlay ->
+                                onPdfSettingsChange(pdfSettings.copy(pdfPageNumberOverlayVisible = !hideOverlay))
+                            }
+                        )
                     }
                 }
                 SharedSettingsDestination.PDF_READER_TOOLS -> {
@@ -619,6 +637,30 @@ private fun SharedSettingsLocalOverrideNote(note: SharedSettingsItemModel) {
                 Text(note.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+@Composable
+private fun SharedPdfVisualOptionDefaultsSwitch(
+    title: String,
+    summary: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(
+                summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

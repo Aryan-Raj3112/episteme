@@ -7,7 +7,8 @@ data class ImportedBookFile(
     val uriString: String?,
     val localPath: String?,
     val size: Long,
-    val sourceFolder: String? = null
+    val sourceFolder: String? = null,
+    val id: String? = null
 )
 
 interface BookRepository {

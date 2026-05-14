@@ -38,10 +38,12 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -514,7 +516,11 @@ private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
 @Composable
 fun PdfVisualOptionsSheet(
     systemUiMode: SystemUiMode,
+    showVerticalPageGap: Boolean,
+    showPageNumberOverlay: Boolean,
     onSystemUiModeChange: (SystemUiMode) -> Unit,
+    onShowVerticalPageGapChange: (Boolean) -> Unit,
+    onShowPageNumberOverlayChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -552,6 +558,54 @@ fun PdfVisualOptionsSheet(
                 onOptionSelected = onSystemUiModeChange,
                 getLabel = { it.title }
             )
+
+            Spacer(modifier = Modifier.height(20.dp))
+            HorizontalDivider()
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(stringResource(R.string.visual_options_page_layout), style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(4.dp))
+            PdfVisualOptionSwitchRow(
+                title = stringResource(R.string.visual_options_remove_page_gap),
+                description = stringResource(R.string.visual_options_remove_page_gap_desc),
+                checked = !showVerticalPageGap,
+                onCheckedChange = { removeGap ->
+                    onShowVerticalPageGapChange(!removeGap)
+                }
+            )
+            PdfVisualOptionSwitchRow(
+                title = stringResource(R.string.visual_options_hide_page_number_overlay),
+                description = stringResource(R.string.visual_options_hide_page_number_overlay_desc),
+                checked = !showPageNumberOverlay,
+                onCheckedChange = { hideOverlay ->
+                    onShowPageNumberOverlayChange(!hideOverlay)
+                }
+            )
         }
+    }
+}
+
+@Composable
+private fun PdfVisualOptionSwitchRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

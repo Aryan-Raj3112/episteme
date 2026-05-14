@@ -58,6 +58,8 @@ class SharedLibrarySnapshotJsonTest {
                         pageInfoMode = PageInfoMode.SYNC,
                         pageInfoPosition = PageInfoPosition.TOP,
                         pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
+                        pdfVerticalPageGapVisible = false,
+                        pdfPageNumberOverlayVisible = false,
                         seamlessChapterNavigation = false,
                         chapterTurnDragMultiplier = 1.6f
                     ),
@@ -178,6 +180,32 @@ class SharedLibrarySnapshotJsonTest {
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty("""{"schemaVersion":14}""")
 
         assertTrue(decoded.isTabsEnabled)
+    }
+
+    @Test
+    fun `legacy reader settings default pdf visual options to current behavior`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """
+            {
+              "books": [
+                {
+                  "id": "book",
+                  "path": "C:/Books/book.pdf",
+                  "type": "PDF",
+                  "displayName": "book.pdf",
+                  "timestamp": 10,
+                  "readerSettings": {
+                    "themeId": "no_theme"
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val settings = decoded.books.single().readerSettings ?: error("Expected settings")
+
+        assertTrue(settings.pdfVerticalPageGapVisible)
+        assertTrue(settings.pdfPageNumberOverlayVisible)
     }
 
     @Test

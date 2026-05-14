@@ -333,6 +333,58 @@ static bool init_pdfium() {
     return get_annot_count_func != nullptr;
 }
 
+static constexpr int kMaxSafeAnnotCount = 100000;
+
+static int get_safe_annot_count(void* page) {
+    if (!get_annot_count_func || page == nullptr) return 0;
+    int count = get_annot_count_func(page);
+    if (count < 0 || count > kMaxSafeAnnotCount) {
+        LOGE("Ignoring invalid annotation count: %d", count);
+        return 0;
+    }
+    return count;
+}
+
+class ScopedPdfAnnot {
+public:
+    explicit ScopedPdfAnnot(void* annot) : annot_(annot) {}
+    ~ScopedPdfAnnot() {
+        if (annot_ && close_annot_func) {
+            close_annot_func(annot_);
+        }
+    }
+
+    ScopedPdfAnnot(const ScopedPdfAnnot&) = delete;
+    ScopedPdfAnnot& operator=(const ScopedPdfAnnot&) = delete;
+
+    ScopedPdfAnnot(ScopedPdfAnnot&& other) noexcept : annot_(other.annot_) {
+        other.annot_ = nullptr;
+    }
+
+    ScopedPdfAnnot& operator=(ScopedPdfAnnot&& other) noexcept {
+        if (this != &other) {
+            if (annot_ && close_annot_func) {
+                close_annot_func(annot_);
+            }
+            annot_ = other.annot_;
+            other.annot_ = nullptr;
+        }
+        return *this;
+    }
+
+    void* get() const { return annot_; }
+
+private:
+    void* annot_;
+};
+
+static ScopedPdfAnnot get_annot_checked(void* page, jint index) {
+    if (!get_annot_func || page == nullptr || index < 0) return ScopedPdfAnnot(nullptr);
+    int count = get_safe_annot_count(page);
+    if (index >= count) return ScopedPdfAnnot(nullptr);
+    return ScopedPdfAnnot(get_annot_func(page, index));
+}
+
 extern "C" JNIEXPORT jdouble JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getFontSize(JNIEnv *env, jclass clazz, jlong textPagePtr, jint index) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
@@ -420,17 +472,18 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getPageCharBoxes(JNIEnv *env, jclas
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass clazz, jlong pagePtr, jint index, jstring key) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
-    if (!init_pdfium() || !get_annot_func || !get_annot_string_func || pagePtr == 0) return nullptr;
+    if (!init_pdfium() || !get_annot_string_func || pagePtr == 0 || key == nullptr) return nullptr;
 
     void* page = reinterpret_cast<void*>(pagePtr);
-    void* annot = get_annot_func(page, index);
-    if (!annot) return nullptr;
+    ScopedPdfAnnot annot = get_annot_checked(page, index);
+    if (!annot.get()) return nullptr;
 
     const char* nativeKey = env->GetStringUTFChars(key, nullptr);
+    if (!nativeKey) return nullptr;
 
     if (strcmp(nativeKey, "IRT") == 0) {
         if (get_linked_annot_func && close_annot_func) {
-            void* parentAnnot = get_linked_annot_func(annot, "IRT");
+            void* parentAnnot = get_linked_annot_func(annot.get(), "IRT");
             if (parentAnnot) {
                 unsigned long len = get_annot_string_func(parentAnnot, "NM", nullptr, 0);
                 jstring result = nullptr;
@@ -448,7 +501,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass 
         return nullptr;
     }
 
-    unsigned long len = get_annot_string_func(annot, nativeKey, nullptr, 0);
+    unsigned long len = get_annot_string_func(annot.get(), nativeKey, nullptr, 0);
 
     if (len <= 2) {
         env->ReleaseStringUTFChars(key, nativeKey);
@@ -456,7 +509,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotString(JNIEnv *env, jclass 
     }
 
     std::vector<unsigned short> buffer(len / 2);
-    get_annot_string_func(annot, nativeKey, buffer.data(), len);
+    get_annot_string_func(annot.get(), nativeKey, buffer.data(), len);
 
     jstring result = env->NewString(reinterpret_cast<const jchar*>(buffer.data()), (jsize)(buffer.size() - 1));
 
@@ -1592,15 +1645,17 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_checkActionSupport(JNIEnv *env, jcl
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtypeAtPoint(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
-    if (!init_pdfium() || !get_annot_count_func || pagePtr == 0) return -1;
+    if (!init_pdfium() || !get_annot_func || !get_annot_rect_func || !get_annot_subtype_func || pagePtr == 0) return -1;
 
     void* page = reinterpret_cast<void*>(pagePtr);
-    int count = get_annot_count_func(page);
+    int count = get_safe_annot_count(page);
 
     for (int i = 0; i < count; i++) {
-        void* annot = get_annot_func(page, i);
+        ScopedPdfAnnot annot = get_annot_checked(page, i);
+        if (!annot.get()) continue;
+
         float r[4]; // L, B, R, T
-        if (get_annot_rect_func(annot, r)) {
+        if (get_annot_rect_func(annot.get(), r)) {
             // FIX: Use min/max to handle inverted PDF rectangles
             float minX = fmin(r[0], r[2]);
             float maxX = fmax(r[0], r[2]);
@@ -1608,8 +1663,9 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtypeAtPoint(JNIEnv *env,
             float maxY = fmax(r[1], r[3]);
 
             if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
-                LOGI("PdfInteraction: MATCH FOUND! Index=%d, Type=%d", i, get_annot_subtype_func(annot));
-                return get_annot_subtype_func(annot);
+                int subtype = get_annot_subtype_func(annot.get());
+                LOGI("PdfInteraction: MATCH FOUND! Index=%d, Type=%d", i, subtype);
+                return subtype;
             }
         }
     }
@@ -1619,15 +1675,22 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtypeAtPoint(JNIEnv *env,
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRectAtPoint(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
-    if (!init_pdfium() || !get_annot_count_func || !get_annot_func || !get_annot_rect_func || pagePtr == 0) return nullptr;
+    if (!init_pdfium() || !get_annot_func || !get_annot_rect_func || pagePtr == 0) return nullptr;
 
     void* page = reinterpret_cast<void*>(pagePtr);
-    int count = get_annot_count_func(page);
+    int count = get_safe_annot_count(page);
     for (int i = 0; i < count; i++) {
-        void* annot = get_annot_func(page, i);
+        ScopedPdfAnnot annot = get_annot_checked(page, i);
+        if (!annot.get()) continue;
+
         float rect[4];
-        if (get_annot_rect_func(annot, rect)) {
-            if (x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]) {
+        if (get_annot_rect_func(annot.get(), rect)) {
+            float minX = fminf(rect[0], rect[2]);
+            float maxX = fmaxf(rect[0], rect[2]);
+            float minY = fminf(rect[1], rect[3]);
+            float maxY = fmaxf(rect[1], rect[3]);
+
+            if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
                 jfloatArray result = env->NewFloatArray(4);
                 env->SetFloatArrayRegion(result, 0, 4, rect);
                 return result;
@@ -1641,26 +1704,26 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotCount(JNIEnv *env, jclass clazz, jlong pagePtr) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
     if (!init_pdfium() || !get_annot_count_func || pagePtr == 0) return 0;
-    return get_annot_count_func(reinterpret_cast<void*>(pagePtr));
+    return get_safe_annot_count(reinterpret_cast<void*>(pagePtr));
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotSubtype(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
-    if (!init_pdfium() || !get_annot_func || !get_annot_subtype_func || pagePtr == 0) return 0;
-    void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
-    return annot ? get_annot_subtype_func(annot) : 0;
+    if (!init_pdfium() || !get_annot_subtype_func || pagePtr == 0) return 0;
+    ScopedPdfAnnot annot = get_annot_checked(reinterpret_cast<void*>(pagePtr), index);
+    return annot.get() ? get_annot_subtype_func(annot.get()) : 0;
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRect(JNIEnv *env, jclass clazz, jlong pagePtr, jint index) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
-    if (!init_pdfium() || !get_annot_func || !get_annot_rect_func || pagePtr == 0) return nullptr;
-    void* annot = get_annot_func(reinterpret_cast<void*>(pagePtr), index);
-    if (!annot) return nullptr;
+    if (!init_pdfium() || !get_annot_rect_func || pagePtr == 0) return nullptr;
+    ScopedPdfAnnot annot = get_annot_checked(reinterpret_cast<void*>(pagePtr), index);
+    if (!annot.get()) return nullptr;
 
     float rect[4];
-    if (!get_annot_rect_func(annot, rect)) return nullptr;
+    if (!get_annot_rect_func(annot.get(), rect)) return nullptr;
 
     jfloatArray result = env->NewFloatArray(4);
     env->SetFloatArrayRegion(result, 0, 4, rect);
@@ -1670,31 +1733,30 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_getAnnotRect(JNIEnv *env, jclass cl
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass clazz, jlong pagePtr, jdouble x, jdouble y) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
-    if (!init_pdfium() || pagePtr == 0) return JNI_FALSE;
+    if (!init_pdfium() || !get_annot_func || !get_annot_rect_func || !get_annot_subtype_func || pagePtr == 0) return JNI_FALSE;
 
     void* page = reinterpret_cast<void*>(pagePtr);
-    int count = get_annot_count_func(page);
-    void* hitAnnot = nullptr;
+    int count = get_safe_annot_count(page);
+    int hitSubtype = 0;
 
     LOGI("PdfLinkDiagnostic: [C++] performClick at x=%f, y=%f (Total annots: %d)", x, y, count);
 
     for (int i = 0; i < count; i++) {
-        void* annot = get_annot_func(page, i);
-        if (!annot) continue;
+        ScopedPdfAnnot annot = get_annot_checked(page, i);
+        if (!annot.get()) continue;
 
         float r[4];
-        if (get_annot_rect_func(annot, r)) {
+        if (get_annot_rect_func(annot.get(), r)) {
             float minX = fminf(r[0], r[2]);
             float maxX = fmaxf(r[0], r[2]);
             float minY = fminf(r[1], r[3]);
             float maxY = fmaxf(r[1], r[3]);
 
             if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
-                hitAnnot = annot;
-                int subtype = get_annot_subtype_func(hitAnnot);
-                LOGI("PdfLinkDiagnostic: [C++] HIT! Annot Index %d, Subtype %d", i, subtype);
+                hitSubtype = get_annot_subtype_func(annot.get());
+                LOGI("PdfLinkDiagnostic: [C++] HIT! Annot Index %d, Subtype %d", i, hitSubtype);
                 if (get_annot_flags_func) {
-                    int flags = get_annot_flags_func(hitAnnot);
+                    int flags = get_annot_flags_func(annot.get());
                     LOGI("PdfLinkDiagnostic: [C++] Flags for hit annot: %d", flags);
                 }
                 break;
@@ -1702,25 +1764,23 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_performClick(JNIEnv *env, jclass cl
         }
     }
 
-    if (hitAnnot) {
-        int subtype = get_annot_subtype_func(hitAnnot);
-
-        if (subtype == 19 || subtype == 20) {
-            LOGI("PdfInteraction: Button clicked (Subtype %d). Performing Blanket Reveal.", subtype);
+    if (hitSubtype != 0) {
+        if (hitSubtype == 19 || hitSubtype == 20) {
+            LOGI("PdfInteraction: Button clicked (Subtype %d). Performing Blanket Reveal.", hitSubtype);
             bool anyChanged = false;
 
             for (int j = 0; j < count; j++) {
-                void* target = get_annot_func(page, j);
-                if (!target || !get_annot_flags_func || !set_annot_flags_func) continue;
+                ScopedPdfAnnot target = get_annot_checked(page, j);
+                if (!target.get() || !get_annot_flags_func || !set_annot_flags_func) continue;
 
-                int flags = get_annot_flags_func(target);
+                int flags = get_annot_flags_func(target.get());
 
                 // We check for: Invisible (1), Hidden (2), or NoView (32)
                 if (flags & (1 | 2 | 32)) {
                     LOGD("PdfInteraction: Unhiding element at index %d (Flags were 0x%X)", j, flags);
 
                     // Clear bits 1, 2, and 6 (1 + 2 + 32 = 35)
-                    set_annot_flags_func(target, flags & ~35);
+                    set_annot_flags_func(target.get(), flags & ~35);
                     anyChanged = true;
                 }
             }

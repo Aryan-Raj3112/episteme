@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
@@ -201,14 +202,14 @@ fun SharedHomeScreen(
                     onRecentLimitChange = onRecentLimitChange
                 )
                 OutlinedButton(onClick = onImportFolder) {
-                    Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Folder")
+                    Text("Add folder")
                 }
                 Button(onClick = onImportBooks) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Import")
+                    Text("Import files")
                 }
             }
         }
@@ -236,10 +237,10 @@ fun SharedHomeScreen(
             SharedEmptyState(
                 icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
                 title = if (model.isLibraryEmpty) "Your library is empty" else "No recent files",
-                body = if (model.isLibraryEmpty) "Import books or connect a folder to start building your desktop library." else "Open books from the library and they will appear here.",
-                actionLabel = "Import books",
+                body = if (model.isLibraryEmpty) "Import files into app storage or add a folder to read files in place." else "Open books from the library and they will appear here.",
+                actionLabel = "Import files",
                 onAction = onImportBooks,
-                secondaryActionLabel = "Import folder",
+                secondaryActionLabel = "Add folder",
                 onSecondaryAction = onImportFolder,
                 modifier = Modifier.weight(1f)
             )
@@ -933,14 +934,14 @@ private fun LibraryToolbar(
                 Text("Shelf")
             }
             OutlinedButton(onClick = onImportFolder) {
-                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Folder")
+                Text("Add folder")
             }
             Button(onClick = onImportBooks) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Import")
+                Text("Import files")
             }
         }
     }
@@ -987,8 +988,8 @@ private fun LibraryContent(
                     SharedEmptyState(
                         icon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(56.dp)) },
                         title = if (state.rawLibraryBooks.isEmpty()) "Your library is empty" else "No books match",
-                        body = if (state.rawLibraryBooks.isEmpty()) "Import books to begin building your desktop library." else "Adjust search, sort, or filters to see more books.",
-                        actionLabel = if (state.rawLibraryBooks.isEmpty()) "Import books" else "Clear filters",
+                        body = if (state.rawLibraryBooks.isEmpty()) "Import files into app storage or add a folder from the toolbar." else "Adjust search, sort, or filters to see more books.",
+                        actionLabel = if (state.rawLibraryBooks.isEmpty()) "Import files" else "Clear filters",
                         onAction = {
                             if (state.rawLibraryBooks.isEmpty()) {
                                 onImportBooks()
@@ -1122,7 +1123,7 @@ private fun LibraryContent(
                             onRemoveFolder = onRemoveFolder,
                             onOpenShelf = { shelf -> onStateChange(state.copy(viewingShelfId = shelf.id)) },
                             emptyTitle = "No folders yet",
-                            emptyBody = "Imported folder metadata will appear here when available.",
+                            emptyBody = "Add a folder to read files from that folder in place.",
                             modifier = Modifier.weight(1f)
                         )
                     }

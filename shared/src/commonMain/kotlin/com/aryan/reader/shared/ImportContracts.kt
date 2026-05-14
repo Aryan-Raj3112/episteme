@@ -91,7 +91,7 @@ object SharedImportPlanner {
                 timestamp = nowMillis + index,
                 title = file.name.substringBeforeLast('.'),
                 fileSize = file.size,
-                sourceFolder = file.sourceFolder ?: file.localPath?.parentPath(),
+                sourceFolder = file.sourceFolder,
                 isRecent = false
             )
         }
@@ -118,12 +118,6 @@ object SharedImportPlanner {
     }
 
     fun stableImportId(file: ImportedBookFile): String {
-        return file.localPath ?: file.uriString ?: file.name
-    }
-
-    private fun String.parentPath(): String? {
-        val normalized = replace('\\', '/')
-        val parent = normalized.substringBeforeLast('/', missingDelimiterValue = "")
-        return parent.ifBlank { null }
+        return file.id ?: file.localPath ?: file.uriString ?: file.name
     }
 }

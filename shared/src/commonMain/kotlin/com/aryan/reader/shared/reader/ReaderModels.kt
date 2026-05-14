@@ -72,6 +72,8 @@ data class ReaderSettings(
     val pageInfoMode: PageInfoMode = PageInfoMode.DEFAULT,
     val pageInfoPosition: PageInfoPosition = PageInfoPosition.BOTTOM,
     val pageSpreadMode: ReaderPageSpreadMode = ReaderPageSpreadMode.SINGLE,
+    val pdfVerticalPageGapVisible: Boolean = true,
+    val pdfPageNumberOverlayVisible: Boolean = true,
     val seamlessChapterNavigation: Boolean = true,
     val chapterTurnDragMultiplier: Float = 1.0f
 ) {

@@ -47,8 +47,12 @@ import com.aryan.reader.epubreader.saveReaderSettings
 import com.aryan.reader.epubreader.saveSystemUiMode
 import com.aryan.reader.pdf.savePdfSystemUiMode
 import com.aryan.reader.pdf.savePdfThemeId
+import com.aryan.reader.pdf.savePdfVerticalPageGapVisible
+import com.aryan.reader.pdf.savePdfPageNumberOverlayVisible
 import com.aryan.reader.pdf.loadPdfSystemUiMode
 import com.aryan.reader.pdf.loadPdfThemeId
+import com.aryan.reader.pdf.loadPdfVerticalPageGapVisible
+import com.aryan.reader.pdf.loadPdfPageNumberOverlayVisible
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.PageInfoMode as SharedPageInfoMode
@@ -444,7 +448,9 @@ private fun loadAndroidPdfReaderDefaultSettings(
     val base = ReaderSettings(
         themeId = loadPdfThemeId(context),
         textureAlpha = (1f - loadGlobalTextureTransparency(context)).coerceIn(0f, 1f),
-        systemUiMode = loadPdfSystemUiMode(context).toSharedSystemUiMode()
+        systemUiMode = loadPdfSystemUiMode(context).toSharedSystemUiMode(),
+        pdfVerticalPageGapVisible = loadPdfVerticalPageGapVisible(context),
+        pdfPageNumberOverlayVisible = loadPdfPageNumberOverlayVisible(context)
     )
     return BuiltInPdfReaderThemes.firstOrNull { it.id == base.themeId }?.toReaderSettings(base) ?: base
 }
@@ -480,6 +486,8 @@ private fun saveAndroidPdfReaderDefaultSettings(
 ) {
     savePdfSystemUiMode(context, settings.systemUiMode.toAndroidSystemUiMode())
     savePdfThemeId(context, settings.themeId ?: "no_theme")
+    savePdfVerticalPageGapVisible(context, settings.pdfVerticalPageGapVisible)
+    savePdfPageNumberOverlayVisible(context, settings.pdfPageNumberOverlayVisible)
     saveGlobalTextureTransparency(context, 1f - settings.textureAlpha.coerceIn(0f, 1f))
 }
 

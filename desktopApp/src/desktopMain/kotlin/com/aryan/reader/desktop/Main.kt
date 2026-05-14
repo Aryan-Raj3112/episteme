@@ -217,6 +217,7 @@ import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedFolderPathResolver
+import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedLibraryProjectionInput
@@ -234,7 +235,6 @@ import com.aryan.reader.shared.SmartCollectionDefinition
 import com.aryan.reader.shared.SmartField
 import com.aryan.reader.shared.SmartOperator
 import com.aryan.reader.shared.SmartRule
-import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.externalLookupUrl
@@ -272,6 +272,7 @@ import com.aryan.reader.shared.pdf.SharedPdfTextDraft
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.currentSharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.mostVisiblePdfPageIndex
+import com.aryan.reader.shared.pdf.pdfVerticalPageGapDp
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.pdf.sharedPdfTextStyle
 import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
@@ -682,6 +683,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
     val libraryDatabase = remember { DesktopLibraryDatabase() }
+    val desktopBookImporter = remember { DesktopBookImporter() }
     val customFontStore = remember {
         DesktopCustomFontStore(
             googleFontsDownloadAvailable = { featurePolicy.googleFontsDownload }
@@ -1284,7 +1286,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
         startReaderCloudTts(ReaderTtsReadScope.PAGE, selectionChunks)
     }
 
-    fun importFiles(files: List<ImportedBookFile>) {
+    fun finishImportFiles(
+        files: List<ImportedBookFile>,
+        failedCount: Int,
+        onImported: (List<BookItem>) -> Unit = {}
+    ) {
         val importStart = System.currentTimeMillis()
         val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
         val importPlan = SharedImportPlanner.plan(
@@ -1293,6 +1299,16 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             platform = ReaderPlatform.DESKTOP,
             nowMillis = importStart
         )
+        val counts = SharedImportOutcomeCounts(
+            addedCount = importPlan.importedCount,
+            duplicateCount = importPlan.duplicateCount,
+            unsupportedCount = importPlan.unsupportedCount,
+            failedCount = failedCount
+        )
+        if (files.isEmpty() && failedCount > 0) {
+            updateState(state.withBanner("Could not import ${failedCount} file(s).", isError = true))
+            return
+        }
         if (importPlan.supportedFiles.isEmpty() && files.isNotEmpty()) {
             updateState(
                 state.withBanner(
@@ -1303,36 +1319,22 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             )
             return
         }
-        val importablePaths = importPlan.supportedFiles
-            .mapNotNull { it.localPath ?: it.uriString }
-            .toSet()
-        val syncedFolders = mergeSyncedFolders(
-            existing = state.syncedFolders,
-            folderRoots = importPlan.supportedFiles.mapNotNull { it.sourceFolder }.distinct(),
-            nowMillis = importStart
-        )
         val next = state.copy(rawLibraryBooks = importPlan.importedBooks + state.rawLibraryBooks)
-            .copy(syncedFolders = syncedFolders)
             .let {
                 when {
-                    importPlan.importedCount > 0 && importPlan.unsupportedCount > 0 -> {
-                        it.withBanner("Imported supported files. Skipped ${importPlan.unsupportedCount} unsupported file(s).")
+                    counts.addedCount > 0 && (counts.unsupportedCount > 0 || counts.failedCount > 0) -> {
+                        val skippedCount = counts.unsupportedCount + counts.failedCount
+                        it.withBanner("Imported ${counts.addedCount} file(s). Skipped ${skippedCount} file(s).")
                     }
-                    importPlan.importedCount > 0 -> it.withBanner("Imported ${importPlan.importedCount} file(s).")
-                    importPlan.duplicateCount > 0 -> it.withBanner("Those files are already in the library.")
+                    counts.addedCount > 0 -> it.withBanner("Imported ${counts.addedCount} file(s).")
+                    counts.duplicateCount > 0 -> it.withBanner("Those files are already in the library.")
+                    counts.failedCount > 0 -> it.withBanner("Could not import ${counts.failedCount} file(s).", isError = true)
                     else -> it
                 }
             }
         updateState(next)
-        val targetBookIds = next.rawLibraryBooks
-            .asSequence()
-            .filter { book ->
-                book.id !in existingIds ||
-                    book.path in importablePaths ||
-                    book.id in importablePaths
-            }
-            .map { it.id }
-            .toSet()
+        onImported(importPlan.importedBooks)
+        val targetBookIds = importPlan.importedBooks.mapTo(mutableSetOf()) { it.id }
         if (targetBookIds.isEmpty()) return
         val originalTargetBooksById = next.rawLibraryBooks
             .filter { it.id in targetBookIds }
@@ -1361,6 +1363,21 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                     )
                 )
             }
+        }
+    }
+
+    fun importFiles(files: List<ImportedBookFile>, onImported: (List<BookItem>) -> Unit = {}) {
+        if (files.isEmpty()) return
+        updateState(state.withBanner("Importing ${files.size} file(s)..."))
+        scope.launch {
+            val preparedImport = withContext(Dispatchers.IO) {
+                desktopBookImporter.prepareImports(files)
+            }
+            finishImportFiles(
+                files = preparedImport.files,
+                failedCount = preparedImport.failedCount,
+                onImported = onImported
+            )
         }
     }
 
@@ -1847,34 +1864,16 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             )
             return
         }
-        importFiles(listOf(importedFile))
-        openReader(
-            BookItem(
-                id = file.absolutePath,
-                path = file.absolutePath,
-                type = type,
-                displayName = file.name,
-                timestamp = System.currentTimeMillis(),
-                title = file.nameWithoutExtension,
-                fileSize = file.length()
-            )
-        )
+        importFiles(listOf(importedFile)) { importedBooks ->
+            importedBooks.firstOrNull()?.let(::openReader)
+        }
     }
 
     fun importAndOpenPdf() {
         val file = choosePdfFile() ?: return
-        importFiles(listOf(file.toImportedBookFile()))
-        openReader(
-            BookItem(
-                id = file.absolutePath,
-                path = file.absolutePath,
-                type = FileType.PDF,
-                displayName = file.name,
-                timestamp = System.currentTimeMillis(),
-                title = file.nameWithoutExtension,
-                fileSize = file.length()
-            )
-        )
+        importFiles(listOf(file.toImportedBookFile())) { importedBooks ->
+            importedBooks.firstOrNull()?.let(::openReader)
+        }
     }
 
     fun emitOpds(next: com.aryan.reader.shared.opds.SharedOpdsScreenState) {
@@ -3285,6 +3284,30 @@ private fun ReaderTheme.toDesktopPdfColorFilter(): ColorFilter? {
             )
             ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
         }
+    }
+}
+
+@Composable
+private fun DesktopPdfVisualOptionSwitch(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -5949,6 +5972,28 @@ private fun PdfReaderScreen(
                             onImportTexture = onImportTexture,
                             onSettingsChange = ::updatePdfReaderSettings
                         )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        Text("Visual options", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        DesktopPdfVisualOptionSwitch(
+                            title = "Remove gap between pages",
+                            description = "Applies to vertical reading mode.",
+                            checked = !pdfReaderSettings.pdfVerticalPageGapVisible,
+                            onCheckedChange = { removeGap ->
+                                updatePdfReaderSettings(
+                                    pdfReaderSettings.copy(pdfVerticalPageGapVisible = !removeGap)
+                                )
+                            }
+                        )
+                        DesktopPdfVisualOptionSwitch(
+                            title = "Hide page number overlay",
+                            description = "Removes the small page count label from each page.",
+                            checked = !pdfReaderSettings.pdfPageNumberOverlayVisible,
+                            onCheckedChange = { hideOverlay ->
+                                updatePdfReaderSettings(
+                                    pdfReaderSettings.copy(pdfPageNumberOverlayVisible = !hideOverlay)
+                                )
+                            }
+                        )
                     }
                     item {
                         Text("Zoom", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -6118,26 +6163,30 @@ private fun PdfReaderScreen(
             onToggleHighlightMode = { dispatchPdf(SharedPdfReaderAction.SearchHighlightModeToggled) }
         )
         if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
-                        .onGloballyPositioned { coordinates ->
-                            pdfZoomViewportRootOffset = coordinates.positionInRoot()
-                        }
-                        .desktopPdfZoomGestures(
-                            currentZoom = scale,
-                            zoomSpec = zoomSpec,
-                            onZoomChanged = ::previewAnchoredPdfZoom
-                        )
-                ) {
-                    LazyColumn(
+            val verticalPageGap = pdfVerticalPageGapDp(
+                isPageGapVisible = pdfReaderSettings.pdfVerticalPageGapVisible,
+                defaultGap = 20.dp
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
+                    .onGloballyPositioned { coordinates ->
+                        pdfZoomViewportRootOffset = coordinates.positionInRoot()
+                    }
+                    .desktopPdfZoomGestures(
+                        currentZoom = scale,
+                        zoomSpec = zoomSpec,
+                        onZoomChanged = ::previewAnchoredPdfZoom
+                    )
+            ) {
+                LazyColumn(
                         state = verticalListState,
                         modifier = Modifier
                             .fillMaxSize()
                             .horizontalScroll(pageHorizontalScrollState)
                             .padding(horizontal = 24.dp, vertical = 18.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(verticalPageGap),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         items((0 until document.pageCount).toList(), key = { it }) { verticalPageIndex ->
@@ -6172,6 +6221,7 @@ private fun PdfReaderScreen(
                                     it.displayMode == PdfDisplayMode.VERTICAL_SCROLL
                                 },
                                 zoomViewportRootOffset = pdfZoomViewportRootOffset,
+                                showPageNumberOverlay = pdfReaderSettings.pdfPageNumberOverlayVisible,
                                 onSelectPage = {
                                     goToPage(
                                         target = it,
@@ -6777,10 +6827,12 @@ private fun PdfReaderScreen(
                                 canvasSize = pageCanvasSize,
                                 selectedAnnotationId = selectedEmbeddedAnnotationId
                             )
-                            SharedPdfPageNumberOverlay(
-                                pageIndex = pageIndex,
-                                pageCount = document.pageCount
-                            )
+                            if (pdfReaderSettings.pdfPageNumberOverlayVisible) {
+                                SharedPdfPageNumberOverlay(
+                                    pageIndex = pageIndex,
+                                    pageCount = document.pageCount
+                                )
+                            }
                             if (textSelection != null && selectionMenuOffset != null) {
                                 Box(
                                     modifier = Modifier
@@ -11271,25 +11323,6 @@ private object EpistemeDesktopAppVersion
 
 private fun ImportedBookFile.desktopFileType(): FileType {
     return SharedFileCapabilities.fileTypeForName(name)
-}
-
-private fun mergeSyncedFolders(
-    existing: List<SyncedFolder>,
-    folderRoots: List<String>,
-    nowMillis: Long
-): List<SyncedFolder> {
-    if (folderRoots.isEmpty()) return existing
-    val byRoot = existing.associateBy { it.uriString }.toMutableMap()
-    folderRoots.forEach { root ->
-        val rootFile = File(root)
-        byRoot[root] = SyncedFolder(
-            uriString = root,
-            name = rootFile.name.takeIf { it.isNotBlank() } ?: root,
-            lastScanTime = nowMillis,
-            allowedFileTypes = DesktopSyncableFileTypes
-        )
-    }
-    return byRoot.values.sortedBy { it.name.lowercase() }
 }
 
 private object DesktopFolderPathResolver : SharedFolderPathResolver {

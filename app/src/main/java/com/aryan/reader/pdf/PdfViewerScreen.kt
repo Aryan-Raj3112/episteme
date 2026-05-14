@@ -371,6 +371,8 @@ fun PdfViewerScreen(
     var pageAspectRatios by remember { mutableStateOf<List<Float>>(emptyList()) }
     var showBars by rememberSaveable { mutableStateOf(true) }
     var systemUiMode by remember { mutableStateOf(loadPdfSystemUiMode(context)) }
+    var showVerticalPageGap by remember { mutableStateOf(loadPdfVerticalPageGapVisible(context)) }
+    var showPageNumberOverlay by remember { mutableStateOf(loadPdfPageNumberOverlayVisible(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
     var rightToLeftPagination by remember { mutableStateOf(loadPdfRightToLeftPagination(context)) }
@@ -4093,6 +4095,7 @@ fun PdfViewerScreen(
                                                 isBookmarked = isPageBookmarked,
                                                 onBookmarkClick = { onToggleBookmark(pageIndex) },
                                                 isZoomEnabled = true,
+                                                showPageNumberOverlay = showPageNumberOverlay,
                                                 clearSelectionTrigger = selectionClearTrigger,
                                                 resetZoomTrigger = resetZoomTrigger,
                                                 pageAnnotations = pageAnnotationsProvider,
@@ -4622,6 +4625,8 @@ fun PdfViewerScreen(
                                             autoScrollSpeed = autoScrollSpeed * 0.5f,
                                             onInteractionListener = onAutoScrollInteraction,
                                             lockedState = lockedState,
+                                            showPageGap = showVerticalPageGap,
+                                            showPageNumberOverlay = showPageNumberOverlay,
                                             onZoomAndPanChanged = { newScale, newOffset ->
                                                 currentActiveScale = newScale
                                                 currentActiveOffset = newOffset
@@ -7118,9 +7123,19 @@ fun PdfViewerScreen(
     if (showVisualOptionsSheet) {
         PdfVisualOptionsSheet(
             systemUiMode = systemUiMode,
+            showVerticalPageGap = showVerticalPageGap,
+            showPageNumberOverlay = showPageNumberOverlay,
             onSystemUiModeChange = { mode ->
                 systemUiMode = mode
                 savePdfSystemUiMode(context, mode)
+            },
+            onShowVerticalPageGapChange = { isVisible ->
+                showVerticalPageGap = isVisible
+                savePdfVerticalPageGapVisible(context, isVisible)
+            },
+            onShowPageNumberOverlayChange = { isVisible ->
+                showPageNumberOverlay = isVisible
+                savePdfPageNumberOverlayVisible(context, isVisible)
             },
             onDismiss = { showVisualOptionsSheet = false }
         )

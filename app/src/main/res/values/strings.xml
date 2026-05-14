@@ -831,6 +831,11 @@
     <string name="button_import_from_files">Import from Files</string>
     <string name="no_imported_fonts_yet">No imported fonts yet.</string>
     <string name="visual_options_title">Visual Options</string>
+    <string name="visual_options_page_layout">Page layout</string>
+    <string name="visual_options_remove_page_gap">Remove gap between pages</string>
+    <string name="visual_options_remove_page_gap_desc">Applies to vertical reading mode.</string>
+    <string name="visual_options_hide_page_number_overlay">Hide page number overlay</string>
+    <string name="visual_options_hide_page_number_overlay_desc">Removes the small page count label from each page.</string>
     <!-- "Status Bar" and "Navigation Bar" are standard Android UI terms — keep consistent with your OS locale if applicable. -->
     <string name="visual_options_system_ui">System UI (Status &amp; Navigation Bars)</string>
     <string name="visual_options_system_ui_desc">Control the visibility of the device\'s system bars.</string>

@@ -43,6 +43,8 @@ internal const val PDF_HIDDEN_TOOLS_KEY = "pdf_hidden_tools"
 internal const val PDF_TOOL_ORDER_KEY = "pdf_tool_order"
 internal const val PDF_BOTTOM_TOOLS_KEY = "pdf_bottom_tools"
 internal const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
+internal const val PDF_VERTICAL_PAGE_GAP_VISIBLE_KEY = "pdf_vertical_page_gap_visible"
+internal const val PDF_PAGE_NUMBER_OVERLAY_VISIBLE_KEY = "pdf_page_number_overlay_visible"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "pdf_hidden_tools_defaults_version"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 2
@@ -181,6 +183,26 @@ internal fun loadPdfSystemUiMode(context: Context): SystemUiMode {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     val id = prefs.getInt(PDF_SYSTEM_UI_MODE_KEY, SystemUiMode.SYNC.id)
     return SystemUiMode.entries.find { it.id == id } ?: SystemUiMode.SYNC
+}
+
+internal fun savePdfVerticalPageGapVisible(context: Context, isVisible: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_VERTICAL_PAGE_GAP_VISIBLE_KEY, isVisible) }
+}
+
+internal fun loadPdfVerticalPageGapVisible(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_VERTICAL_PAGE_GAP_VISIBLE_KEY, true)
+}
+
+internal fun savePdfPageNumberOverlayVisible(context: Context, isVisible: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_PAGE_NUMBER_OVERLAY_VISIBLE_KEY, isVisible) }
+}
+
+internal fun loadPdfPageNumberOverlayVisible(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_PAGE_NUMBER_OVERLAY_VISIBLE_KEY, true)
 }
 
 internal fun savePdfThemeId(context: Context, themeId: String) {

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Folder
@@ -409,14 +410,14 @@ private fun SharedToolsPanel(
                             Button(onClick = onImportFiles, modifier = Modifier.weight(1f)) {
                                 Icon(Icons.Default.ImportExport, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("Files")
+                                Text("Import files")
                             }
                         }
                         if (SharedAppToolAction.IMPORT_FOLDER in toolActions) {
                             OutlinedButton(onClick = onImportFolder, modifier = Modifier.weight(1f)) {
-                                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("Folder")
+                                Text("Add folder")
                             }
                         }
                     }
