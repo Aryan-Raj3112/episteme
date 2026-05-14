@@ -79,6 +79,7 @@ import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -133,6 +134,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
+import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
@@ -163,6 +165,7 @@ private fun getBookCountString(count: Int): String {
 @Composable
 fun LibraryScreen(
     viewModel: MainViewModel,
+    navController: NavHostController,
 ) {
     val compStart = remember { System.currentTimeMillis() }
     LaunchedEffect(Unit) {
@@ -340,7 +343,8 @@ fun LibraryScreen(
                     catalogId = catalog?.id
                 )
             },
-            onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog
+            onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
+            onSettingsClick = { navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE) }
         )
 
 
@@ -576,6 +580,7 @@ fun LibraryScreenContent(
     onOpdsBookDownloaded: (Uri, String) -> Unit,
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onDeleteCatalogStreams: (String) -> Unit,
+    onSettingsClick: () -> Unit,
 ) {
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
@@ -709,6 +714,9 @@ fun LibraryScreenContent(
                                 IconButton(onClick = { onSearchActiveChange(true) }) {
                                     Icon(Icons.Default.Search, contentDescription = stringResource(R.string.action_search))
                                 }
+                            }
+                            IconButton(onClick = onSettingsClick) {
+                                Icon(Icons.Default.Settings, contentDescription = "Settings")
                             }
                         }
                     )

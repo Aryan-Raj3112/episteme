@@ -11,6 +11,8 @@ fun androidSettingsHubInput(
     isDebugBuild: Boolean = BuildConfig.DEBUG,
     hideReaderAi: Boolean = false
 ): SharedSettingsHubInput {
+    val supportsSync = !isOssBuild && !isOfflineBuild
+    val supportsOssAiKeys = isOssBuild && !isOfflineBuild
     val featurePolicy = if (isOfflineBuild) {
         SharedFeaturePolicy.OssOffline
     } else {
@@ -22,9 +24,9 @@ fun androidSettingsHubInput(
         isDebugBuild = isDebugBuild,
         isSignedIn = uiState.currentUser != null,
         isProUser = uiState.isProUser,
-        syncAvailable = !isOssBuild,
-        folderSyncAvailable = !isOssBuild || uiState.currentUser != null || uiState.syncedFolders.isNotEmpty(),
-        aiSettingsAvailable = !isOfflineBuild,
+        syncAvailable = supportsSync,
+        folderSyncAvailable = supportsSync,
+        aiSettingsAvailable = supportsOssAiKeys,
         ttsSettingsAvailable = true,
         includePdfReaderDefaults = true,
         includeReaderToolbar = true,
@@ -35,6 +37,8 @@ fun androidSettingsHubInput(
         includeCustomFonts = true,
         includeStrictFileFilter = true,
         includeHideReaderAi = !isOfflineBuild,
+        includeCloudLocalDataClear = supportsSync,
+        supportProjectAvailable = isOssBuild,
         isTabsEnabled = uiState.isTabsEnabled,
         isSyncEnabled = uiState.isSyncEnabled,
         isFolderSyncEnabled = uiState.isFolderSyncEnabled,

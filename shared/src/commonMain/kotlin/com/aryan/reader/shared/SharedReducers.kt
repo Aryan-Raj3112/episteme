@@ -132,6 +132,9 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.ReaderDefaultSettingsChanged -> copy(
             readerDefaultSettings = action.settings
         )
+        is AppAction.PdfReaderDefaultSettingsChanged -> copy(
+            pdfReaderDefaultSettings = action.settings
+        )
         is AppAction.ReaderToolbarPreferencesChanged -> copy(
             readerToolbarPreferences = action.preferences.sanitized()
         )

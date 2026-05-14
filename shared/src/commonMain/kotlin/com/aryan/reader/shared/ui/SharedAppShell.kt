@@ -92,7 +92,7 @@ fun SharedAppShell(
     appTextDimFactorDark: Float = 1.0f,
     appSeedColor: Color? = null,
     customAppThemes: List<CustomAppTheme> = emptyList(),
-    isTabsEnabled: Boolean = false,
+    isTabsEnabled: Boolean = true,
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard,
     onTabSelected: (SharedAppTab) -> Unit,
     onImportFiles: () -> Unit,

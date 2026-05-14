@@ -110,7 +110,10 @@ fun MainScreen(
                             windowSizeClass = windowSizeClass,
                             navController = navController
                         )
-                        1 -> LibraryScreen(viewModel = viewModel)
+                        1 -> LibraryScreen(
+                            viewModel = viewModel,
+                            navController = navController
+                        )
                     }
                 }
             }

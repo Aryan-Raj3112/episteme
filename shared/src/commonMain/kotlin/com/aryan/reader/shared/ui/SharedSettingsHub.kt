@@ -68,6 +68,8 @@ fun SharedSettingsHub(
     onQueryChange: (String) -> Unit,
     readerDefaultSettings: ReaderSettings,
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit,
+    pdfReaderDefaultSettings: ReaderSettings = readerDefaultSettings,
+    onPdfReaderDefaultSettingsChange: (ReaderSettings) -> Unit = onReaderDefaultSettingsChange,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
     onAction: (SharedSettingsAction) -> Unit,
@@ -157,6 +159,8 @@ fun SharedSettingsHub(
                     page = page,
                     settings = readerDefaultSettings,
                     onSettingsChange = onReaderDefaultSettingsChange,
+                    pdfSettings = pdfReaderDefaultSettings,
+                    onPdfSettingsChange = onPdfReaderDefaultSettingsChange,
                     toolbarPreferences = readerToolbarPreferences,
                     onToolbarPreferencesChange = onReaderToolbarPreferencesChange,
                     ttsReplacementPreferences = ttsReplacementPreferences,
@@ -478,6 +482,8 @@ private fun SharedSettingsDetailPage(
     page: SharedSettingsPageModel,
     settings: ReaderSettings,
     onSettingsChange: (ReaderSettings) -> Unit,
+    pdfSettings: ReaderSettings,
+    onPdfSettingsChange: (ReaderSettings) -> Unit,
     toolbarPreferences: ReaderToolbarPreferences?,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
@@ -536,11 +542,11 @@ private fun SharedSettingsDetailPage(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         SharedReaderThemeControls(
-                            settings = settings,
+                            settings = pdfSettings,
                             builtInThemes = BuiltInPdfReaderThemes,
                             customTextureIds = readerCustomTextureIds,
                             onImportTexture = onImportReaderTexture,
-                            onSettingsChange = onSettingsChange
+                            onSettingsChange = onPdfSettingsChange
                         )
                     }
                 }
@@ -631,6 +637,8 @@ private fun SharedSettingsDestination.iconForSettingsDestination(): ImageVector 
         SharedSettingsDestination.THEME_APPEARANCE -> Icons.Default.Palette
         SharedSettingsDestination.TTS_AI -> Icons.Default.Settings
         SharedSettingsDestination.LIBRARY_SYNC_STORAGE -> Icons.Default.Folder
+        SharedSettingsDestination.SYNC_ACCOUNTS -> Icons.Default.Cloud
+        SharedSettingsDestination.EXTRA -> Icons.Default.Settings
         SharedSettingsDestination.HELP_ABOUT -> Icons.Default.Info
         SharedSettingsDestination.ROOT -> Icons.Default.Settings
     }
@@ -651,13 +659,16 @@ private fun SharedSettingsAction.iconForSettings(): ImageVector {
         SharedSettingsAction.CLOUD_SYNC -> Icons.Default.Cloud
         SharedSettingsAction.FOLDER_SYNC -> Icons.Default.Folder
         SharedSettingsAction.CLEAR_BOOK_CACHE,
-        SharedSettingsAction.CLEAR_REFLOW_CACHE -> Icons.Default.Delete
+        SharedSettingsAction.CLEAR_REFLOW_CACHE,
+        SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> Icons.Default.Delete
         SharedSettingsAction.HELP_FEEDBACK -> Icons.Default.Feedback
         SharedSettingsAction.SUPPORT -> Icons.Default.Favorite
         SharedSettingsAction.LOCAL_OVERRIDE_NOTE,
         SharedSettingsAction.ABOUT -> Icons.Default.Info
         SharedSettingsAction.EXPORT_LOGS,
         SharedSettingsAction.DEBUG_ACTIONS,
+        SharedSettingsAction.TEST_PANEL_DETECTION,
+        SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
         SharedSettingsAction.DEVICE_MANAGEMENT,
         SharedSettingsAction.AI_SETTINGS,
         SharedSettingsAction.LANGUAGE,

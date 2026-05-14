@@ -84,6 +84,7 @@ sealed interface AppAction {
     data class HomePinToggled(val bookId: String) : AppAction
     data class LibraryPinToggled(val bookId: String) : AppAction
     data class ReaderDefaultSettingsChanged(val settings: ReaderSettings) : AppAction
+    data class PdfReaderDefaultSettingsChanged(val settings: ReaderSettings) : AppAction
     data class ReaderToolbarPreferencesChanged(val preferences: ReaderToolbarPreferences) : AppAction
     data class ReaderToolVisibilityChanged(val tool: ReaderTool, val hidden: Boolean) : AppAction
     data class ReaderToolPlacementChanged(val tool: ReaderTool, val bottom: Boolean) : AppAction

@@ -47,6 +47,9 @@ import com.aryan.reader.epubreader.saveReaderSettings
 import com.aryan.reader.epubreader.saveSystemUiMode
 import com.aryan.reader.pdf.savePdfSystemUiMode
 import com.aryan.reader.pdf.savePdfThemeId
+import com.aryan.reader.pdf.loadPdfSystemUiMode
+import com.aryan.reader.pdf.loadPdfThemeId
+import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.PageInfoMode as SharedPageInfoMode
 import com.aryan.reader.shared.PageInfoPosition as SharedPageInfoPosition
@@ -90,6 +93,7 @@ fun SettingsScreen(
     var showStrictFilterDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
     var showClearReflowCacheDialog by remember { mutableStateOf(false) }
+    var showClearAllDataDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
@@ -97,8 +101,11 @@ fun SettingsScreen(
     var showRecentLimitDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var hideReaderAi by remember { mutableStateOf(loadHideReaderAiFeatures(context)) }
-    var readerDefaults by remember(context, uiState.renderMode) {
-        mutableStateOf(loadAndroidReaderDefaultSettings(context, uiState.renderMode))
+    var epubReaderDefaults by remember(context, uiState.renderMode) {
+        mutableStateOf(loadAndroidEpubReaderDefaultSettings(context, uiState.renderMode))
+    }
+    var pdfReaderDefaults by remember(context) {
+        mutableStateOf(loadAndroidPdfReaderDefaultSettings(context))
     }
     var ttsReplacementPreferences by remember(context) {
         mutableStateOf(loadTtsReplacementPreferences(context))
@@ -106,7 +113,7 @@ fun SettingsScreen(
     var ttsMode by remember(context) { mutableStateOf(loadTtsMode(context)) }
 
     LaunchedEffect(uiState.renderMode) {
-        readerDefaults = loadAndroidReaderDefaultSettings(context, uiState.renderMode)
+        epubReaderDefaults = loadAndroidEpubReaderDefaultSettings(context, uiState.renderMode)
     }
 
     val sharedFonts = remember(customFonts) {
@@ -156,11 +163,16 @@ fun SettingsScreen(
             model = settingsModel,
             query = query,
             onQueryChange = { query = it },
-            readerDefaultSettings = readerDefaults,
+            readerDefaultSettings = epubReaderDefaults,
             onReaderDefaultSettingsChange = { settings ->
-                readerDefaults = settings
-                saveAndroidReaderDefaultSettings(context, settings)
+                epubReaderDefaults = settings
+                saveAndroidEpubReaderDefaultSettings(context, settings)
                 viewModel.setRenderMode(settings.toAndroidRenderMode())
+            },
+            pdfReaderDefaultSettings = pdfReaderDefaults,
+            onPdfReaderDefaultSettingsChange = { settings ->
+                pdfReaderDefaults = settings
+                saveAndroidPdfReaderDefaultSettings(context, settings)
             },
             ttsReplacementPreferences = ttsReplacementPreferences,
             onTtsReplacementPreferencesChange = { preferences ->
@@ -222,6 +234,9 @@ fun SettingsScreen(
                     SharedSettingsAction.TTS_SETTINGS -> showTtsSettingsSheet = true
                     SharedSettingsAction.CLEAR_BOOK_CACHE -> showClearBookCacheDialog = true
                     SharedSettingsAction.CLEAR_REFLOW_CACHE -> showClearReflowCacheDialog = true
+                    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA -> showClearAllDataDialog = true
+                    SharedSettingsAction.TEST_PANEL_DETECTION -> viewModel.testPanelDetection(context)
+                    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> viewModel.testSpeechBubbleDetection(context)
                     SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
                     SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner("Debug actions remain in their existing menus.")
                     SharedSettingsAction.HELP_FEEDBACK -> navController.navigate(AppDestinations.FEEDBACK_SCREEN_ROUTE)
@@ -287,6 +302,16 @@ fun SettingsScreen(
                 showClearReflowCacheDialog = false
             },
             onDismiss = { showClearReflowCacheDialog = false }
+        )
+    }
+
+    if (showClearAllDataDialog) {
+        ClearAllDataConfirmationDialog(
+            onConfirm = {
+                viewModel.deleteAllCloudAndLocalData()
+                showClearAllDataDialog = false
+            },
+            onDismiss = { showClearAllDataDialog = false }
         )
     }
 
@@ -383,7 +408,7 @@ private fun RecentLimitDialog(
     )
 }
 
-private fun loadAndroidReaderDefaultSettings(
+private fun loadAndroidEpubReaderDefaultSettings(
     context: Context,
     renderMode: RenderMode
 ): ReaderSettings {
@@ -413,7 +438,18 @@ private fun loadAndroidReaderDefaultSettings(
     return readerThemeById(base.themeId)?.toReaderSettings(base) ?: base
 }
 
-private fun saveAndroidReaderDefaultSettings(
+private fun loadAndroidPdfReaderDefaultSettings(
+    context: Context
+): ReaderSettings {
+    val base = ReaderSettings(
+        themeId = loadPdfThemeId(context),
+        textureAlpha = (1f - loadGlobalTextureTransparency(context)).coerceIn(0f, 1f),
+        systemUiMode = loadPdfSystemUiMode(context).toSharedSystemUiMode()
+    )
+    return BuiltInPdfReaderThemes.firstOrNull { it.id == base.themeId }?.toReaderSettings(base) ?: base
+}
+
+private fun saveAndroidEpubReaderDefaultSettings(
     context: Context,
     settings: ReaderSettings
 ) {
@@ -430,13 +466,20 @@ private fun saveAndroidReaderDefaultSettings(
         textAlign = settings.textAlign.toAndroidTextAlign()
     )
     saveSystemUiMode(context, settings.systemUiMode.toAndroidSystemUiMode())
-    savePdfSystemUiMode(context, settings.systemUiMode.toAndroidSystemUiMode())
     savePageInfoMode(context, settings.pageInfoMode.toAndroidPageInfoMode())
     savePageInfoPosition(context, settings.pageInfoPosition.toAndroidPageInfoPosition())
     savePullToTurn(context, settings.seamlessChapterNavigation)
     savePullToTurnMultiplier(context, settings.chapterTurnDragMultiplier)
     saveReaderThemeId(context, settings.themeId ?: "system")
-    settings.themeId?.let { savePdfThemeId(context, it) }
+    saveGlobalTextureTransparency(context, 1f - settings.textureAlpha.coerceIn(0f, 1f))
+}
+
+private fun saveAndroidPdfReaderDefaultSettings(
+    context: Context,
+    settings: ReaderSettings
+) {
+    savePdfSystemUiMode(context, settings.systemUiMode.toAndroidSystemUiMode())
+    savePdfThemeId(context, settings.themeId ?: "no_theme")
     saveGlobalTextureTransparency(context, 1f - settings.textureAlpha.coerceIn(0f, 1f))
 }
 

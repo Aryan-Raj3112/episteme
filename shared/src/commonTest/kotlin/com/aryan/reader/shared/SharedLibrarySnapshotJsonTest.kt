@@ -125,6 +125,8 @@ class SharedLibrarySnapshotJsonTest {
             customAppThemes = listOf(
                 CustomAppTheme(id = "forest", name = "Forest", seedColor = Color(0xFF006C4C))
             ),
+            readerDefaultSettings = ReaderSettings(themeId = "sepia"),
+            pdfReaderDefaultSettings = ReaderSettings(themeId = "reverse"),
             readerToolbarPreferences = ReaderToolbarPreferences(
                 hiddenToolIds = setOf(ReaderTool.SEARCH.id),
                 toolOrder = listOf(ReaderTool.BOOKMARK, ReaderTool.THEME, ReaderTool.SEARCH),
@@ -169,6 +171,13 @@ class SharedLibrarySnapshotJsonTest {
 
         assertTrue(SharedLibrarySnapshotJson.decodeOrEmpty("not json").books.isEmpty())
         assertTrue(decoded.books.isEmpty())
+    }
+
+    @Test
+    fun `missing tab setting defaults to enabled for new desktop snapshots`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty("""{"schemaVersion":14}""")
+
+        assertTrue(decoded.isTabsEnabled)
     }
 
     @Test

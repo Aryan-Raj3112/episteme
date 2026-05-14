@@ -88,7 +88,7 @@ data class ReaderScreenState(
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),
     val recentFilesLimit: Int = 0,
-    val isTabsEnabled: Boolean = false,
+    val isTabsEnabled: Boolean = true,
     val openTabIds: List<String> = emptyList(),
     val openTabs: List<RecentFileItem> = emptyList(),
     val activeTabBookId: String? = null,

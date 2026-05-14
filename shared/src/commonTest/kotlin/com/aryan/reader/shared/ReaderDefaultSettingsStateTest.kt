@@ -24,6 +24,18 @@ class ReaderDefaultSettingsStateTest {
     }
 
     @Test
+    fun `pdf reader default settings reducer updates separate shared state`() {
+        val epubDefaults = ReaderSettings(themeId = "sepia")
+        val pdfDefaults = ReaderSettings(themeId = "reverse")
+
+        val state = SharedReaderScreenState(readerDefaultSettings = epubDefaults)
+            .reduce(AppAction.PdfReaderDefaultSettingsChanged(pdfDefaults))
+
+        assertEquals(epubDefaults, state.readerDefaultSettings)
+        assertEquals(pdfDefaults, state.pdfReaderDefaultSettings)
+    }
+
+    @Test
     fun `reader default settings persist in shared snapshot json`() {
         val defaults = ReaderSettings(
             fontSize = 21,
@@ -45,5 +57,23 @@ class ReaderDefaultSettingsStateTest {
         )
 
         assertEquals(defaults, decoded.readerDefaultSettings)
+    }
+
+    @Test
+    fun `pdf reader default settings persist separately in shared snapshot json`() {
+        val epubDefaults = ReaderSettings(themeId = "sepia")
+        val pdfDefaults = ReaderSettings(themeId = "reverse")
+
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            SharedLibrarySnapshotJson.encode(
+                SharedLibrarySnapshot(
+                    readerDefaultSettings = epubDefaults,
+                    pdfReaderDefaultSettings = pdfDefaults
+                )
+            )
+        )
+
+        assertEquals(epubDefaults, decoded.readerDefaultSettings)
+        assertEquals(pdfDefaults, decoded.pdfReaderDefaultSettings)
     }
 }

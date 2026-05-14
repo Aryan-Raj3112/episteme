@@ -748,6 +748,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
             appSeedColor = initialLibrarySnapshot.appSeedColor,
             customAppThemes = initialLibrarySnapshot.customAppThemes,
             readerDefaultSettings = initialLibrarySnapshot.readerDefaultSettings,
+            pdfReaderDefaultSettings = initialLibrarySnapshot.pdfReaderDefaultSettings,
             readerToolbarPreferences = initialLibrarySnapshot.readerToolbarPreferences,
             readerHighlightPalette = initialLibrarySnapshot.readerHighlightPalette,
             pdfHighlighterPalette = initialLibrarySnapshot.pdfHighlighterPalette,
@@ -893,6 +894,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                         appSeedColor = projected.appSeedColor,
                         customAppThemes = projected.customAppThemes,
                         readerDefaultSettings = projected.readerDefaultSettings,
+                        pdfReaderDefaultSettings = projected.pdfReaderDefaultSettings,
                         readerToolbarPreferences = projected.readerToolbarPreferences,
                         readerHighlightPalette = projected.readerHighlightPalette,
                         pdfHighlighterPalette = projected.pdfHighlighterPalette,
@@ -2134,6 +2136,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     includeScreenCaptureProtection = false,
                                     includeExternalFileBehavior = false,
                                     includeStrictFileFilter = false,
+                                    includeHideReaderAi = false,
                                     isTabsEnabled = state.isTabsEnabled,
                                     isFolderSyncEnabled = state.isFolderSyncEnabled
                                 )
@@ -2145,6 +2148,10 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                             readerDefaultSettings = state.readerDefaultSettings,
                             onReaderDefaultSettingsChange = { settings ->
                                 updateState(state.reduce(AppAction.ReaderDefaultSettingsChanged(settings)))
+                            },
+                            pdfReaderDefaultSettings = state.pdfReaderDefaultSettings,
+                            onPdfReaderDefaultSettingsChange = { settings ->
+                                updateState(state.reduce(AppAction.PdfReaderDefaultSettingsChanged(settings)))
                             },
                             readerToolbarPreferences = state.readerToolbarPreferences,
                             onReaderToolbarPreferencesChange = { preferences ->
@@ -2168,9 +2175,11 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     SharedSettingsAction.HELP_FEEDBACK -> selectedTab = SharedAppTab.FEEDBACK
                                     SharedSettingsAction.SUPPORT -> selectedTab = SharedAppTab.SUPPORT
                                     SharedSettingsAction.ABOUT -> selectedTab = SharedAppTab.ABOUT
-                                    SharedSettingsAction.PDF_READER_DEFAULTS -> updateState(state.withBanner("PDF-specific settings are still available inside the PDF reader."))
                                     SharedSettingsAction.CLEAR_BOOK_CACHE,
                                     SharedSettingsAction.CLEAR_REFLOW_CACHE,
+                                    SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
+                                    SharedSettingsAction.TEST_PANEL_DETECTION,
+                                    SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
                                     SharedSettingsAction.EXPORT_LOGS,
                                     SharedSettingsAction.DEBUG_ACTIONS,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
@@ -2184,6 +2193,7 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
                                     SharedSettingsAction.HIDE_READER_AI,
                                     SharedSettingsAction.TTS_SETTINGS,
+                                    SharedSettingsAction.PDF_READER_DEFAULTS,
                                     SharedSettingsAction.TEXT_READER_DEFAULTS,
                                     SharedSettingsAction.READER_TOOLBAR,
                                     SharedSettingsAction.TTS_REPLACEMENTS,
@@ -2325,8 +2335,8 @@ private fun EpistemeDesktopApp(window: Component? = null) {
                                         ?: 0,
                                     initialReaderSettings = activeReaderBookId
                                         ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId } }
-                                        ?.let { book -> resolvedDesktopReaderSettings(book, state.readerDefaultSettings) }
-                                        ?: state.readerDefaultSettings,
+                                        ?.let { book -> resolvedDesktopReaderSettings(book, state.pdfReaderDefaultSettings) }
+                                        ?: state.pdfReaderDefaultSettings,
                                     onReturnToLibrary = {
                                         readerFullscreen = false
                                         selectedTab = SharedAppTab.LIBRARY

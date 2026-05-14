@@ -1089,11 +1089,6 @@ fun DefaultTopAppBar(
             }
             DropdownMenu(
                 expanded = showOptionsMenu, onDismissRequest = { showOptionsMenu = false }) {
-                DropdownMenuItem(text = { Text("Settings") }, onClick = {
-                    onSettingsClick()
-                    showOptionsMenu = false
-                })
-
                 DropdownMenuItem(text = { Text(stringResource(R.string.about_title)) }, onClick = {
                     onAboutClick()
                     showOptionsMenu = false
@@ -1144,19 +1139,21 @@ fun DefaultTopAppBar(
                     showOptionsMenu = false
                 })
 
-                DropdownMenuItem(
-                    text = { Text(if (hideReaderAiFeatures) "Show AI in reader" else "Hide AI in reader") },
-                    onClick = {
-                        onToggleHideReaderAi()
-                        hideReaderAiFeatures = !hideReaderAiFeatures
-                        showOptionsMenu = false
-                    },
-                    trailingIcon = {
-                        if (hideReaderAiFeatures) {
-                            Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                if (!BuildConfig.IS_OFFLINE) {
+                    DropdownMenuItem(
+                        text = { Text(if (hideReaderAiFeatures) "Show AI in reader" else "Hide AI in reader") },
+                        onClick = {
+                            onToggleHideReaderAi()
+                            hideReaderAiFeatures = !hideReaderAiFeatures
+                            showOptionsMenu = false
+                        },
+                        trailingIcon = {
+                            if (hideReaderAiFeatures) {
+                                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                            }
                         }
-                    }
-                )
+                    )
+                }
 
                 HorizontalDivider()
                 DropdownMenuItem(text = { Text(stringResource(R.string.options_clear_book_cache)) }, onClick = {

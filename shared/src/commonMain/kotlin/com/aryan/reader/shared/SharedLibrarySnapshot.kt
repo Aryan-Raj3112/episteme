@@ -31,7 +31,7 @@ data class SharedLibrarySnapshot(
     val customFonts: List<CustomFontItem> = emptyList(),
     val syncedFolders: List<SyncedFolder> = emptyList(),
     val recentFilesLimit: Int = 12,
-    val isTabsEnabled: Boolean = false,
+    val isTabsEnabled: Boolean = true,
     val openTabIds: List<String> = emptyList(),
     val activeTabBookId: String? = null,
     val pinnedHomeBookIds: Set<String> = emptySet(),
@@ -44,6 +44,7 @@ data class SharedLibrarySnapshot(
     val appSeedColor: Color? = null,
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
+    val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
@@ -51,7 +52,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 13
+    private const val SCHEMA_VERSION = 14
 
     private val json = Json {
         prettyPrint = true
@@ -75,7 +76,7 @@ object SharedLibrarySnapshotJson {
             customFonts = root.array("customFonts").mapNotNull { it.asCustomFontItemOrNull() },
             syncedFolders = root.array("syncedFolders").mapNotNull { it.asSyncedFolderOrNull() },
             recentFilesLimit = root.int("recentFilesLimit", 12),
-            isTabsEnabled = root.boolean("isTabsEnabled", false),
+            isTabsEnabled = root.boolean("isTabsEnabled", true),
             openTabIds = openTabIds,
             activeTabBookId = root.string("activeTabBookId"),
             pinnedHomeBookIds = root.stringArray("pinnedHomeBookIds").toSet(),
@@ -99,6 +100,10 @@ object SharedLibrarySnapshotJson {
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderSettingsOrNull()
                 ?: ReaderSettings(),
+            pdfReaderDefaultSettings = root["pdfReaderDefaultSettings"]
+                ?.takeUnless { it is JsonNull }
+                ?.asReaderSettingsOrNull()
+                ?: ReaderSettings(themeId = "no_theme"),
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderToolbarPreferencesOrNull()
@@ -142,6 +147,7 @@ object SharedLibrarySnapshotJson {
                 "appSeedColor" to snapshot.appSeedColor.asJson(),
                 "customAppThemes" to JsonArray(snapshot.customAppThemes.map { it.toJsonObject() }),
                 "readerDefaultSettings" to snapshot.readerDefaultSettings.asJson(),
+                "pdfReaderDefaultSettings" to snapshot.pdfReaderDefaultSettings.asJson(),
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
                 "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject(),
                 "pdfHighlighterPalette" to snapshot.pdfHighlighterPalette.sanitized().toJsonObject(),

@@ -546,7 +546,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             pinnedHomeBookIds = prefs.getStringSet(KEY_PINNED_HOME, emptySet()) ?: emptySet(),
             pinnedLibraryBookIds = prefs.getStringSet(KEY_PINNED_LIBRARY, emptySet()) ?: emptySet(),
             recentFilesLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0),
-            isTabsEnabled = prefs.getBoolean(KEY_TABS_ENABLED, false),
+            isTabsEnabled = prefs.getBoolean(KEY_TABS_ENABLED, true),
             openTabIds = prefs.getString(KEY_OPEN_TAB_IDS, null)?.let {
                 try {
                     val arr = JSONArray(it)

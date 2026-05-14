@@ -20,7 +20,8 @@ class SettingsHubModelsTest {
                 SharedSettingsDestination.THEME_APPEARANCE,
                 SharedSettingsDestination.TTS_AI,
                 SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
-                SharedSettingsDestination.HELP_ABOUT
+                SharedSettingsDestination.SYNC_ACCOUNTS,
+                SharedSettingsDestination.EXTRA
             ),
             model.rootCategories.map { it.destination }
         )
@@ -44,6 +45,25 @@ class SettingsHubModelsTest {
         assertFalse(SharedSettingsAction.SIGN_IN in actions)
         assertTrue(SharedSettingsAction.TTS_SETTINGS in actions)
         assertTrue(SharedSettingsAction.ABOUT in actions)
+    }
+
+    @Test
+    fun `sync unavailable hides account rows while preserving folder sync`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.DESKTOP,
+                syncAvailable = false,
+                folderSyncAvailable = true,
+                isSignedIn = true,
+                isProUser = true
+            )
+        )
+        val actions = model.visibleNestedActions()
+
+        assertFalse(SharedSettingsAction.SIGN_IN in actions)
+        assertFalse(SharedSettingsAction.SIGN_OUT in actions)
+        assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
+        assertTrue(SharedSettingsAction.FOLDER_SYNC in actions)
     }
 
     @Test
@@ -74,7 +94,7 @@ class SettingsHubModelsTest {
 
         assertEquals(1, results.size)
         assertEquals(SharedSettingsAction.CUSTOM_FONTS, results.first().action)
-        assertEquals("Settings / Theme & Appearance", results.first().breadcrumb)
+        assertEquals("Settings / Library & Files", results.first().breadcrumb)
     }
 
     @Test
@@ -83,6 +103,27 @@ class SettingsHubModelsTest {
         assertEquals(SharedSettingsDestination.EPUB_TEXT, SharedSettingsDestination.EPUB_FORMAT.parentDestination())
         assertEquals(SharedSettingsDestination.PDF_COMICS, SharedSettingsDestination.PDF_READER_TOOLS.parentDestination())
         assertEquals(SharedSettingsDestination.TTS_AI, SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS.parentDestination())
+        assertEquals(SharedSettingsDestination.ROOT, SharedSettingsDestination.EXTRA.parentDestination())
+    }
+
+    @Test
+    fun `tts replacements are only exposed from global tts area`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(platform = SharedSettingsPlatform.DESKTOP)
+        )
+
+        assertFalse(
+            model.page(SharedSettingsDestination.EPUB_TEXT)
+                .items
+                .any { it.action == SharedSettingsAction.TTS_REPLACEMENTS }
+        )
+        assertEquals(
+            SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS,
+            model.page(SharedSettingsDestination.TTS_AI)
+                .items
+                .single { it.action == SharedSettingsAction.TTS_REPLACEMENTS }
+                .destination
+        )
     }
 }
 
