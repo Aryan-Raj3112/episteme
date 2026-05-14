@@ -9,12 +9,19 @@ import kotlin.test.assertTrue
 class DesktopStartupTest {
     @Test
     fun `startup splash uses compact branded feedback`() {
-        val spec = epistemeDesktopStartupSplashSpec()
+        val spec = epistemeDesktopStartupSplashSpec(desktopBuildProfileForFlavor("standard"))
 
         assertEquals(EpistemeDesktopWindowTitle, spec.title)
         assertTrue(spec.message.isNotBlank())
         assertTrue(spec.width in 320..480)
         assertTrue(spec.height in 180..280)
+    }
+
+    @Test
+    fun `oss startup splash uses oss branding`() {
+        val spec = epistemeDesktopStartupSplashSpec(desktopBuildProfileForFlavor("oss-offline"))
+
+        assertEquals(EpistemeDesktopOssAppName, spec.title)
     }
 
     @Test

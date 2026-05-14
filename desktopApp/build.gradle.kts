@@ -7,6 +7,7 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.TaskAction
+import org.gradle.jvm.tasks.Jar
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
@@ -287,14 +288,41 @@ fun normalizeDesktopPackageVersion(rawVersion: String): String {
     return "$major.$minor.$build"
 }
 
-val desktopFlavor = providers.gradleProperty("desktopFlavor").orElse("standard").get().lowercase()
+fun normalizeDesktopVersionName(rawVersion: String): String {
+    return rawVersion.trim().takeIf { it.isNotBlank() } ?: "1.0.0"
+}
+
+fun normalizeDesktopFlavor(rawFlavor: String): String {
+    val flavor = rawFlavor.trim().lowercase()
+    return when (flavor) {
+        "oss", "oss-offline", "episteme-oss" -> "oss-offline"
+        else -> "standard"
+    }
+}
+
+val desktopVersionName = "1.0.0"
+val desktopFlavor = providers.gradleProperty("desktopFlavor")
+    .orElse("standard")
+    .map(::normalizeDesktopFlavor)
+    .get()
 val isOssOfflineDesktop = desktopFlavor == "oss-offline"
 val desktopDiagnostics = providers.gradleProperty("desktopDiagnostics")
     .map { it.equals("true", ignoreCase = true) }
     .orElse(false)
+val desktopResolvedVersionName = providers.gradleProperty("desktopVersionName")
+    .orElse(providers.gradleProperty("desktopVersion"))
+    .orElse(desktopVersionName)
+    .map(::normalizeDesktopVersionName)
 val desktopPackageVersion = providers.gradleProperty("desktopPackageVersion")
-    .orElse("1.0.0")
+    .orElse(desktopResolvedVersionName)
     .map(::normalizeDesktopPackageVersion)
+val desktopPackageName = if (isOssOfflineDesktop) "Episteme oss" else "Episteme"
+val desktopPackageDescription = if (isOssOfflineDesktop) {
+    "Episteme oss offline desktop reader"
+} else {
+    "Episteme desktop reader"
+}
+val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan Raj")
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
@@ -368,6 +396,7 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("net.java.dev.jna:jna:5.17.0")
                 implementation("org.apache.commons:commons-compress:1.28.0")
+                implementation("org.apache.thrift:libthrift:0.22.0")
                 implementation("org.tukaani:xz:1.10")
                 implementation("com.twelvemonkeys.imageio:imageio-webp:3.13.1")
             }
@@ -389,22 +418,23 @@ compose.desktop {
         jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
         jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
         jvmArgs("-Depisteme.desktop.diagnostics=${desktopDiagnostics.get()}")
+        jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
 
         buildTypes.release.proguard {
             obfuscate.set(false)
+            // Compose/Kotlin generated methods can produce very large stack-map frames.
+            // ProGuard optimization has emitted invalid frames for SharedAppTheme in release builds.
+            optimize.set(false)
+            configurationFiles.from(project.file("compose-desktop.pro"))
         }
 
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
             modules("java.net.http")
-            packageName = if (isOssOfflineDesktop) "Episteme OSS Offline" else "Episteme"
+            packageName = desktopPackageName
             packageVersion = desktopPackageVersion.get()
-            description = if (isOssOfflineDesktop) {
-                "Episteme desktop offline shell"
-            } else {
-                "Episteme desktop shell"
-            }
-            vendor = "Aryan Reader"
+            description = desktopPackageDescription
+            vendor = desktopVendor.get()
             appResourcesRootDir.set(generatedDesktopResourcesDir)
             windows {
                 iconFile.set(desktopWindowsIconFile)
@@ -417,7 +447,7 @@ compose.desktop {
             }
             linux {
                 iconFile.set(desktopLinuxIconFile)
-                packageName = if (isOssOfflineDesktop) "episteme-oss-offline" else "episteme"
+                packageName = if (isOssOfflineDesktop) "episteme-oss" else "episteme"
                 debMaintainer = "epistemereader@gmail.com"
                 menuGroup = "Office"
                 appCategory = "Office"
@@ -431,9 +461,20 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
     jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
     jvmArgs("-Depisteme.desktop.diagnostics=${desktopDiagnostics.get()}")
+    jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
     if (System.getProperty("os.name").contains("Mac")) {
         jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+    }
+}
+
+tasks.withType<Jar>().configureEach {
+    manifest {
+        attributes(
+            "Implementation-Title" to desktopPackageName,
+            "Implementation-Version" to desktopResolvedVersionName.get(),
+            "Implementation-Vendor" to desktopVendor.get()
+        )
     }
 }
 

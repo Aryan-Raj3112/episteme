@@ -5,12 +5,17 @@ import com.aryan.reader.shared.SharedFeaturePolicy
 import java.io.File
 
 internal const val DesktopFlavorProperty = "episteme.desktop.flavor"
+internal const val DesktopVersionProperty = "episteme.desktop.version"
 internal const val DesktopFlavorStandard = "standard"
 internal const val DesktopFlavorOssOffline = "oss-offline"
+internal const val EpistemeDesktopStandardAppName = "Episteme"
+internal const val EpistemeDesktopOssAppName = "Episteme oss"
 internal const val ComposeApplicationResourcesDirProperty = "compose.application.resources.dir"
 
 internal data class DesktopBuildProfile(
     val flavor: String,
+    val appName: String,
+    val buildLabel: String,
     val featurePolicy: SharedFeaturePolicy
 ) {
     val isOssOffline: Boolean get() = flavor == DesktopFlavorOssOffline
@@ -23,17 +28,29 @@ internal fun currentDesktopBuildProfile(): DesktopBuildProfile {
 }
 
 internal fun desktopBuildProfileForFlavor(rawFlavor: String?): DesktopBuildProfile {
-    val flavor = rawFlavor?.trim()?.lowercase().takeUnless { it.isNullOrBlank() }
-        ?: DesktopFlavorStandard
+    val flavor = normalizedDesktopFlavor(rawFlavor)
     return when (flavor) {
         DesktopFlavorOssOffline -> DesktopBuildProfile(
             flavor = DesktopFlavorOssOffline,
+            appName = EpistemeDesktopOssAppName,
+            buildLabel = "Offline OSS edition",
             featurePolicy = SharedFeaturePolicy.OssOffline
         )
         else -> DesktopBuildProfile(
             flavor = DesktopFlavorStandard,
+            appName = EpistemeDesktopStandardAppName,
+            buildLabel = "Standard edition",
             featurePolicy = SharedFeaturePolicy.Standard
         )
+    }
+}
+
+private fun normalizedDesktopFlavor(rawFlavor: String?): String {
+    return when (rawFlavor?.trim()?.lowercase()) {
+        DesktopFlavorOssOffline,
+        "oss",
+        "episteme-oss" -> DesktopFlavorOssOffline
+        else -> DesktopFlavorStandard
     }
 }
 

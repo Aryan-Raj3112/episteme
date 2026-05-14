@@ -24,7 +24,7 @@ import javax.swing.RootPaneContainer
 import javax.swing.SwingUtilities
 import kotlinx.coroutines.delay
 
-internal const val EpistemeDesktopWindowTitle = "Episteme"
+internal const val EpistemeDesktopWindowTitle = EpistemeDesktopStandardAppName
 internal const val EpistemeDesktopWindowIconResource = "episteme_icon.png"
 internal const val EpistemeDesktopWindowMinimumWidthPx = 960
 internal const val EpistemeDesktopWindowMinimumHeightPx = 640
@@ -36,9 +36,11 @@ internal data class DesktopWindowDefaults(
     val iconResourcePath: String
 )
 
-internal fun epistemeDesktopWindowDefaults(): DesktopWindowDefaults {
+internal fun epistemeDesktopWindowDefaults(
+    profile: DesktopBuildProfile = currentDesktopBuildProfile()
+): DesktopWindowDefaults {
     return DesktopWindowDefaults(
-        title = EpistemeDesktopWindowTitle,
+        title = profile.appName,
         defaultSize = DpSize(1280.dp, 820.dp),
         minimumSize = Dimension(EpistemeDesktopWindowMinimumWidthPx, EpistemeDesktopWindowMinimumHeightPx),
         iconResourcePath = EpistemeDesktopWindowIconResource

@@ -14,6 +14,8 @@ class DesktopBuildProfileTest {
         val profile = desktopBuildProfileForFlavor("standard")
 
         assertEquals(DesktopFlavorStandard, profile.flavor)
+        assertEquals(EpistemeDesktopStandardAppName, profile.appName)
+        assertEquals("Standard edition", profile.buildLabel)
         assertEquals(SharedFeaturePolicy.Standard, profile.featurePolicy)
         assertTrue(profile.featurePolicy.networkAccess)
     }
@@ -23,11 +25,22 @@ class DesktopBuildProfileTest {
         val profile = desktopBuildProfileForFlavor("oss-offline")
 
         assertEquals(DesktopFlavorOssOffline, profile.flavor)
+        assertEquals(EpistemeDesktopOssAppName, profile.appName)
+        assertEquals("Offline OSS edition", profile.buildLabel)
         assertEquals(SharedFeaturePolicy.OssOffline, profile.featurePolicy)
         assertFalse(profile.featurePolicy.networkAccess)
         assertFalse(profile.featurePolicy.aiAndCloud)
         assertFalse(profile.featurePolicy.opdsCatalogs)
         assertFalse(profile.featurePolicy.googleFontsDownload)
+    }
+
+    @Test
+    fun `oss desktop flavor aliases resolve to offline oss profile`() {
+        val profile = desktopBuildProfileForFlavor("oss")
+
+        assertEquals(DesktopFlavorOssOffline, profile.flavor)
+        assertEquals(EpistemeDesktopOssAppName, profile.appName)
+        assertEquals(SharedFeaturePolicy.OssOffline, profile.featurePolicy)
     }
 
     @Test

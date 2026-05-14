@@ -541,6 +541,7 @@ private fun EpistemeDesktopStartupGate(
 
 @Composable
 private fun EpistemeDesktopStartupScreen(window: Component?) {
+    val appTitle = remember { epistemeDesktopWindowDefaults().title }
     SharedAppTheme(
         appThemeMode = AppThemeMode.SYSTEM,
         appContrastOption = AppContrastOption.STANDARD,
@@ -571,7 +572,7 @@ private fun EpistemeDesktopStartupScreen(window: Component?) {
                     modifier = Modifier.size(64.dp)
                 )
                 Text(
-                    text = EpistemeDesktopWindowTitle,
+                    text = appTitle,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
@@ -2540,7 +2541,8 @@ private fun EpistemeDesktopApp(
                         SharedAppTab.FEEDBACK -> SharedHelpFeedbackScreen(
                             onOpenGitHubIssues = { openExternalUrl(EpistemeIssuesUrl) },
                             onEmailSupport = {
-                                openExternalUrl("mailto:$EpistemeSupportEmail?subject=${EpistemeFeedbackSubject.urlEncode()}")
+                                val subject = desktopFeedbackSubject(desktopBuildProfile).urlEncode()
+                                openExternalUrl("mailto:$EpistemeSupportEmail?subject=$subject")
                             }
                         )
 
@@ -2551,7 +2553,7 @@ private fun EpistemeDesktopApp(
 
                         SharedAppTab.ABOUT -> SharedAboutScreen(
                             versionName = desktopAppVersionName(),
-                            buildLabel = if (desktopBuildProfile.isOssOffline) "Desktop oss-offline build" else "Desktop build",
+                            buildLabel = desktopBuildProfile.buildLabel,
                             onOpenSource = if (featurePolicy.projectLinks) {
                                 { openExternalUrl(EpistemeSourceUrl) }
                             } else {
@@ -11753,12 +11755,17 @@ private const val EpistemeIssuesUrl = "https://github.com/Aryan-Raj3112/episteme
 private const val EpistemeGitHubSponsorsUrl = "https://github.com/sponsors/Aryan-Raj3112"
 private const val EpistemePatreonUrl = "https://www.patreon.com/c/epistemereader"
 private const val EpistemeSupportEmail = "epistemereader@gmail.com"
-private const val EpistemeFeedbackSubject = "Feedback: Episteme Reader"
+
+private fun desktopFeedbackSubject(profile: DesktopBuildProfile): String {
+    return "Feedback: ${profile.appName}"
+}
 
 private fun desktopAppVersionName(): String {
-    return EpistemeDesktopAppVersion::class.java.getPackage()?.implementationVersion
-        ?.let { "Version $it" }
-        ?: "Desktop development build"
+    val version = System.getProperty(DesktopVersionProperty)
+        ?.takeIf { it.isNotBlank() }
+        ?: EpistemeDesktopAppVersion::class.java.getPackage()?.implementationVersion
+            ?.takeIf { it.isNotBlank() }
+    return version?.let { "Version $it" } ?: "Version unavailable"
 }
 
 private object EpistemeDesktopAppVersion

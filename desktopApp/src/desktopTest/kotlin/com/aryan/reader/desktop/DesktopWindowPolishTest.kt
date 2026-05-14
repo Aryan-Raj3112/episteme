@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 class DesktopWindowPolishTest {
     @Test
     fun `desktop window defaults use app branding and a useful first launch size`() {
-        val defaults = epistemeDesktopWindowDefaults()
+        val defaults = epistemeDesktopWindowDefaults(desktopBuildProfileForFlavor("standard"))
 
         assertEquals(EpistemeDesktopWindowTitle, defaults.title)
         assertEquals(EpistemeDesktopWindowIconResource, defaults.iconResourcePath)
@@ -17,6 +17,13 @@ class DesktopWindowPolishTest {
         assertTrue(defaults.defaultSize.height.value > defaults.minimumSize.height.toFloat())
         assertEquals(EpistemeDesktopWindowMinimumWidthPx, defaults.minimumSize.width)
         assertEquals(EpistemeDesktopWindowMinimumHeightPx, defaults.minimumSize.height)
+    }
+
+    @Test
+    fun `oss desktop window defaults use oss branding`() {
+        val defaults = epistemeDesktopWindowDefaults(desktopBuildProfileForFlavor("oss-offline"))
+
+        assertEquals(EpistemeDesktopOssAppName, defaults.title)
     }
 
     @Test

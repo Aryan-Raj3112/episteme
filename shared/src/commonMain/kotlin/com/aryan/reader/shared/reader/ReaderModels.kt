@@ -256,27 +256,27 @@ object SampleReaderBooks {
         return SharedEpubBook(
             id = "desktop_welcome",
             fileName = "Desktop Welcome.epub",
-            title = "Episteme Desktop Reader",
+            title = "Welcome to Episteme",
             author = "Episteme",
             chapters = listOf(
                 SharedEpubChapter(
                     id = "intro",
-                    title = "A Careful First Page",
+                    title = "Start Reading",
                     plainText = """
-                        This is the first desktop paginated reader milestone.
+                        Welcome to Episteme on desktop.
 
-                        It intentionally starts with the quiet parts: page state, chapter navigation, font sizing, margins, light and dark reading surfaces, progress, and a JVM EPUB loader. The Android reader remains where it is, which keeps the mobile app protected while Windows grows its own platform layer.
+                        Import a book from Library, open a recent file, or connect a local folder to build a library that stays on this computer.
 
-                        The next pieces can be added one by one: persisted locations, bookmarks, highlights, table of contents polish, keyboard shortcuts, and eventually the richer pagination engine from Android once its platform-specific parts are behind interfaces.
+                        Your reading settings, custom fonts, shelves, folder sync, and theme choices are shared across the desktop experience so the app feels familiar when you move between formats.
                     """.trimIndent()
                 ),
                 SharedEpubChapter(
                     id = "scope",
-                    title = "What Works Here",
+                    title = "Desktop Edition",
                     plainText = """
-                        The desktop shell can import EPUB files and extract readable spine text using the JDK zip APIs. It does not try to render complex CSS, images, MathML, or annotations yet.
+                        Episteme for Windows focuses on local reading first: EPUB, PDF, comic archives, text files, reader themes, annotations, bookmarks, and local folder sync.
 
-                        That limitation is deliberate. A plain paginated reader gives us a working Windows loop without pulling Android WebView, SAF, Room, PDF, or existing reader screens into the first KMP step.
+                        Episteme oss uses the same local-first desktop surface with offline policies enabled, so network-backed features stay hidden while core reading flows remain available.
                     """.trimIndent()
                 )
             )

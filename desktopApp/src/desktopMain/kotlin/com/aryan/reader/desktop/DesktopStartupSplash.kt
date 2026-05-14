@@ -27,8 +27,10 @@ internal data class DesktopStartupSplashSpec(
     val height: Int = 220
 )
 
-internal fun epistemeDesktopStartupSplashSpec(): DesktopStartupSplashSpec {
-    return DesktopStartupSplashSpec()
+internal fun epistemeDesktopStartupSplashSpec(
+    profile: DesktopBuildProfile = currentDesktopBuildProfile()
+): DesktopStartupSplashSpec {
+    return DesktopStartupSplashSpec(title = profile.appName)
 }
 
 internal class DesktopStartupSplash private constructor(
