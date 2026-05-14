@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -47,6 +48,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
@@ -3160,9 +3163,16 @@ private val DesktopPdfAnnotationTools = listOf(
     PdfInkTool.ERASER
 )
 
+private enum class DesktopPdfInspectorTab(val title: String) {
+    VIEW("View"),
+    MARKUP("Markup"),
+    ASSIST("Assist")
+}
+
 private data class DesktopPdfThemeStyle(
     val theme: ReaderTheme,
     val viewerBackgroundColor: Color,
+    val pageBackgroundColor: Color,
     val colorFilter: ColorFilter?,
     val textureBitmap: ImageBitmap?,
     val textureAlpha: Float,
@@ -3176,7 +3186,7 @@ private fun DesktopPdfThemedPageImage(
     themeStyle: DesktopPdfThemeStyle,
     modifier: Modifier = Modifier
 ) {
-    Box(modifier = modifier) {
+    Box(modifier = modifier.background(themeStyle.pageBackgroundColor)) {
         Image(
             bitmap = bitmap,
             contentDescription = contentDescription,
@@ -3214,16 +3224,12 @@ private fun ReaderSettings?.toDesktopPdfReaderSettings(): ReaderSettings {
 
 private fun ReaderSettings.toDesktopPdfThemeStyle(displayMode: PdfDisplayMode): DesktopPdfThemeStyle {
     val theme = toDesktopPdfTheme()
-    val viewerBackground = when (theme.id) {
-        "no_theme", "system" -> if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.White else Color.Black
-        "reverse" -> if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.Black else Color.White
-        else -> theme.backgroundColor.takeIf { it.isSpecified }
-            ?: if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.White else Color.Black
-    }
+    val pageBackground = desktopPdfPageBackgroundColor(theme, displayMode)
     val isDarkTexture = theme.isDark || theme.id == "reverse"
     return DesktopPdfThemeStyle(
         theme = theme,
-        viewerBackgroundColor = viewerBackground,
+        viewerBackgroundColor = pageBackground,
+        pageBackgroundColor = pageBackground,
         colorFilter = theme.toDesktopPdfColorFilter(),
         textureBitmap = DesktopReaderTextures.imageBitmapFor(textureId),
         textureAlpha = if (textureId == null) 0f else textureAlpha.coerceIn(0f, 1f),
@@ -3284,6 +3290,17 @@ private fun ReaderTheme.toDesktopPdfColorFilter(): ColorFilter? {
             )
             ColorFilter.colorMatrix(ColorMatrix(colorMatrix))
         }
+    }
+}
+
+@Composable
+private fun DesktopPdfInspectorSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        content()
     }
 }
 
@@ -3741,6 +3758,7 @@ private fun PdfReaderScreen(
                 initialPageIndex = initialPageIndex,
                 zoomSpec = zoomSpec
             ).copy(
+                displayMode = DesktopDefaultPdfDisplayMode,
                 isTextSelectionMode = true,
                 selectedTool = defaultTool,
                 selectedColorArgb = defaultToolConfig.colorArgb,
@@ -5794,9 +5812,10 @@ private fun PdfReaderScreen(
 
     @Composable
     fun PdfBottomChrome() {
-        val chromeBackground = pdfThemeStyle.viewerBackgroundColor
-        val chromeContent = pdfThemeStyle.theme.textColor.takeIf { it.isSpecified }
-            ?: if (chromeBackground.luminance() < 0.5f) Color.White else Color.Black
+        val chromeBackground = MaterialTheme.colorScheme.surface
+        val chromeContent = MaterialTheme.colorScheme.onSurface
+        val sliderActive = MaterialTheme.colorScheme.primary
+        val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(6.dp),
@@ -5804,50 +5823,63 @@ private fun PdfReaderScreen(
             contentColor = chromeContent,
             tonalElevation = 0.dp,
             shadowElevation = 1.dp,
-            border = BorderStroke(1.dp, chromeContent.copy(alpha = 0.12f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = "Previous page",
-                        tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
-                    )
-                }
-                Text(
-                    "Page ${pageIndex + 1} of ${document.pageCount}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = chromeContent.copy(alpha = 0.72f)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                DesktopPdfJumpHistoryControls(
+                    visible = !isPdfSearchActive,
+                    backPage = jumpHistory.backPage,
+                    forwardPage = jumpHistory.forwardPage,
+                    onBack = ::goBackInJumpHistory,
+                    onForward = ::goForwardInJumpHistory,
+                    onClear = { jumpHistory = jumpHistory.clear() }
                 )
-                if (document.pageCount > 1) {
-                    ReaderMinimalSlider(
-                        value = pageIndex.toFloat(),
-                        onValueChange = ::updatePdfPageScrub,
-                        onValueChangeFinished = ::finishPdfPageScrub,
-                        valueRange = 0f..(document.pageCount - 1).toFloat(),
-                        activeColor = chromeContent.copy(alpha = 0.62f),
-                        inactiveColor = chromeContent.copy(alpha = 0.18f),
-                        thumbColor = chromeContent.copy(alpha = 0.86f),
-                        modifier = Modifier.weight(1f)
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
+                if (!isPdfSearchActive && jumpHistory.hasJumpTargets) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                Text(
-                    "${progressPercent.toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = chromeContent.copy(alpha = 0.72f)
-                )
-                IconButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = "Next page",
-                        tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.NavigateBefore,
+                            contentDescription = "Previous page",
+                            tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+                        )
+                    }
+                    Text(
+                        "Page ${pageIndex + 1} of ${document.pageCount}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = chromeContent.copy(alpha = 0.72f)
                     )
+                    if (document.pageCount > 1) {
+                        ReaderMinimalSlider(
+                            value = pageIndex.toFloat(),
+                            onValueChange = ::updatePdfPageScrub,
+                            onValueChangeFinished = ::finishPdfPageScrub,
+                            valueRange = 0f..(document.pageCount - 1).toFloat(),
+                            activeColor = sliderActive,
+                            inactiveColor = sliderInactive,
+                            thumbColor = sliderActive,
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    Text(
+                        "${progressPercent.toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = chromeContent.copy(alpha = 0.72f)
+                    )
+                    IconButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.NavigateNext,
+                            contentDescription = "Next page",
+                            tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                        )
+                    }
                 }
             }
         }
@@ -5883,7 +5915,15 @@ private fun PdfReaderScreen(
             .focusable(),
         leftSidebar = { _ -> PdfNavigationSidebar() },
         rightInspector = {
-            val pdfInspectorListState = rememberLazyListState()
+            var selectedPdfInspectorTab by remember(document.path) { mutableStateOf(DesktopPdfInspectorTab.VIEW) }
+            val viewInspectorListState = rememberLazyListState()
+            val markupInspectorListState = rememberLazyListState()
+            val assistInspectorListState = rememberLazyListState()
+            val pdfInspectorListState = when (selectedPdfInspectorTab) {
+                DesktopPdfInspectorTab.VIEW -> viewInspectorListState
+                DesktopPdfInspectorTab.MARKUP -> markupInspectorListState
+                DesktopPdfInspectorTab.ASSIST -> assistInspectorListState
+            }
             Surface(
                 modifier = Modifier
                     .width(340.dp)
@@ -5891,234 +5931,253 @@ private fun PdfReaderScreen(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    LazyColumn(
-                        state = pdfInspectorListState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .sharedAcceleratedLazyWheelScroll(pdfInspectorListState, multiplier = 2.8f)
-                            .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                    item {
-                        Text("Tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    }
-                    item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            FilterChip(
-                                selected = displayMode == PdfDisplayMode.PAGINATION,
-                                onClick = {
-                                    commitActiveTextDraft()
-                                    dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.PAGINATION))
-                                },
-                                label = { Text("Page") }
-                            )
-                            FilterChip(
-                                selected = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
-                                onClick = {
-                                    commitActiveTextDraft()
-                                    dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.VERTICAL_SCROLL))
-                                },
-                                label = { Text("Scroll") }
-                            )
-                        }
-                    }
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { goToPage(0) }, enabled = canGoPrevious) {
-                                    Text("First")
-                                }
-                                TextButton(onClick = { goToPage(pageIndex - 1) }, enabled = canGoPrevious) {
-                                    Text("Prev")
-                                }
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { goToPage(pageIndex + 1) }, enabled = canGoNext) {
-                                    Text("Next")
-                                }
-                                TextButton(onClick = { goToPage(document.pageCount - 1) }, enabled = canGoNext) {
-                                    Text("Last")
-                                }
-                            }
-                        }
-                    }
-                    item {
-                        DesktopPdfJumpHistoryControls(
-                            backPage = jumpHistory.backPage,
-                            forwardPage = jumpHistory.forwardPage,
-                            onBack = ::goBackInJumpHistory,
-                            onForward = ::goForwardInJumpHistory,
-                            onClear = { jumpHistory = jumpHistory.clear() }
-                        )
-                    }
-                    if (document.pageCount > 1) {
-                        item {
-                            Text("Page ${pageIndex + 1} of ${document.pageCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            ReaderMinimalSlider(
-                                value = pageIndex.toFloat(),
-                                onValueChange = ::updatePdfPageScrub,
-                                onValueChangeFinished = ::finishPdfPageScrub,
-                                valueRange = 0f..(document.pageCount - 1).toFloat()
-                            )
-                        }
-                    }
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        SharedReaderThemeControls(
-                            settings = pdfReaderSettings,
-                            builtInThemes = BuiltInPdfReaderThemes,
-                            customTextureIds = customTextureIds,
-                            onImportTexture = onImportTexture,
-                            onSettingsChange = ::updatePdfReaderSettings
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text("Visual options", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        DesktopPdfVisualOptionSwitch(
-                            title = "Remove gap between pages",
-                            description = "Applies to vertical reading mode.",
-                            checked = !pdfReaderSettings.pdfVerticalPageGapVisible,
-                            onCheckedChange = { removeGap ->
-                                updatePdfReaderSettings(
-                                    pdfReaderSettings.copy(pdfVerticalPageGapVisible = !removeGap)
+                        Text("PDF tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        ScrollableTabRow(
+                            selectedTabIndex = selectedPdfInspectorTab.ordinal,
+                            edgePadding = 0.dp,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            DesktopPdfInspectorTab.values().forEach { tab ->
+                                Tab(
+                                    selected = selectedPdfInspectorTab == tab,
+                                    onClick = { selectedPdfInspectorTab = tab },
+                                    text = {
+                                        Text(
+                                            tab.title,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 )
                             }
-                        )
-                        DesktopPdfVisualOptionSwitch(
-                            title = "Hide page number overlay",
-                            description = "Removes the small page count label from each page.",
-                            checked = !pdfReaderSettings.pdfPageNumberOverlayVisible,
-                            onCheckedChange = { hideOverlay ->
-                                updatePdfReaderSettings(
-                                    pdfReaderSettings.copy(pdfPageNumberOverlayVisible = !hideOverlay)
-                                )
-                            }
-                        )
-                    }
-                    item {
-                        Text("Zoom", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = {
-                                cancelPendingPdfZoomPreview()
-                                dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
-                            }) {
-                                Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out")
-                            }
-                            Text("${(zoomControlScale * 100).toInt()}%", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                            IconButton(onClick = {
-                                cancelPendingPdfZoomPreview()
-                                dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
-                            }) {
-                                Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
-                            }
                         }
-                        Slider(
-                            value = zoomControlScale,
-                            onValueChange = {
-                                cancelPendingPdfZoomPreview()
-                                dispatchPdf(SharedPdfReaderAction.ZoomChanged(it))
-                            },
-                            valueRange = zoomSpec.min..zoomSpec.max
-                        )
                     }
-                    item {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text("Annotations", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        FilterChip(
-                            selected = isTextSelectionMode,
-                            onClick = {
-                                val enabled = !isTextSelectionMode
-                                if (enabled) {
-                                    deactivateRichTextMode()
-                                }
-                                if (enabled) {
-                                    commitActiveTextDraft()
-                                }
-                                dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(enabled))
-                                if (!enabled) {
-                                    clearPdfInteractionState()
-                                }
-                            },
-                            label = { Text("Select text") }
-                        )
-                        FilterChip(
-                            selected = isRichTextMode,
-                            onClick = {
-                                if (isRichTextMode) {
-                                    deactivateRichTextMode()
-                                } else {
-                                    activateRichTextMode()
-                                }
-                            },
-                            label = { Text("Document text") }
-                        )
-                        SharedPdfAnnotationToolDock(
-                            selectedTool = selectedTool,
-                            selectedColor = selectedColor,
-                            strokeWidth = strokeWidth,
-                            tools = DesktopPdfAnnotationTools,
-                            highlighterPalette = pdfHighlighterColors,
-                            onToolSelected = ::selectPdfAnnotationTool,
-                            onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
-                            onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
-                            onUndo = {
-                                dispatchPdf(SharedPdfReaderAction.UndoLastAnnotationOnPage(pageIndex))
-                            },
-                            onClearPage = {
-                                dispatchPdf(SharedPdfReaderAction.ClearPageAnnotations(pageIndex))
-                            },
-                            isHighlighterSnapEnabled = isHighlighterSnapEnabled,
-                            onHighlighterSnapChange = { isHighlighterSnapEnabled = it }
-                        )
-                        SharedPdfHighlighterPaletteEditor(
-                            palette = pdfHighlighterPalette,
-                            onPaletteChange = ::updatePdfHighlighterPalette,
-                            modifier = Modifier.padding(top = 10.dp)
-                        )
-                    }
-                    if (isRichTextMode || selectedTool == PdfInkTool.TEXT) {
-                        item {
-                            SharedPdfTextAnnotationDock(
-                                style = if (isRichTextMode) {
-                                    richTextController.currentSharedPdfTextStyleConfig()
-                                } else {
-                                    effectiveTextStyleConfig
-                                },
-                                onStyleChange = { style ->
-                                    if (isRichTextMode) {
-                                        richTextController.updateCurrentSharedPdfTextStyle(style)
-                                    } else {
-                                        updateTextStyleConfig(style)
+                    HorizontalDivider()
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        LazyColumn(
+                            state = pdfInspectorListState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .sharedAcceleratedLazyWheelScroll(pdfInspectorListState, multiplier = 2.8f)
+                                .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            when (selectedPdfInspectorTab) {
+                                DesktopPdfInspectorTab.VIEW -> {
+                                    item {
+                                        DesktopPdfInspectorSection("Reading") {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                FilterChip(
+                                                    selected = displayMode == PdfDisplayMode.PAGINATION,
+                                                    onClick = {
+                                                        commitActiveTextDraft()
+                                                        dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.PAGINATION))
+                                                    },
+                                                    label = { Text("Page") }
+                                                )
+                                                FilterChip(
+                                                    selected = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
+                                                    onClick = {
+                                                        commitActiveTextDraft()
+                                                        dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(PdfDisplayMode.VERTICAL_SCROLL))
+                                                    },
+                                                    label = { Text("Scroll") }
+                                                )
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        DesktopPdfInspectorSection("Position") {
+                                            Text("Page ${pageIndex + 1} of ${document.pageCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            if (document.pageCount > 1) {
+                                                ReaderMinimalSlider(
+                                                    value = pageIndex.toFloat(),
+                                                    onValueChange = ::updatePdfPageScrub,
+                                                    onValueChangeFinished = ::finishPdfPageScrub,
+                                                    valueRange = 0f..(document.pageCount - 1).toFloat()
+                                                )
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        DesktopPdfInspectorSection("Appearance") {
+                                            SharedReaderThemeControls(
+                                                settings = pdfReaderSettings,
+                                                builtInThemes = BuiltInPdfReaderThemes,
+                                                customTextureIds = customTextureIds,
+                                                onImportTexture = onImportTexture,
+                                                onSettingsChange = ::updatePdfReaderSettings
+                                            )
+                                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                                            Text("Visual options", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                                            DesktopPdfVisualOptionSwitch(
+                                                title = "Remove gap between pages",
+                                                description = "Applies to vertical reading mode.",
+                                                checked = !pdfReaderSettings.pdfVerticalPageGapVisible,
+                                                onCheckedChange = { removeGap ->
+                                                    updatePdfReaderSettings(
+                                                        pdfReaderSettings.copy(pdfVerticalPageGapVisible = !removeGap)
+                                                    )
+                                                }
+                                            )
+                                            DesktopPdfVisualOptionSwitch(
+                                                title = "Hide page number overlay",
+                                                description = "Removes the small page count label from each page.",
+                                                checked = !pdfReaderSettings.pdfPageNumberOverlayVisible,
+                                                onCheckedChange = { hideOverlay ->
+                                                    updatePdfReaderSettings(
+                                                        pdfReaderSettings.copy(pdfPageNumberOverlayVisible = !hideOverlay)
+                                                    )
+                                                }
+                                            )
+                                        }
+                                    }
+                                    item {
+                                        DesktopPdfInspectorSection("Zoom") {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(onClick = {
+                                                    cancelPendingPdfZoomPreview()
+                                                    dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
+                                                }) {
+                                                    Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out")
+                                                }
+                                                Text("${(zoomControlScale * 100).toInt()}%", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                                                IconButton(onClick = {
+                                                    cancelPendingPdfZoomPreview()
+                                                    dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
+                                                }) {
+                                                    Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
+                                                }
+                                            }
+                                            Slider(
+                                                value = zoomControlScale,
+                                                onValueChange = {
+                                                    cancelPendingPdfZoomPreview()
+                                                    dispatchPdf(SharedPdfReaderAction.ZoomChanged(it))
+                                                },
+                                                valueRange = zoomSpec.min..zoomSpec.max
+                                            )
+                                        }
                                     }
                                 }
-                            )
+                                DesktopPdfInspectorTab.MARKUP -> {
+                                    item {
+                                        DesktopPdfInspectorSection("Interaction") {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                FilterChip(
+                                                    selected = isTextSelectionMode,
+                                                    onClick = {
+                                                        val enabled = !isTextSelectionMode
+                                                        if (enabled) {
+                                                            deactivateRichTextMode()
+                                                            commitActiveTextDraft()
+                                                        }
+                                                        dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(enabled))
+                                                        if (!enabled) {
+                                                            clearPdfInteractionState()
+                                                        }
+                                                    },
+                                                    label = { Text("Select text") }
+                                                )
+                                                FilterChip(
+                                                    selected = isRichTextMode,
+                                                    onClick = {
+                                                        if (isRichTextMode) {
+                                                            deactivateRichTextMode()
+                                                        } else {
+                                                            activateRichTextMode()
+                                                        }
+                                                    },
+                                                    label = { Text("Document text") }
+                                                )
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        DesktopPdfInspectorSection("Annotation tools") {
+                                            SharedPdfAnnotationToolDock(
+                                                selectedTool = selectedTool,
+                                                selectedColor = selectedColor,
+                                                strokeWidth = strokeWidth,
+                                                tools = DesktopPdfAnnotationTools,
+                                                highlighterPalette = pdfHighlighterColors,
+                                                onToolSelected = ::selectPdfAnnotationTool,
+                                                onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
+                                                onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
+                                                onUndo = {
+                                                    dispatchPdf(SharedPdfReaderAction.UndoLastAnnotationOnPage(pageIndex))
+                                                },
+                                                onClearPage = {
+                                                    dispatchPdf(SharedPdfReaderAction.ClearPageAnnotations(pageIndex))
+                                                },
+                                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+                                                onHighlighterSnapChange = { isHighlighterSnapEnabled = it }
+                                            )
+                                        }
+                                    }
+                                    item {
+                                        DesktopPdfInspectorSection("Highlighter palette") {
+                                            SharedPdfHighlighterPaletteEditor(
+                                                palette = pdfHighlighterPalette,
+                                                onPaletteChange = ::updatePdfHighlighterPalette
+                                            )
+                                        }
+                                    }
+                                    if (isRichTextMode || selectedTool == PdfInkTool.TEXT) {
+                                        item {
+                                            DesktopPdfInspectorSection("Text style") {
+                                                SharedPdfTextAnnotationDock(
+                                                    style = if (isRichTextMode) {
+                                                        richTextController.currentSharedPdfTextStyleConfig()
+                                                    } else {
+                                                        effectiveTextStyleConfig
+                                                    },
+                                                    onStyleChange = { style ->
+                                                        if (isRichTextMode) {
+                                                            richTextController.updateCurrentSharedPdfTextStyle(style)
+                                                        } else {
+                                                            updateTextStyleConfig(style)
+                                                        }
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                DesktopPdfInspectorTab.ASSIST -> {
+                                    item {
+                                        DesktopPdfExtrasPanel(
+                                            pageText = currentPdfPageText(),
+                                            recapText = pdfTextBeforeCurrentPage(),
+                                            extrasState = pdfExtrasState,
+                                            aiByokSettings = aiByokSettings,
+                                            externalLookupAvailable = featurePolicy.externalLookup,
+                                            cloudTtsFeatureAvailable = featurePolicy.aiAndCloud,
+                                            onExternalLookup = ::openPdfExternalLookup,
+                                            onAiAction = ::runPdfAiAction,
+                                            onCloudTtsStart = ::startPdfCloudTts,
+                                            onCloudTtsPauseResume = ::pauseResumePdfCloudTts,
+                                            onCloudTtsStop = ::stopPdfCloudTts,
+                                            onCloudTtsClearCache = ::clearPdfCloudTtsCache,
+                                            onAutoScrollChange = ::updatePdfAutoScroll,
+                                            ttsReplacementPreferences = ttsReplacementPreferences,
+                                            ttsReplacementBookId = document.path,
+                                            onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
+                                        )
+                                    }
+                                }
+                            }
                         }
-                    }
-                    item {
-                        DesktopPdfExtrasPanel(
-                            pageText = currentPdfPageText(),
-                            recapText = pdfTextBeforeCurrentPage(),
-                            extrasState = pdfExtrasState,
-                            aiByokSettings = aiByokSettings,
-                            externalLookupAvailable = featurePolicy.externalLookup,
-                            cloudTtsFeatureAvailable = featurePolicy.aiAndCloud,
-                            onExternalLookup = ::openPdfExternalLookup,
-                            onAiAction = ::runPdfAiAction,
-                            onCloudTtsStart = ::startPdfCloudTts,
-                            onCloudTtsPauseResume = ::pauseResumePdfCloudTts,
-                            onCloudTtsStop = ::stopPdfCloudTts,
-                            onCloudTtsClearCache = ::clearPdfCloudTtsCache,
-                            onAutoScrollChange = ::updatePdfAutoScroll,
-                            ttsReplacementPreferences = ttsReplacementPreferences,
-                            ttsReplacementBookId = document.path,
-                            onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
+                        SharedReaderVerticalScrollbar(
+                            listState = pdfInspectorListState,
+                            modifier = Modifier.align(Alignment.CenterEnd)
                         )
                     }
-                    }
-                    SharedReaderVerticalScrollbar(
-                        listState = pdfInspectorListState,
-                        modifier = Modifier.align(Alignment.CenterEnd)
-                    )
                 }
             }
         },
@@ -6127,11 +6186,16 @@ private fun PdfReaderScreen(
             DesktopPdfFullscreenBottomChrome(
                 pageIndex = pageIndex,
                 pageCount = document.pageCount,
-                themeStyle = pdfThemeStyle,
+                showJumpHistory = !isPdfSearchActive,
+                jumpBackPage = jumpHistory.backPage,
+                jumpForwardPage = jumpHistory.forwardPage,
                 onPrevious = { goToPage(pageIndex - 1) },
                 onNext = { goToPage(pageIndex + 1) },
                 onPageScrub = ::updatePdfPageScrub,
-                onPageScrubFinished = ::finishPdfPageScrub
+                onPageScrubFinished = ::finishPdfPageScrub,
+                onJumpBack = ::goBackInJumpHistory,
+                onJumpForward = ::goForwardInJumpHistory,
+                onClearJumpHistory = { jumpHistory = jumpHistory.clear() }
             )
         }
     ) {
@@ -6165,12 +6229,17 @@ private fun PdfReaderScreen(
         if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
             val verticalPageGap = pdfVerticalPageGapDp(
                 isPageGapVisible = pdfReaderSettings.pdfVerticalPageGapVisible,
-                defaultGap = 20.dp
+                defaultGap = DesktopDefaultPdfVerticalPageGap
+            )
+            val verticalViewportBackground = desktopPdfVerticalViewportBackgroundColor(
+                pageBackgroundColor = pdfThemeStyle.pageBackgroundColor,
+                gapBackgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+                isPageGapVisible = pdfReaderSettings.pdfVerticalPageGapVisible
             )
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
+                    .background(verticalViewportBackground, RoundedCornerShape(8.dp))
                     .onGloballyPositioned { coordinates ->
                         pdfZoomViewportRootOffset = coordinates.positionInRoot()
                     }
@@ -6255,7 +6324,7 @@ private fun PdfReaderScreen(
                         listState = verticalListState,
                         pageCount = document.pageCount,
                         currentPage = pageIndex,
-                        isDarkMode = pdfThemeStyle.viewerBackgroundColor.luminance() < 0.5f,
+                        isDarkMode = verticalViewportBackground.luminance() < 0.5f,
                         modifier = Modifier.align(Alignment.CenterEnd)
                     )
                     DesktopPdfPageScrubOverlay(
@@ -6397,6 +6466,7 @@ private fun PdfReaderScreen(
                                     pageRootOffset = paginatedPageRootOffset,
                                     pageCanvasSize = pageCanvasSize
                                 )
+                                .background(pdfThemeStyle.pageBackgroundColor, RoundedCornerShape(2.dp))
                                 .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool, isRichTextMode) {
                                     if (isRichTextMode) return@pointerInput
                                     awaitPointerEventScope {
@@ -6885,70 +6955,70 @@ private fun PdfReaderScreen(
                     isRendering -> CircularProgressIndicator(modifier = Modifier.padding(48.dp))
                     renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
                 }
-                    DesktopPdfPageScrubOverlay(
-                        pageIndex = pageScrubPreview,
-                        pageCount = document.pageCount
-                    )
-            }
-            AnimatedVisibility(
-                visible = showPdfZoomIndicator,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 16.dp, end = 16.dp),
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                DesktopPdfZoomPercentageIndicator(
-                    percentage = (zoomControlScale * 100).roundToInt(),
-                    onResetZoomClick = {
-                        cancelPendingPdfZoomPreview()
-                        dispatchPdf(SharedPdfReaderAction.ZoomChanged(1f))
-                    }
+                DesktopPdfPageScrubOverlay(
+                    pageIndex = pageScrubPreview,
+                    pageCount = document.pageCount
                 )
             }
-            when {
-                selectedTextHighlight != null -> {
-                    DesktopReaderBottomSheet(
-                        title = selectedTextHighlight.desktopSheetTitle(),
-                        onDismiss = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) }
-                    ) {
-                        DesktopPdfAnnotationEditor(
-                            annotation = selectedTextHighlight,
-                            onUpdate = ::updateAnnotation,
-                            onDelete = { deleteAnnotation(selectedTextHighlight.id) },
-                            onClose = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) },
-                            onCopy = {
-                                clipboardManager.setText(AnnotatedString(selectedTextHighlight.text))
-                                dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
-                            },
-                            showSearch = featurePolicy.externalLookup,
-                            highlighterPalette = pdfHighlighterColors,
-                            onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
-                            onSearch = {
-                                openPdfExternalLookup(ReaderExternalLookupAction.SEARCH, selectedTextHighlight.text)
-                                dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
-                            }
-                        )
-                    }
+        }
+        AnimatedVisibility(
+            visible = showPdfZoomIndicator,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 16.dp, end = 16.dp),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            DesktopPdfZoomPercentageIndicator(
+                percentage = (zoomControlScale * 100).roundToInt(),
+                onResetZoomClick = {
+                    cancelPendingPdfZoomPreview()
+                    dispatchPdf(SharedPdfReaderAction.ZoomChanged(1f))
                 }
-                selectedEmbeddedAnnotation != null -> {
-                    DesktopReaderBottomSheet(
-                        title = "PDF comment",
-                        onDismiss = { selectedEmbeddedAnnotationId = null }
-                    ) {
-                        DesktopPdfEmbeddedAnnotationPanel(
-                            annotation = selectedEmbeddedAnnotation,
-                            onCopy = { clipboardManager.setText(AnnotatedString(selectedEmbeddedAnnotation.threadText())) },
-                            onClose = { selectedEmbeddedAnnotationId = null }
-                        )
-                    }
-                }
-                pdfExtrasState.aiResult.hasContent -> {
-                    DesktopReaderAiResultSheet(
-                        result = pdfExtrasState.aiResult,
-                        onDismiss = { pdfExtrasState = pdfExtrasState.copy(aiResult = ReaderAiResultState()) }
+            )
+        }
+        when {
+            selectedTextHighlight != null -> {
+                DesktopReaderBottomSheet(
+                    title = selectedTextHighlight.desktopSheetTitle(),
+                    onDismiss = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) }
+                ) {
+                    DesktopPdfAnnotationEditor(
+                        annotation = selectedTextHighlight,
+                        onUpdate = ::updateAnnotation,
+                        onDelete = { deleteAnnotation(selectedTextHighlight.id) },
+                        onClose = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) },
+                        onCopy = {
+                            clipboardManager.setText(AnnotatedString(selectedTextHighlight.text))
+                            dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                        },
+                        showSearch = featurePolicy.externalLookup,
+                        highlighterPalette = pdfHighlighterColors,
+                        onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
+                        onSearch = {
+                            openPdfExternalLookup(ReaderExternalLookupAction.SEARCH, selectedTextHighlight.text)
+                            dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                        }
                     )
                 }
+            }
+            selectedEmbeddedAnnotation != null -> {
+                DesktopReaderBottomSheet(
+                    title = "PDF comment",
+                    onDismiss = { selectedEmbeddedAnnotationId = null }
+                ) {
+                    DesktopPdfEmbeddedAnnotationPanel(
+                        annotation = selectedEmbeddedAnnotation,
+                        onCopy = { clipboardManager.setText(AnnotatedString(selectedEmbeddedAnnotation.threadText())) },
+                        onClose = { selectedEmbeddedAnnotationId = null }
+                    )
+                }
+            }
+            pdfExtrasState.aiResult.hasContent -> {
+                DesktopReaderAiResultSheet(
+                    result = pdfExtrasState.aiResult,
+                    onDismiss = { pdfExtrasState = pdfExtrasState.copy(aiResult = ReaderAiResultState()) }
+                )
             }
         }
     }
@@ -6958,48 +7028,78 @@ private fun PdfReaderScreen(
 private fun DesktopPdfFullscreenBottomChrome(
     pageIndex: Int,
     pageCount: Int,
-    themeStyle: DesktopPdfThemeStyle,
+    showJumpHistory: Boolean,
+    jumpBackPage: Int?,
+    jumpForwardPage: Int?,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onPageScrub: (Float) -> Unit,
-    onPageScrubFinished: () -> Unit
+    onPageScrubFinished: () -> Unit,
+    onJumpBack: () -> Unit,
+    onJumpForward: () -> Unit,
+    onClearJumpHistory: () -> Unit
 ) {
-    val chromeBackground = themeStyle.viewerBackgroundColor
-    val chromeContent = themeStyle.theme.textColor.takeIf { it.isSpecified }
-        ?: if (chromeBackground.luminance() < 0.5f) Color.White else Color.Black
-    Row(
+    val chromeBackground = MaterialTheme.colorScheme.surface
+    val chromeContent = MaterialTheme.colorScheme.onSurface
+    val sliderActive = MaterialTheme.colorScheme.primary
+    val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
+        shape = RoundedCornerShape(6.dp),
+        color = chromeBackground,
+        contentColor = chromeContent,
+        tonalElevation = 0.dp,
+        shadowElevation = 1.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        val canGoPrevious = pageIndex > 0
-        val canGoNext = pageIndex < pageCount - 1
-        IconButton(onClick = onPrevious, enabled = canGoPrevious) {
-            Icon(
-                Icons.AutoMirrored.Filled.NavigateBefore,
-                contentDescription = "Previous page",
-                tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            val hasJumpTargets = jumpBackPage != null || jumpForwardPage != null
+            DesktopPdfJumpHistoryControls(
+                visible = showJumpHistory,
+                backPage = jumpBackPage,
+                forwardPage = jumpForwardPage,
+                onBack = onJumpBack,
+                onForward = onJumpForward,
+                onClear = onClearJumpHistory
             )
-        }
-        ReaderMinimalSlider(
-            value = pageIndex.toFloat(),
-            onValueChange = onPageScrub,
-            onValueChangeFinished = onPageScrubFinished,
-            valueRange = 0f..(pageCount - 1).coerceAtLeast(0).toFloat(),
-            enabled = pageCount > 1,
-            activeColor = chromeContent.copy(alpha = 0.62f),
-            inactiveColor = chromeContent.copy(alpha = 0.18f),
-            thumbColor = chromeContent.copy(alpha = 0.86f),
-            modifier = Modifier.weight(1f)
-        )
-        IconButton(onClick = onNext, enabled = canGoNext) {
-            Icon(
-                Icons.AutoMirrored.Filled.NavigateNext,
-                contentDescription = "Next page",
-                tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
-            )
+            if (showJumpHistory && hasJumpTargets) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val canGoPrevious = pageIndex > 0
+                val canGoNext = pageIndex < pageCount - 1
+                IconButton(onClick = onPrevious, enabled = canGoPrevious) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateBefore,
+                        contentDescription = "Previous page",
+                        tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+                    )
+                }
+                ReaderMinimalSlider(
+                    value = pageIndex.toFloat(),
+                    onValueChange = onPageScrub,
+                    onValueChangeFinished = onPageScrubFinished,
+                    valueRange = 0f..(pageCount - 1).coerceAtLeast(0).toFloat(),
+                    enabled = pageCount > 1,
+                    activeColor = sliderActive,
+                    inactiveColor = sliderInactive,
+                    thumbColor = sliderActive,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onNext, enabled = canGoNext) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateNext,
+                        contentDescription = "Next page",
+                        tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                    )
+                }
+            }
         }
     }
 }
@@ -7760,6 +7860,8 @@ private fun DesktopPdfExtrasPanel(
 
 @Composable
 private fun DesktopPdfJumpHistoryControls(
+    visible: Boolean,
+    modifier: Modifier = Modifier,
     backPage: Int?,
     forwardPage: Int?,
     onBack: () -> Unit,
@@ -7767,69 +7869,67 @@ private fun DesktopPdfJumpHistoryControls(
     onClear: () -> Unit
 ) {
     val hasJumpTargets = backPage != null || forwardPage != null
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(6.dp)
+    AnimatedVisibility(
+        visible = visible && hasJumpTargets,
+        enter = slideInVertically { fullHeight -> fullHeight } + fadeIn(),
+        exit = slideOutVertically { fullHeight -> fullHeight } + fadeOut(),
+        modifier = modifier.fillMaxWidth()
     ) {
-        Column(
-            modifier = Modifier.padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Jump history",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(
-                    onClick = onClear,
-                    enabled = hasJumpTargets,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(Icons.Default.Close, contentDescription = "Clear jump history")
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            TextButton(
+                onClick = onBack,
+                enabled = backPage != null,
+                modifier = Modifier.weight(1f)
             ) {
-                TextButton(
-                    onClick = onBack,
-                    enabled = backPage != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = "Jump back",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        backPage?.let { "Jump back p. ${it + 1}" } ?: "Jump back",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                TextButton(
-                    onClick = onForward,
-                    enabled = forwardPage != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        forwardPage?.let { "Jump forward p. ${it + 1}" } ?: "Jump forward",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = "Jump forward",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Jump back",
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    backPage?.let { "P. ${it + 1}" } ?: "",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            TextButton(
+                onClick = onClear,
+                modifier = Modifier.weight(0.8f)
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Clear jump history",
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("Clear", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+
+            TextButton(
+                onClick = onForward,
+                enabled = forwardPage != null,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    forwardPage?.let { "P. ${it + 1}" } ?: "",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = "Jump forward",
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }
@@ -8214,7 +8314,7 @@ private fun DesktopVerticalPdfPage(
                     viewportRootOffset = zoomViewportRootOffset,
                     pageRootOffset = pageRootOffset
                 )
-                .background(Color.White, RoundedCornerShape(2.dp))
+                .background(themeStyle.pageBackgroundColor, RoundedCornerShape(2.dp))
                 .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool, isRichTextMode) {
                     if (isRichTextMode) return@pointerInput
                     awaitPointerEventScope {
