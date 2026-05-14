@@ -35,9 +35,11 @@ import org.w3c.dom.Node
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.ByteArrayOutputStream
 import java.net.URLDecoder
 import java.nio.file.Paths
 import java.util.UUID
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -109,6 +111,9 @@ class EpubParser(private val context: Context) {
         private const val BOOK_METADATA_FILE = "book_metadata.json"
         private const val CACHE_MANIFEST_FILE = "epub_cache_manifest.json"
         private const val EPUB_EXTRACTION_CACHE_VERSION = 1
+        private const val MAX_METADATA_ENTRY_BYTES = 4 * 1024 * 1024
+        private const val EPUB_COVER_MAX_DIMENSION = 1024
+        private val EPUB_IMAGE_EXTENSIONS = setOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
     }
 
     internal val String.decodedURL: String
@@ -215,7 +220,12 @@ class EpubParser(private val context: Context) {
                 tempFile.outputStream().use { output ->
                     inputStream.copyTo(output)
                 }
-                filesMap = extractEpubContents(ZipFile(tempFile), extractionDir, parseContent)
+                filesMap = extractEpubContents(
+                    zipFile = ZipFile(tempFile),
+                    extractionDir = extractionDir,
+                    parseContent = parseContent,
+                    extractImagesForMetadata = shouldDeleteExtractionDir
+                )
             } finally {
                 tempFile.delete()
             }
@@ -297,22 +307,40 @@ class EpubParser(private val context: Context) {
         }
     }
 
-    private fun extractEpubContents(zipFile: ZipFile, extractionDir: File, parseContent: Boolean): Map<String, EpubFile> {
+    internal fun extractEpubContents(
+        zipFile: ZipFile,
+        extractionDir: File,
+        parseContent: Boolean,
+        extractImagesForMetadata: Boolean
+    ): Map<String, EpubFile> {
         val filesMap = mutableMapOf<String, EpubFile>()
         zipFile.use { zf ->
             zf.entries().asSequence().filterNot { it.isDirectory }.forEach { entry ->
                 val isEssential = isEssentialFile(entry.name, parseContent)
-                val isImage = entry.name.matches(Regex(".*\\.(png|jpg|jpeg|gif|webp|svg)$", RegexOption.IGNORE_CASE))
+                val isImage = isEpubImageFile(entry.name)
 
                 if (!parseContent) {
-                    if (isEssential || isImage) {
-                        val data = zf.getInputStream(entry).readBytes()
-                        filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
+                    when {
+                        isEssential -> {
+                            val data = zf.readSmallEntryBytes(entry) ?: return@forEach
+                            filesMap[entry.name] = EpubFile(absPath = entry.name, data = data)
+                        }
+                        isImage && extractImagesForMetadata -> {
+                            val outputFile = safeExtractionFile(extractionDir, entry.name)
+                                ?: return@forEach
+                            outputFile.parentFile?.mkdirs()
+                            zf.getInputStream(entry).use { input ->
+                                FileOutputStream(outputFile).use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                            filesMap[entry.name] = EpubFile(absPath = entry.name, data = ByteArray(0))
+                        }
                     }
                     return@forEach
                 }
 
-                val outputFile = File(extractionDir, entry.name)
+                val outputFile = safeExtractionFile(extractionDir, entry.name) ?: return@forEach
                 outputFile.parentFile?.mkdirs()
                 zf.getInputStream(entry).use { input ->
                     FileOutputStream(outputFile).use { output ->
@@ -327,6 +355,59 @@ class EpubParser(private val context: Context) {
             }
         }
         return filesMap
+    }
+
+    private fun isEpubImageFile(fileName: String): Boolean {
+        val lowerName = fileName.lowercase()
+        return EPUB_IMAGE_EXTENSIONS.any { lowerName.endsWith(it) }
+    }
+
+    private fun safeExtractionFile(extractionDir: File, entryName: String): File? {
+        val outputFile = File(extractionDir, entryName)
+        val root = extractionDir.canonicalFile
+        val target = outputFile.canonicalFile
+        val rootPath = root.path
+        val targetPath = target.path
+        val isInsideRoot = targetPath == rootPath || targetPath.startsWith(rootPath + File.separator)
+
+        if (!isInsideRoot) {
+            Timber.w("Skipping unsafe EPUB entry outside extraction root: $entryName")
+            return null
+        }
+
+        return outputFile
+    }
+
+    private fun ZipFile.readSmallEntryBytes(entry: ZipEntry): ByteArray? {
+        if (entry.size > MAX_METADATA_ENTRY_BYTES.toLong()) {
+            Timber.w("Skipping oversized EPUB metadata entry: ${entry.name} (${entry.size} bytes)")
+            return null
+        }
+
+        val initialSize = entry.size
+            .takeIf { it in 0..MAX_METADATA_ENTRY_BYTES.toLong() }
+            ?.toInt()
+            ?: DEFAULT_BUFFER_SIZE
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var totalBytes = 0
+
+        return getInputStream(entry).use { input ->
+            ByteArrayOutputStream(initialSize).use { output ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+
+                    totalBytes += read
+                    if (totalBytes > MAX_METADATA_ENTRY_BYTES) {
+                        Timber.w("Skipping oversized EPUB metadata entry while reading: ${entry.name}")
+                        return null
+                    }
+
+                    output.write(buffer, 0, read)
+                }
+                output.toByteArray()
+            }
+        }
     }
 
     private suspend fun parseAndCreateEbook(
@@ -712,8 +793,6 @@ class EpubParser(private val context: Context) {
         filesContentMap: Map<String, EpubFile>,
         @Suppress("UNUSED_PARAMETER") extractionRoot: File
     ): List<EpubImage> {
-        val imageExtensions = setOf(".png", ".gif", ".jpg", ".jpeg", ".webp", ".svg")
-
         val listedImages = manifestItems.values
             .filter { it.mediaType.startsWith("image/") }
             .map { manifestItem ->
@@ -725,7 +804,7 @@ class EpubParser(private val context: Context) {
         val unlistedImages = filesContentMap.keys
             .filter { path ->
                 val lowerPath = path.lowercase()
-                imageExtensions.any { lowerPath.endsWith(it) } && !listedPaths.contains(path)
+                EPUB_IMAGE_EXTENSIONS.any { lowerPath.endsWith(it) } && !listedPaths.contains(path)
             }
             .map { path ->
                 EpubImage(absPath = path)
@@ -743,11 +822,9 @@ class EpubParser(private val context: Context) {
     ): Bitmap? {
         val coverManifestItem = manifestItems[metadataCoverId]
         if (coverManifestItem != null) {
-            val coverImageBytes = filesContentMap[coverManifestItem.absPath]?.data?.takeIf { it.isNotEmpty() }
-                ?: File(extractionRoot, coverManifestItem.absPath).takeIf { it.exists() }?.readBytes()
-
-            if (coverImageBytes != null) {
-                return BitmapFactory.decodeByteArray(coverImageBytes, 0, coverImageBytes.size)
+            val coverImage = decodeEpubImage(coverManifestItem.absPath, filesContentMap, extractionRoot)
+            if (coverImage != null) {
+                return coverImage
             } else {
                 Timber.e("Cover image file content not found for path: ${coverManifestItem.absPath}")
             }
@@ -768,27 +845,68 @@ class EpubParser(private val context: Context) {
             )
             for (path in possiblePaths) {
                 if (filesContentMap.containsKey(path)) {
-                    val bytes = filesContentMap[path]?.data?.takeIf { it.isNotEmpty() }
-                        ?: File(extractionRoot, path).takeIf { it.exists() }?.readBytes()
-
-                    bytes?.let {
+                    decodeEpubImage(path, filesContentMap, extractionRoot)?.let {
                         Timber.d("Found fallback cover image at $path")
-                        return BitmapFactory.decodeByteArray(it, 0, it.size)
+                        return it
                     }
                 }
                 manifestItems.values.find { item -> item.absPath.equals(path, ignoreCase = true) && item.mediaType.startsWith("image/") }?.let { manifestItem ->
-                    val bytes = filesContentMap[manifestItem.absPath]?.data?.takeIf { it.isNotEmpty() }
-                        ?: File(extractionRoot, manifestItem.absPath).takeIf { it.exists() }?.readBytes()
-
-                    bytes?.let {
+                    decodeEpubImage(manifestItem.absPath, filesContentMap, extractionRoot)?.let {
                         Timber.d("Found fallback cover image via manifest item (case-insensitive) at ${manifestItem.absPath}")
-                        return BitmapFactory.decodeByteArray(it, 0, it.size)
+                        return it
                     }
                 }
             }
         }
         Timber.d("Cover image could not be loaded from metadata or common fallbacks.")
         return null
+    }
+
+    private fun decodeEpubImage(
+        path: String,
+        filesContentMap: Map<String, EpubFile>,
+        extractionRoot: File
+    ): Bitmap? {
+        filesContentMap[path]?.data?.takeIf { it.isNotEmpty() }?.let { bytes ->
+            return decodeSampledByteArray(bytes)
+        }
+
+        val imageFile = File(extractionRoot, path).takeIf { it.exists() && it.isFile } ?: return null
+        return decodeSampledFile(imageFile)
+    }
+
+    private fun decodeSampledByteArray(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = calculateBitmapSampleSize(bounds)
+        }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+
+    private fun decodeSampledFile(file: File): Bitmap? {
+        val bounds = BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = calculateBitmapSampleSize(bounds)
+        }
+        return BitmapFactory.decodeFile(file.absolutePath, options)
+    }
+
+    private fun calculateBitmapSampleSize(options: BitmapFactory.Options): Int {
+        val width = options.outWidth
+        val height = options.outHeight
+        if (width <= 0 || height <= 0) return 1
+
+        var sampleSize = 1
+        while ((width / sampleSize) > EPUB_COVER_MAX_DIMENSION || (height / sampleSize) > EPUB_COVER_MAX_DIMENSION) {
+            sampleSize *= 2
+        }
+        return sampleSize
     }
 
     private fun isEssentialFile(fileName: String, parseContent: Boolean): Boolean {
