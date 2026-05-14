@@ -369,6 +369,23 @@ class HtmlParserTest {
     }
 
     @Test
+    fun htmlToSemanticBlocks_deepInlineWrapperWithBlockDescendant_parsesWithoutSelectorRecursion() {
+        val mathId = "deep-math"
+        val mathPlaceholder = """<math-placeholder id="$mathId" alttext="Deep math"></math-placeholder>"""
+        val nestedHtml = (1..600).fold(mathPlaceholder) { content, _ ->
+            "<span>$content</span>"
+        }
+
+        val blocks = parse(
+            html = nestedHtml,
+            mathSvgCache = mapOf(mathId to "<svg><text>x</text></svg>")
+        )
+
+        assertThat(blocks).hasSize(1)
+        assertThat(blocks.first()).isInstanceOf(SemanticMath::class.java)
+    }
+
+    @Test
     fun htmlToSemanticBlocks_imageWithRootRelativePath_resolvesCorrectly() {
         // SETUP
         val imageRootRelativeSrc = "images/test.jpg"

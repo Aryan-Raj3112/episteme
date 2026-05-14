@@ -116,7 +116,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
@@ -200,6 +199,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
+    private var bannerDismissJob: Job? = null
+    private var bannerDismissGeneration = 0L
     private var pendingSwitchDeferred: CompletableDeferred<Boolean>? = null
     private var externalOpenedBookId: String? = null
 
@@ -1189,17 +1190,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState
                 .map { it.bannerMessage }
                 .distinctUntilChanged()
-                .collectLatest { banner ->
-                    if (banner != null && !banner.isPersistent) {
-                        delay(BANNER_AUTO_DISMISS_MILLIS)
-                        _internalState.update { state ->
-                            if (state.bannerMessage == banner) {
-                                state.copy(bannerMessage = null)
-                            } else {
-                                state
-                            }
-                        }
-                    }
+                .collect { banner ->
+                    scheduleBannerAutoDismiss(banner)
                 }
         }
 
@@ -3603,10 +3595,32 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun bannerMessageShown() {
         _internalState.update { it.copy(bannerMessage = null) }
+        scheduleBannerAutoDismiss(null)
     }
 
     fun showBanner(message: String, isError: Boolean = false, isPersistent: Boolean = false) {
-        _internalState.update { it.copy(bannerMessage = BannerMessage(message, isError, isPersistent)) }
+        val banner = BannerMessage(message, isError, isPersistent)
+        _internalState.update { it.copy(bannerMessage = banner) }
+        scheduleBannerAutoDismiss(banner)
+    }
+
+    private fun scheduleBannerAutoDismiss(banner: BannerMessage?) {
+        if (_internalState.value.bannerMessage != banner) return
+        bannerDismissJob?.cancel()
+        bannerDismissJob = null
+        val generation = ++bannerDismissGeneration
+        if (banner == null || banner.isPersistent) return
+
+        bannerDismissJob = viewModelScope.launch {
+            delay(BANNER_AUTO_DISMISS_MILLIS)
+            _internalState.update { state ->
+                if (generation == bannerDismissGeneration && state.bannerMessage == banner) {
+                    state.copy(bannerMessage = null)
+                } else {
+                    state
+                }
+            }
+        }
     }
 
     fun errorMessageShown() {

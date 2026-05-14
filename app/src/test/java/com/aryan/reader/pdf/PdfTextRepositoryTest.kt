@@ -4,6 +4,7 @@ import android.content.Context
 import com.aryan.reader.SearchResult
 import com.aryan.reader.pdf.data.PdfMetaDao
 import com.aryan.reader.pdf.data.PdfMetadata
+import com.aryan.reader.pdf.data.PdfSearchIndex
 import com.aryan.reader.pdf.data.PdfSearchMatch
 import com.aryan.reader.pdf.data.PdfTextDao
 import com.aryan.reader.pdf.data.PdfTextDatabase
@@ -13,7 +14,6 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.every
-import io.mockk.match
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
@@ -117,13 +117,17 @@ class PdfTextRepositoryTest {
         coEvery { page.openTextPage() } returns textPage
         coEvery { textPage.textPageCountChars() } returns 11
         coEvery { textPage.textPageGetText(0, 11) } returns "hello world"
+        val insertedPageText = slot<PdfSearchIndex>()
 
         repository.indexReaderPage("book", document, 0)
 
         coVerifyOrder {
             dao.deletePageText("book", 0)
-            dao.insertPageText(match { it.bookId == "book" && it.pageIndex == 0 && it.content == "hello world" })
+            dao.insertPageText(capture(insertedPageText))
         }
+        assertEquals("book", insertedPageText.captured.bookId)
+        assertEquals(0, insertedPageText.captured.pageIndex)
+        assertEquals("hello world", insertedPageText.captured.content)
     }
 
     @Test

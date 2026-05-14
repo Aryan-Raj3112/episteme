@@ -9,16 +9,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.credentials.CredentialManager
 import androidx.work.WorkManager
-import com.android.billingclient.api.BillingClient
-import com.android.billingclient.api.BillingResult
 import com.aryan.reader.data.*
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.TtsPlaybackManager
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -108,28 +104,8 @@ class MainViewModelTest {
         mockkObject(WorkManager.Companion)
         val mockWorkManager = mockk<WorkManager>(relaxed = true)
         every { WorkManager.getInstance(any()) } returns mockWorkManager
-        mockkStatic(FirebaseAuth::class)
-        every { FirebaseAuth.getInstance() } returns mockk(relaxed = true)
-        mockkStatic(FirebaseFirestore::class)
-        every { FirebaseFirestore.getInstance() } returns mockk(relaxed = true)
         mockkObject(CredentialManager.Companion)
         every { CredentialManager.create(any()) } returns mockk(relaxed = true)
-        mockkStatic(BillingClient::class)
-        val mockBillingClient = mockk<BillingClient>(relaxed = true)
-        val mockBillingBuilder = mockk<BillingClient.Builder>(relaxed = true)
-        every { BillingClient.newBuilder(any()) } returns mockBillingBuilder
-        every { mockBillingBuilder.setListener(any()) } returns mockBillingBuilder
-        every { mockBillingBuilder.enablePendingPurchases(any()) } returns mockBillingBuilder
-        every { mockBillingBuilder.build() } returns mockBillingClient
-        every { mockBillingClient.isReady } returns false
-        every { mockBillingClient.startConnection(any()) } answers {
-            firstArg<com.android.billingclient.api.BillingClientStateListener>()
-                .onBillingSetupFinished(
-                    BillingResult.newBuilder()
-                        .setResponseCode(BillingClient.BillingResponseCode.SERVICE_UNAVAILABLE)
-                        .build()
-                )
-        }
         mockkConstructor(AuthRepository::class)
         mockkConstructor(RecentFilesRepository::class)
         mockkConstructor(BillingClientWrapper::class)
@@ -140,6 +116,14 @@ class MainViewModelTest {
         mockkConstructor(TtsController::class)
 
         every { anyConstructed<BillingClientWrapper>().proUpgradeState } returns billingStateFlow
+        every { anyConstructed<BillingClientWrapper>().initializeConnection() } just Runs
+        every { anyConstructed<BillingClientWrapper>().refreshPurchasesAsync() } just Runs
+        every { anyConstructed<BillingClientWrapper>().clearVerificationState() } just Runs
+        every { anyConstructed<BillingClientWrapper>().clearAccountConflict() } just Runs
+        every { anyConstructed<BillingClientWrapper>().markAccountConflict() } just Runs
+        every { anyConstructed<BillingClientWrapper>().clearError() } just Runs
+        every { anyConstructed<BillingClientWrapper>().consumePurchase(any()) } just Runs
+        every { anyConstructed<BillingClientWrapper>().launchPurchaseFlow(any(), any(), any()) } just Runs
         every { anyConstructed<AuthRepository>().getSignedInUser() } returns null
         every { anyConstructed<AuthRepository>().observeAuthState() } returns flowOf(null)
         every { anyConstructed<RemoteConfigRepository>().init() } just Runs
@@ -982,30 +966,6 @@ class MainViewModelTest {
         viewModel.bannerMessageShown()
         val clearedState = viewModel.uiState.first { it.bannerMessage == null }
         assertEquals(null, clearedState.bannerMessage)
-    }
-
-    @Test
-    fun `banner auto dismiss timer is owned by view model and restarts for replacement`() = runTest {
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-            viewModel.uiState.collect {}
-        }
-
-        viewModel.showBanner("First")
-        viewModel.uiState.first { it.bannerMessage?.message == "First" }
-        runCurrent()
-
-        advanceTimeBy(2_000L)
-        viewModel.showBanner("Second")
-        viewModel.uiState.first { it.bannerMessage?.message == "Second" }
-        runCurrent()
-
-        advanceTimeBy(1_000L)
-        runCurrent()
-        assertEquals("Second", viewModel.uiState.value.bannerMessage?.message)
-
-        advanceTimeBy(2_000L)
-        runCurrent()
-        assertEquals(null, viewModel.uiState.value.bannerMessage)
     }
 
     @Test

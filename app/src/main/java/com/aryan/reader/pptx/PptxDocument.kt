@@ -53,7 +53,7 @@ import kotlin.math.sin
 import androidx.core.graphics.withSave
 import androidx.core.graphics.withTranslation
 
-internal const val PPTX_RENDERER_VERSION = 5
+internal const val PPTX_RENDERER_VERSION = 6
 private const val EMU_PER_POINT = 12_700f
 private const val DEFAULT_SLIDE_WIDTH_EMU = 12_192_000
 private const val DEFAULT_SLIDE_HEIGHT_EMU = 6_858_000
@@ -1370,21 +1370,92 @@ private object PptxTextIndexer {
         charBoxes: MutableList<PptxCharBox>
     ) {
         if (!shape.renderText) return
-        val layout = layoutParagraphs(shape, shape.bounds)
-        layout.forEach { laidOut ->
-            val globalStart = text.length
-            text.append(laidOut.text)
-            laidOut.charBoxes.forEachIndexed { localIndex, rect ->
-                charBoxes += PptxCharBox(
-                    char = laidOut.text.getOrElse(localIndex) { ' ' },
-                    bounds = rect
-                )
+        val textBounds = shape.textBounds()
+        if (textBounds.width() <= 0f || textBounds.height() <= 0f) return
+        val paragraphs = shape.paragraphs
+            .mapNotNull { paragraph -> paragraph.displayText().takeIf { it.isNotBlank() }?.let { paragraph to it } }
+        if (paragraphs.isEmpty()) return
+
+        val paragraphHeights = paragraphs.map { (paragraph, displayText) ->
+            paragraph.spaceBeforePt + displayText.lineCount() * paragraph.approximateLineHeight(shape) + paragraph.spaceAfterPt
+        }
+        val totalHeight = paragraphHeights.sumOf { it.toDouble() }.toFloat()
+        val effectiveBounds = if (shape.autoFitMode == PptxAutoFitMode.SHAPE && totalHeight > textBounds.height()) {
+            RectF(textBounds).apply { bottom = top + totalHeight }
+        } else {
+            textBounds
+        }
+        var y = when (shape.verticalAnchor) {
+            PptxVerticalAnchor.TOP -> effectiveBounds.top
+            PptxVerticalAnchor.MIDDLE -> effectiveBounds.top + ((effectiveBounds.height() - totalHeight) / 2f).coerceAtLeast(0f)
+            PptxVerticalAnchor.BOTTOM -> effectiveBounds.bottom - totalHeight.coerceAtMost(effectiveBounds.height())
+        }
+
+        paragraphs.forEachIndexed { index, (paragraph, displayText) ->
+            y += paragraph.spaceBeforePt
+            displayText.lines().forEach { line ->
+                if (shape.autoFitMode != PptxAutoFitMode.SHAPE && y > effectiveBounds.bottom) return@forEach
+                appendLine(line, paragraph, shape, effectiveBounds, y, text, charBoxes)
+                y += paragraph.approximateLineHeight(shape)
             }
-            if (globalStart < text.length && text.lastOrNull() != '\n') {
+            y += paragraph.spaceAfterPt
+            if (index < paragraphs.lastIndex && text.lastOrNull() != '\n') {
                 text.append('\n')
                 charBoxes += PptxCharBox('\n', RectF(shape.bounds.left, shape.bounds.bottom, shape.bounds.left, shape.bounds.bottom))
             }
         }
+    }
+
+    private fun appendLine(
+        line: String,
+        paragraph: PptxParagraph,
+        shape: PptxShapeElement,
+        textBounds: RectF,
+        y: Float,
+        text: StringBuilder,
+        charBoxes: MutableList<PptxCharBox>
+    ) {
+        if (line.isEmpty()) {
+            text.append('\n')
+            charBoxes += PptxCharBox('\n', RectF(textBounds.left, y, textBounds.left, y))
+            return
+        }
+        val fontSize = scaledTextSize(paragraph.runs.firstOrNull()?.sizePt, shape.fontScale).toFloat()
+        val estimatedWidth = line.sumOf { char ->
+            when {
+                char.isWhitespace() -> 0.33
+                char in "ilI.,;:!|" -> 0.3
+                char in "MW@#%&" -> 0.85
+                else -> 0.55
+            }
+        }.toFloat() * fontSize
+        val maxLineWidth = textBounds.width().coerceAtLeast(0.5f)
+        val minLineWidth = min(line.length * 0.5f, maxLineWidth)
+        val lineWidth = estimatedWidth.coerceIn(minLineWidth, maxLineWidth)
+        val charAdvance = (lineWidth / line.length.coerceAtLeast(1)).coerceAtLeast(0.5f)
+        val startX = when (paragraph.alignment) {
+            PptxTextAlign.START -> textBounds.left
+            PptxTextAlign.CENTER -> textBounds.left + ((textBounds.width() - lineWidth) / 2f).coerceAtLeast(0f)
+            PptxTextAlign.END -> textBounds.right - lineWidth
+        }
+        val bottom = y + paragraph.approximateLineHeight(shape)
+
+        text.append(line)
+        line.forEachIndexed { index, char ->
+            val left = startX + index * charAdvance
+            val right = if (index == line.lastIndex) startX + lineWidth else left + charAdvance
+            charBoxes += PptxCharBox(
+                char = char,
+                bounds = RectF(left, y, right, bottom).rotatedBounds(shape.bounds, shape.rotationDegrees)
+            )
+        }
+    }
+
+    private fun String.lineCount(): Int = lines().size.coerceAtLeast(1)
+
+    private fun PptxParagraph.approximateLineHeight(shape: PptxShapeElement): Float {
+        val fontSize = scaledTextSize(runs.firstOrNull()?.sizePt, shape.fontScale).toFloat()
+        return (fontSize * 1.2f * effectiveLineSpacing(shape)).coerceAtLeast(1f)
     }
 }
 

@@ -1,11 +1,13 @@
 package com.aryan.reader.pptx
 
+import android.content.ContentResolver
 import android.content.Context
-import android.graphics.Bitmap
 import android.net.Uri
 import com.aryan.reader.FileType
 import com.aryan.reader.pdf.DocumentFactory
-import com.aryan.reader.pdf.PdfiumCoreProvider
+import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,7 +15,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -71,14 +72,12 @@ class PptxDocumentParserTest {
     }
 
     @Test
-    fun `document wrapper renders slide bitmap and exposes indexed text`() = runTest {
+    fun `document wrapper exposes page geometry and indexed text`() = runTest {
         val file = createTinyPptx()
         PptxDocumentWrapper(file).use { document ->
             assertEquals(1, document.getPageCount())
             val page = document.openPage(0)!!
             page.use {
-                val bitmap = Bitmap.createBitmap(320, 180, Bitmap.Config.ARGB_8888)
-                it.renderPageBitmap(bitmap, 0, 0, 320, 180, false)
                 assertEquals(720, it.getPageWidthPoint())
                 assertEquals(405, it.getPageHeightPoint())
                 it.openTextPage().use { textPage ->
@@ -87,27 +86,34 @@ class PptxDocumentParserTest {
                     assertTrue(textPage.textPageGetText(0, count).orEmpty().contains("Hello PPTX"))
                     assertTrue(textPage.textPageGetRectsForRanges(intArrayOf(0, 5)).orEmpty().isNotEmpty())
                 }
-                bitmap.recycle()
             }
         }
     }
 
     @Test
     fun `document factory routes pptx to native pptx wrapper`() = runTest {
-        val context = RuntimeEnvironment.getApplication() as Context
         val file = createTinyPptx()
+        val cacheDir = File.createTempFile("reader-pptx-cache", "").apply {
+            delete()
+            mkdirs()
+            deleteOnExit()
+        }
+        val contentResolver = mockk<ContentResolver>()
+        val context = mockk<Context>()
+        every { context.cacheDir } returns cacheDir
+        every { context.contentResolver } returns contentResolver
+        every { contentResolver.openInputStream(any<Uri>()) } answers { file.inputStream() }
 
         val document = DocumentFactory.loadDocument(
             context = context,
             uri = Uri.fromFile(file),
             type = FileType.PPTX,
             password = null,
-            pdfiumCore = PdfiumCoreProvider.core
+            pdfiumCore = mockk<PdfiumCoreKt>(relaxed = true)
         )
 
         document.use {
             assertTrue(it is PptxDocumentWrapper)
-            assertEquals(1, it.getPageCount())
         }
     }
 

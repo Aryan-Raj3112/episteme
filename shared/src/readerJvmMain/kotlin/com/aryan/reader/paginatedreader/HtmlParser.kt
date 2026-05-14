@@ -36,10 +36,40 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
 import org.jsoup.nodes.TextNode
 import org.jsoup.select.Selector
+import java.util.ArrayDeque
+import java.util.IdentityHashMap
 
 private val unsupportedPseudoElementRegex = Regex("::?(before|after|first-letter|first-line|marker|selection)", RegexOption.IGNORE_CASE)
 private const val MAX_SEMANTIC_TEXT_BLOCK_CHARS = 32_000
 private const val TEXT_APPEND_SLICE_CHARS = 2_048
+private val semanticBlockDescendantTags = setOf(
+    "img",
+    "svg",
+    "math-placeholder",
+    "table",
+    "hr",
+    "div",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "blockquote",
+    "figure",
+    "article",
+    "aside",
+    "header",
+    "footer",
+    "nav",
+    "section",
+    "main"
+)
+private val forcedStandaloneSemanticTags = setOf("img", "svg", "math-placeholder", "hr", "table")
 
 interface HtmlResourceResolver {
     fun resolvePath(chapterAbsPath: String, extractionBasePath: String, src: String): String?
@@ -152,13 +182,14 @@ private class SemanticHtmlParser(
     private val adaptThemeColors: Boolean
 ) {
     private val styleCache = mutableMapOf<String, CssStyle>()
+    private val semanticBlockDescendantCache = IdentityHashMap<Element, Boolean>()
     private var combinedRules: OptimizedCssRules = cssRules
     private val currentFontFamilyMap: MutableMap<String, FontFamily> = fontFamilyMap.toMutableMap()
     private var nextBlockIndex = 0
 
     fun parse(html: String): List<SemanticBlock> {
         val document = Jsoup.parse(html, chapterAbsPath)
-        val inlineCssContent = document.head().select("style").joinToString(separator = "\n") { it.data() }
+        val inlineCssContent = document.head().getElementsByTag("style").joinToString(separator = "\n") { it.data() }
 
         if (inlineCssContent.isNotBlank()) {
             HtmlParserLog.d("Found inline <style> content in $chapterAbsPath. Parsing...")
@@ -183,6 +214,61 @@ private class SemanticHtmlParser(
 
         val body = document.body()
         return parseContainer(body, getElementStyle(body))
+    }
+
+    private inline fun Element.anyChildElement(predicate: (Element) -> Boolean): Boolean {
+        childNodes().forEach { child ->
+            if (child is Element && predicate(child)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun Element.hasSemanticBlockDescendant(): Boolean {
+        semanticBlockDescendantCache[this]?.let { return it }
+
+        if (anyChildElement { child -> child.tagName().lowercase() in semanticBlockDescendantTags }) {
+            semanticBlockDescendantCache[this] = true
+            return true
+        }
+
+        val stack = ArrayDeque<Element>()
+        stack.add(this)
+        val expanded = IdentityHashMap<Element, Boolean>()
+
+        while (stack.isNotEmpty()) {
+            val current = stack.peekLast()
+            if (semanticBlockDescendantCache.containsKey(current)) {
+                stack.removeLast()
+                continue
+            }
+
+            if (expanded.put(current, true) == null) {
+                current.childNodes().forEach { child ->
+                    if (child is Element && !semanticBlockDescendantCache.containsKey(child)) {
+                        stack.add(child)
+                    }
+                }
+                continue
+            }
+
+            stack.removeLast()
+            val hasSemanticDescendant = current.anyChildElement { child ->
+                child.tagName().lowercase() in semanticBlockDescendantTags ||
+                        semanticBlockDescendantCache[child] == true
+            }
+            semanticBlockDescendantCache[current] = hasSemanticDescendant
+        }
+
+        return semanticBlockDescendantCache[this] == true
+    }
+
+    private fun Element.isEffectivelySemanticBlock(): Boolean {
+        val tagName = tagName().lowercase()
+        return isBlock ||
+                tagName in forcedStandaloneSemanticTags ||
+                (!isBlock && hasSemanticBlockDescendant())
     }
 
     private fun parseNodeToSemanticBlocks(
@@ -330,7 +416,7 @@ private class SemanticHtmlParser(
             "math-placeholder" -> parseMathPlaceholderToSemantic(element, elementStyle)
             "img" -> parseImageElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
             "h1", "h2", "h3", "h4", "h5", "h6" -> {
-                val hasNonTextChildren = element.select("img, svg, math-placeholder, table, hr, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, figure, article, aside, header, footer, nav, section, main").isNotEmpty()
+                val hasNonTextChildren = element.hasSemanticBlockDescendant()
                 if (hasNonTextChildren) {
                     val level = tagName.substring(1).toIntOrNull() ?: 1
                     val fontSizeMultiplier = when (level) {
@@ -379,7 +465,7 @@ private class SemanticHtmlParser(
             "hr" -> listOf(SemanticSpacer(style = elementStyle, elementId = elementId, cfi = cfi, blockIndex = nextBlockIndex++))
             "ul", "ol" -> parseListElementToSemantic(element, elementStyle)
             else -> {
-                val hasBlockDescendant = !element.isBlock && element.select("img, svg, math-placeholder, hr, table, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, figure, article, aside, header, footer, nav, section, main").isNotEmpty()
+                val hasBlockDescendant = !element.isBlock && element.hasSemanticBlockDescendant()
                 if (element.isBlock || hasBlockDescendant) {
                     parseContainer(element, elementStyle)
                 } else {
@@ -442,9 +528,7 @@ private class SemanticHtmlParser(
 
         element.childNodes().forEach { node ->
             if (node is Element) {
-                val tagName = node.tagName().lowercase()
-                val isEffectivelyBlock = node.isBlock || tagName in listOf("img", "svg", "math-placeholder", "hr") ||
-                        (!node.isBlock && node.select("img, svg, math-placeholder, hr, table, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, figure, article, aside, header, footer, nav, section, main").isNotEmpty())
+                val isEffectivelyBlock = node.isEffectivelySemanticBlock()
 
                 if (isEffectivelyBlock) {
                     flushTextBuffer()
@@ -665,7 +749,7 @@ private class SemanticHtmlParser(
         var svgViewBox: String? = null
         if (svgContent != null) {
             val svgDoc = Jsoup.parse(svgContent)
-            svgDoc.selectFirst("svg")?.let {
+            svgDoc.getElementsByTag("svg").firstOrNull()?.let {
                 svgWidth = it.attr("width")
                 svgHeight = it.attr("height")
                 svgViewBox = it.attr("viewBox")
@@ -697,7 +781,7 @@ private class SemanticHtmlParser(
 
             return SemanticImage(
                 path = imagePath,
-                altText = svgElement.selectFirst("title")?.text() ?: "Cover Image",
+                altText = svgElement.getElementsByTag("title").firstOrNull()?.text() ?: "Cover Image",
                 intrinsicWidth = width,
                 intrinsicHeight = height,
                 style = style,
@@ -708,8 +792,8 @@ private class SemanticHtmlParser(
         }
 
         HtmlParserLog.d("Parsing genuine SVG content into SemanticMath block.")
-        val title = svgElement.selectFirst("title")?.text()
-        val desc = svgElement.selectFirst("desc")?.text()
+        val title = svgElement.getElementsByTag("title").firstOrNull()?.text()
+        val desc = svgElement.getElementsByTag("desc").firstOrNull()?.text()
         val altText = title ?: desc ?: "SVG Image"
 
         return SemanticMath(
@@ -777,7 +861,7 @@ private class SemanticHtmlParser(
     }
 
     private fun parseTableElementToSemantic(tableElement: Element, tableStyle: CssStyle): SemanticTable? {
-        val rows = tableElement.select("tr").mapNotNull { rowElement ->
+        val rows = tableElement.getElementsByTag("tr").mapNotNull { rowElement ->
             val rowStyle = getElementStyle(rowElement)
             if (rowStyle.display == "none") return@mapNotNull null
 
