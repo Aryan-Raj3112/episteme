@@ -150,7 +150,6 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import timber.log.Timber
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -1449,8 +1448,6 @@ private fun AddBooksModeScreen(
 
 @Composable
 private fun ShelfCover(shelf: Shelf) {
-    val context = LocalContext.current
-    val placeholder = R.drawable.epub_placeholder
     val booksForCovers = shelf.books.take(4).reversed()
     val coverWidth = 52.dp
     val coverHeight = 75.dp
@@ -1464,22 +1461,24 @@ private fun ShelfCover(shelf: Shelf) {
         contentAlignment = Alignment.CenterStart
     ) {
         if (booksForCovers.size <= 1) {
-            val imageModel = remember(shelf.topBook?.coverImagePath) {
-                shelf.topBook?.coverImagePath?.let { File(it) } ?: placeholder
+            val topBook = shelf.topBook
+            if (topBook != null) {
+                ThemedBookCover(
+                    item = topBook,
+                    contentDescription = stringResource(R.string.content_desc_shelf_cover, shelf.name),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(width = coverWidth, height = coverHeight)
+                        .clip(MaterialTheme.shapes.small)
+                )
+            } else {
+                EmptyShelfCover(
+                    shelfName = shelf.name,
+                    modifier = Modifier
+                        .size(width = coverWidth, height = coverHeight)
+                        .clip(MaterialTheme.shapes.small)
+                )
             }
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(imageModel)
-                    .error(placeholder)
-                    .fallback(placeholder)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = stringResource(R.string.content_desc_shelf_cover, shelf.name),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(width = coverWidth, height = coverHeight)
-                    .clip(MaterialTheme.shapes.small)
-            )
         } else {
             Box(
                 modifier = Modifier
@@ -1487,9 +1486,6 @@ private fun ShelfCover(shelf: Shelf) {
                     .height(coverHeight)
             ) {
                 booksForCovers.forEachIndexed { index, book ->
-                    val imageModel = remember(book.coverImagePath) {
-                        book.coverImagePath?.let { File(it) } ?: placeholder
-                    }
                     Surface(
                         shape = MaterialTheme.shapes.small,
                         shadowElevation = 4.dp,
@@ -1498,13 +1494,8 @@ private fun ShelfCover(shelf: Shelf) {
                             .align(Alignment.CenterEnd)
                             .offset(x = -horizontalOffset * index)
                     ) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(imageModel)
-                                .error(placeholder)
-                                .fallback(placeholder)
-                                .crossfade(true)
-                                .build(),
+                        ThemedBookCover(
+                            item = book,
                             contentDescription = null,
                             contentScale = ContentScale.Crop
                         )
@@ -1512,6 +1503,36 @@ private fun ShelfCover(shelf: Shelf) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EmptyShelfCover(
+    shelfName: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .background(
+                androidx.compose.ui.graphics.Brush.linearGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                )
+            )
+            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = shelfName.takeIf { it.isNotBlank() } ?: stringResource(R.string.tab_shelves),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(8.dp)
+        )
     }
 }
 
@@ -1603,15 +1624,6 @@ private fun LibraryListItem(
     onItemLongClick: () -> Unit,
     isDownloading: Boolean,
 ) {
-    val context = LocalContext.current
-    val placeholder = when (item.type) {
-        FileType.PDF, FileType.PPTX -> R.drawable.pdf_placeholder
-        FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.DOCX, FileType.ODT, FileType.FODT, FileType.UNKNOWN -> R.drawable.epub_placeholder
-    }
-    val imageModel = remember(item.coverImagePath) {
-        item.coverImagePath?.let { File(it) } ?: placeholder
-    }
-
     androidx.compose.material3.ElevatedCard(
         shape = MaterialTheme.shapes.large,
         colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
@@ -1648,13 +1660,8 @@ private fun LibraryListItem(
                     .clip(MaterialTheme.shapes.medium)
                     .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), MaterialTheme.shapes.medium)
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(imageModel)
-                        .error(placeholder)
-                        .fallback(placeholder)
-                        .crossfade(true)
-                        .build(),
+                ThemedBookCover(
+                    item = item,
                     contentDescription = item.displayName,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

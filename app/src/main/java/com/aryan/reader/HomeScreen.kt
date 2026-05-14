@@ -143,7 +143,6 @@ import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -794,16 +793,8 @@ fun RecentFileCard(
     onLongClick: () -> Unit,
     isDownloading: Boolean,
 ) {
-    val context = LocalContext.current
     val progressPercent = item.progressPercentage?.takeIf { it > 0f }?.coerceIn(0f, 100f)?.toInt()
     val authorText = item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) } ?: " "
-    val placeholder = when (item.type) {
-        FileType.PDF, FileType.PPTX -> R.drawable.pdf_placeholder
-        FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.MD, FileType.TXT, FileType.HTML, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.DOCX, FileType.ODT, FileType.FODT, FileType.UNKNOWN -> R.drawable.epub_placeholder
-    }
-    val imageModel = remember(item.coverImagePath) {
-        item.coverImagePath?.let { File(it) } ?: placeholder
-    }
 
     androidx.compose.material3.ElevatedCard(
         modifier = modifier
@@ -828,24 +819,25 @@ fun RecentFileCard(
                     .fillMaxWidth()
                     .aspectRatio(0.74f)
             ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data(imageModel).error(placeholder)
-                        .fallback(placeholder).crossfade(true).build(),
+                ThemedBookCover(
+                    item = item,
                     contentDescription = item.displayName,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
 
-                Box(
-                    modifier = Modifier.fillMaxSize().background(
-                        androidx.compose.ui.graphics.Brush.verticalGradient(
-                            0f to Color.Black.copy(alpha = 0.15f),
-                            0.3f to Color.Transparent,
-                            0.6f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.5f)
+                if (!item.coverImagePath.isNullOrBlank()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0.15f),
+                                0.3f to Color.Transparent,
+                                0.6f to Color.Transparent,
+                                1f to Color.Black.copy(alpha = 0.5f)
+                            )
                         )
                     )
-                )
+                }
 
                 if (item.sourceFolderUri != null || item.isOpdsStream() || isPinned) {
                     FileStatusBadges(
