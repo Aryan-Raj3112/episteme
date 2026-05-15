@@ -23,6 +23,9 @@ package com.aryan.reader
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.text.TextUtils
+import android.text.method.LinkMovementMethod
+import android.widget.TextView
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -111,7 +114,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -134,9 +139,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
+import androidx.core.text.HtmlCompat
 import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.ui.SharedMarkdownText
 import timber.log.Timber
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -390,6 +398,7 @@ fun FileInfoDialog(
         mutableStateOf(item.seriesIndex?.formatMetadataNumber().orEmpty())
     }
     var descriptionInput by remember(item.bookId, item.description) { mutableStateOf(item.description.orEmpty()) }
+    var showRestoreConfirmation by remember(item.bookId) { mutableStateOf(false) }
 
     val formattedDate = remember(item.timestamp) {
         SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(item.timestamp))
@@ -437,15 +446,13 @@ fun FileInfoDialog(
                 FileInfoTopBar(
                     title = if (isEditing) "Edit metadata" else stringResource(R.string.file_information),
                     subtitle = item.cardTitle(),
-                    isEditing = isEditing,
                     onClose = {
                         if (isEditing) {
                             isEditing = false
                         } else {
                             onDismiss()
                         }
-                    },
-                    onEdit = { isEditing = true }
+                    }
                 )
 
                 HorizontalDivider()
@@ -468,8 +475,7 @@ fun FileInfoDialog(
                             seriesIndexInput = seriesIndexInput,
                             onSeriesIndexChange = { seriesIndexInput = it },
                             descriptionInput = descriptionInput,
-                            onDescriptionChange = { descriptionInput = it },
-                            originalItem = item
+                            onDescriptionChange = { descriptionInput = it }
                         )
                     } else {
                         BookMetadataInfoContent(
@@ -497,8 +503,7 @@ fun FileInfoDialog(
                         }
                     },
                     onRestore = {
-                        onRestoreMetadata()
-                        onDismiss()
+                        showRestoreConfirmation = true
                     },
                     onSave = {
                         onSaveMetadata(
@@ -517,15 +522,42 @@ fun FileInfoDialog(
             }
         }
     }
+
+    if (showRestoreConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showRestoreConfirmation = false },
+            icon = { Icon(Icons.Default.Restore, contentDescription = null) },
+            title = { Text("Restore original metadata?") },
+            text = {
+                Text(
+                    "This will restore the title, author, series, and summary saved from the original file metadata. It will also clear any custom display name. Reading progress, tags, notes, and the file itself will not change."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRestoreConfirmation = false
+                        onRestoreMetadata()
+                        onDismiss()
+                    }
+                ) {
+                    Text("Restore")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestoreConfirmation = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
 private fun FileInfoTopBar(
     title: String,
     subtitle: String,
-    isEditing: Boolean,
-    onClose: () -> Unit,
-    onEdit: () -> Unit
+    onClose: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -549,13 +581,6 @@ private fun FileInfoTopBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-        }
-        if (!isEditing) {
-            FilledTonalButton(onClick = onEdit) {
-                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Edit")
-            }
         }
     }
 }
@@ -601,18 +626,6 @@ private fun BookMetadataInfoContent(
         }
     }
 
-    item.description?.takeIf { it.isNotBlank() }?.let { summary ->
-        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                ExpandableValueText(summary, collapsedMaxLines = 4)
-            }
-        }
-    }
-
     FileInfoSection(title = "Metadata") {
         InfoRowDetailed("Title", item.title?.takeIf { it.isNotBlank() } ?: item.displayName, maxLines = 3)
         item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
@@ -630,7 +643,6 @@ private fun BookMetadataInfoContent(
         InfoRowDetailed("File name", item.displayName, maxLines = 2)
         InfoRowDetailed(stringResource(R.string.added), formattedDate)
         lastModifiedDate?.let { InfoRowDetailed("Modified", it) }
-        InfoRowDetailed("Availability", if (item.isAvailable) "Available" else "Missing from device")
         InfoRowDetailed(
             label = stringResource(R.string.location),
             value = pathText,
@@ -639,12 +651,15 @@ private fun BookMetadataInfoContent(
         )
     }
 
-    if (hasMetadataChanges) {
-        FileInfoSection(title = "Original Metadata") {
-            item.originalTitle?.takeIf { it.isNotBlank() }?.let { InfoRowDetailed("Title", it, maxLines = 3) }
-            item.originalAuthor?.takeIf { it.isNotBlank() }?.let { InfoRowDetailed(stringResource(R.string.author), it, maxLines = 2) }
-            item.originalSeriesLabel()?.let { InfoRowDetailed("Series", it, maxLines = 2) }
-            item.originalDescription?.takeIf { it.isNotBlank() }?.let { InfoRowDetailed("Summary", it, maxLines = 4) }
+    item.description?.takeIf { it.isNotBlank() }?.let { summary ->
+        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                ExpandableSummaryText(summary, collapsedMaxLines = 4)
+            }
         }
     }
 
@@ -681,8 +696,7 @@ private fun BookMetadataEditContent(
     seriesIndexInput: String,
     onSeriesIndexChange: (String) -> Unit,
     descriptionInput: String,
-    onDescriptionChange: (String) -> Unit,
-    originalItem: RecentFileItem
+    onDescriptionChange: (String) -> Unit
 ) {
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -695,12 +709,7 @@ private fun BookMetadataEditContent(
                 onValueChange = onTitleChange,
                 label = { Text("Title") },
                 modifier = Modifier.fillMaxWidth(),
-                maxLines = 3,
-                supportingText = {
-                    originalItem.originalTitle?.takeIf { it.isNotBlank() && it != titleInput.trim() }?.let {
-                        Text("Original: $it", maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                }
+                maxLines = 3
             )
             OutlinedTextField(
                 value = authorInput,
@@ -876,6 +885,83 @@ private fun ExpandableValueText(
     }
 }
 
+@Composable
+private fun ExpandableSummaryText(
+    value: String,
+    collapsedMaxLines: Int
+) {
+    var expanded by remember(value) { mutableStateOf(false) }
+    val canExpand = value.length > 220 || value.count { it == '\n' } >= collapsedMaxLines || value.looksLikeHtml()
+    val contentModifier = if (expanded) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = (collapsedMaxLines * 26).dp)
+            .clipToBounds()
+    }
+
+    if (value.looksLikeHtml()) {
+        HtmlSummaryText(
+            html = value,
+            expanded = expanded,
+            collapsedMaxLines = collapsedMaxLines,
+            modifier = Modifier.fillMaxWidth()
+        )
+    } else {
+        Box(modifier = contentModifier) {
+            SharedMarkdownText(
+                markdown = value,
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+
+    if (canExpand) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier.height(32.dp)
+        ) {
+            Text(if (expanded) "Less" else "...more")
+            Spacer(modifier = Modifier.width(2.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun HtmlSummaryText(
+    html: String,
+    expanded: Boolean,
+    collapsedMaxLines: Int,
+    modifier: Modifier = Modifier
+) {
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            TextView(context).apply {
+                includeFontPadding = false
+                movementMethod = LinkMovementMethod.getInstance()
+            }
+        },
+        update = { textView ->
+            textView.text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT)
+            textView.setTextColor(textColor)
+            textView.setLinkTextColor(linkColor)
+            textView.maxLines = if (expanded) Int.MAX_VALUE else collapsedMaxLines
+            textView.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
+        }
+    )
+}
+
 private fun RecentFileItem.resolveDisplayPath(context: Context, isOpdsStream: Boolean): String {
     return if (isOpdsStream) {
         "Source: OPDS Stream"
@@ -913,6 +999,11 @@ private fun RecentFileItem.resolveDisplayPath(context: Context, isOpdsStream: Bo
     }
 }
 
+private fun String.looksLikeHtml(): Boolean {
+    return contains(Regex("<\\s*/?\\s*(p|br|div|span|strong|em|ul|ol|li|h[1-6]|blockquote|a|b|i)\\b", RegexOption.IGNORE_CASE)) ||
+        contains(Regex("&(#\\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);"))
+}
+
 private fun RecentFileItem.hasOriginalMetadata(): Boolean {
     return listOf(originalTitle, originalAuthor, originalSeriesName, originalDescription).any { !it.isNullOrBlank() } ||
         originalSeriesIndex != null
@@ -934,11 +1025,6 @@ private fun metadataValueChanged(current: String?, original: String?): Boolean {
 private fun RecentFileItem.seriesLabel(): String? {
     val series = seriesName?.trim()?.takeIf { it.isNotBlank() } ?: return null
     return seriesIndex?.takeIf { it > 0.0 }?.let { "$series #${it.formatMetadataNumber()}" } ?: series
-}
-
-private fun RecentFileItem.originalSeriesLabel(): String? {
-    val series = originalSeriesName?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    return originalSeriesIndex?.takeIf { it > 0.0 }?.let { "$series #${it.formatMetadataNumber()}" } ?: series
 }
 
 private fun RecentFileItem.readingProgressText(): String {

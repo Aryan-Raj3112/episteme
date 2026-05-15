@@ -320,7 +320,6 @@ import com.aryan.reader.shared.ui.SharedAppTab
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
 import com.aryan.reader.shared.ui.SharedAboutScreen
-import com.aryan.reader.shared.ui.SharedBookEditDialog
 import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
@@ -1082,7 +1081,7 @@ private fun EpistemeDesktopApp(
     var settingsQuery by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
-    var bookEditDialogFor by remember { mutableStateOf<BookItem?>(null) }
+    var bookInfoInitiallyEditing by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
     var opdsState by remember { mutableStateOf(opdsController.state) }
@@ -2358,8 +2357,14 @@ private fun EpistemeDesktopApp(
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
                             onRemoveSelected = ::removeSelectedBooks,
-                            onShowBookInfo = { bookInfoDialogFor = it },
-                            onEditBook = { bookEditDialogFor = it },
+                            onShowBookInfo = {
+                                bookInfoInitiallyEditing = false
+                                bookInfoDialogFor = it
+                            },
+                            onEditBook = {
+                                bookInfoInitiallyEditing = true
+                                bookInfoDialogFor = it
+                            },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
                             onAddSelectedBooksToShelf = { showAddToShelfDialog = true },
                             onOpenTab = ::openReader,
@@ -2468,8 +2473,14 @@ private fun EpistemeDesktopApp(
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
                             onRemoveSelected = ::removeSelectedBooks,
-                            onShowBookInfo = { bookInfoDialogFor = it },
-                            onEditBook = { bookEditDialogFor = it },
+                            onShowBookInfo = {
+                                bookInfoInitiallyEditing = false
+                                bookInfoDialogFor = it
+                            },
+                            onEditBook = {
+                                bookInfoInitiallyEditing = true
+                                bookInfoDialogFor = it
+                            },
                             onCreateShelf = { showCreateShelfDialog = true },
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
@@ -2488,8 +2499,14 @@ private fun EpistemeDesktopApp(
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             selectedBookIds = state.selectedBookIds,
                             pinnedBookIds = state.pinnedLibraryBookIds,
-                            onShowBookInfo = { bookInfoDialogFor = it },
-                            onEditBook = { bookEditDialogFor = it },
+                            onShowBookInfo = {
+                                bookInfoInitiallyEditing = false
+                                bookInfoDialogFor = it
+                            },
+                            onEditBook = {
+                                bookInfoInitiallyEditing = true
+                                bookInfoDialogFor = it
+                            },
                             onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) },
                             onCreateShelf = { showCreateShelfDialog = true },
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
@@ -2808,22 +2825,21 @@ private fun EpistemeDesktopApp(
         bookInfoDialogFor?.let { book ->
             SharedBookInfoDialog(
                 book = book,
-                onDismiss = { bookInfoDialogFor = null },
-                onEdit = {
-                    bookEditDialogFor = book
-                    bookInfoDialogFor = null
-                }
-            )
-        }
-
-        bookEditDialogFor?.let { book ->
-            SharedBookEditDialog(
-                book = book,
                 knownTags = state.allTags,
-                onDismiss = { bookEditDialogFor = null },
+                initiallyEditing = bookInfoInitiallyEditing,
+                onDismiss = {
+                    bookInfoInitiallyEditing = false
+                    bookInfoDialogFor = null
+                },
                 onSave = { updated ->
                     updateBookMetadata(updated)
-                    bookEditDialogFor = null
+                    bookInfoInitiallyEditing = false
+                    bookInfoDialogFor = null
+                },
+                onRestore = { restored ->
+                    updateBookMetadata(restored)
+                    bookInfoInitiallyEditing = false
+                    bookInfoDialogFor = null
                 }
             )
         }
@@ -3041,6 +3057,26 @@ private fun BookItem.withDesktopImportMetadata(
         } else {
             author
         },
+        description = if (shouldApplyText(description, original?.description)) {
+            enriched.description ?: description
+        } else {
+            description
+        },
+        seriesName = if (shouldApplyText(seriesName, original?.seriesName)) {
+            enriched.seriesName ?: seriesName
+        } else {
+            seriesName
+        },
+        seriesIndex = if (seriesIndex == null || seriesIndex == original?.seriesIndex) {
+            enriched.seriesIndex ?: seriesIndex
+        } else {
+            seriesIndex
+        },
+        originalTitle = originalTitle ?: enriched.originalTitle ?: enriched.title,
+        originalAuthor = originalAuthor ?: enriched.originalAuthor ?: enriched.author,
+        originalSeriesName = originalSeriesName ?: enriched.originalSeriesName ?: enriched.seriesName,
+        originalSeriesIndex = originalSeriesIndex ?: enriched.originalSeriesIndex ?: enriched.seriesIndex,
+        originalDescription = originalDescription ?: enriched.originalDescription ?: enriched.description,
         fileSize = enriched.fileSize.takeIf { it > 0L } ?: fileSize,
         coverImagePath = coverImagePath?.takeIf { File(it).isFile } ?: enriched.coverImagePath,
         folderTextMetadataParsed = folderTextMetadataParsed || enriched.folderTextMetadataParsed

@@ -24,6 +24,7 @@ class DesktopFolderMetadataExtractorTest {
                   <metadata>
                     <dc:title>Direct EPUB</dc:title>
                     <dc:creator>Ada Lovelace</dc:creator>
+                    <dc:description>&lt;p&gt;Metadata summary&lt;/p&gt;</dc:description>
                     <meta name="cover" content="cover-image" />
                   </metadata>
                   <manifest>
@@ -42,6 +43,10 @@ class DesktopFolderMetadataExtractorTest {
         val enriched = result.books.single()
         assertEquals("Direct EPUB", enriched.title)
         assertEquals("Ada Lovelace", enriched.author)
+        assertEquals("<p>Metadata summary</p>", enriched.description)
+        assertEquals("Direct EPUB", enriched.originalTitle)
+        assertEquals("Ada Lovelace", enriched.originalAuthor)
+        assertEquals("<p>Metadata summary</p>", enriched.originalDescription)
         assertTrue(enriched.folderTextMetadataParsed)
         assertTrue(File(assertNotNull(enriched.coverImagePath)).isFile)
         assertEquals(1, result.stats.updatedBooks)

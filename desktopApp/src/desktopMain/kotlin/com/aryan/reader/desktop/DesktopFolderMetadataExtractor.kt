@@ -112,27 +112,31 @@ object DesktopFolderMetadataExtractor {
     private fun enrichBook(book: BookItem): BookItem {
         val file = File(book.path.orEmpty())
         val size = file.length().takeIf { it > 0L } ?: book.fileSize
-        var title = book.title
-        var author = book.author
+        var extractedTitle: String? = null
+        var extractedAuthor: String? = null
+        var extractedDescription: String? = null
         var textMetadataParsed = book.folderTextMetadataParsed
         var embeddedCover: EmbeddedCover? = null
 
         when (book.type) {
             FileType.EPUB -> {
                 val metadata = parseEpubMetadata(file)
-                title = sanitizeTitle(metadata.title) ?: title
-                author = sanitizeAuthor(metadata.author) ?: author
+                extractedTitle = sanitizeTitle(metadata.title)
+                extractedAuthor = sanitizeAuthor(metadata.author)
+                extractedDescription = sanitizeDescription(metadata.description)
                 embeddedCover = metadata.cover
                 textMetadataParsed = true
             }
             FileType.PDF -> {
                 val metadata = runCatching { DesktopPdfium.extractMetadata(file) }.getOrNull()
-                title = sanitizeTitle(metadata?.title) ?: title
-                author = sanitizeAuthor(metadata?.author) ?: author
+                extractedTitle = sanitizeTitle(metadata?.title)
+                extractedAuthor = sanitizeAuthor(metadata?.author)
+                extractedDescription = sanitizeDescription(metadata?.description)
                 textMetadataParsed = true
             }
             FileType.HTML -> {
-                title = sanitizeTitle(parseHtmlTitle(file)) ?: title
+                extractedTitle = sanitizeTitle(parseHtmlTitle(file))
+                extractedDescription = sanitizeDescription(parseHtmlDescription(file))
                 textMetadataParsed = true
             }
             FileType.MOBI,
@@ -142,8 +146,8 @@ object DesktopFolderMetadataExtractor {
             FileType.FODT -> {
                 runCatching { SharedJvmBookLoader.load(file, book.type) }
                     .onSuccess { loaded ->
-                        title = sanitizeTitle(loaded.title) ?: title
-                        author = sanitizeAuthor(loaded.author) ?: author
+                        extractedTitle = sanitizeTitle(loaded.title)
+                        extractedAuthor = sanitizeAuthor(loaded.author)
                         textMetadataParsed = true
                     }
             }
@@ -155,9 +159,29 @@ object DesktopFolderMetadataExtractor {
             ?: renderReaderSurfaceCover(book, file)
             ?: saveGeneratedCover(book)
 
+        val nextTitle = if (book.shouldApplyExtractedTitle(file)) {
+            extractedTitle ?: book.title ?: file.nameWithoutExtension
+        } else {
+            book.title
+        }
+        val nextAuthor = if (book.shouldApplyExtractedText(book.author, book.originalAuthor)) {
+            extractedAuthor ?: book.author
+        } else {
+            book.author
+        }
+        val nextDescription = if (book.shouldApplyExtractedText(book.description, book.originalDescription)) {
+            extractedDescription ?: book.description
+        } else {
+            book.description
+        }
+
         return book.copy(
-            title = title ?: file.nameWithoutExtension,
-            author = author,
+            title = nextTitle,
+            author = nextAuthor,
+            description = nextDescription,
+            originalTitle = book.originalTitle ?: extractedTitle,
+            originalAuthor = book.originalAuthor ?: extractedAuthor,
+            originalDescription = book.originalDescription ?: extractedDescription,
             fileSize = size,
             coverImagePath = coverPath,
             folderTextMetadataParsed = textMetadataParsed
@@ -189,6 +213,7 @@ object DesktopFolderMetadataExtractor {
             return ExtractedBookMetadata(
                 title = opf.tagText("title"),
                 author = opf.tagText("creator"),
+                description = opf.tagInnerContent("description"),
                 cover = cover
             )
         }
@@ -252,6 +277,35 @@ object DesktopFolderMetadataExtractor {
                 }
             }
             head.tagText("title")
+        }.getOrNull()
+    }
+
+    private fun parseHtmlDescription(file: File): String? {
+        return runCatching {
+            val head = file.inputStream().bufferedReader(Charsets.UTF_8).use { reader ->
+                buildString {
+                    var remaining = 64 * 1024
+                    val buffer = CharArray(2048)
+                    while (remaining > 0) {
+                        val read = reader.read(buffer, 0, minOf(buffer.size, remaining))
+                        if (read <= 0) break
+                        append(buffer, 0, read)
+                        remaining -= read
+                        if (contains("</head>", ignoreCase = true)) break
+                    }
+                }
+            }
+            Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+                .findAll(head)
+                .firstOrNull { meta ->
+                    val name = meta.value.attr("name")
+                    val property = meta.value.attr("property")
+                    name.equals("description", ignoreCase = true) ||
+                        property.equals("og:description", ignoreCase = true)
+                }
+                ?.value
+                ?.attr("content")
+                ?.decodeEntities()
         }.getOrNull()
     }
 
@@ -454,6 +508,21 @@ object DesktopFolderMetadataExtractor {
             .orEmpty()
     }
 
+    private fun String.tagInnerContent(tag: String): String {
+        return Regex(
+            "<(?:[^:>]+:)?$tag\\b[^>]*>(.*?)</(?:[^:>]+:)?$tag>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+            .find(this)
+            ?.groupValues
+            ?.get(1)
+            ?.trim()
+            ?.removeSurrounding("<![CDATA[", "]]>")
+            ?.decodeEntities()
+            ?.trim()
+            .orEmpty()
+    }
+
     private fun String.decodeEntities(): String {
         return replace("&nbsp;", " ")
             .replace("&amp;", "&")
@@ -493,6 +562,23 @@ object DesktopFolderMetadataExtractor {
             ?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
     }
 
+    private fun sanitizeDescription(value: String?): String? {
+        return value
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+    }
+
+    private fun BookItem.shouldApplyExtractedTitle(file: File): Boolean {
+        val current = title?.trim()
+        val fallback = file.nameWithoutExtension
+        return current.isNullOrBlank() || current == fallback || current == originalTitle?.trim()
+    }
+
+    private fun BookItem.shouldApplyExtractedText(current: String?, original: String?): Boolean {
+        val normalized = current?.trim()
+        return normalized.isNullOrBlank() || normalized == original?.trim()
+    }
+
     private val EpubManifestItem.isRasterCover: Boolean
         get() = rasterExtension != null
 
@@ -516,6 +602,7 @@ object DesktopFolderMetadataExtractor {
     private data class ExtractedBookMetadata(
         val title: String? = null,
         val author: String? = null,
+        val description: String? = null,
         val cover: EmbeddedCover? = null
     )
 

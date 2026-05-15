@@ -244,6 +244,40 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `metadata sidecar preserves editable metadata and restore originals`() {
+        val local = book(id = "local_Book.pdf")
+            .copy(
+                title = "Edited Title",
+                author = "Edited Author",
+                seriesName = "Edited Series",
+                seriesIndex = 2.0,
+                description = "<p>Edited summary</p>",
+                originalTitle = "Original Title",
+                originalAuthor = "Original Author",
+                originalSeriesName = "Original Series",
+                originalSeriesIndex = 1.0,
+                originalDescription = "Original summary"
+            )
+
+        val metadata = local.toSharedFolderBookMetadata() ?: error("Expected sidecar")
+        val restored = metadata.toBookItem(
+            file = scannedFile("Book.pdf", "Book.pdf"),
+            existing = book(id = "local_Book.pdf", title = "Stale"),
+            nowMillis = 2_000L
+        )
+
+        assertEquals("Edited Title", metadata.title)
+        assertEquals("<p>Edited summary</p>", metadata.description)
+        assertEquals("Original Title", metadata.originalTitle)
+        assertEquals("Edited Title", restored.title)
+        assertEquals("Edited Author", restored.author)
+        assertEquals("Edited Series", restored.seriesName)
+        assertEquals(2.0, restored.seriesIndex)
+        assertEquals("<p>Edited summary</p>", restored.description)
+        assertEquals("Original summary", restored.originalDescription)
+    }
+
+    @Test
     fun `sync resets extracted metadata and cover when folder file size changes`() {
         val existing = book(
             id = "local_Book.pdf",

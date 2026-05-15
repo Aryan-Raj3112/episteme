@@ -103,7 +103,8 @@ data class DesktopPdfPageRender(
 
 data class DesktopPdfMetadata(
     val title: String? = null,
-    val author: String? = null
+    val author: String? = null,
+    val description: String? = null
 )
 
 internal val DesktopPdfZoomSpec = PdfZoomSpec(
@@ -877,7 +878,8 @@ object DesktopPdfium {
     private fun extractDocumentMetadata(document: Pointer): DesktopPdfMetadata {
         return DesktopPdfMetadata(
             title = documentMetaText(document, "Title").cleanPdfMetadata(),
-            author = documentMetaText(document, "Author").cleanPdfMetadata()
+            author = documentMetaText(document, "Author").cleanPdfMetadata(),
+            description = documentMetaText(document, "Subject").cleanPdfMetadata()
         )
     }
 
