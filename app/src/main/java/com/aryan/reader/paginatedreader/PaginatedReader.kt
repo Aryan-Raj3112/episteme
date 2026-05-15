@@ -413,6 +413,30 @@ internal object CfiUtils {
 
     fun getPath(cfi: String): String = cfi.split(':').first()
     fun getOffset(cfi: String): Int = cfi.substringAfter(':', "0").toIntOrNull() ?: 0
+    fun getOffsetOrNull(cfi: String): Int? = cfi.substringAfter(':', "").toIntOrNull()
+
+    fun isPathStrictlyBetween(candidate: String, start: String, end: String): Boolean {
+        val candidateParts = pathParts(candidate) ?: return false
+        val startParts = pathParts(start) ?: return false
+        val endParts = pathParts(end) ?: return false
+        return comparePathParts(candidateParts, startParts) > 0 &&
+            comparePathParts(candidateParts, endParts) < 0
+    }
+
+    private fun pathParts(cfi: String): List<Int>? {
+        val segments = getPath(cfi).split('/').filter { it.isNotEmpty() }
+        if (segments.isEmpty()) return null
+        return segments.map { it.toIntOrNull() ?: return null }
+    }
+
+    private fun comparePathParts(first: List<Int>, second: List<Int>): Int {
+        val length = minOf(first.size, second.size)
+        for (index in 0 until length) {
+            val cmp = first[index].compareTo(second[index])
+            if (cmp != 0) return cmp
+        }
+        return first.size.compareTo(second.size)
+    }
 }
 
 private fun highlightQueryInText(
@@ -1476,7 +1500,7 @@ private fun findFuzzyMatch(source: String, target: String, ignoreCase: Boolean =
     return null
 }
 
-private fun getHighlightOffsetsInBlock(
+internal fun getHighlightOffsetsInBlock(
     block: TextContentBlock, highlight: UserHighlight
 ): IntRange? {
     if (block.cfi == null) return null
@@ -1485,6 +1509,7 @@ private fun getHighlightOffsetsInBlock(
     val parts = highlight.cfi.split('|')
     val startCfi = parts.firstOrNull() ?: highlight.cfi
     val endCfi = parts.lastOrNull()
+    val isMultipartHighlight = endCfi != null && endCfi != startCfi
 
     @Suppress("REDUNDANT_ELSE_IN_WHEN") val blockStartAbs = when (block) {
         is ParagraphBlock -> block.startCharOffsetInSource
@@ -1493,6 +1518,9 @@ private fun getHighlightOffsetsInBlock(
         is ListItemBlock -> block.startCharOffsetInSource
         else -> 0
     }
+    val blockEndAbs = block.endCharOffsetInSource
+        .takeIf { it > blockStartAbs }
+        ?: (blockStartAbs + block.content.text.length)
 
     Timber.d(
         "getHighlightOffsetsInBlock: Checking Block=${block.cfi} (AbsStart=$blockStartAbs) against Highlight=${highlight.cfi}"
@@ -1536,48 +1564,28 @@ private fun getHighlightOffsetsInBlock(
         )
     }
 
-    var isAfterStart = false
-    var isBeforeEnd = true
-
-    if (relevantPart == null) {
-        if (startCfi.isNotEmpty()) {
-            try {
-                if (CfiUtils.compare(block.cfi!!, startCfi) > 0) {
-                    isAfterStart = true
-                }
-            } catch (_: Exception) {
-            }
-        }
-
-        if (endCfi != null && endCfi != startCfi) {
-            try {
-                val endPath = CfiUtils.getPath(endCfi)
-                val cmp = CfiUtils.compare(blockPath, endPath)
-                Timber.d(" -> Comparing BlockPath ($blockPath) vs EndPath ($endPath). Result: $cmp")
-                if (CfiUtils.compare(blockPath, endPath) > 0) {
-                    isBeforeEnd = false
-                }
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    Timber.d(" -> relevantPart=$relevantPart, isAfterStart=$isAfterStart, isBeforeEnd=$isBeforeEnd")
-
-    if (relevantPart == null && (!isAfterStart || !isBeforeEnd)) {
-        return null
-    }
-
     val blockText = block.content.text
     val highlightText = highlight.text
 
     if (blockText.isEmpty() || highlightText.isEmpty()) return null
-    if (highlightText.contains(blockText, ignoreCase = false)) return 0 until blockText.length
-    if (highlightText.contains(blockText, ignoreCase = true)) return 0 until blockText.length
 
-    var startIndex = blockText.indexOf(highlightText, ignoreCase = false)
-    if (startIndex == -1) {
-        startIndex = blockText.indexOf(highlightText, ignoreCase = true)
+    val isIntermediateBlock = relevantPart == null &&
+        isMultipartHighlight &&
+        CfiUtils.isPathStrictlyBetween(block.cfi!!, startCfi, endCfi!!)
+
+    Timber.d(" -> relevantPart=$relevantPart, isIntermediateBlock=$isIntermediateBlock")
+
+    if (relevantPart == null) {
+        if (!isIntermediateBlock) return null
+        if (highlightText.contains(blockText, ignoreCase = false)) return 0 until blockText.length
+        if (highlightText.contains(blockText, ignoreCase = true)) return 0 until blockText.length
+        val normBlock = blockText.filter { !it.isWhitespace() }
+        val normHighlight = highlightText.filter { !it.isWhitespace() }
+        return if (normBlock.isNotBlank() && normHighlight.contains(normBlock, ignoreCase = true)) {
+            0 until blockText.length
+        } else {
+            null
+        }
     }
 
     if (relevantPart != null) {
@@ -1599,11 +1607,27 @@ private fun getHighlightOffsetsInBlock(
         Timber.d(" -> Path Equivalence: StartMatches=$startMatches, EndMatches=$endMatches")
 
         if (startMatches || endMatches) {
+            val startAbs = CfiUtils.getOffsetOrNull(startCfi)
+            val endAbs = endCfi?.let { CfiUtils.getOffsetOrNull(it) }
+            if (startMatches && endMatches && startAbs != null && endAbs != null) {
+                val rangeStartAbs = minOf(startAbs, endAbs)
+                val rangeEndAbs = maxOf(startAbs, endAbs)
+                if (rangeEndAbs <= blockStartAbs || rangeStartAbs >= blockEndAbs) {
+                    Timber.d(
+                        " -> Skipping same-path split block outside highlight offsets. " +
+                            "highlight=$rangeStartAbs..$rangeEndAbs block=$blockStartAbs..$blockEndAbs"
+                    )
+                    return null
+                }
+            } else {
+                if (startMatches && startAbs != null && startAbs >= blockEndAbs) return null
+                if (endMatches && endAbs != null && endAbs <= blockStartAbs) return null
+            }
             var s = 0
             var e = blockText.length
 
             if (startMatches) {
-                val absOffset = CfiUtils.getOffset(startCfi)
+                val absOffset = startAbs ?: CfiUtils.getOffset(startCfi)
                 val relOffset = absOffset - blockStartAbs
 
                 if (relOffset < 0) {
@@ -1647,7 +1671,7 @@ private fun getHighlightOffsetsInBlock(
             }
 
             if (endMatches) {
-                val absOffset = CfiUtils.getOffset(endCfi!!)
+                val absOffset = endAbs ?: CfiUtils.getOffset(endCfi!!)
                 val relOffset = absOffset - blockStartAbs
 
                 Timber.d(
@@ -1676,18 +1700,16 @@ private fun getHighlightOffsetsInBlock(
         }
     }
 
-    if (startIndex >= 0) {
-        return startIndex until (startIndex + highlightText.length)
+    if (highlightText.contains(blockText, ignoreCase = false)) return 0 until blockText.length
+    if (highlightText.contains(blockText, ignoreCase = true)) return 0 until blockText.length
+
+    var startIndex = blockText.indexOf(highlightText, ignoreCase = false)
+    if (startIndex == -1) {
+        startIndex = blockText.indexOf(highlightText, ignoreCase = true)
     }
 
-    if (relevantPart == null) {
-        @Suppress("KotlinConstantConditions") if (isAfterStart) {
-            val normBlock = blockText.filter { !it.isWhitespace() }
-            val normHighlight = highlightText.filter { !it.isWhitespace() }
-            if (normHighlight.contains(normBlock, ignoreCase = true)) {
-                return 0 until blockText.length
-            }
-        }
+    if (startIndex >= 0) {
+        return startIndex until (startIndex + highlightText.length)
     }
 
     val match = findFuzzyMatch(blockText, highlightText)

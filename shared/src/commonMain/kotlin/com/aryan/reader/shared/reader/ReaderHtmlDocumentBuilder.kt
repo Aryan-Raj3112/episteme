@@ -267,6 +267,9 @@ object ReaderHtmlDocumentBuilder {
                   --reader-link-decoration: ${appearance.linkColors.decoration};
                   --reader-link-bg: ${appearance.linkColors.background};
                   --reader-highlight: ${appearance.highlight};
+                  --reader-scrollbar-track: color-mix(in srgb, var(--reader-bg) 88%, var(--reader-fg));
+                  --reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg) 48%, var(--reader-bg));
+                  --reader-scrollbar-thumb-hover: var(--reader-link);
                   --reader-font-size: ${settings.fontSize}px;
                   --reader-line-height: ${settings.lineSpacing};
                   --reader-page-width: ${settings.pageWidth}px;
@@ -287,11 +290,38 @@ object ReaderHtmlDocumentBuilder {
                   font-size: var(--reader-font-size);
                   line-height: var(--reader-line-height);
                 }
+                html {
+                  scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track);
+                  scrollbar-width: thin;
+                }
+                html::-webkit-scrollbar,
+                body.reader-vertical::-webkit-scrollbar {
+                  width: 12px;
+                  height: 12px;
+                }
+                html::-webkit-scrollbar-track,
+                body.reader-vertical::-webkit-scrollbar-track {
+                  background: var(--reader-scrollbar-track);
+                  border-radius: 999px;
+                }
+                html::-webkit-scrollbar-thumb,
+                body.reader-vertical::-webkit-scrollbar-thumb {
+                  background: var(--reader-scrollbar-thumb);
+                  border: 3px solid var(--reader-bg);
+                  border-radius: 999px;
+                }
+                html::-webkit-scrollbar-thumb:hover,
+                body.reader-vertical::-webkit-scrollbar-thumb:hover {
+                  background: var(--reader-scrollbar-thumb-hover);
+                }
                 body {
                   box-sizing: border-box;
                   padding: var(--reader-margin-y) var(--reader-margin-x);
                   overflow-wrap: anywhere;
                   position: relative;
+                }
+                body.reader-vertical {
+                  scrollbar-gutter: stable;
                 }
                 body.reader-paginated {
                   height: 100vh;
@@ -545,6 +575,8 @@ object ReaderHtmlDocumentBuilder {
                   var lastReportedStartOffset = -1;
                   var reportTimer = null;
                   var selectionMenuTimer = null;
+                  var readerCurrentHighlights = [];
+                  var readerHighlightReconcileTimer = null;
                   var selectionPointerDown = false;
                   var activeSelectionHandle = null;
                   var selectionHandleFrame = null;
@@ -1596,9 +1628,18 @@ object ReaderHtmlDocumentBuilder {
                     return { start: rawStart + leadingWhitespace, end: rawEnd - trailingWhitespace };
                   }
                   function selectionSourceOffsetsWithin(content, range) {
+                    return rangeOffsetsWithinContent(content, range);
+                  }
+                  function rangeOffsetsWithinContent(content, range) {
+                    if (!content || !range) return { start: null, end: null };
                     var rawStart = absoluteOffsetForBoundary(content, range.startContainer, range.startOffset);
                     var rawEnd = absoluteOffsetForBoundary(content, range.endContainer, range.endOffset);
                     return trimSourceOffsets(rawStart, rawEnd, range.toString());
+                  }
+                  function rangeMatchesStoredOffsets(content, range, startOffset, endOffset) {
+                    var offsets = rangeOffsetsWithinContent(content, range);
+                    if (offsets.start === null || offsets.end === null) return false;
+                    return Math.abs(offsets.start - startOffset) <= 1 && Math.abs(offsets.end - endOffset) <= 1;
                   }
                   function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset) {
                     var marker = document.createElement('span');
@@ -1925,9 +1966,19 @@ object ReaderHtmlDocumentBuilder {
                         searchRoot = containing || content;
                       }
                       var textRange = normalizedRangeForText(searchRoot, expectedNormalized, false);
-                      if (textRange && !textRange.collapsed) {
+                      if (textRange && !textRange.collapsed && rangeMatchesStoredOffsets(content, textRange, startOffset, endOffset)) {
                         if (range && range.detach) range.detach();
                         range = textRange;
+                      } else {
+                        if (textRange && textRange.detach) textRange.detach();
+                        if (range && range.detach) range.detach();
+                        readerSelectionDebugLog(
+                          'highlight_expected_mismatch id=' + (highlight.id || '') +
+                          ' offsets=' + startOffset + '..' + endOffset +
+                          ' expected="' + readerTtsPreview(expectedText, 120) + '"' +
+                          ' actual="' + readerTtsPreview(actualNormalized, 120) + '"'
+                        );
+                        return;
                       }
                     }
                     if (!range || range.collapsed) {
@@ -1965,9 +2016,10 @@ object ReaderHtmlDocumentBuilder {
                   window.readerApplyHighlights = function (highlights) {
                     var previousX = window.scrollX;
                     var previousY = window.scrollY;
+                    readerCurrentHighlights = Array.isArray(highlights) ? highlights.slice() : [];
                     unwrapReaderHighlights();
-                    if (Array.isArray(highlights)) {
-                      highlights
+                    if (readerCurrentHighlights.length > 0) {
+                      readerCurrentHighlights
                         .slice()
                         .sort(function (a, b) {
                           var aStart = (a.locator && a.locator.startOffset) || 0;
@@ -1978,6 +2030,13 @@ object ReaderHtmlDocumentBuilder {
                     }
                     window.scrollTo({ top: previousY, left: previousX, behavior: 'auto' });
                   };
+                  function scheduleReaderHighlightReconcile() {
+                    if (readerHighlightReconcileTimer !== null) window.clearTimeout(readerHighlightReconcileTimer);
+                    readerHighlightReconcileTimer = window.setTimeout(function () {
+                      readerHighlightReconcileTimer = null;
+                      if (window.readerApplyHighlights) window.readerApplyHighlights(readerCurrentHighlights);
+                    }, 1200);
+                  }
                   var readerTtsLocator = null;
                   var readerTtsOverlayTimer = null;
                   function ensureTtsLayer() {
@@ -2154,6 +2213,7 @@ object ReaderHtmlDocumentBuilder {
                       if (localRange !== range && localRange.detach) localRange.detach();
                     }
                     if (text.length > 0) sendReaderHighlightCreated(payload, 0);
+                    scheduleReaderHighlightReconcile();
                     selection.removeAllRanges();
                     hideMenu();
                   }

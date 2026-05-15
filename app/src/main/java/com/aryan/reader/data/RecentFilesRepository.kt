@@ -179,16 +179,14 @@ class RecentFilesRepository(private val context: Context) {
                 ((item.fileSize > 0L && item.fileSize != existingItem.fileSize) ||
                     (item.fileContentModifiedTimestamp > 0L &&
                         item.fileContentModifiedTimestamp != existingItem.fileContentModifiedTimestamp))
-            val appOwnedFileChanged = item.sourceFolderUri == null &&
-                existingItem.sourceFolderUri == null &&
-                ((item.fileSize > 0L && item.fileSize != existingItem.fileSize) ||
+            val embeddedMetadataFileChanged =
+                (item.fileSize > 0L && existingItem.fileSize > 0L && item.fileSize != existingItem.fileSize) ||
                     (item.fileContentModifiedTimestamp > 0L &&
-                        item.fileContentModifiedTimestamp != existingItem.fileContentModifiedTimestamp))
-            val keepExistingEmbeddedMetadata = item.sourceFolderUri == null &&
-                existingItem.sourceFolderUri == null &&
-                item.type == FileType.EPUB &&
+                        existingItem.fileContentModifiedTimestamp > 0L &&
+                        item.fileContentModifiedTimestamp != existingItem.fileContentModifiedTimestamp)
+            val keepExistingEmbeddedMetadata = item.type == FileType.EPUB &&
                 existingItem.type == FileType.EPUB &&
-                !appOwnedFileChanged &&
+                !embeddedMetadataFileChanged &&
                 existingItem.hasEmbeddedMetadataChanges()
 
             item.toRecentFileEntity().copy(
@@ -281,8 +279,7 @@ class RecentFilesRepository(private val context: Context) {
                 metadataValueChanged(seriesName, originalSeriesName) ||
                 seriesIndex != originalSeriesIndex ||
                 metadataValueChanged(description, originalDescription)
-            )) ||
-            !customName.isNullOrBlank()
+            ))
     }
 
     private fun metadataValueChanged(current: String?, original: String?): Boolean {

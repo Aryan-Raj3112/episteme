@@ -523,6 +523,7 @@ fun SharedReaderScreen(
                 )
             }
             val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+                // Keep the initial locator in the document so its first position report is not the top of the book.
                 remember(
                     readerState.book,
                     documentLayoutSignature,
@@ -540,7 +541,7 @@ fun SharedReaderScreen(
                         searchOptions = session.searchOptions,
                         highlights = emptyList(),
                         highlightPalette = highlightPalette,
-                        navigationLocator = null,
+                        navigationLocator = navigationLocator,
                         pages = readerState.pages,
                         readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
                         cloudTtsEnabled = effectiveCloudTtsAvailable,

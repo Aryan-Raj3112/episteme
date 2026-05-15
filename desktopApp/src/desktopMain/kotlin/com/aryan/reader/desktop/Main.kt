@@ -1821,34 +1821,13 @@ private fun EpistemeDesktopApp(
         }
     }
 
-    fun updateBookMetadata(updated: BookItem) {
-        val original = state.rawLibraryBooks.firstOrNull { it.id == updated.id }
-        if (original != null && original.type == FileType.EPUB && original.hasEmbeddedMetadataChange(updated)) {
-            scope.launch {
-                val rewritten = runCatching {
-                    withContext(Dispatchers.IO) {
-                        writeDesktopEpubMetadata(original, updated)
-                    }
-                }
-                rewritten.onSuccess(::applyBookMetadataUpdate)
-                    .onFailure { error ->
-                        println("Failed to update EPUB metadata for ${updated.displayName}: ${error.message}")
-                        updateState(state.copy(bannerMessage = BannerMessage("Could not update EPUB metadata.")))
-                    }
-            }
-            return
-        }
-
-        applyBookMetadataUpdate(updated)
-    }
-
-    private fun applyBookMetadataUpdate(updated: BookItem) {
+    fun applyBookMetadataUpdate(updated: BookItem) {
         val result = SharedLibraryEditor.updateBookMetadata(state, shelfRecords, shelfRefs, updated, System.currentTimeMillis())
         replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
         result.state.rawLibraryBooks.firstOrNull { it.id == updated.id }?.let(::syncBookSidecars)
     }
 
-    private fun writeDesktopEpubMetadata(original: BookItem, updated: BookItem): BookItem {
+    fun writeDesktopEpubMetadata(original: BookItem, updated: BookItem): BookItem {
         val file = File(original.path ?: error("Book path is missing."))
         require(file.isFile && file.canWrite()) { "EPUB file is not writable." }
         val backup = File(
@@ -1880,6 +1859,27 @@ private fun EpistemeDesktopApp(
             fileSize = file.length(),
             fileContentModifiedTimestamp = file.lastModified()
         )
+    }
+
+    fun updateBookMetadata(updated: BookItem) {
+        val original = state.rawLibraryBooks.firstOrNull { it.id == updated.id }
+        if (original != null && original.type == FileType.EPUB && original.hasEmbeddedMetadataChange(updated)) {
+            scope.launch {
+                val rewritten = runCatching {
+                    withContext(Dispatchers.IO) {
+                        writeDesktopEpubMetadata(original, updated)
+                    }
+                }
+                rewritten.onSuccess(::applyBookMetadataUpdate)
+                    .onFailure { error ->
+                        println("Failed to update EPUB metadata for ${updated.displayName}: ${error.message}")
+                        updateState(state.copy(bannerMessage = BannerMessage("Could not update EPUB metadata.")))
+                    }
+            }
+            return
+        }
+
+        applyBookMetadataUpdate(updated)
     }
 
     fun recordBookOpened(bookId: String) {

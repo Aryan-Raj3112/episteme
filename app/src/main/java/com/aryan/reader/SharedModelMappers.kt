@@ -68,7 +68,7 @@ fun SharedBookItem.toRecentFileItem(
         ?.copy(
             uriString = path,
             type = type.toAndroidFileType(),
-            displayName = displayName,
+            displayName = androidBooksById[id]?.displayName ?: displayName,
             timestamp = timestamp,
             coverImagePath = coverImagePath,
             title = title,

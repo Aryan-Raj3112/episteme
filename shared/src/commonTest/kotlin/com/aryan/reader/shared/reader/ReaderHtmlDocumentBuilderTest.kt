@@ -154,6 +154,32 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `reader highlight script rejects mismatched fallback text ranges`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta alpha beta"),
+            page = ReaderPage(0, 0, "One", "alpha beta alpha beta", 0, 21),
+            settings = ReaderSettings()
+        )
+
+        assertTrue(html.contains("function rangeMatchesStoredOffsets(content, range, startOffset, endOffset)"))
+        assertTrue(html.contains("rangeMatchesStoredOffsets(content, textRange, startOffset, endOffset)"))
+        assertTrue(html.contains("highlight_expected_mismatch id="))
+    }
+
+    @Test
+    fun `reader highlight script reconciles unsaved local highlight wrappers`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
+            settings = ReaderSettings()
+        )
+
+        assertTrue(html.contains("var readerCurrentHighlights = [];"))
+        assertTrue(html.contains("function scheduleReaderHighlightReconcile()"))
+        assertTrue(html.contains("scheduleReaderHighlightReconcile();"))
+    }
+
+    @Test
     fun `page document can render a two page spread`() {
         val left = ReaderPage(
             pageIndex = 2,
@@ -211,6 +237,20 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("data-reader-active-chapter-index=\"1\""))
         assertTrue(html.contains("data-reader-active-start-offset=\"7\""))
         assertTrue(html.contains("scrollToActiveLocator"))
+    }
+
+    @Test
+    fun `vertical document styles native scrollbar from reader theme variables`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+
+        assertTrue(html.contains("--reader-scrollbar-track: color-mix(in srgb, var(--reader-bg)"))
+        assertTrue(html.contains("--reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg)"))
+        assertTrue(html.contains("scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track)"))
+        assertTrue(html.contains("body.reader-vertical::-webkit-scrollbar-thumb"))
+        assertTrue(html.contains("body.reader-vertical::-webkit-scrollbar-thumb:hover"))
     }
 
     @Test
