@@ -8,6 +8,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Constraints
@@ -62,6 +64,10 @@ class SharedMeasuredEpubPaginator(
                 "cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
                     "viewport=${viewport.widthPx}x${viewport.heightPx} spread=${settings.pageSpreadMode}"
             }
+            logEpubPageFit {
+                "page_fit layer=cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
+                    "note=clear_book_cache_to_capture_layer_measured"
+            }
             return cached
         }
 
@@ -79,7 +85,7 @@ class SharedMeasuredEpubPaginator(
             lineHeight = (settings.fontSize * settings.lineSpacing).sp,
             fontFamily = fontFamily,
             textAlign = settings.textAlign.toComposeTextAlign()
-        )
+        ).withAndroidPaginationTextMetrics()
         val pages = mutableListOf<ReaderPage>()
         book.chapters.forEachIndexed { chapterIndex, chapter ->
             currentCoroutineContext().ensureActive()
@@ -144,11 +150,24 @@ class SharedMeasuredEpubPaginator(
         val pages = mutableListOf<ReaderPage>()
         val queue = ArrayDeque<SemanticBlock>().apply { addAll(sourceBlocks) }
         var pageBlocks = mutableListOf<SemanticBlock>()
+        var pageBlockFits = mutableListOf<MeasuredPageBlockFit>()
         var usedHeight = 0
 
         logEpubPagination {
             "chapter_start chapter=$chapterIndex title=\"${chapter.title.logPreview()}\" " +
                 "sourceBlocks=${sourceBlocks.size} plainChars=${chapter.plainText.length} pageHeightPx=${geometry.pageHeightPx}"
+        }
+
+        fun addPageBlock(block: SemanticBlock, blockHeight: Int, spaceBefore: Int) {
+            pageBlocks += block
+            pageBlockFits += block.toMeasuredPageBlockFit(
+                order = pageBlockFits.size,
+                blockHeightPx = blockHeight,
+                spaceBeforePx = spaceBefore,
+                topMarginPx = block.effectiveTopMarginPx(),
+                bottomMarginPx = block.effectiveBottomMarginPx(settings)
+            )
+            usedHeight += blockHeight + spaceBefore
         }
 
         fun emitPage(reason: String) {
@@ -163,6 +182,15 @@ class SharedMeasuredEpubPaginator(
                     "usedPx=$usedHeight pageHeightPx=${geometry.pageHeightPx} remainingPx=${geometry.pageHeightPx - usedHeight} " +
                     "blocks=${pageBlocks.size} range=${page.startOffset}..${page.endOffset} textChars=${page.text.length}"
             }
+            val remainingPx = geometry.pageHeightPx - usedHeight
+            if (remainingPx < 0) {
+                logEpubPageFit {
+                    "page_fit layer=measured_overflow reason=$reason page=${page.pageIndex + 1} chapter=$chapterIndex " +
+                        "usedPx=$usedHeight pageHeightPx=${geometry.pageHeightPx} remainingPx=$remainingPx " +
+                        "blocks=${pageBlocks.size} range=${page.startOffset}..${page.endOffset} " +
+                        "textChars=${page.text.length} tail=\"${pageBlockFits.measuredPageFitTail()}\""
+                }
+            }
             logReaderGapPagination {
                 val firstTopMargin = pageBlocks.firstOrNull()?.effectiveTopMarginPx() ?: 0
                 val trailingBottomMargin = pageBlocks.lastOrNull()?.effectiveBottomMarginPx(settings) ?: 0
@@ -174,6 +202,7 @@ class SharedMeasuredEpubPaginator(
             }
             pages += page
             pageBlocks = mutableListOf()
+            pageBlockFits = mutableListOf()
             usedHeight = 0
         }
 
@@ -185,8 +214,7 @@ class SharedMeasuredEpubPaginator(
             val requiredHeight = blockHeight + spaceBeforeBlock
             val fitsCurrent = requiredHeight <= geometry.pageHeightPx - usedHeight
             if (fitsCurrent) {
-                pageBlocks += block
-                usedHeight += requiredHeight
+                addPageBlock(block, blockHeight, spaceBeforeBlock)
                 continue
             }
 
@@ -195,24 +223,29 @@ class SharedMeasuredEpubPaginator(
             val split = splitBlock(block, splitAvailableHeight, geometry, baseStyle, settings)
             if (split != null && split.first.hasReadableContent()) {
                 val splitHeight = measureBlock(split.first, geometry, baseStyle, settings)
-                logEpubPagination {
-                    "split_current block=${block.kindName()} blockPx=$blockHeight splitPx=$splitHeight " +
-                        "spaceBeforePx=$spaceBeforeBlock remainingPx=$remainingHeight " +
-                        "splitAvailablePx=$splitAvailableHeight usedPx=$usedHeight " +
-                        "pageHeightPx=${geometry.pageHeightPx} chapter=$chapterIndex"
+                if (spaceBeforeBlock + splitHeight <= remainingHeight) {
+                    logEpubPagination {
+                        "split_current block=${block.kindName()} blockPx=$blockHeight splitPx=$splitHeight " +
+                            "spaceBeforePx=$spaceBeforeBlock remainingPx=$remainingHeight " +
+                            "splitAvailablePx=$splitAvailableHeight usedPx=$usedHeight " +
+                            "pageHeightPx=${geometry.pageHeightPx} chapter=$chapterIndex"
+                    }
+                    addPageBlock(split.first, splitHeight, spaceBeforeBlock)
+                    if (split.second.hasReadableContent()) queue.addFirst(split.second)
+                    emitPage("split_current")
+                    continue
                 }
-                pageBlocks += split.first
-                usedHeight += spaceBeforeBlock + splitHeight
-                if (split.second.hasReadableContent()) queue.addFirst(split.second)
-                emitPage("split_current")
-                continue
+                logEpubPageFit {
+                    "page_fit layer=split_rejected block=${block.kindName()} chapter=$chapterIndex " +
+                        "spaceBeforePx=$spaceBeforeBlock splitPx=$splitHeight remainingPx=$remainingHeight " +
+                        "splitAvailablePx=$splitAvailableHeight pageHeightPx=${geometry.pageHeightPx}"
+                }
             }
 
             emitPage("before_block")
             val newPageSpaceBefore = block.collapsedMarginBefore(previous = null, settings)
             if (blockHeight + newPageSpaceBefore <= geometry.pageHeightPx) {
-                pageBlocks += block
-                usedHeight = blockHeight + newPageSpaceBefore
+                addPageBlock(block, blockHeight, newPageSpaceBefore)
                 continue
             }
 
@@ -231,6 +264,17 @@ class SharedMeasuredEpubPaginator(
                         "spaceBeforePx=$newPageSpaceBefore pageHeightPx=${geometry.pageHeightPx} " +
                         "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length}"
                 }
+                logOversizedMeasuredPageFit(
+                    reason = "split_oversized",
+                    page = page,
+                    chapterIndex = chapterIndex,
+                    block = oversizedSplit.first,
+                    blockHeightPx = splitHeight,
+                    spaceBeforePx = newPageSpaceBefore,
+                    pageHeightPx = geometry.pageHeightPx,
+                    topMarginPx = oversizedSplit.first.effectiveTopMarginPx(),
+                    bottomMarginPx = oversizedSplit.first.effectiveBottomMarginPx(settings)
+                )
                 pages += page
                 if (oversizedSplit.second.hasReadableContent()) queue.addFirst(oversizedSplit.second)
             } else {
@@ -244,6 +288,17 @@ class SharedMeasuredEpubPaginator(
                         "block=${block.kindName()} blockPx=$blockHeight pageHeightPx=${geometry.pageHeightPx} " +
                         "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length}"
                 }
+                logOversizedMeasuredPageFit(
+                    reason = "unsplittable_oversized",
+                    page = page,
+                    chapterIndex = chapterIndex,
+                    block = block,
+                    blockHeightPx = blockHeight,
+                    spaceBeforePx = newPageSpaceBefore,
+                    pageHeightPx = geometry.pageHeightPx,
+                    topMarginPx = block.effectiveTopMarginPx(),
+                    bottomMarginPx = block.effectiveBottomMarginPx(settings)
+                )
                 pages += page
             }
         }
@@ -275,7 +330,7 @@ class SharedMeasuredEpubPaginator(
         currentCoroutineContext().ensureActive()
         val padding = block.style.blockStyle.padding.verticalPx()
         val borders = block.style.blockStyle.verticalBorderPx()
-        val contentWidth = (geometry.pageWidthPx - block.style.blockStyle.horizontalOuterPx()).coerceAtLeast(64)
+        val contentWidth = block.measuredTextContentWidthPx(geometry)
         val contentHeight = when (block) {
             is SemanticTextBlock -> measureTextBlock(block, contentWidth, baseStyle, settings)
             is SemanticList -> measureBlockStack(
@@ -345,6 +400,9 @@ class SharedMeasuredEpubPaginator(
         return measureTextLayout(annotated, style, widthPx)
             .size
             .height
+            .let { height ->
+                height + centeredTextSafetyPaddingPx(style)
+            }
             .coerceAtLeast(minimumLineHeight.coerceAtLeast(1))
     }
 
@@ -462,8 +520,8 @@ class SharedMeasuredEpubPaginator(
         if (block.style.blockStyle.pageBreakInsideAvoid) return null
 
         val style = block.textStyle(baseStyle, settings)
-        val contentWidth = (geometry.pageWidthPx - block.style.blockStyle.horizontalOuterPx()).coerceAtLeast(64)
-        val availableTextHeight = availableHeight - block.splitDecorationPx()
+        val contentWidth = block.measuredTextContentWidthPx(geometry)
+        val availableTextHeight = availableHeight - block.splitDecorationPx() - centeredTextSafetyPaddingPx(style)
         if (availableTextHeight <= 0) return null
 
         val layoutResult = measureTextLayout(
@@ -507,20 +565,16 @@ class SharedMeasuredEpubPaginator(
         baseStyle: TextStyle,
         settings: ReaderSettings
     ): Pair<SemanticBlock, SemanticBlock>? {
-        val firstItems = mutableListOf<SemanticListItem>()
-        var used = 0
-        var previous: SemanticBlock? = null
-        for (item in block.items) {
-            val itemHeight = measureBlock(item, geometry, baseStyle, settings)
-            val itemRequired = itemHeight + item.collapsedMarginBefore(previous, settings)
-            if (firstItems.isNotEmpty() && used + itemRequired > availableHeight) break
-            if (firstItems.isEmpty() && itemRequired > availableHeight) return null
-            firstItems += item
-            used += itemRequired
-            previous = item
-        }
-        if (firstItems.isEmpty() || firstItems.size >= block.items.size) return null
-        return block.copy(items = firstItems) to block.copy(items = block.items.drop(firstItems.size))
+        val availableContentHeight = availableHeight - block.splitDecorationPx()
+        if (availableContentHeight <= 0) return null
+        val items = block.items.toPaginationStackItems(geometry, baseStyle, settings)
+        val prefixCount = paginationStackPrefixCountThatFits(
+            items = items,
+            availableHeightPx = availableContentHeight,
+            includeTrailingBottomMargin = true
+        )
+        if (prefixCount <= 0 || prefixCount >= block.items.size) return null
+        return block.copy(items = block.items.take(prefixCount)) to block.copy(items = block.items.drop(prefixCount))
     }
 
     private suspend fun splitFlex(
@@ -530,20 +584,16 @@ class SharedMeasuredEpubPaginator(
         baseStyle: TextStyle,
         settings: ReaderSettings
     ): Pair<SemanticBlock, SemanticBlock>? {
-        val firstChildren = mutableListOf<SemanticBlock>()
-        var used = 0
-        var previous: SemanticBlock? = null
-        for (child in block.children) {
-            val childHeight = measureBlock(child, geometry, baseStyle, settings)
-            val childRequired = childHeight + child.collapsedMarginBefore(previous, settings)
-            if (firstChildren.isNotEmpty() && used + childRequired > availableHeight) break
-            if (firstChildren.isEmpty() && childRequired > availableHeight) return null
-            firstChildren += child
-            used += childRequired
-            previous = child
-        }
-        if (firstChildren.isEmpty() || firstChildren.size >= block.children.size) return null
-        return block.copy(children = firstChildren) to block.copy(children = block.children.drop(firstChildren.size))
+        val availableContentHeight = availableHeight - block.splitDecorationPx()
+        if (availableContentHeight <= 0) return null
+        val items = block.children.toPaginationStackItems(geometry, baseStyle, settings)
+        val prefixCount = paginationStackPrefixCountThatFits(
+            items = items,
+            availableHeightPx = availableContentHeight,
+            includeTrailingBottomMargin = true
+        )
+        if (prefixCount <= 0 || prefixCount >= block.children.size) return null
+        return block.copy(children = block.children.take(prefixCount)) to block.copy(children = block.children.drop(prefixCount))
     }
 
     private suspend fun splitWrapping(
@@ -553,24 +603,33 @@ class SharedMeasuredEpubPaginator(
         baseStyle: TextStyle,
         settings: ReaderSettings
     ): Pair<SemanticBlock, SemanticBlock>? {
-        val imageHeight = measureBlock(block.floatedImage, geometry, baseStyle, settings)
-        val imageRequired = imageHeight + block.floatedImage.collapsedMarginBefore(previous = null, settings)
-        if (imageRequired >= availableHeight) return null
-        val firstParagraphs = mutableListOf<SemanticParagraph>()
-        var used = imageRequired
-        var previous: SemanticBlock? = block.floatedImage
-        for (paragraph in block.paragraphsToWrap) {
-            val height = measureBlock(paragraph, geometry, baseStyle, settings)
-            val required = height + paragraph.collapsedMarginBefore(previous, settings)
-            if (firstParagraphs.isNotEmpty() && used + required > availableHeight) break
-            if (firstParagraphs.isEmpty() && used + required > availableHeight) return null
-            firstParagraphs += paragraph
-            used += required
-            previous = paragraph
-        }
-        if (firstParagraphs.isEmpty() || firstParagraphs.size >= block.paragraphsToWrap.size) return null
+        val availableContentHeight = availableHeight - block.splitDecorationPx()
+        if (availableContentHeight <= 0) return null
+        val children = listOf<SemanticBlock>(block.floatedImage) + block.paragraphsToWrap
+        val items = children.toPaginationStackItems(geometry, baseStyle, settings)
+        val prefixCount = paginationStackPrefixCountThatFits(
+            items = items,
+            availableHeightPx = availableContentHeight,
+            includeTrailingBottomMargin = true
+        )
+        if (prefixCount <= 1 || prefixCount >= children.size) return null
+        val firstParagraphs = block.paragraphsToWrap.take(prefixCount - 1)
         return block.copy(paragraphsToWrap = firstParagraphs) to
             block.copy(paragraphsToWrap = block.paragraphsToWrap.drop(firstParagraphs.size))
+    }
+
+    private suspend fun List<SemanticBlock>.toPaginationStackItems(
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): List<PaginationStackItem> {
+        return map { block ->
+            PaginationStackItem(
+                contentHeightPx = measureBlock(block, geometry, baseStyle, settings),
+                marginTopPx = block.effectiveTopMarginPx(),
+                marginBottomPx = block.effectiveBottomMarginPx(settings)
+            )
+        }
     }
 
     private fun Dp.toPxInt(): Int = with(density) { toPx().roundToInt() }
@@ -595,9 +654,30 @@ class SharedMeasuredEpubPaginator(
         return margin.horizontalPx() + padding.horizontalPx() + horizontalBorderPx()
     }
 
-    private fun SemanticTextBlock.splitDecorationPx(): Int {
+    private fun SemanticBlock.splitDecorationPx(): Int {
         val blockStyle = style.blockStyle
         return blockStyle.padding.verticalPx() + blockStyle.verticalBorderPx()
+    }
+
+    private fun SemanticBlock.measuredTextContentWidthPx(geometry: MeasuredPageGeometry): Int {
+        val markerWidth = if (this is SemanticListItem) listItemMarkerAreaWidthPx() else 0
+        return (geometry.pageWidthPx - style.blockStyle.horizontalOuterPx() - markerWidth)
+            .coerceAtLeast(64)
+    }
+
+    private fun listItemMarkerAreaWidthPx(): Int {
+        return with(density) { MeasuredListItemMarkerAreaWidthDp.dp.toPx().roundToInt() }
+    }
+
+    private fun centeredTextSafetyPaddingPx(style: TextStyle): Int {
+        if (style.textAlign != TextAlign.Center) return 0
+        val fallbackLineHeight = if (style.fontSize.isSpecified) {
+            style.fontSize * 1.2f
+        } else {
+            16.sp * 1.2f
+        }
+        val effectiveLineHeight = if (style.lineHeight.isSpecified) style.lineHeight else fallbackLineHeight
+        return with(density) { effectiveLineHeight.toPx().roundToInt() }
     }
 
     private fun Dp.toPxIfSpecified(): Int = if (isSpecified) toPxInt() else 0
@@ -714,6 +794,32 @@ internal fun collapsedPaginationStackHeight(
     return total
 }
 
+internal fun paginationStackPrefixCountThatFits(
+    items: List<PaginationStackItem>,
+    availableHeightPx: Int,
+    includeTrailingBottomMargin: Boolean
+): Int {
+    if (items.isEmpty() || availableHeightPx < 0) return 0
+    var totalWithoutTrailingBottom = 0
+    var previousBottom: Int? = null
+    var prefixCount = 0
+    for (item in items) {
+        totalWithoutTrailingBottom += item.contentHeightPx.coerceAtLeast(0)
+        totalWithoutTrailingBottom += previousBottom?.let { maxOf(it, item.marginTopPx.coerceAtLeast(0)) }
+            ?: item.marginTopPx.coerceAtLeast(0)
+        previousBottom = item.marginBottomPx.coerceAtLeast(0)
+
+        val candidateHeight = if (includeTrailingBottomMargin) {
+            totalWithoutTrailingBottom + previousBottom
+        } else {
+            totalWithoutTrailingBottom
+        }
+        if (candidateHeight > availableHeightPx) break
+        prefixCount++
+    }
+    return prefixCount
+}
+
 private fun List<SemanticBlock>.toReaderPage(
     pageIndex: Int,
     chapterIndex: Int,
@@ -791,6 +897,17 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
         lineHeight = lineHeight,
         fontWeight = if (this is SemanticHeader) FontWeight.Bold else baseStyle.fontWeight,
         textAlign = style.paragraphStyle.textAlign.takeUnless { it == TextAlign.Unspecified } ?: baseStyle.textAlign
+    ).withAndroidPaginationTextMetrics()
+}
+
+private fun TextStyle.withAndroidPaginationTextMetrics(): TextStyle {
+    return copy(
+        lineBreak = LineBreak.Paragraph,
+        letterSpacing = TextUnit.Unspecified,
+        lineHeightStyle = LineHeightStyle(
+            alignment = LineHeightStyle.Alignment.Proportional,
+            trim = LineHeightStyle.Trim.None
+        )
     )
 }
 
@@ -951,6 +1068,85 @@ private fun SemanticBlock.kindName(): String {
     }
 }
 
+private data class MeasuredPageBlockFit(
+    val order: Int,
+    val kind: String,
+    val blockIndex: Int,
+    val blockHeightPx: Int,
+    val spaceBeforePx: Int,
+    val topMarginPx: Int,
+    val bottomMarginPx: Int,
+    val sourceRange: String
+) {
+    fun format(): String {
+        return "#$order:$kind(block=$blockIndex,space=$spaceBeforePx,height=$blockHeightPx," +
+            "top=$topMarginPx,bottom=$bottomMarginPx,range=$sourceRange)"
+    }
+}
+
+private fun SemanticBlock.toMeasuredPageBlockFit(
+    order: Int,
+    blockHeightPx: Int,
+    spaceBeforePx: Int,
+    topMarginPx: Int,
+    bottomMarginPx: Int
+): MeasuredPageBlockFit {
+    return MeasuredPageBlockFit(
+        order = order,
+        kind = kindName(),
+        blockIndex = blockIndex,
+        blockHeightPx = blockHeightPx,
+        spaceBeforePx = spaceBeforePx,
+        topMarginPx = topMarginPx,
+        bottomMarginPx = bottomMarginPx,
+        sourceRange = sourceRangeLabel()
+    )
+}
+
+private fun List<MeasuredPageBlockFit>.measuredPageFitTail(): String {
+    return takeLast(EpubPageFitTailBlockCount).joinToString("|") { it.format() }
+}
+
+private fun SemanticBlock.sourceRangeLabel(): String {
+    return when (this) {
+        is SemanticTextBlock -> {
+            val start = startCharOffsetInSource
+            "$start..${start + text.length}"
+        }
+        else -> cfi?.takeIf { it.isNotBlank() }
+            ?: elementId?.takeIf { it.isNotBlank() }
+            ?: "-"
+    }.logPreview(maxLength = 80)
+}
+
+private fun logOversizedMeasuredPageFit(
+    reason: String,
+    page: ReaderPage,
+    chapterIndex: Int,
+    block: SemanticBlock,
+    blockHeightPx: Int,
+    spaceBeforePx: Int,
+    pageHeightPx: Int,
+    topMarginPx: Int,
+    bottomMarginPx: Int
+) {
+    val usedPx = blockHeightPx + spaceBeforePx
+    val remainingPx = pageHeightPx - usedPx
+    if (remainingPx >= 0) return
+    val fit = block.toMeasuredPageBlockFit(
+        order = 0,
+        blockHeightPx = blockHeightPx,
+        spaceBeforePx = spaceBeforePx,
+        topMarginPx = topMarginPx,
+        bottomMarginPx = bottomMarginPx
+    )
+    logEpubPageFit {
+        "page_fit layer=measured_overflow reason=$reason page=${page.pageIndex + 1} chapter=$chapterIndex " +
+            "usedPx=$usedPx pageHeightPx=$pageHeightPx remainingPx=$remainingPx blocks=1 " +
+            "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length} tail=\"${fit.format()}\""
+    }
+}
+
 private fun String.toCssPxOrNull(containerPx: Int): Int? {
     val trimmed = trim().lowercase()
     if (trimmed.isBlank()) return null
@@ -990,6 +1186,10 @@ private inline fun logEpubPagination(message: () -> String) {
     logSharedReaderDiagnostic("EpistemeEpubPagination", message)
 }
 
+private inline fun logEpubPageFit(message: () -> String) {
+    logSharedReaderDiagnostic("EpistemeEpubPageFit", message)
+}
+
 private inline fun logReaderGapPagination(message: () -> String) {
     logSharedReaderDiagnostic("EpistemeReaderGap", message)
 }
@@ -1000,3 +1200,6 @@ private fun String.logPreview(maxLength: Int = 96): String {
         .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
         .replace("\"", "\\\"")
 }
+
+private const val EpubPageFitTailBlockCount = 4
+private const val MeasuredListItemMarkerAreaWidthDp = 32

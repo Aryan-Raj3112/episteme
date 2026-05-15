@@ -339,6 +339,8 @@ val isOssOfflineDesktop = desktopFlavor == "oss-offline"
 val desktopDiagnostics = providers.gradleProperty("desktopDiagnostics")
     .map { it.equals("true", ignoreCase = true) }
     .orElse(false)
+val desktopDiagnosticTags = providers.gradleProperty("desktopDiagnosticTags")
+    .orElse("")
 val desktopResolvedVersionName = providers.gradleProperty("desktopVersionName")
     .orElse(providers.gradleProperty("desktopVersion"))
     .orElse(desktopVersionName)
@@ -501,6 +503,7 @@ compose.desktop {
         jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
         jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
         jvmArgs("-Depisteme.desktop.diagnostics=${desktopDiagnostics.get()}")
+        jvmArgs("-Depisteme.desktop.diagnostics.tags=${desktopDiagnosticTags.get()}")
         jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
 
         buildTypes.release.proguard {
@@ -544,6 +547,7 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs("--add-opens", "java.desktop/java.awt.peer=ALL-UNNAMED")
     jvmArgs("-Depisteme.desktop.flavor=$desktopFlavor")
     jvmArgs("-Depisteme.desktop.diagnostics=${desktopDiagnostics.get()}")
+    jvmArgs("-Depisteme.desktop.diagnostics.tags=${desktopDiagnosticTags.get()}")
     jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
     if (System.getProperty("os.name").contains("Mac")) {
         jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")

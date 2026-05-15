@@ -108,4 +108,29 @@ class SharedMeasuredEpubPaginatorTest {
             collapsedPaginationStackHeight(items, includeTrailingBottomMargin = true)
         )
     }
+
+    @Test
+    fun `pagination stack prefix fitting includes trailing bottom margin`() {
+        val items = listOf(
+            PaginationStackItem(contentHeightPx = 100, marginTopPx = 10, marginBottomPx = 30),
+            PaginationStackItem(contentHeightPx = 80, marginTopPx = 10, marginBottomPx = 30)
+        )
+
+        assertEquals(
+            1,
+            paginationStackPrefixCountThatFits(
+                items = items,
+                availableHeightPx = 220,
+                includeTrailingBottomMargin = true
+            )
+        )
+        assertEquals(
+            2,
+            paginationStackPrefixCountThatFits(
+                items = items,
+                availableHeightPx = 220,
+                includeTrailingBottomMargin = false
+            )
+        )
+    }
 }
