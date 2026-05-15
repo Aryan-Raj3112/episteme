@@ -20,7 +20,15 @@ data class FolderBookMetadata(
     val locatorBlockIndex: Int?,
     val locatorCharOffset: Int?,
     val customName: String?,
-    val highlightsJson: String?
+    val highlightsJson: String?,
+    val seriesName: String? = null,
+    val seriesIndex: Double? = null,
+    val description: String? = null,
+    val originalTitle: String? = null,
+    val originalAuthor: String? = null,
+    val originalSeriesName: String? = null,
+    val originalSeriesIndex: Double? = null,
+    val originalDescription: String? = null
 ) {
     fun toJsonString(): String {
         val json = JSONObject()
@@ -40,6 +48,14 @@ data class FolderBookMetadata(
         json.put("locatorCharOffset", locatorCharOffset ?: -1)
         json.put("customName", customName)
         json.put("highlightsJson", highlightsJson)
+        json.put("seriesName", seriesName)
+        json.put("seriesIndex", seriesIndex)
+        json.put("description", description)
+        json.put("originalTitle", originalTitle)
+        json.put("originalAuthor", originalAuthor)
+        json.put("originalSeriesName", originalSeriesName)
+        json.put("originalSeriesIndex", originalSeriesIndex)
+        json.put("originalDescription", originalDescription)
         return json.toString()
     }
 
@@ -72,7 +88,15 @@ data class FolderBookMetadata(
                 locatorBlockIndex = json.optIntNull("locatorBlockIndex"),
                 locatorCharOffset = json.optIntNull("locatorCharOffset"),
                 customName = json.optStringNull("customName"),
-                highlightsJson = json.optStringNull("highlightsJson")
+                highlightsJson = json.optStringNull("highlightsJson"),
+                seriesName = json.optStringNull("seriesName"),
+                seriesIndex = if (json.has("seriesIndex") && !json.isNull("seriesIndex")) json.optDouble("seriesIndex") else null,
+                description = json.optStringNull("description"),
+                originalTitle = json.optStringNull("originalTitle"),
+                originalAuthor = json.optStringNull("originalAuthor"),
+                originalSeriesName = json.optStringNull("originalSeriesName"),
+                originalSeriesIndex = if (json.has("originalSeriesIndex") && !json.isNull("originalSeriesIndex")) json.optDouble("originalSeriesIndex") else null,
+                originalDescription = json.optStringNull("originalDescription")
             )
         }
     }
@@ -101,6 +125,14 @@ fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, 
         bookmarksJson = this.bookmarksJson,
         sourceFolderUri = sourceFolderUri,
         customName = this.customName,
-        highlightsJson = this.highlightsJson
+        highlightsJson = this.highlightsJson,
+        seriesName = this.seriesName,
+        seriesIndex = this.seriesIndex,
+        description = this.description,
+        originalTitle = this.originalTitle,
+        originalAuthor = this.originalAuthor,
+        originalSeriesName = this.originalSeriesName,
+        originalSeriesIndex = this.originalSeriesIndex,
+        originalDescription = this.originalDescription
     )
 }

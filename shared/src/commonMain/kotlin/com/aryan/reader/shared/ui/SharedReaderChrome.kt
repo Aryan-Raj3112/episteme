@@ -451,6 +451,16 @@ fun SharedReaderScreen(
                 border = BorderStroke(1.dp, foreground.copy(alpha = 0.12f))
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                    val showJumpHistory = !session.isSearchActive && session.jumpHistory.hasJumpTargets
+                    if (showJumpHistory) {
+                        SharedReaderJumpHistoryBar(
+                            session = session,
+                            onBack = { dispatch(ReaderAction.JumpBack) },
+                            onForward = { dispatch(ReaderAction.JumpForward) },
+                            onClear = { dispatch(ReaderAction.JumpHistoryCleared) }
+                        )
+                        HorizontalDivider(color = foreground.copy(alpha = 0.12f))
+                    }
                     SharedReaderCompactNavigation(
                         session = session,
                         showSlider = toolbarPreferences.isVisible(ReaderTool.SLIDER),
@@ -471,6 +481,9 @@ fun SharedReaderScreen(
                 onPrevious = { dispatch(ReaderAction.PreviousPage) },
                 onNext = { dispatch(ReaderAction.NextPage) },
                 onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) },
+                onJumpBack = { dispatch(ReaderAction.JumpBack) },
+                onJumpForward = { dispatch(ReaderAction.JumpForward) },
+                onClearJumpHistory = { dispatch(ReaderAction.JumpHistoryCleared) },
                 backgroundColor = background,
                 contentColor = foreground
             )
@@ -2880,6 +2893,9 @@ private fun SharedReaderFullscreenNavigation(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onPageNumberChange: (Int) -> Unit,
+    onJumpBack: () -> Unit,
+    onJumpForward: () -> Unit,
+    onClearJumpHistory: () -> Unit,
     backgroundColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier
@@ -2900,52 +2916,63 @@ private fun SharedReaderFullscreenNavigation(
         contentColor = contentColor,
         tonalElevation = 0.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(
-                enabled = readerState.canGoPrevious,
-                onClick = onPrevious
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.NavigateBefore,
-                    contentDescription = "Previous page",
-                    tint = contentColor.copy(alpha = if (readerState.canGoPrevious) 0.78f else 0.32f),
-                    modifier = Modifier.size(22.dp)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            if (!session.isSearchActive && session.jumpHistory.hasJumpTargets) {
+                SharedReaderJumpHistoryBar(
+                    session = session,
+                    onBack = onJumpBack,
+                    onForward = onJumpForward,
+                    onClear = onClearJumpHistory
                 )
+                HorizontalDivider(color = contentColor.copy(alpha = 0.14f))
             }
-            ReaderMinimalSlider(
-                value = currentSliderPosition.toFloat(),
-                onValueChange = { value ->
-                    onPageNumberChange(
-                        ReaderSpreadLayout.pageNumberForSliderPosition(
-                            position = value.roundToInt(),
-                            pageCount = totalPages,
-                            settings = readerState.settings
-                        )
-                    )
-                },
-                valueRange = 1f..sliderMax.toFloat(),
-                enabled = sliderSteps > 1,
-                activeColor = contentColor.copy(alpha = 0.68f),
-                inactiveColor = contentColor.copy(alpha = 0.24f),
-                thumbColor = contentColor.copy(alpha = 0.92f),
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(
-                enabled = readerState.canGoNext,
-                onClick = onNext
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.NavigateNext,
-                    contentDescription = "Next page",
-                    tint = contentColor.copy(alpha = if (readerState.canGoNext) 0.78f else 0.32f),
-                    modifier = Modifier.size(22.dp)
+                IconButton(
+                    enabled = readerState.canGoPrevious,
+                    onClick = onPrevious
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateBefore,
+                        contentDescription = "Previous page",
+                        tint = contentColor.copy(alpha = if (readerState.canGoPrevious) 0.78f else 0.32f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                ReaderMinimalSlider(
+                    value = currentSliderPosition.toFloat(),
+                    onValueChange = { value ->
+                        onPageNumberChange(
+                            ReaderSpreadLayout.pageNumberForSliderPosition(
+                                position = value.roundToInt(),
+                                pageCount = totalPages,
+                                settings = readerState.settings
+                            )
+                        )
+                    },
+                    valueRange = 1f..sliderMax.toFloat(),
+                    enabled = sliderSteps > 1,
+                    activeColor = contentColor.copy(alpha = 0.68f),
+                    inactiveColor = contentColor.copy(alpha = 0.24f),
+                    thumbColor = contentColor.copy(alpha = 0.92f),
+                    modifier = Modifier.weight(1f)
                 )
+                IconButton(
+                    enabled = readerState.canGoNext,
+                    onClick = onNext
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateNext,
+                        contentDescription = "Next page",
+                        tint = contentColor.copy(alpha = if (readerState.canGoNext) 0.78f else 0.32f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
             }
         }
     }

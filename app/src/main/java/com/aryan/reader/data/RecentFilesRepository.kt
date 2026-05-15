@@ -203,6 +203,11 @@ class RecentFilesRepository(private val context: Context) {
                 seriesName = item.seriesName ?: existingItem.seriesName,
                 seriesIndex = item.seriesIndex ?: existingItem.seriesIndex,
                 description = item.description ?: existingItem.description,
+                originalTitle = if (folderFileChanged) item.originalTitle ?: item.title else existingItem.originalTitle ?: item.originalTitle ?: item.title,
+                originalAuthor = if (folderFileChanged) item.originalAuthor ?: item.author else existingItem.originalAuthor ?: item.originalAuthor ?: item.author,
+                originalSeriesName = if (folderFileChanged) item.originalSeriesName ?: item.seriesName else existingItem.originalSeriesName ?: item.originalSeriesName ?: item.seriesName,
+                originalSeriesIndex = if (folderFileChanged) item.originalSeriesIndex ?: item.seriesIndex else existingItem.originalSeriesIndex ?: item.originalSeriesIndex ?: item.seriesIndex,
+                originalDescription = if (folderFileChanged) item.originalDescription ?: item.description else existingItem.originalDescription ?: item.originalDescription ?: item.description,
                 folderTextMetadataParsed = if (folderFileChanged) {
                     item.folderTextMetadataParsed
                 } else {
@@ -223,13 +228,33 @@ class RecentFilesRepository(private val context: Context) {
         Timber.d("Added/Updated recent file in DB: ${item.displayName}")
     }
 
+    suspend fun updateUserEditableMetadata(bookId: String, metadata: BookMetadataEdit) = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        recentFileDao.updateUserEditableMetadata(
+            bookId = bookId,
+            title = metadata.title,
+            author = metadata.author,
+            seriesName = metadata.seriesName,
+            seriesIndex = metadata.seriesIndex,
+            description = metadata.description,
+            timestamp = currentTime
+        )
+        Timber.d("Updated user-editable metadata for $bookId")
+    }
+
+    suspend fun restoreOriginalMetadata(bookId: String) = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        recentFileDao.restoreOriginalMetadata(bookId, currentTime)
+        Timber.d("Restored original metadata for $bookId")
+    }
+
     suspend fun updateHighlights(bookId: String, highlightsJson: String) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateHighlights(bookId, highlightsJson, currentTime)
         Timber.d("Updated highlights for $bookId")
     }
 
-    suspend fun syncLocalMetadataToFolder(bookId: String) = withContext(Dispatchers.IO) {
+    suspend fun syncLocalMetadataToFolder(bookId: String, force: Boolean = false) = withContext(Dispatchers.IO) {
         val entity = recentFileDao.getFileByBookId(bookId) ?: return@withContext
         val folderUriString = entity.sourceFolderUri
 
@@ -239,7 +264,7 @@ class RecentFilesRepository(private val context: Context) {
             val hasHighlights = !entity.highlights.isNullOrEmpty() && entity.highlights != "[]"
             val isDirty = entity.isRecent || hasProgress || hasBookmarks || hasHighlights
 
-            if (!isDirty) {
+            if (!force && !isDirty) {
                 Timber.d("SyncDebug: Book $bookId is 'Clean' (Unread/Not Recent). Skipping JSON creation.")
                 return@withContext
             }
@@ -262,7 +287,15 @@ class RecentFilesRepository(private val context: Context) {
                 locatorBlockIndex = entity.locatorBlockIndex,
                 locatorCharOffset = entity.locatorCharOffset,
                 customName = entity.customName,
-                highlightsJson = entity.highlights
+                highlightsJson = entity.highlights,
+                seriesName = entity.seriesName,
+                seriesIndex = entity.seriesIndex,
+                description = entity.description,
+                originalTitle = entity.originalTitle,
+                originalAuthor = entity.originalAuthor,
+                originalSeriesName = entity.originalSeriesName,
+                originalSeriesIndex = entity.originalSeriesIndex,
+                originalDescription = entity.originalDescription
             )
 
             LocalSyncUtils.saveMetadataToFolder(

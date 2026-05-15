@@ -396,8 +396,11 @@ fun LibraryScreen(
                         showInfoDialog = false
                         itemForInfoDialog = null
                     },
-                    onUpdateName = { newName ->
-                        viewModel.updateCustomName(item.bookId, newName)
+                    onSaveMetadata = { metadata ->
+                        viewModel.updateBookMetadata(item.bookId, metadata)
+                    },
+                    onRestoreMetadata = {
+                        viewModel.restoreOriginalBookMetadata(item.bookId)
                     },
                     onOpenTags = { viewModel.openTagSelection(setOf(item.bookId)) }
                 )
@@ -518,7 +521,8 @@ fun ShelfScreen(
                 FileInfoDialog(
                     item = item,
                     onDismiss = { showInfoDialog = false; itemForInfoDialog = null },
-                    onUpdateName = { newName -> viewModel.updateCustomName(item.bookId, newName) },
+                    onSaveMetadata = { metadata -> viewModel.updateBookMetadata(item.bookId, metadata) },
+                    onRestoreMetadata = { viewModel.restoreOriginalBookMetadata(item.bookId) },
                     onOpenTags = { viewModel.openTagSelection(setOf(item.bookId)) }
                 )
             }

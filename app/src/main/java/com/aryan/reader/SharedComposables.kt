@@ -57,6 +57,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -69,17 +71,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -88,6 +97,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.ProvideTextStyle
@@ -117,11 +127,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
+import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.RecentFileItem
 import timber.log.Timber
 import java.text.SimpleDateFormat
@@ -359,194 +373,432 @@ fun DeleteConfirmationDialog(
 }
 
 @Composable
-fun FileInfoDialog(item: RecentFileItem, onDismiss: () -> Unit, onUpdateName: (String?) -> Unit, onOpenTags: () -> Unit) {
-    LocalContext.current
+fun FileInfoDialog(
+    item: RecentFileItem,
+    onDismiss: () -> Unit,
+    onSaveMetadata: (BookMetadataEdit) -> Unit,
+    onRestoreMetadata: () -> Unit,
+    onOpenTags: () -> Unit
+) {
     @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
-
-    val originalName = item.title ?: item.displayName
-    var editingName by remember { mutableStateOf(item.customName ?: originalName) }
-    val hasCustomName = item.customName != null
+    val context = LocalContext.current
+    var isEditing by remember(item.bookId) { mutableStateOf(false) }
+    var titleInput by remember(item.bookId, item.title) { mutableStateOf(item.title.orEmpty()) }
+    var authorInput by remember(item.bookId, item.author) { mutableStateOf(item.author.orEmpty()) }
+    var seriesInput by remember(item.bookId, item.seriesName) { mutableStateOf(item.seriesName.orEmpty()) }
+    var seriesIndexInput by remember(item.bookId, item.seriesIndex) {
+        mutableStateOf(item.seriesIndex?.formatMetadataNumber().orEmpty())
+    }
+    var descriptionInput by remember(item.bookId, item.description) { mutableStateOf(item.description.orEmpty()) }
 
     val formattedDate = remember(item.timestamp) {
         SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(item.timestamp))
     }
-
-    val context = LocalContext.current
+    val lastModifiedDate = remember(item.lastModifiedTimestamp) {
+        item.lastModifiedTimestamp
+            .takeIf { it > 0L }
+            ?.let { SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(it)) }
+    }
     val isOpdsStream = item.uriString?.startsWith("opds-pse://") == true
     val pathText = remember(item.sourceFolderUri, item.uriString, item.displayName, context) {
-        if (isOpdsStream) {
-            "Source: OPDS Stream"
-        } else if (item.sourceFolderUri != null && item.uriString != null) {
-            try {
-                val uri = item.uriString.toUri()
-                val docId = if (android.provider.DocumentsContract.isDocumentUri(context, uri)) {
-                    android.provider.DocumentsContract.getDocumentId(uri)
-                } else if (android.provider.DocumentsContract.isTreeUri(uri)) {
-                    android.provider.DocumentsContract.getTreeDocumentId(uri)
-                } else {
-                    Uri.decode(uri.toString())
-                }
+        item.resolveDisplayPath(context, isOpdsStream)
+    }
+    val pathTextFinal = if (isOpdsStream) {
+        stringResource(R.string.source_opds)
+    } else if (pathText == "In-App Storage") {
+        stringResource(R.string.source_in_app)
+    } else {
+        pathText.replace("Internal storage", stringResource(R.string.internal_storage))
+    }
+    val hasOriginalMetadata = item.hasOriginalMetadata()
+    val hasMetadataChanges = item.hasMetadataChanges()
 
-                val split = docId.split(":")
-                val storageName = if (split[0].equals("primary", ignoreCase = true)) "Internal storage" else split[0]
-                var relativePath = if (split.size > 1) {
-                    Uri.decode(split[1]).removeSuffix("/")
-                } else ""
-
-                if (!relativePath.endsWith(item.displayName)) {
-                    relativePath = if (relativePath.isEmpty()) item.displayName else "$relativePath/${item.displayName}"
-                }
-
-                val leadingSlash = if (relativePath.isNotEmpty() && !relativePath.startsWith("/")) "/" else ""
-
-                "/$storageName$leadingSlash$relativePath"
-            } catch (_: Exception) {
-                val decoded = Uri.decode(item.uriString)
-                if (decoded.contains("primary:")) {
-                    "/Internal storage/${decoded.substringAfter("primary:").substringBeforeLast("/")}/${item.displayName}"
-                } else {
-                    item.displayName
-                }
+    Dialog(
+        onDismissRequest = {
+            if (isEditing) {
+                isEditing = false
+            } else {
+                onDismiss()
             }
-        } else {
-            "In-App Storage"
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .imePadding()
+            ) {
+                FileInfoTopBar(
+                    title = if (isEditing) "Edit metadata" else stringResource(R.string.file_information),
+                    subtitle = item.cardTitle(),
+                    isEditing = isEditing,
+                    onClose = {
+                        if (isEditing) {
+                            isEditing = false
+                        } else {
+                            onDismiss()
+                        }
+                    },
+                    onEdit = { isEditing = true }
+                )
+
+                HorizontalDivider()
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    if (isEditing) {
+                        BookMetadataEditContent(
+                            titleInput = titleInput,
+                            onTitleChange = { titleInput = it },
+                            authorInput = authorInput,
+                            onAuthorChange = { authorInput = it },
+                            seriesInput = seriesInput,
+                            onSeriesChange = { seriesInput = it },
+                            seriesIndexInput = seriesIndexInput,
+                            onSeriesIndexChange = { seriesIndexInput = it },
+                            descriptionInput = descriptionInput,
+                            onDescriptionChange = { descriptionInput = it },
+                            originalItem = item
+                        )
+                    } else {
+                        BookMetadataInfoContent(
+                            item = item,
+                            formattedDate = formattedDate,
+                            lastModifiedDate = lastModifiedDate,
+                            pathText = pathTextFinal,
+                            hasMetadataChanges = hasMetadataChanges,
+                            onCopy = { value -> clipboardManager.setText(AnnotatedString(value)) },
+                            onOpenTags = onOpenTags
+                        )
+                    }
+                }
+
+                HorizontalDivider()
+
+                FileInfoBottomBar(
+                    isEditing = isEditing,
+                    canRestore = hasOriginalMetadata && (hasMetadataChanges || isEditing),
+                    onCancel = {
+                        if (isEditing) {
+                            isEditing = false
+                        } else {
+                            onDismiss()
+                        }
+                    },
+                    onRestore = {
+                        onRestoreMetadata()
+                        onDismiss()
+                    },
+                    onSave = {
+                        onSaveMetadata(
+                            BookMetadataEdit(
+                                title = titleInput.toMetadataValue() ?: item.displayName.substringBeforeLast('.', item.displayName),
+                                author = authorInput.toMetadataValue(),
+                                seriesName = seriesInput.toMetadataValue(),
+                                seriesIndex = seriesIndexInput.toSeriesIndexOrNull(),
+                                description = descriptionInput.toMetadataValue()
+                            )
+                        )
+                        onDismiss()
+                    },
+                    onEdit = { isEditing = true }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileInfoTopBar(
+    title: String,
+    subtitle: String,
+    isEditing: Boolean,
+    onClose: () -> Unit,
+    onEdit: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onClose) {
+            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 8.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (!isEditing) {
+            FilledTonalButton(onClick = onEdit) {
+                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Edit")
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookMetadataInfoContent(
+    item: RecentFileItem,
+    formattedDate: String,
+    lastModifiedDate: String?,
+    pathText: String,
+    hasMetadataChanges: Boolean,
+    onCopy: (String) -> Unit,
+    onOpenTags: () -> Unit
+) {
+    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                item.cardTitle(),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+            item.author
+                ?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+                ?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            Text(
+                if (hasMetadataChanges) "Metadata edited in library" else "Metadata from file",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (hasMetadataChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.fillMaxWidth()
-        ) {
+    item.description?.takeIf { it.isNotBlank() }?.let { summary ->
+        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
             Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    stringResource(R.string.file_information),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-
-                androidx.compose.material3.OutlinedTextField(
-                    value = editingName,
-                    onValueChange = { editingName = it },
-                    label = { Text(stringResource(R.string.book_name)) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 64.dp, max = 130.dp),
-                    maxLines = 4,
-                    textStyle = MaterialTheme.typography.bodyLarge,
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            clipboardManager.setText(AnnotatedString(editingName))
-                        }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.copy_name), modifier = Modifier.size(20.dp))
-                        }
-                    }
-                )
-
-                if (hasCustomName) {
-                    Text(
-                        text = stringResource(R.string.original_name, originalName),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    TextButton(
-                        onClick = {
-                            editingName = originalName
-                            onUpdateName(null)
-                        },
-                        modifier = Modifier.align(Alignment.End),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Text(stringResource(R.string.revert_to_original))
-                    }
-                } else if (originalName != item.displayName) {
-                    Text(
-                        text = stringResource(R.string.file_name, item.displayName),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
-                        InfoRowDetailed(stringResource(R.string.author), it)
-                    }
-                    item.seriesName?.takeIf { it.isNotBlank() }?.let { series ->
-                        val seriesText = if (item.seriesIndex != null && item.seriesIndex > 0) {
-                            "$series #${item.seriesIndex.toInt()}"
-                        } else {
-                            series
-                        }
-                        InfoRowDetailed("Series", seriesText)
-                    }
-                    InfoRowDetailed(stringResource(R.string.format), item.type.name)
-                    InfoRowDetailed(stringResource(R.string.size), formatFileSize(item.fileSize))
-                    InfoRowDetailed(stringResource(R.string.added), formattedDate)
-
-                    val pathTextFinal = if (isOpdsStream) {
-                        stringResource(R.string.source_opds)
-                    } else if (pathText == "In-App Storage") {
-                        stringResource(R.string.source_in_app)
-                    } else {
-                        pathText.replace("Internal storage", stringResource(R.string.internal_storage))
-                    }
-
-                    InfoRowDetailed(
-                        label = stringResource(R.string.location),
-                        value = pathTextFinal,
-                        maxLines = 4,
-                        isScrollable = true,
-                        onCopy = {
-                            clipboardManager.setText(AnnotatedString(pathTextFinal))
-                        }
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.section_tags), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    TextButton(onClick = onOpenTags) { Text(stringResource(R.string.action_add_edit)) }
-                }
-
-                if (item.tags.isNotEmpty()) {
-                    BookTagChipsRow(tags = item.tags, compact = false)
-                } else {
-                    Text(stringResource(R.string.msg_no_tags_assigned), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    androidx.compose.material3.Button(onClick = {
-                        val finalName = editingName.trim()
-                        if (finalName != (item.customName ?: originalName)) {
-                            if (finalName == originalName || finalName.isEmpty()) {
-                                onUpdateName(null)
-                            } else {
-                                onUpdateName(finalName)
-                            }
-                        }
-                        onDismiss()
-                    }) { Text(stringResource(R.string.action_save)) }
-                }
+                Text("Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                ExpandableValueText(summary, collapsedMaxLines = 4)
             }
+        }
+    }
+
+    FileInfoSection(title = "Metadata") {
+        InfoRowDetailed("Title", item.title?.takeIf { it.isNotBlank() } ?: item.displayName, maxLines = 3)
+        item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
+            InfoRowDetailed(stringResource(R.string.author), it, maxLines = 2)
+        }
+        item.seriesLabel()?.let {
+            InfoRowDetailed("Series", it, maxLines = 2)
+        }
+        InfoRowDetailed(stringResource(R.string.format), item.type.name)
+        InfoRowDetailed(stringResource(R.string.size), formatFileSize(item.fileSize))
+        InfoRowDetailed("Reading", item.readingProgressText(), maxLines = 2)
+    }
+
+    FileInfoSection(title = "File") {
+        InfoRowDetailed("File name", item.displayName, maxLines = 2)
+        InfoRowDetailed(stringResource(R.string.added), formattedDate)
+        lastModifiedDate?.let { InfoRowDetailed("Modified", it) }
+        InfoRowDetailed("Availability", if (item.isAvailable) "Available" else "Missing from device")
+        InfoRowDetailed(
+            label = stringResource(R.string.location),
+            value = pathText,
+            maxLines = 4,
+            onCopy = { onCopy(pathText) }
+        )
+    }
+
+    if (hasMetadataChanges) {
+        FileInfoSection(title = "Original Metadata") {
+            item.originalTitle?.takeIf { it.isNotBlank() }?.let { InfoRowDetailed("Title", it, maxLines = 3) }
+            item.originalAuthor?.takeIf { it.isNotBlank() }?.let { InfoRowDetailed(stringResource(R.string.author), it, maxLines = 2) }
+            item.originalSeriesLabel()?.let { InfoRowDetailed("Series", it, maxLines = 2) }
+            item.originalDescription?.takeIf { it.isNotBlank() }?.let { InfoRowDetailed("Summary", it, maxLines = 4) }
+        }
+    }
+
+    FileInfoSection(title = stringResource(R.string.section_tags)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Library tags", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = onOpenTags) { Text(stringResource(R.string.action_add_edit)) }
+        }
+
+        if (item.tags.isNotEmpty()) {
+            BookTagChipsRow(tags = item.tags, compact = false)
+        } else {
+            Text(
+                stringResource(R.string.msg_no_tags_assigned),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun BookMetadataEditContent(
+    titleInput: String,
+    onTitleChange: (String) -> Unit,
+    authorInput: String,
+    onAuthorChange: (String) -> Unit,
+    seriesInput: String,
+    onSeriesChange: (String) -> Unit,
+    seriesIndexInput: String,
+    onSeriesIndexChange: (String) -> Unit,
+    descriptionInput: String,
+    onDescriptionChange: (String) -> Unit,
+    originalItem: RecentFileItem
+) {
+    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Editable metadata", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = titleInput,
+                onValueChange = onTitleChange,
+                label = { Text("Title") },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 3,
+                supportingText = {
+                    originalItem.originalTitle?.takeIf { it.isNotBlank() && it != titleInput.trim() }?.let {
+                        Text("Original: $it", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            )
+            OutlinedTextField(
+                value = authorInput,
+                onValueChange = onAuthorChange,
+                label = { Text(stringResource(R.string.author)) },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 2
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = seriesInput,
+                    onValueChange = onSeriesChange,
+                    label = { Text("Series") },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2
+                )
+                OutlinedTextField(
+                    value = seriesIndexInput,
+                    onValueChange = onSeriesIndexChange,
+                    label = { Text("#") },
+                    modifier = Modifier.width(96.dp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+            OutlinedTextField(
+                value = descriptionInput,
+                onValueChange = onDescriptionChange,
+                label = { Text("Summary") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 128.dp),
+                minLines = 4,
+                maxLines = 10
+            )
+        }
+    }
+}
+
+@Composable
+private fun FileInfoBottomBar(
+    isEditing: Boolean,
+    canRestore: Boolean,
+    onCancel: () -> Unit,
+    onRestore: () -> Unit,
+    onSave: () -> Unit,
+    onEdit: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (canRestore) {
+            OutlinedButton(
+                onClick = onRestore,
+                modifier = Modifier.padding(end = 8.dp)
+            ) {
+                Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Restore")
+            }
+        }
+        TextButton(onClick = onCancel) {
+            Text(if (isEditing) stringResource(R.string.action_cancel) else stringResource(R.string.action_close))
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        if (isEditing) {
+            Button(onClick = onSave) {
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.action_save))
+            }
+        } else {
+            Button(onClick = onEdit) {
+                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Edit")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileInfoSection(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            content()
         }
     }
 }
@@ -556,7 +808,6 @@ private fun InfoRowDetailed(
     label: String,
     value: String,
     maxLines: Int = 1,
-    isScrollable: Boolean = false,
     onCopy: (() -> Unit)? = null
 ) {
     Row(
@@ -569,32 +820,17 @@ private fun InfoRowDetailed(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
-                .width(85.dp)
+                .width(104.dp)
                 .padding(top = 2.dp)
         )
-
-        val scrollModifier = if (isScrollable) {
-            Modifier
-                .heightIn(max = 66.dp)
-                .verticalScroll(rememberScrollState())
-        } else Modifier
-
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = if (isScrollable) Int.MAX_VALUE else maxLines,
-            overflow = if (isScrollable) TextOverflow.Clip else TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .padding(top = 2.dp)
-                .then(scrollModifier)
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            ExpandableValueText(value, collapsedMaxLines = maxLines)
+        }
         if (onCopy != null) {
             IconButton(
                 onClick = onCopy,
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(28.dp)
                     .padding(start = 4.dp)
             ) {
                 Icon(
@@ -605,6 +841,134 @@ private fun InfoRowDetailed(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ExpandableValueText(
+    value: String,
+    collapsedMaxLines: Int
+) {
+    var expanded by remember(value) { mutableStateOf(false) }
+    val canExpand = collapsedMaxLines < Int.MAX_VALUE && (value.length > 120 || value.contains('\n'))
+    Text(
+        text = value,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = if (expanded) Int.MAX_VALUE else collapsedMaxLines,
+        overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+        modifier = Modifier.padding(top = 2.dp)
+    )
+    if (canExpand) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier.height(32.dp)
+        ) {
+            Text(if (expanded) "Less" else "...more")
+            Spacer(modifier = Modifier.width(2.dp))
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+private fun RecentFileItem.resolveDisplayPath(context: Context, isOpdsStream: Boolean): String {
+    return if (isOpdsStream) {
+        "Source: OPDS Stream"
+    } else if (sourceFolderUri != null && uriString != null) {
+        try {
+            val uri = uriString.toUri()
+            val docId = if (android.provider.DocumentsContract.isDocumentUri(context, uri)) {
+                android.provider.DocumentsContract.getDocumentId(uri)
+            } else if (android.provider.DocumentsContract.isTreeUri(uri)) {
+                android.provider.DocumentsContract.getTreeDocumentId(uri)
+            } else {
+                Uri.decode(uri.toString())
+            }
+
+            val split = docId.split(":")
+            val storageName = if (split[0].equals("primary", ignoreCase = true)) "Internal storage" else split[0]
+            var relativePath = if (split.size > 1) Uri.decode(split[1]).removeSuffix("/") else ""
+
+            if (!relativePath.endsWith(displayName)) {
+                relativePath = if (relativePath.isEmpty()) displayName else "$relativePath/$displayName"
+            }
+
+            val leadingSlash = if (relativePath.isNotEmpty() && !relativePath.startsWith("/")) "/" else ""
+            "/$storageName$leadingSlash$relativePath"
+        } catch (_: Exception) {
+            val decoded = Uri.decode(uriString)
+            if (decoded.contains("primary:")) {
+                "/Internal storage/${decoded.substringAfter("primary:").substringBeforeLast("/")}/$displayName"
+            } else {
+                displayName
+            }
+        }
+    } else {
+        "In-App Storage"
+    }
+}
+
+private fun RecentFileItem.hasOriginalMetadata(): Boolean {
+    return listOf(originalTitle, originalAuthor, originalSeriesName, originalDescription).any { !it.isNullOrBlank() } ||
+        originalSeriesIndex != null
+}
+
+private fun RecentFileItem.hasMetadataChanges(): Boolean {
+    return metadataValueChanged(title, originalTitle) ||
+        metadataValueChanged(author, originalAuthor) ||
+        metadataValueChanged(seriesName, originalSeriesName) ||
+        seriesIndex != originalSeriesIndex ||
+        metadataValueChanged(description, originalDescription) ||
+        !customName.isNullOrBlank()
+}
+
+private fun metadataValueChanged(current: String?, original: String?): Boolean {
+    return current.orEmpty().trim() != original.orEmpty().trim()
+}
+
+private fun RecentFileItem.seriesLabel(): String? {
+    val series = seriesName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    return seriesIndex?.takeIf { it > 0.0 }?.let { "$series #${it.formatMetadataNumber()}" } ?: series
+}
+
+private fun RecentFileItem.originalSeriesLabel(): String? {
+    val series = originalSeriesName?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    return originalSeriesIndex?.takeIf { it > 0.0 }?.let { "$series #${it.formatMetadataNumber()}" } ?: series
+}
+
+private fun RecentFileItem.readingProgressText(): String {
+    val progress = progressPercentage?.coerceIn(0f, 100f)
+    val progressText = progress?.let { String.format(Locale.US, "%.1f%%", it) } ?: "Not started"
+    val locatorText = when {
+        lastPage != null -> "Last page ${lastPage + 1}"
+        lastChapterIndex != null -> "Chapter ${lastChapterIndex + 1}"
+        else -> null
+    }
+    return listOfNotNull(progressText, locatorText).joinToString(" - ")
+}
+
+private fun String.toMetadataValue(): String? {
+    return trim().takeIf { it.isNotEmpty() }
+}
+
+private fun String.toSeriesIndexOrNull(): Double? {
+    return trim()
+        .replace(',', '.')
+        .takeIf { it.isNotEmpty() }
+        ?.toDoubleOrNull()
+        ?.takeIf { it > 0.0 }
+}
+
+private fun Double.formatMetadataNumber(): String {
+    return if (this % 1.0 == 0.0) {
+        toInt().toString()
+    } else {
+        String.format(Locale.US, "%.2f", this).trimEnd('0').trimEnd('.')
     }
 }
 

@@ -71,6 +71,120 @@ class RecentFileDaoMetadataExtractionTest {
         assertEquals("book-2", pending.single().bookId)
     }
 
+    @Test
+    fun `metadata extraction does not replace user edited metadata`() = runTest {
+        dao.insertOrUpdateFile(
+            recentFileEntity().copy(
+                title = "Edited title",
+                author = "Edited author",
+                originalTitle = "Original title",
+                originalAuthor = "Original author"
+            )
+        )
+
+        dao.updateExtractedMetadata(
+            bookId = "book-1",
+            coverImagePath = null,
+            title = "Extracted title",
+            author = "Extracted author",
+            fileSize = 0L,
+            textMetadataParsed = true,
+            coverMetadataParsed = false
+        )
+
+        val saved = dao.getFileByBookId("book-1")!!
+        assertEquals("Edited title", saved.title)
+        assertEquals("Edited author", saved.author)
+        assertEquals("Original title", saved.originalTitle)
+        assertEquals("Original author", saved.originalAuthor)
+    }
+
+    @Test
+    fun `metadata extraction promotes extracted values before user edits`() = runTest {
+        dao.insertOrUpdateFile(
+            recentFileEntity().copy(
+                title = "book-1.epub",
+                author = null,
+                originalTitle = "book-1.epub",
+                originalAuthor = null
+            )
+        )
+
+        dao.updateExtractedMetadata(
+            bookId = "book-1",
+            coverImagePath = null,
+            title = "Extracted title",
+            author = "Extracted author",
+            fileSize = 0L,
+            textMetadataParsed = true,
+            coverMetadataParsed = false
+        )
+
+        val saved = dao.getFileByBookId("book-1")!!
+        assertEquals("Extracted title", saved.title)
+        assertEquals("Extracted author", saved.author)
+        assertEquals("Extracted title", saved.originalTitle)
+        assertEquals("Extracted author", saved.originalAuthor)
+    }
+
+    @Test
+    fun `restore original metadata restores snapshot and clears display override`() = runTest {
+        dao.insertOrUpdateFile(
+            recentFileEntity().copy(
+                title = "Edited title",
+                author = "Edited author",
+                seriesName = "Edited series",
+                seriesIndex = 2.0,
+                description = "Edited summary",
+                customName = "Edited display",
+                originalTitle = "Original title",
+                originalAuthor = "Original author",
+                originalSeriesName = "Original series",
+                originalSeriesIndex = 1.0,
+                originalDescription = "Original summary"
+            )
+        )
+
+        dao.restoreOriginalMetadata("book-1", timestamp = 9_000L)
+
+        val saved = dao.getFileByBookId("book-1")!!
+        assertEquals("Original title", saved.title)
+        assertEquals("Original author", saved.author)
+        assertEquals("Original series", saved.seriesName)
+        assertEquals(1.0, saved.seriesIndex)
+        assertEquals("Original summary", saved.description)
+        assertNull(saved.customName)
+        assertEquals(9_000L, saved.lastModifiedTimestamp)
+    }
+
+    @Test
+    fun `manual metadata update seeds missing original snapshot from previous values`() = runTest {
+        dao.insertOrUpdateFile(
+            recentFileEntity().copy(
+                title = "Existing title",
+                author = "Existing author",
+                originalTitle = null,
+                originalAuthor = null
+            )
+        )
+
+        dao.updateUserEditableMetadata(
+            bookId = "book-1",
+            title = "Edited title",
+            author = "Edited author",
+            seriesName = null,
+            seriesIndex = null,
+            description = null,
+            timestamp = 5_000L
+        )
+
+        val saved = dao.getFileByBookId("book-1")!!
+        assertEquals("Edited title", saved.title)
+        assertEquals("Edited author", saved.author)
+        assertEquals("Existing title", saved.originalTitle)
+        assertEquals("Existing author", saved.originalAuthor)
+    }
+
     private fun recentFileEntity(
         bookId: String = "book-1",
         timestamp: Long = 1_000L,

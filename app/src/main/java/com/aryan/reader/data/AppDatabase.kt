@@ -36,7 +36,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         TagEntity::class,
         BookTagCrossRef::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 @TypeConverters(FileTypeConverter::class)
@@ -263,6 +263,25 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN originalTitle TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN originalAuthor TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN originalSeriesName TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN originalSeriesIndex REAL DEFAULT NULL")
+                db.execSQL("ALTER TABLE recent_files ADD COLUMN originalDescription TEXT DEFAULT NULL")
+                db.execSQL("""
+                    UPDATE recent_files
+                    SET
+                        originalTitle = title,
+                        originalAuthor = author,
+                        originalSeriesName = seriesName,
+                        originalSeriesIndex = seriesIndex,
+                        originalDescription = description
+                """)
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -275,7 +294,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
-                        MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20
+                        MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
+                        MIGRATION_20_21
                     )
                     .fallbackToDestructiveMigration(false)
                     .build()

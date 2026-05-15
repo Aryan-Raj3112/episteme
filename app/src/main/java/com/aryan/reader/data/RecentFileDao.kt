@@ -33,7 +33,7 @@ interface RecentFileDao {
     @Upsert
     suspend fun insertOrUpdateFiles(files: List<RecentFileEntity>)
 
-    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, seriesName, seriesIndex, description FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getRecentFiles(): Flow<List<RecentFileSummary>>
 
     @Query("SELECT * FROM recent_files WHERE sourceFolderUri = :sourceFolderUri AND isDeleted = 0")
@@ -45,7 +45,7 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET isReflowPreferred = :isPreferred WHERE bookId = :bookId")
     suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean)
 
-    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, seriesName, seriesIndex, description FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentFilesList(limit: Int): List<RecentFileSummary>
 
     @Query("DELETE FROM recent_files WHERE bookId IN (:bookIds)")
@@ -142,8 +142,26 @@ interface RecentFileDao {
         UPDATE recent_files
         SET
             coverImagePath = COALESCE(:coverImagePath, coverImagePath),
-            title = COALESCE(:title, title),
-            author = COALESCE(:author, author),
+            title = CASE
+                WHEN :title IS NOT NULL AND (originalTitle IS NULL OR title IS NULL OR title = originalTitle OR title = displayName)
+                THEN :title
+                ELSE title
+            END,
+            author = CASE
+                WHEN :author IS NOT NULL AND (originalAuthor IS NULL OR author IS NULL OR author = originalAuthor)
+                THEN :author
+                ELSE author
+            END,
+            originalTitle = CASE
+                WHEN :title IS NOT NULL AND (originalTitle IS NULL OR originalTitle = title OR originalTitle = displayName)
+                THEN :title
+                ELSE originalTitle
+            END,
+            originalAuthor = CASE
+                WHEN :author IS NOT NULL AND (originalAuthor IS NULL OR originalAuthor = author)
+                THEN :author
+                ELSE originalAuthor
+            END,
             fileSize = CASE WHEN :fileSize > 0 THEN :fileSize ELSE fileSize END,
             folderTextMetadataParsed = CASE WHEN :textMetadataParsed = 1 THEN 1 ELSE folderTextMetadataParsed END,
             folderCoverMetadataParsed = CASE WHEN :coverMetadataParsed = 1 THEN 1 ELSE folderCoverMetadataParsed END
@@ -164,4 +182,44 @@ interface RecentFileDao {
 
     @Query("UPDATE recent_files SET highlights = :highlightsJson, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateHighlights(bookId: String, highlightsJson: String, timestamp: Long)
+
+    @Query("""
+        UPDATE recent_files
+        SET
+            title = :title,
+            author = :author,
+            seriesName = :seriesName,
+            seriesIndex = :seriesIndex,
+            description = :description,
+            originalTitle = COALESCE(originalTitle, title),
+            originalAuthor = COALESCE(originalAuthor, author),
+            originalSeriesName = COALESCE(originalSeriesName, seriesName),
+            originalSeriesIndex = COALESCE(originalSeriesIndex, seriesIndex),
+            originalDescription = COALESCE(originalDescription, description),
+            lastModifiedTimestamp = :timestamp
+        WHERE bookId = :bookId
+    """)
+    suspend fun updateUserEditableMetadata(
+        bookId: String,
+        title: String?,
+        author: String?,
+        seriesName: String?,
+        seriesIndex: Double?,
+        description: String?,
+        timestamp: Long
+    )
+
+    @Query("""
+        UPDATE recent_files
+        SET
+            title = COALESCE(originalTitle, displayName),
+            author = originalAuthor,
+            seriesName = originalSeriesName,
+            seriesIndex = originalSeriesIndex,
+            description = originalDescription,
+            customName = NULL,
+            lastModifiedTimestamp = :timestamp
+        WHERE bookId = :bookId
+    """)
+    suspend fun restoreOriginalMetadata(bookId: String, timestamp: Long)
 }

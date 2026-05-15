@@ -76,8 +76,10 @@ internal actual fun SharedReaderModalLayer(
         LaunchedEffect(modalWindow, level) {
             modalWindow.name = SharedReaderModalWindowNamePrefix + level.name
             modalWindow.isAlwaysOnTop = true
-            if (level == SharedReaderModalLevel.Popup) {
-                delay(40)
+            val frontAttempts = if (level == SharedReaderModalLevel.Popup) 4 else 3
+            repeat(frontAttempts) { attempt ->
+                delay(if (attempt == 0) 30L else 80L)
+                modalWindow.isAlwaysOnTop = true
                 modalWindow.toFront()
                 modalWindow.requestFocus()
                 modalWindow.requestFocusInWindow()

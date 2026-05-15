@@ -49,6 +49,11 @@ data class RecentFileItem(
     val seriesName: String? = null,
     val seriesIndex: Double? = null,
     val description: String? = null,
+    val originalTitle: String? = null,
+    val originalAuthor: String? = null,
+    val originalSeriesName: String? = null,
+    val originalSeriesIndex: Double? = null,
+    val originalDescription: String? = null,
     val folderTextMetadataParsed: Boolean = false,
     val folderCoverMetadataParsed: Boolean = false,
     val tags: List<TagEntity> = emptyList()
@@ -83,6 +88,11 @@ fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
         seriesName = this.seriesName,
         seriesIndex = this.seriesIndex,
         description = this.description,
+        originalTitle = this.originalTitle,
+        originalAuthor = this.originalAuthor,
+        originalSeriesName = this.originalSeriesName,
+        originalSeriesIndex = this.originalSeriesIndex,
+        originalDescription = this.originalDescription,
         folderTextMetadataParsed = this.folderTextMetadataParsed,
         folderCoverMetadataParsed = this.folderCoverMetadataParsed
     )
@@ -117,6 +127,11 @@ fun RecentFileItem.toRecentFileEntity(): RecentFileEntity {
         seriesName = this.seriesName,
         seriesIndex = this.seriesIndex,
         description = this.description,
+        originalTitle = this.originalTitle ?: this.title,
+        originalAuthor = this.originalAuthor ?: this.author,
+        originalSeriesName = this.originalSeriesName ?: this.seriesName,
+        originalSeriesIndex = this.originalSeriesIndex ?: this.seriesIndex,
+        originalDescription = this.originalDescription ?: this.description,
         folderTextMetadataParsed = this.folderTextMetadataParsed,
         folderCoverMetadataParsed = this.folderCoverMetadataParsed
     )
@@ -141,7 +156,15 @@ fun RecentFileItem.toBookMetadata(): BookMetadata {
         bookmarksJson = this.bookmarksJson,
         hasAnnotations = false,
         customName = this.customName,
-        highlightsJson = this.highlightsJson
+        highlightsJson = this.highlightsJson,
+        seriesName = this.seriesName,
+        seriesIndex = this.seriesIndex,
+        description = this.description,
+        originalTitle = this.originalTitle ?: this.title,
+        originalAuthor = this.originalAuthor ?: this.author,
+        originalSeriesName = this.originalSeriesName ?: this.seriesName,
+        originalSeriesIndex = this.originalSeriesIndex ?: this.seriesIndex,
+        originalDescription = this.originalDescription ?: this.description
     )
 }
 
@@ -167,7 +190,15 @@ fun BookMetadata.toRecentFileItem(): RecentFileItem {
         isDeleted = this.isDeleted,
         bookmarksJson = this.bookmarksJson,
         customName = this.customName,
-        highlightsJson = this.highlightsJson
+        highlightsJson = this.highlightsJson,
+        seriesName = this.seriesName,
+        seriesIndex = this.seriesIndex,
+        description = this.description,
+        originalTitle = this.originalTitle,
+        originalAuthor = this.originalAuthor,
+        originalSeriesName = this.originalSeriesName,
+        originalSeriesIndex = this.originalSeriesIndex,
+        originalDescription = this.originalDescription
     )
 }
 
@@ -199,6 +230,11 @@ fun RecentFileSummary.toRecentFileItem(): RecentFileItem {
         fileSize = this.fileSize,
         seriesName = this.seriesName,
         seriesIndex = this.seriesIndex,
-        description = this.description
+        description = this.description,
+        originalTitle = this.originalTitle,
+        originalAuthor = this.originalAuthor,
+        originalSeriesName = this.originalSeriesName,
+        originalSeriesIndex = this.originalSeriesIndex,
+        originalDescription = this.originalDescription
     )
 }

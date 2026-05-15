@@ -502,8 +502,11 @@ fun HomeScreen(
                                     showInfoDialog = false
                                     itemForInfoDialog = null
                                 },
-                                onUpdateName = { newName ->
-                                    viewModel.updateCustomName(item.bookId, newName)
+                                onSaveMetadata = { metadata ->
+                                    viewModel.updateBookMetadata(item.bookId, metadata)
+                                },
+                                onRestoreMetadata = {
+                                    viewModel.restoreOriginalBookMetadata(item.bookId)
                                 },
                                 onOpenTags = { viewModel.openTagSelection(setOf(item.bookId)) }
                             )

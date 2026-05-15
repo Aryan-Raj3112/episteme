@@ -232,11 +232,6 @@ object ReaderHtmlDocumentBuilder {
         val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
             """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
         }
-        val highlightColorMap = HighlightColor.entries.joinToString(
-            separator = ",",
-            prefix = "{",
-            postfix = "}"
-        ) { color -> """"${color.id}":"${color.color.toCssHex()}"""" }
         val defineButton = if (readerAiFeaturesEnabled) {
             readerSelectionActionButton("define", "Define", ReaderSelectionIconDefinePath)
         } else {
@@ -363,23 +358,12 @@ object ReaderHtmlDocumentBuilder {
                   color: inherit;
                   border-radius: 2px;
                 }
-                .reader-user-highlight {
-                  background: color-mix(in srgb, var(--reader-highlight) 72%, transparent);
+                span[class*="user-highlight-"],
+                mark.reader-user-highlight {
                   border-radius: 2px;
+                  cursor: pointer;
                   -webkit-box-decoration-break: clone;
                   box-decoration-break: clone;
-                }
-                #reader-user-highlight-layer {
-                  position: absolute;
-                  inset: 0;
-                  z-index: 2;
-                  pointer-events: none;
-                }
-                .reader-user-highlight-rect {
-                  position: absolute;
-                  border-radius: 2px;
-                  opacity: 0.48;
-                  pointer-events: none;
                 }
                 ::highlight(reader-tts-highlight) {
                   background: rgba(125, 211, 252, 0.52);
@@ -397,7 +381,7 @@ object ReaderHtmlDocumentBuilder {
                   border-radius: 3px;
                   box-shadow: 0 0 0 1px rgba(14, 116, 144, 0.12);
                 }
-                ${HighlightColor.entries.joinToString("\n") { ".${it.cssClass} { background: ${it.color.toCssHex()} !important; }" }}
+                ${HighlightColor.entries.joinToString("\n") { ".${it.cssClass} { background-color: ${it.color.toCssRgba(0.4f)} !important; }" }}
                 #reader-selection-menu {
                   position: fixed;
                   z-index: 99999;
@@ -568,7 +552,6 @@ object ReaderHtmlDocumentBuilder {
                   var selectionDebugSequence = 0;
                   var selectionDebugLastLineKey = null;
                   var selectionDebugLastAt = 0;
-                  var readerHighlightColors = $highlightColorMap;
                   function numberAttribute(element, name, fallback) {
                     if (!element) return fallback;
                     var value = parseInt(element.getAttribute(name) || '', 10);
@@ -1086,7 +1069,7 @@ object ReaderHtmlDocumentBuilder {
                   document.addEventListener('click', function (event) {
                     var target = event.target;
                     if (!target || !target.closest) return;
-                    var highlight = target.closest('.reader-user-highlight[data-reader-highlight-id]');
+                    var highlight = target.closest('.reader-user-highlight[data-reader-highlight-id], span[class*="user-highlight-"][data-reader-highlight-id]');
                     if (highlight && !menu.contains(highlight)) {
                       var highlightId = highlight.getAttribute('data-reader-highlight-id') || '';
                       if (highlightId && sendReaderHighlightClick(highlightId)) {
@@ -1618,7 +1601,7 @@ object ReaderHtmlDocumentBuilder {
                     return trimSourceOffsets(rawStart, rawEnd, range.toString());
                   }
                   function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset) {
-                    var marker = document.createElement('mark');
+                    var marker = document.createElement('span');
                     marker.className = 'reader-user-highlight user-highlight-' + (colorId || 'yellow');
                     if (highlightId) marker.setAttribute('data-reader-highlight-id', highlightId);
                     if (startOffset !== undefined && startOffset !== null) {
@@ -1629,43 +1612,10 @@ object ReaderHtmlDocumentBuilder {
                     }
                     return marker;
                   }
-                  function ensureUserHighlightLayer() {
-                    var layer = document.getElementById('reader-user-highlight-layer');
-                    if (!layer) {
-                      layer = document.createElement('div');
-                      layer.id = 'reader-user-highlight-layer';
-                      document.body.appendChild(layer);
-                    }
-                    return layer;
-                  }
-                  function clearUserHighlightLayer() {
-                    var layer = document.getElementById('reader-user-highlight-layer');
-                    if (layer) layer.innerHTML = '';
-                  }
-                  function paintUserHighlightRange(highlight, range, colorId) {
-                    if (!range || range.collapsed) return false;
-                    var layer = ensureUserHighlightLayer();
-                    var rects = Array.prototype.slice.call(range.getClientRects());
-                    var color = readerHighlightColors[colorId || 'yellow'] || readerHighlightColors.yellow || '#FBC02D';
-                    var painted = 0;
-                    rects.forEach(function (rect) {
-                      if (!rect || rect.width <= 0 || rect.height <= 0) return;
-                      var marker = document.createElement('div');
-                      marker.className = 'reader-user-highlight-rect';
-                      if (highlight && highlight.id) marker.setAttribute('data-reader-highlight-id', highlight.id);
-                      marker.style.left = (rect.left + window.scrollX) + 'px';
-                      marker.style.top = (rect.top + window.scrollY) + 'px';
-                      marker.style.width = rect.width + 'px';
-                      marker.style.height = rect.height + 'px';
-                      marker.style.backgroundColor = color;
-                      layer.appendChild(marker);
-                      painted++;
-                    });
-                    return painted > 0;
-                  }
                   function rangeIntersectsTextNode(range, node) {
                     var nodeRange = document.createRange();
                     try {
+                      if (range.intersectsNode) return range.intersectsNode(node);
                       nodeRange.selectNodeContents(node);
                       return range.compareBoundaryPoints(Range.END_TO_START, nodeRange) > 0 &&
                         range.compareBoundaryPoints(Range.START_TO_END, nodeRange) < 0;
@@ -1701,7 +1651,7 @@ object ReaderHtmlDocumentBuilder {
                       var node = segment.node;
                       var parent = node.parentNode;
                       if (!parent) continue;
-                      if (parent.closest && parent.closest('mark.reader-user-highlight')) continue;
+                      if (parent.closest && parent.closest('span[class*="user-highlight-"], mark.reader-user-highlight')) continue;
                       var value = node.nodeValue || '';
                       var selected = value.substring(segment.start, segment.end);
                       if (!selected) continue;
@@ -1717,8 +1667,7 @@ object ReaderHtmlDocumentBuilder {
                     return wrapped > 0;
                   }
                   function unwrapReaderHighlights() {
-                    clearUserHighlightLayer();
-                    var marks = Array.prototype.slice.call(document.querySelectorAll('mark.reader-user-highlight'));
+                    var marks = Array.prototype.slice.call(document.querySelectorAll('span[class*="user-highlight-"], mark.reader-user-highlight'));
                     marks.forEach(function (mark) {
                       var parent = mark.parentNode;
                       if (!parent) return;
@@ -1985,9 +1934,10 @@ object ReaderHtmlDocumentBuilder {
                       applyHighlightTextFallback(highlight);
                       return;
                     }
-                    paintUserHighlightRange(highlight, range, highlight.colorId || 'yellow');
                     wrapRangeTextSegments(range, function () {
-                      return createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', startOffset, endOffset);
+                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', startOffset, endOffset);
+                      marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
+                      return marker;
                     });
                     range.detach && range.detach();
                   }
@@ -2004,9 +1954,10 @@ object ReaderHtmlDocumentBuilder {
                     var content = root.querySelector ? (root.querySelector('.reader-content') || root) : root;
                     var range = normalizedRangeForText(content, expectedText, false);
                     if (!range || range.collapsed) return false;
-                    paintUserHighlightRange(highlight, range, highlight.colorId || 'yellow');
                     wrapRangeTextSegments(range, function () {
-                      return createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null);
+                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null);
+                      marker.setAttribute('data-cfi', locator.cfi || highlight.cfi || '');
+                      return marker;
                     });
                     range.detach && range.detach();
                     return true;
@@ -2192,9 +2143,10 @@ object ReaderHtmlDocumentBuilder {
                     };
                     var localRange = range.cloneRange ? range.cloneRange() : range;
                     try {
-                      paintUserHighlightRange(payload, localRange, colorId || 'yellow');
                       wrapRangeTextSegments(localRange, function () {
-                        return createReaderHighlightMarker(null, colorId || 'yellow', startOffset, endOffset);
+                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', startOffset, endOffset);
+                        marker.setAttribute('data-cfi', cfi);
+                        return marker;
                       });
                     } catch (error) {
                       readerSelectionDebugLog('highlight_local_wrap_error error=' + readerTtsPreview(error, 180));
@@ -2345,10 +2297,8 @@ object ReaderHtmlDocumentBuilder {
                         .take(index)
                         .mapNotNull { it.lastTextBlock() }
                         .lastOrNull()
-                    val nextText = asSequence()
-                        .drop(index + 1)
-                        .mapNotNull { it.firstTextBlock() }
-                        .firstOrNull()
+                    val nextText =
+                        asSequence().drop(index + 1).firstNotNullOfOrNull { it.firstTextBlock() }
                     val anchor = previousText?.let { it.startCharOffsetInSource + it.text.length }
                         ?: nextText?.startCharOffsetInSource
                         ?: 0
@@ -2396,12 +2346,12 @@ object ReaderHtmlDocumentBuilder {
         return when (this) {
             is SemanticTextBlock -> this
             is SemanticList -> items.firstOrNull()
-            is SemanticTable -> rows.asSequence()
-                .flatMap { it.asSequence() }
-                .flatMap { it.content.asSequence() }
-                .mapNotNull { it.firstTextBlock() }
-                .firstOrNull()
-            is SemanticFlexContainer -> children.asSequence().mapNotNull { it.firstTextBlock() }.firstOrNull()
+            is SemanticTable -> rows.asSequence().flatMap { it.asSequence() }
+                .flatMap { it.content.asSequence() }.firstNotNullOfOrNull { it.firstTextBlock() }
+
+            is SemanticFlexContainer -> children
+                .firstNotNullOfOrNull { it.firstTextBlock() }
+
             is SemanticWrappingBlock -> paragraphsToWrap.firstOrNull()
             else -> null
         }
@@ -2414,9 +2364,11 @@ object ReaderHtmlDocumentBuilder {
             is SemanticTable -> rows.asReversed().asSequence()
                 .flatMap { it.asReversed().asSequence() }
                 .flatMap { it.content.asReversed().asSequence() }
-                .mapNotNull { it.lastTextBlock() }
-                .firstOrNull()
-            is SemanticFlexContainer -> children.asReversed().asSequence().mapNotNull { it.lastTextBlock() }.firstOrNull()
+                .firstNotNullOfOrNull { it.lastTextBlock() }
+
+            is SemanticFlexContainer -> children.asReversed()
+                .firstNotNullOfOrNull { it.lastTextBlock() }
+
             is SemanticWrappingBlock -> paragraphsToWrap.lastOrNull()
             else -> null
         }
@@ -2989,8 +2941,8 @@ object ReaderHtmlDocumentBuilder {
             if (startIndex >= endIndex || endIndex > html.length) return@fold html
             val markedText = html.substring(startIndex, endIndex)
             if (markedText.visibleHtmlText().isBlank()) return@fold html
-            val markerStart = """<mark class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">"""
-            html.replaceRange(startIndex, endIndex, markedText.wrapVisibleHtmlText(markerStart, "</mark>"))
+            val markerStart = """<span class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">"""
+            html.replaceRange(startIndex, endIndex, markedText.wrapVisibleHtmlText(markerStart, "</span>"))
         }
 
         return highlights
@@ -2998,7 +2950,7 @@ object ReaderHtmlDocumentBuilder {
             .fold(rangedHtml) { html, highlight ->
                 val text = highlight.text.trim().takeIf { it.isNotBlank() } ?: return@fold html
                 val escapedText = text.escapeHtml()
-                val markedText = """<mark class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}">$escapedText</mark>"""
+                val markedText = """<span class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}">$escapedText</span>"""
                 html.replaceFirst(escapedText, markedText)
             }
     }
@@ -3184,6 +3136,7 @@ object ReaderHtmlDocumentBuilder {
         if (boundedEnd <= boundedStart) return null
         return RenderedHighlight(
             id = id,
+            cfi = normalizedLocator.cfi ?: cfi,
             color = color,
             absoluteStart = boundedStart,
             absoluteEnd = boundedEnd,
@@ -3252,6 +3205,7 @@ object ReaderHtmlDocumentBuilder {
 
     private data class RenderedHighlight(
         val id: String,
+        val cfi: String,
         val color: HighlightColor,
         val absoluteStart: Int,
         val absoluteEnd: Int,
@@ -3294,6 +3248,19 @@ object ReaderHtmlDocumentBuilder {
     private fun androidx.compose.ui.graphics.Color.toCssHex(): String {
         fun channel(value: Float): String = (value * 255f).roundToInt().coerceIn(0, 255).toString(16).padStart(2, '0')
         return "#${channel(red)}${channel(green)}${channel(blue)}"
+    }
+
+    private fun androidx.compose.ui.graphics.Color.toCssRgba(alpha: Float): String {
+        fun channel(value: Float): Int = (value * 255f).roundToInt().coerceIn(0, 255)
+        val safeAlpha = alpha.coerceIn(0f, 1f)
+        return "rgba(${channel(red)}, ${channel(green)}, ${channel(blue)}, ${safeAlpha.formatCssAlpha()})"
+    }
+
+    private fun Float.formatCssAlpha(): String {
+        val scaled = (this * 1000f).roundToInt()
+        val whole = scaled / 1000
+        val fraction = (scaled % 1000).toString().padStart(3, '0').trimEnd('0')
+        return if (fraction.isEmpty()) whole.toString() else "$whole.$fraction"
     }
 
     private fun logReaderHtml(message: String) {

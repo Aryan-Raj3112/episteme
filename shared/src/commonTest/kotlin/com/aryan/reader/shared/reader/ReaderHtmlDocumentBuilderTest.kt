@@ -61,8 +61,8 @@ class ReaderHtmlDocumentBuilderTest {
             highlights = listOf(highlight)
         )
 
-        assertEquals(1, Regex("<mark class=\"reader-user-highlight").findAll(html).count())
-        assertTrue(html.contains("""alpha beta <mark class="reader-user-highlight user-highlight-yellow" data-reader-highlight-id="highlight-1" data-reader-start-offset="11" data-reader-end-offset="16">alpha</mark> beta"""))
+        assertEquals(1, Regex("<span class=\"reader-user-highlight").findAll(html).count())
+        assertTrue(html.contains("""alpha beta <span class="reader-user-highlight user-highlight-yellow" data-reader-highlight-id="highlight-1" data-cfi="desktop:0:11:16" data-reader-start-offset="11" data-reader-end-offset="16">alpha</span> beta"""))
     }
 
     @Test
@@ -91,13 +91,13 @@ class ReaderHtmlDocumentBuilderTest {
             highlights = listOf(highlight)
         )
 
-        assertEquals(2, Regex("<mark class=\"reader-user-highlight").findAll(html).count())
-        assertFalse(html.contains("<mark class=\"reader-user-highlight user-highlight-yellow\" data-reader-highlight-id=\"highlight-1\" data-reader-start-offset=\"0\" data-reader-end-offset=\"${text.length}\"><p"))
-        assertFalse(html.contains("</p></mark>"))
+        assertEquals(2, Regex("<span class=\"reader-user-highlight").findAll(html).count())
+        assertFalse(html.contains("<span class=\"reader-user-highlight user-highlight-yellow\" data-reader-highlight-id=\"highlight-1\" data-cfi=\"desktop:0:0:${text.length}\" data-reader-start-offset=\"0\" data-reader-end-offset=\"${text.length}\"><p"))
+        assertFalse(html.contains("</p></span>"))
     }
 
     @Test
-    fun `reader highlight script verifies stored text before painting offsets`() {
+    fun `reader highlight script verifies stored text before applying offsets`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta alpha beta"),
             page = ReaderPage(
@@ -118,24 +118,26 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `reader highlight script paints locally before guarded bridge send`() {
+    fun `reader highlight script wraps locally before guarded bridge send`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),
             page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
             settings = ReaderSettings()
         )
-        val localPaintIndex = html.indexOf("wrapRangeTextSegments(localRange")
+        val localWrapIndex = html.indexOf("wrapRangeTextSegments(localRange")
         val bridgeSendIndex = html.indexOf("sendReaderHighlightCreated(payload, 0)")
 
         assertTrue(html.contains("function sendReaderHighlightCreated(payload, attempt)"))
         assertTrue(html.contains("highlight_bridge_error attempt="))
-        assertTrue(html.contains("paintUserHighlightRange(payload, localRange, colorId || 'yellow')"))
-        assertTrue(localPaintIndex >= 0)
-        assertTrue(bridgeSendIndex > localPaintIndex)
+        assertTrue(html.contains("var marker = document.createElement('span');"))
+        assertTrue(html.contains("range.intersectsNode(node)"))
+        assertFalse(html.contains("paintUserHighlightRange(payload"))
+        assertTrue(localWrapIndex >= 0)
+        assertTrue(bridgeSendIndex > localWrapIndex)
     }
 
     @Test
-    fun `reader highlight script repaints text fallback highlights`() {
+    fun `reader highlight script wraps text fallback highlights without stale overlay rects`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),
             page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
@@ -143,12 +145,12 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("function applyHighlightTextFallback(highlight)"))
-        assertTrue(html.contains("function paintUserHighlightRange(highlight, range, colorId)"))
-        assertTrue(html.contains("var readerHighlightColors = {"))
-        assertTrue(html.contains("clearUserHighlightLayer();"))
         assertTrue(html.contains("applyHighlightTextFallback(highlight);"))
         assertTrue(html.contains("normalizedRangeForText(content, expectedText, false)"))
-        assertTrue(html.contains("paintUserHighlightRange(highlight, range, highlight.colorId || 'yellow')"))
+        assertTrue(html.contains("wrapRangeTextSegments(range, function ()"))
+        assertFalse(html.contains("function paintUserHighlightRange("))
+        assertFalse(html.contains("reader-user-highlight-layer"))
+        assertFalse(html.contains("reader-user-highlight-rect"))
     }
 
     @Test

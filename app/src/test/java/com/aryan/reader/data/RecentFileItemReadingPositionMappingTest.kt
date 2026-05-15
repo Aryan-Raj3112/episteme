@@ -32,6 +32,45 @@ class RecentFileItemReadingPositionMappingTest {
         assertEquals(item.progressPercentage, roundTripped.progressPercentage)
     }
 
+    @Test
+    fun `recent file entity mapping preserves original metadata snapshot`() {
+        val item = recentFileItem().copy(
+            title = "Edited One",
+            author = "Edited Author",
+            seriesName = "Edited Series",
+            seriesIndex = 2.0,
+            description = "Edited summary",
+            originalTitle = "Original One",
+            originalAuthor = "Original Author",
+            originalSeriesName = "Original Series",
+            originalSeriesIndex = 1.0,
+            originalDescription = "Original summary"
+        )
+
+        val roundTripped = item.toRecentFileEntity().toRecentFileItem()
+
+        assertEquals("Original One", roundTripped.originalTitle)
+        assertEquals("Original Author", roundTripped.originalAuthor)
+        assertEquals("Original Series", roundTripped.originalSeriesName)
+        assertEquals(1.0, roundTripped.originalSeriesIndex)
+        assertEquals("Original summary", roundTripped.originalDescription)
+    }
+
+    @Test
+    fun `recent file entity mapping seeds original metadata when first stored`() {
+        val entity = recentFileItem().copy(
+            seriesName = "Series",
+            seriesIndex = 1.0,
+            description = "Summary"
+        ).toRecentFileEntity()
+
+        assertEquals("One", entity.originalTitle)
+        assertEquals("Author", entity.originalAuthor)
+        assertEquals("Series", entity.originalSeriesName)
+        assertEquals(1.0, entity.originalSeriesIndex)
+        assertEquals("Summary", entity.originalDescription)
+    }
+
     private fun recentFileItem(): RecentFileItem {
         return RecentFileItem(
             bookId = "book-1",

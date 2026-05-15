@@ -54,6 +54,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.aryan.reader.data.BookMetadata
+import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.CloudflareRepository
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.FeedbackRepository
@@ -5374,7 +5375,43 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 if (updatedItem.sourceFolderUri != null) {
                     launch(Dispatchers.IO) {
-                        recentFilesRepository.syncLocalMetadataToFolder(bookId)
+                        recentFilesRepository.syncLocalMetadataToFolder(bookId, force = true)
+                    }
+                }
+            }
+        }
+    }
+
+    fun updateBookMetadata(bookId: String, metadata: BookMetadataEdit) {
+        viewModelScope.launch {
+            recentFilesRepository.updateUserEditableMetadata(bookId, metadata)
+            val updatedItem = recentFilesRepository.getFileByBookId(bookId)
+            if (updatedItem != null) {
+                if (uiState.value.isSyncEnabled) {
+                    uploadSingleBookMetadata(updatedItem)
+                }
+
+                if (updatedItem.sourceFolderUri != null) {
+                    launch(Dispatchers.IO) {
+                        recentFilesRepository.syncLocalMetadataToFolder(bookId, force = true)
+                    }
+                }
+            }
+        }
+    }
+
+    fun restoreOriginalBookMetadata(bookId: String) {
+        viewModelScope.launch {
+            recentFilesRepository.restoreOriginalMetadata(bookId)
+            val restoredItem = recentFilesRepository.getFileByBookId(bookId)
+            if (restoredItem != null) {
+                if (uiState.value.isSyncEnabled) {
+                    uploadSingleBookMetadata(restoredItem)
+                }
+
+                if (restoredItem.sourceFolderUri != null) {
+                    launch(Dispatchers.IO) {
+                        recentFilesRepository.syncLocalMetadataToFolder(bookId, force = true)
                     }
                 }
             }
