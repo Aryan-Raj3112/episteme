@@ -4,28 +4,37 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -34,12 +43,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -53,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
@@ -96,9 +116,105 @@ internal data class SharedNativeReaderTextSelection(
     val pageIndex: Int,
     val startOffset: Int,
     val endOffset: Int,
+    val text: String,
+    val startPageIndex: Int = pageIndex,
+    val endPageIndex: Int = pageIndex,
+    val startBlockIndex: Int = -1,
+    val endBlockIndex: Int = -1,
+    val startBlockCharOffset: Int = startOffset,
+    val endBlockCharOffset: Int = endOffset,
+    val startLocalOffset: Int = 0,
+    val endLocalOffset: Int = endOffset - startOffset,
+    val startBaseCfi: String? = null,
+    val endBaseCfi: String? = null,
+    val rect: Rect = Rect.Zero,
+    val textPerBlock: Map<String, String> = emptyMap()
+) {
+    val cfi: String
+        get() = if (!startBaseCfi.isNullOrBlank() && !endBaseCfi.isNullOrBlank()) {
+            "${startBaseCfi}:${startLocalOffset}|${endBaseCfi}:${endLocalOffset}"
+        } else {
+            "desktop:$chapterIndex:$startOffset:$endOffset"
+        }
+}
+
+private data class SharedNativeSelectionBlockKey(
+    val pageIndex: Int,
+    val blockIndex: Int,
+    val blockCharOffset: Int
+) {
+    val stableKey: String get() = "$pageIndex:$blockIndex:$blockCharOffset"
+}
+
+private data class SharedNativeTextBlockDescriptor(
+    val chapterIndex: Int,
+    val pageIndex: Int,
+    val blockIndex: Int,
+    val blockCharOffset: Int,
+    val baseCfi: String?,
+    val textStartOffset: Int,
     val text: String
 ) {
-    val cfi: String get() = "desktop:$chapterIndex:$startOffset:$endOffset"
+    val key: SharedNativeSelectionBlockKey
+        get() = SharedNativeSelectionBlockKey(pageIndex, blockIndex, blockCharOffset)
+}
+
+private data class SharedNativeTextLayoutInfo(
+    val descriptor: SharedNativeTextBlockDescriptor,
+    val layout: TextLayoutResult,
+    val coordinates: LayoutCoordinates
+)
+
+private data class SharedNativeTextPosition(
+    val descriptor: SharedNativeTextBlockDescriptor,
+    val localOffset: Int
+)
+
+private enum class SharedNativeSelectionHandle {
+    START,
+    END
+}
+
+private object SharedNativeSelectionVectorIcons {
+    val Copy: ImageVector = vector(
+        name = "SharedNativeSelectionCopy",
+        pathData = "M360,720Q327,720 303.5,696.5Q280,673 280,640L280,160Q280,127 303.5,103.5Q327,80 360,80L720,80Q753,80 776.5,103.5Q800,127 800,160L800,640Q800,673 776.5,696.5Q753,720 720,720L360,720ZM360,640L720,640L720,160L360,160L360,640ZM200,880Q167,880 143.5,856.5Q120,833 120,800L120,240L200,240L200,800L640,800L640,880L200,880Z"
+    )
+    val Define: ImageVector = vector(
+        name = "SharedNativeSelectionDefine",
+        pathData = "M480,800Q432,762 376,741Q320,720 260,720Q218,720 177.5,731Q137,742 100,762Q79,773 59.5,761Q40,749 40,726L40,244Q40,233 45.5,223Q51,213 62,208Q108,184 158,172Q208,160 260,160Q318,160 373.5,175Q429,190 480,220Q531,190 586.5,175Q642,160 700,160Q752,160 802,172Q852,184 898,208Q909,213 914.5,223Q920,233 920,244L920,726Q920,749 900.5,761Q881,773 860,762Q823,742 782.5,731Q742,720 700,720Q640,720 584,741Q528,762 480,800ZM520,682Q564,661 608.5,650.5Q653,640 700,640Q736,640 770.5,646Q805,652 840,664L840,268Q807,254 771.5,247Q736,240 700,240Q653,240 607,252Q561,264 520,288L520,682ZM440,682L440,288Q399,264 353,252Q307,240 260,240Q224,240 188.5,247Q153,254 120,268L120,664Q155,652 189.5,646Q224,640 260,640Q307,640 351.5,650.5Q396,661 440,682Z"
+    )
+    val Speak: ImageVector = vector(
+        name = "SharedNativeSelectionSpeak",
+        pathData = "M560,828L560,746Q653,719 706.5,642Q760,565 760,466Q760,367 706.5,290Q653,213 560,186L560,104Q687,133 763.5,234Q840,335 840,466Q840,597 763.5,698Q687,799 560,828ZM120,600L120,360L280,360L480,160L480,800L280,600L120,600ZM560,640L560,292Q612,317 646,364.5Q680,412 680,466Q680,520 646,567.5Q612,615 560,640Z"
+    )
+    val Search: ImageVector = vector(
+        name = "SharedNativeSelectionSearch",
+        pathData = "M784,840L532,588Q502,612 463,626Q424,640 380,640Q271,640 195.5,564.5Q120,489 120,380Q120,271 195.5,195.5Q271,120 380,120Q489,120 564.5,195.5Q640,271 640,380Q640,424 626,463Q612,502 588,532L840,784L784,840ZM380,560Q455,560 507.5,507.5Q560,455 560,380Q560,305 507.5,252.5Q455,200 380,200Q305,200 252.5,252.5Q200,305 200,380Q200,455 252.5,507.5Q305,560 380,560Z"
+    )
+    val Clear: ImageVector = vector(
+        name = "SharedNativeSelectionClear",
+        pathData = "M256,760L200,704L424,480L200,256L256,200L480,424L704,200L760,256L536,480L760,704L704,760L480,536L256,760Z"
+    )
+    val Teardrop: ImageVector = vector(
+        name = "SharedNativeSelectionTeardrop",
+        pathData = "M480,860Q347,860 253.5,768Q160,676 160,544Q160,481 184.5,423.5Q209,366 254,322L480,100L706,322Q751,366 775.5,423.5Q800,481 800,544Q800,676 706.5,768Q613,860 480,860Z"
+    )
+
+    private fun vector(name: String, pathData: String): ImageVector {
+        return ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 960f,
+            viewportHeight = 960f
+        ).apply {
+            addPath(
+                pathData = PathParser().parsePathString(pathData).toNodes(),
+                fill = SolidColor(Color.Black)
+            )
+        }.build()
+    }
 }
 
 @Composable
@@ -121,11 +237,31 @@ fun SharedNativePaginatedReader(
     var activeSelection by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf<SharedNativeReaderTextSelection?>(null)
     }
+    var selectionGestureActive by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf(false)
+    }
+    var selectionHandleDragging by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf(false)
+    }
+    fun updateActiveSelection(selection: SharedNativeReaderTextSelection?) {
+        activeSelection = selection
+        if (selection == null) {
+            selectionGestureActive = false
+            selectionHandleDragging = false
+        }
+    }
     val visiblePageIndices = remember(visiblePages) { visiblePages.map { it.pageIndex } }
+    val selectionLayouts = remember(renderPlan.navigationTarget.requestId, visiblePageIndices) {
+        mutableStateMapOf<String, SharedNativeTextLayoutInfo>()
+    }
+    var readerCoordinates by remember(renderPlan.navigationTarget.requestId) {
+        mutableStateOf<LayoutCoordinates?>(null)
+    }
+    val density = LocalDensity.current
     LaunchedEffect(visiblePageIndices) {
         val selection = activeSelection
         if (selection != null && selection.pageIndex !in visiblePageIndices) {
-            activeSelection = null
+            updateActiveSelection(null)
         }
     }
     LaunchedEffect(firstPage?.pageIndex, renderPlan.navigationTarget.requestId) {
@@ -145,7 +281,9 @@ fun SharedNativePaginatedReader(
     }
 
     val selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier.onGloballyPositioned { readerCoordinates = it }
+    ) {
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
@@ -176,9 +314,11 @@ fun SharedNativePaginatedReader(
                         searchHighlight = searchHighlight,
                         selectionHighlight = selectionHighlight,
                         activeSelection = activeSelection,
-                        onSelectionChange = { activeSelection = it },
+                        onSelectionChange = ::updateActiveSelection,
+                        onSelectionGestureActiveChange = { selectionGestureActive = it },
                         onHighlightSelected = onHighlightSelected,
                         onLinkClicked = onLinkClicked,
+                        selectionLayouts = selectionLayouts,
                         imageContent = imageContent,
                         modifier = Modifier
                             .width(pageOuterWidth)
@@ -188,27 +328,58 @@ fun SharedNativePaginatedReader(
             }
         }
         activeSelection?.let { selection ->
-            SharedNativeSelectionMenu(
-                selection = selection,
-                highlightPalette = renderPlan.highlightPalette.sanitized().colors,
-                enabledSelectionActions = enabledSelectionActions,
-                onCopy = {
-                    onCopyText(selection.text)
-                    activeSelection = null
-                },
-                onSelectionAction = { action ->
-                    onSelectionAction(action, selection.text)
-                    activeSelection = null
-                },
-                onHighlight = { color ->
-                    onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, color))
-                    activeSelection = null
-                },
-                onDismiss = { activeSelection = null },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(16.dp)
-            )
+            arrayOf(SharedNativeSelectionHandle.START, SharedNativeSelectionHandle.END).forEach { handle ->
+                SharedNativeSelectionHandleView(
+                    selection = selection,
+                    handle = handle,
+                    selectionLayouts = selectionLayouts.values,
+                    readerCoordinates = readerCoordinates,
+                    onDragActiveChange = { selectionHandleDragging = it },
+                    onDrag = { windowPosition ->
+                        val currentSelection = activeSelection
+                        if (currentSelection != null) {
+                            sharedNativeSelectionWithHandleMoved(
+                                selection = currentSelection,
+                                handle = handle,
+                                windowPosition = windowPosition,
+                                layouts = selectionLayouts.values
+                            )?.let(::updateActiveSelection)
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.TopStart)
+                )
+            }
+            if (!selectionGestureActive && !selectionHandleDragging) {
+                SharedNativeSelectionMenu(
+                    selection = selection,
+                    highlightPalette = renderPlan.highlightPalette.sanitized().colors,
+                    enabledSelectionActions = enabledSelectionActions,
+                    background = renderPlan.background,
+                    foreground = renderPlan.foreground,
+                    onCopy = {
+                        onCopyText(selection.text)
+                        updateActiveSelection(null)
+                    },
+                    onSelectionAction = { action ->
+                        onSelectionAction(action, selection.text)
+                        updateActiveSelection(null)
+                    },
+                    onHighlight = { color ->
+                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, color))
+                        updateActiveSelection(null)
+                    },
+                    onDismiss = { updateActiveSelection(null) },
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            sharedNativeSelectionMenuOffset(
+                                selection = selection,
+                                readerCoordinates = readerCoordinates,
+                                density = density
+                            )
+                        }
+                )
+            }
         }
     }
 }
@@ -222,8 +393,10 @@ private fun SharedNativePaginatedPage(
     selectionHighlight: Color,
     activeSelection: SharedNativeReaderTextSelection?,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
+    onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     modifier: Modifier = Modifier
 ) {
@@ -324,6 +497,15 @@ private fun SharedNativePaginatedPage(
                         selectionHighlight = selectionHighlight
                     ),
                     page = page,
+                    textBlock = SharedNativeTextBlockDescriptor(
+                        chapterIndex = page.chapterIndex,
+                        pageIndex = page.pageIndex,
+                        blockIndex = -1,
+                        blockCharOffset = page.startOffset,
+                        baseCfi = null,
+                        textStartOffset = page.startOffset,
+                        text = page.text
+                    ),
                     textStartOffset = page.startOffset,
                     color = renderPlan.foreground,
                     textAlign = fallbackTextAlign,
@@ -333,8 +515,10 @@ private fun SharedNativePaginatedPage(
                         fontFamily = readerFontFamily
                     ).withAndroidPaginationTextMetrics(),
                     onSelectionChange = onSelectionChange,
+                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
                     onLinkClicked = onLinkClicked,
+                    selectionLayouts = selectionLayouts,
                     fitLabel = SharedNativeTextFitLabel(
                         page = page,
                         blockIndex = -1,
@@ -358,8 +542,10 @@ private fun SharedNativePaginatedPage(
                     settings = settings,
                     includeTrailingBottomMargin = false,
                     onSelectionChange = onSelectionChange,
+                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
                     onLinkClicked = onLinkClicked,
+                    selectionLayouts = selectionLayouts,
                     imageContent = imageContent,
                     onBlockLaidOut = { fit ->
                         if (blockLayouts[fit.index] != fit) {
@@ -375,50 +561,232 @@ private fun SharedNativePaginatedPage(
 
 @Composable
 private fun SharedNativeSelectionMenu(
+    @Suppress("UNUSED_PARAMETER")
     selection: SharedNativeReaderTextSelection,
     highlightPalette: List<HighlightColor>,
     enabledSelectionActions: Set<SharedNativeReaderSelectionAction>,
+    background: Color,
+    foreground: Color,
     onCopy: () -> Unit,
     onSelectionAction: (SharedNativeReaderSelectionAction) -> Unit,
     onHighlight: (HighlightColor) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val menuBackground = background.blendWith(foreground, foregroundWeight = 0.08f)
+    val borderColor = foreground.copy(alpha = 0.18f)
+    val hoverIconBackground = foreground.copy(alpha = 0.09f)
+    val iconColor = foreground.copy(alpha = 0.86f)
+    val actions = buildList {
+        add(SharedNativeSelectionMenuAction("Copy", SharedNativeSelectionVectorIcons.Copy, onCopy))
+        if (SharedNativeReaderSelectionAction.DEFINE in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    "Define",
+                    SharedNativeSelectionVectorIcons.Define,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.DEFINE) }
+                )
+            )
+        }
+        if (SharedNativeReaderSelectionAction.SPEAK in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    "Speak",
+                    SharedNativeSelectionVectorIcons.Speak,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.SPEAK) }
+                )
+            )
+        }
+        if (SharedNativeReaderSelectionAction.SEARCH in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    "Search",
+                    SharedNativeSelectionVectorIcons.Search,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.SEARCH) }
+                )
+            )
+        }
+        add(SharedNativeSelectionMenuAction("Clear", SharedNativeSelectionVectorIcons.Clear, onDismiss))
+    }
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        tonalElevation = 4.dp,
-        shadowElevation = 8.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        shape = RoundedCornerShape(14.dp),
+        color = menuBackground,
+        contentColor = foreground,
+        tonalElevation = 0.dp,
+        shadowElevation = 18.dp,
+        border = BorderStroke(1.dp, borderColor)
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .width(IntrinsicSize.Max)
+                .widthIn(max = 300.dp)
+                .padding(bottom = 6.dp)
         ) {
-            TextButton(onClick = onCopy) { Text("Copy") }
-            if (SharedNativeReaderSelectionAction.DEFINE in enabledSelectionActions) {
-                TextButton(onClick = { onSelectionAction(SharedNativeReaderSelectionAction.DEFINE) }) { Text("Define") }
-            }
-            if (SharedNativeReaderSelectionAction.SEARCH in enabledSelectionActions) {
-                TextButton(onClick = { onSelectionAction(SharedNativeReaderSelectionAction.SEARCH) }) { Text("Search") }
-            }
-            if (SharedNativeReaderSelectionAction.SPEAK in enabledSelectionActions) {
-                TextButton(onClick = { onSelectionAction(SharedNativeReaderSelectionAction.SPEAK) }) { Text("Speak") }
-            }
-            highlightPalette.forEach { color ->
-                Box(
+            if (highlightPalette.isNotEmpty()) {
+                Row(
                     modifier = Modifier
-                        .size(24.dp)
-                        .background(color.color, RoundedCornerShape(50))
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
-                        .clickable { onHighlight(color) }
-                )
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    highlightPalette.forEach { color ->
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(color.color)
+                                .border(
+                                    width = 1.dp,
+                                    color = borderColor,
+                                    shape = CircleShape
+                                )
+                                .clickable { onHighlight(color) }
+                        )
+                    }
+                }
+                HorizontalDivider(color = foreground.copy(alpha = 0.12f))
             }
-            TextButton(onClick = onDismiss) { Text("Close") }
+            Column(
+                modifier = Modifier
+                    .padding(start = 8.dp, top = 6.dp, end = 8.dp, bottom = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                actions.chunked(3).forEach { rowActions ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        rowActions.forEach { action ->
+                            SharedNativeSelectionIconButton(
+                                action = action,
+                                iconColor = iconColor,
+                                iconBackground = hoverIconBackground,
+                                foreground = foreground
+                            )
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+private data class SharedNativeSelectionMenuAction(
+    val label: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit
+)
+
+@Composable
+private fun SharedNativeSelectionIconButton(
+    action: SharedNativeSelectionMenuAction,
+    iconColor: Color,
+    iconBackground: Color,
+    foreground: Color
+) {
+    Column(
+        modifier = Modifier
+            .width(78.dp)
+            .height(58.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { action.onClick() }
+            .padding(horizontal = 4.dp, vertical = 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(iconBackground),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = action.icon,
+                contentDescription = action.label,
+                tint = iconColor,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Text(
+            text = action.label,
+            color = foreground,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 12.sp,
+                lineHeight = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        )
+    }
+}
+
+@Composable
+private fun SharedNativeSelectionHandleView(
+    selection: SharedNativeReaderTextSelection,
+    handle: SharedNativeSelectionHandle,
+    selectionLayouts: Collection<SharedNativeTextLayoutInfo>,
+    readerCoordinates: LayoutCoordinates?,
+    onDragActiveChange: (Boolean) -> Unit,
+    onDrag: (Offset) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val handleOffset = sharedNativeSelectionHandleOffset(
+        selection = selection,
+        handle = handle,
+        layouts = selectionLayouts,
+        readerCoordinates = readerCoordinates,
+        density = density
+    ) ?: return
+    val handleColor = MaterialTheme.colorScheme.primary
+    var handleCoordinates by remember(handle) { mutableStateOf<LayoutCoordinates?>(null) }
+    Box(
+        modifier = modifier
+            .offset { handleOffset }
+            .size(28.dp)
+            .onGloballyPositioned { handleCoordinates = it }
+            .pointerInput(handle) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    onDragActiveChange(true)
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) {
+                                change.consume()
+                                break
+                            }
+                            handleCoordinates
+                                ?.takeIf { it.isAttached }
+                                ?.let { coordinates -> onDrag(coordinates.localToWindow(change.position)) }
+                            change.consume()
+                        }
+                    } finally {
+                        onDragActiveChange(false)
+                    }
+                }
+            },
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Icon(
+            imageVector = SharedNativeSelectionVectorIcons.Teardrop,
+            contentDescription = if (handle == SharedNativeSelectionHandle.START) {
+                "Adjust selection start"
+            } else {
+                "Adjust selection end"
+            },
+            tint = handleColor,
+            modifier = Modifier
+                .size(22.dp)
+                .graphicsLayer {
+                    rotationZ = if (handle == SharedNativeSelectionHandle.START) 28f else -28f
+                    transformOrigin = TransformOrigin(0.5f, 0f)
+                }
+        )
     }
 }
 
@@ -426,13 +794,16 @@ private fun SharedNativeSelectionMenu(
 private fun SharedNativeInteractiveText(
     text: AnnotatedString,
     page: ReaderPage,
+    textBlock: SharedNativeTextBlockDescriptor,
     textStartOffset: Int,
     color: Color,
     textAlign: TextAlign,
     style: TextStyle,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
+    onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     modifier: Modifier = Modifier,
     fitLabel: SharedNativeTextFitLabel? = null
 ) {
@@ -440,6 +811,22 @@ private fun SharedNativeInteractiveText(
     var textCoordinates by remember(text) { mutableStateOf<LayoutCoordinates?>(null) }
     var lastTextClipLogSignature by remember(text) { mutableStateOf<String?>(null) }
     var dragAnchorOffset by remember(text) { mutableStateOf<Int?>(null) }
+    val viewConfiguration = LocalViewConfiguration.current
+    val textBlockKey = textBlock.key.stableKey
+    DisposableEffect(textBlockKey, selectionLayouts) {
+        onDispose {
+            selectionLayouts.remove(textBlockKey)
+        }
+    }
+    LaunchedEffect(textLayoutResult, textCoordinates, textBlock, textBlockKey) {
+        val layout = textLayoutResult ?: return@LaunchedEffect
+        val coordinates = textCoordinates ?: return@LaunchedEffect
+        selectionLayouts[textBlockKey] = SharedNativeTextLayoutInfo(
+            descriptor = textBlock,
+            layout = layout,
+            coordinates = coordinates
+        )
+    }
     LaunchedEffect(textLayoutResult, textCoordinates, fitLabel) {
         val layout = textLayoutResult ?: return@LaunchedEffect
         val coordinates = textCoordinates ?: return@LaunchedEffect
@@ -471,6 +858,14 @@ private fun SharedNativeInteractiveText(
             .onGloballyPositioned { textCoordinates = it }
             .pointerInput(text) {
                 detectTapGestures(
+                    onPress = {
+                        onSelectionGestureActiveChange(true)
+                        try {
+                            tryAwaitRelease()
+                        } finally {
+                            onSelectionGestureActiveChange(false)
+                        }
+                    },
                     onLongPress = { offset ->
                         val layout = textLayoutResult ?: return@detectTapGestures
                         val charOffset = layout.getOffsetForPosition(offset)
@@ -481,14 +876,11 @@ private fun SharedNativeInteractiveText(
                             start = boundary.start,
                             end = boundary.end
                         ) ?: return@detectTapGestures
-                        val selectedText = text.text.substring(range.start, range.end)
                         onSelectionChange(
-                            SharedNativeReaderTextSelection(
-                                chapterIndex = page.chapterIndex,
-                                pageIndex = page.pageIndex,
-                                startOffset = textStartOffset + range.start,
-                                endOffset = textStartOffset + range.end,
-                                text = selectedText
+                            sharedNativeReaderSelectionBetween(
+                                start = SharedNativeTextPosition(textBlock, range.start),
+                                end = SharedNativeTextPosition(textBlock, range.end),
+                                layouts = selectionLayouts.values
                             )
                         )
                     },
@@ -519,6 +911,7 @@ private fun SharedNativeInteractiveText(
             .pointerInput(text) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { offset ->
+                        onSelectionGestureActiveChange(true)
                         val layout = textLayoutResult
                         if (layout != null) {
                             val charOffset = layout.getOffsetForPosition(offset)
@@ -531,14 +924,11 @@ private fun SharedNativeInteractiveText(
                             )
                             if (range != null) {
                                 dragAnchorOffset = range.start
-                                val selectedText = text.text.substring(range.start, range.end)
                                 onSelectionChange(
-                                    SharedNativeReaderTextSelection(
-                                        chapterIndex = page.chapterIndex,
-                                        pageIndex = page.pageIndex,
-                                        startOffset = textStartOffset + range.start,
-                                        endOffset = textStartOffset + range.end,
-                                        text = selectedText
+                                    sharedNativeReaderSelectionBetween(
+                                        start = SharedNativeTextPosition(textBlock, range.start),
+                                        end = SharedNativeTextPosition(textBlock, range.end),
+                                        layouts = selectionLayouts.values
                                     )
                                 )
                             }
@@ -548,28 +938,84 @@ private fun SharedNativeInteractiveText(
                         val layout = textLayoutResult
                         val anchor = dragAnchorOffset
                         if (layout != null && anchor != null) {
-                            val current = layout.getOffsetForPosition(change.position)
-                                .coerceIn(0, text.text.length)
-                            val start = minOf(anchor, current)
-                            val end = maxOf(anchor, current)
-                            if (start < end) {
-                                val selectedText = text.text.substring(start, end)
-                                onSelectionChange(
-                                    SharedNativeReaderTextSelection(
-                                        chapterIndex = page.chapterIndex,
-                                        pageIndex = page.pageIndex,
-                                        startOffset = textStartOffset + start,
-                                        endOffset = textStartOffset + end,
-                                        text = selectedText
-                                    )
+                            val current = textCoordinates?.let { coordinates ->
+                                sharedNativeReaderTextPositionAtWindow(
+                                    windowPosition = coordinates.localToWindow(change.position),
+                                    layouts = selectionLayouts.values
                                 )
-                            }
+                            } ?: SharedNativeTextPosition(
+                                descriptor = textBlock,
+                                localOffset = layout.getOffsetForPosition(change.position)
+                                    .coerceIn(0, text.text.length)
+                            )
+                            onSelectionChange(
+                                sharedNativeReaderSelectionBetween(
+                                    start = SharedNativeTextPosition(textBlock, anchor),
+                                    end = current,
+                                    layouts = selectionLayouts.values
+                                )
+                            )
                         }
                         change.consume()
                     },
-                    onDragEnd = { dragAnchorOffset = null },
-                    onDragCancel = { dragAnchorOffset = null }
+                    onDragEnd = {
+                        dragAnchorOffset = null
+                        onSelectionGestureActiveChange(false)
+                    },
+                    onDragCancel = {
+                        dragAnchorOffset = null
+                        onSelectionGestureActiveChange(false)
+                    }
                 )
+            }
+            .pointerInput(textBlockKey, text) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val layout = textLayoutResult ?: return@awaitEachGesture
+                    val coordinates = textCoordinates ?: return@awaitEachGesture
+                    val anchorOffset = layout.getOffsetForPosition(down.position)
+                        .coerceIn(0, text.text.length)
+                    val anchor = SharedNativeTextPosition(textBlock, anchorOffset)
+                    val touchSlopSquared = viewConfiguration.touchSlop * viewConfiguration.touchSlop
+                    var selecting = false
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            val dx = change.position.x - down.position.x
+                            val dy = change.position.y - down.position.y
+                            if (!selecting && dx * dx + dy * dy >= touchSlopSquared) {
+                                selecting = true
+                                onSelectionGestureActiveChange(true)
+                            }
+                            if (selecting) {
+                                val latestCoordinates = textCoordinates ?: coordinates
+                                val windowPosition = latestCoordinates.localToWindow(change.position)
+                                val current = sharedNativeReaderTextPositionAtWindow(
+                                    windowPosition = windowPosition,
+                                    layouts = selectionLayouts.values
+                                ) ?: SharedNativeTextPosition(
+                                    descriptor = textBlock,
+                                    localOffset = layout.getOffsetForPosition(change.position)
+                                        .coerceIn(0, text.text.length)
+                                )
+                                onSelectionChange(
+                                    sharedNativeReaderSelectionBetween(
+                                        start = anchor,
+                                        end = current,
+                                        layouts = selectionLayouts.values
+                                    )
+                                )
+                                change.consume()
+                            }
+                        }
+                    } finally {
+                        if (selecting) {
+                            onSelectionGestureActiveChange(false)
+                        }
+                    }
+                }
             },
         textAlign = textAlign,
         style = style,
@@ -643,8 +1089,10 @@ private fun SharedSemanticBlockStack(
     settings: ReaderSettings,
     includeTrailingBottomMargin: Boolean,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
+    onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null
 ) {
@@ -669,8 +1117,10 @@ private fun SharedSemanticBlockStack(
                 0.dp
             },
             onSelectionChange = onSelectionChange,
+            onSelectionGestureActiveChange = onSelectionGestureActiveChange,
             onHighlightSelected = onHighlightSelected,
             onLinkClicked = onLinkClicked,
+            selectionLayouts = selectionLayouts,
             imageContent = imageContent,
             layoutIndex = index,
             onBlockLaidOut = onBlockLaidOut
@@ -695,8 +1145,10 @@ private fun SharedSemanticBlockView(
     marginTop: Dp,
     marginBottom: Dp,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
+    onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     layoutIndex: Int? = null,
     onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null
@@ -749,14 +1201,16 @@ private fun SharedSemanticBlockView(
                 settings = settings,
                 fontWeight = FontWeight.Bold,
                 onSelectionChange = onSelectionChange,
+                onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                 onHighlightSelected = onHighlightSelected,
-                onLinkClicked = onLinkClicked
+                onLinkClicked = onLinkClicked,
+                selectionLayouts = selectionLayouts
             )
         }
 
-        is SemanticParagraph -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked)
-        is SemanticListItem -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked)
-        is SemanticTextBlock -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked)
+        is SemanticParagraph -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
+        is SemanticListItem -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
+        is SemanticTextBlock -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
 
         is SemanticList -> {
             Column(modifier = measuredModifier, verticalArrangement = Arrangement.Top) {
@@ -797,8 +1251,10 @@ private fun SharedSemanticBlockView(
                             fallbackFontFamily = fallbackFontFamily,
                             settings = settings,
                             onSelectionChange = onSelectionChange,
+                            onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                             onHighlightSelected = onHighlightSelected,
-                            onLinkClicked = onLinkClicked
+                            onLinkClicked = onLinkClicked,
+                            selectionLayouts = selectionLayouts
                         )
                     }
                     previous = item
@@ -822,8 +1278,10 @@ private fun SharedSemanticBlockView(
                     settings = settings,
                     includeTrailingBottomMargin = true,
                     onSelectionChange = onSelectionChange,
+                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
                     onLinkClicked = onLinkClicked,
+                    selectionLayouts = selectionLayouts,
                     imageContent = imageContent
                 )
             }
@@ -845,8 +1303,10 @@ private fun SharedSemanticBlockView(
                     settings = settings,
                     includeTrailingBottomMargin = true,
                     onSelectionChange = onSelectionChange,
+                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
                     onLinkClicked = onLinkClicked,
+                    selectionLayouts = selectionLayouts,
                     imageContent = imageContent
                 )
             }
@@ -872,8 +1332,10 @@ private fun SharedSemanticBlockView(
                                     settings = settings,
                                     includeTrailingBottomMargin = true,
                                     onSelectionChange = onSelectionChange,
+                                    onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                                     onHighlightSelected = onHighlightSelected,
                                     onLinkClicked = onLinkClicked,
+                                    selectionLayouts = selectionLayouts,
                                     imageContent = imageContent
                                 )
                             }
@@ -1120,8 +1582,10 @@ private fun SharedSemanticTextView(
     settings: ReaderSettings,
     fontWeight: FontWeight? = null,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
+    onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
-    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit
+    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>
 ) {
     val textStyle = block.renderedTextStyle(
         settings = settings,
@@ -1136,17 +1600,32 @@ private fun SharedSemanticTextView(
             highlights = highlights,
             activeSelection = activeSelection,
             selectionHighlight = selectionHighlight,
-            blockFontSizeSp = textStyle.fontSize.value
+            blockFontSizeSp = textStyle.fontSize.value,
+            pageIndex = page.pageIndex,
+            blockCfi = block.cfi,
+            blockIndex = block.blockIndex,
+            blockCharOffset = block.startCharOffsetInSource
         ),
         page = page,
+        textBlock = SharedNativeTextBlockDescriptor(
+            chapterIndex = page.chapterIndex,
+            pageIndex = page.pageIndex,
+            blockIndex = block.blockIndex,
+            blockCharOffset = block.startCharOffsetInSource,
+            baseCfi = block.cfi,
+            textStartOffset = block.startCharOffsetInSource,
+            text = block.text
+        ),
         textStartOffset = block.startCharOffsetInSource,
         color = foreground,
         modifier = modifier,
         textAlign = block.style.paragraphStyle.textAlign.takeUnless { it == TextAlign.Unspecified } ?: fallbackTextAlign,
         style = textStyle,
         onSelectionChange = onSelectionChange,
+        onSelectionGestureActiveChange = onSelectionGestureActiveChange,
         onHighlightSelected = onHighlightSelected,
         onLinkClicked = onLinkClicked,
+        selectionLayouts = selectionLayouts,
         fitLabel = SharedNativeTextFitLabel(
             page = page,
             blockIndex = block.blockIndex,
@@ -1200,7 +1679,11 @@ private fun SemanticTextBlock.toAnnotatedString(
     highlights: List<UserHighlight>,
     activeSelection: SharedNativeReaderTextSelection?,
     selectionHighlight: Color,
-    blockFontSizeSp: Float
+    blockFontSizeSp: Float,
+    pageIndex: Int,
+    blockCfi: String?,
+    blockIndex: Int,
+    blockCharOffset: Int
 ): AnnotatedString {
     val normalized = query.trim()
     return buildAnnotatedString {
@@ -1218,12 +1701,17 @@ private fun SemanticTextBlock.toAnnotatedString(
         highlights.forEach { highlight ->
             applyHighlightToTextRange(
                 highlight = highlight,
+                blockCfi = blockCfi,
                 textStartOffset = startCharOffsetInSource,
-                textLength = text.length
+                textLength = text.length,
+                text = text
             )
         }
         applySelectionToTextRange(
             selection = activeSelection,
+            pageIndex = pageIndex,
+            blockIndex = blockIndex,
+            blockCharOffset = blockCharOffset,
             textStartOffset = startCharOffsetInSource,
             textLength = text.length,
             color = selectionHighlight
@@ -1241,6 +1729,17 @@ private fun SemanticTextBlock.toAnnotatedString(
 }
 
 private fun TextUnit.takeIfSpecified(): TextUnit? = if (isSpecified) this else null
+
+private fun Color.blendWith(other: Color, foregroundWeight: Float): Color {
+    val weight = foregroundWeight.coerceIn(0f, 1f)
+    val baseWeight = 1f - weight
+    return Color(
+        red * baseWeight + other.red * weight,
+        green * baseWeight + other.green * weight,
+        blue * baseWeight + other.blue * weight,
+        alpha
+    )
+}
 
 private fun TextUnit.resolveFontSizeSp(baseFontSizeSp: Float): TextUnit {
     return when {
@@ -1272,19 +1771,38 @@ private fun List<UserHighlight>.visibleInPage(page: ReaderPage): List<UserHighli
         val chapterIndex = locator.chapterIndex ?: highlight.chapterIndex
         val start = locator.startOffset
         val end = locator.endOffset
-        chapterIndex == page.chapterIndex &&
-            start != null &&
+        val pageMatch = locator.pageIndex == page.pageIndex
+        val offsetMatch = start != null &&
             end != null &&
             start < page.endOffset &&
             end > page.startOffset
+        chapterIndex == page.chapterIndex && (pageMatch || offsetMatch)
     }
 }
 
 private fun AnnotatedString.Builder.applyHighlightToTextRange(
     highlight: UserHighlight,
+    blockCfi: String? = null,
     textStartOffset: Int,
-    textLength: Int
+    textLength: Int,
+    text: String? = null
 ) {
+    val cfiRange = sharedNativeHighlightRangeInBlock(
+        highlight = highlight,
+        blockCfi = blockCfi,
+        textLength = textLength,
+        text = text
+    )
+    if (cfiRange != null) {
+        addStyle(
+            style = SpanStyle(background = highlight.color.color.copy(alpha = 0.38f)),
+            start = cfiRange.start,
+            end = cfiRange.end
+        )
+        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, cfiRange.start, cfiRange.end)
+        return
+    }
+    if (highlight.cfi.contains('|') || highlight.cfi.startsWith("/")) return
     val start = highlight.locator.startOffset ?: return
     val end = highlight.locator.endOffset ?: return
     val localStart = (start - textStartOffset).coerceIn(0, textLength)
@@ -1301,13 +1819,35 @@ private fun AnnotatedString.Builder.applyHighlightToTextRange(
 
 private fun AnnotatedString.Builder.applySelectionToTextRange(
     selection: SharedNativeReaderTextSelection?,
+    pageIndex: Int? = null,
+    blockIndex: Int? = null,
+    blockCharOffset: Int? = null,
     textStartOffset: Int,
     textLength: Int,
     color: Color
 ) {
     if (selection == null) return
-    val localStart = (selection.startOffset - textStartOffset).coerceIn(0, textLength)
-    val localEnd = (selection.endOffset - textStartOffset).coerceIn(localStart, textLength)
+    val blockLocalRange = if (pageIndex != null && blockIndex != null && blockCharOffset != null) {
+        sharedNativeSelectionRangeInBlock(
+            selection = selection,
+            pageIndex = pageIndex,
+            blockIndex = blockIndex,
+            blockCharOffset = blockCharOffset,
+            textLength = textLength
+        )
+    } else {
+        null
+    }
+    val localStart: Int
+    val localEnd: Int
+    if (blockLocalRange != null) {
+        localStart = blockLocalRange.start
+        localEnd = blockLocalRange.end
+    } else {
+        if (selection.startBlockIndex >= 0 || selection.endBlockIndex >= 0) return
+        localStart = (selection.startOffset - textStartOffset).coerceIn(0, textLength)
+        localEnd = (selection.endOffset - textStartOffset).coerceIn(localStart, textLength)
+    }
     if (localStart < localEnd) {
         addStyle(
             style = SpanStyle(background = color),
@@ -1322,6 +1862,351 @@ private fun AnnotatedString.stringAnnotationAt(tag: String, offset: Int): String
     val start = offset.coerceIn(0, (length - 1).coerceAtLeast(0))
     val end = (start + 1).coerceAtMost(length)
     return getStringAnnotations(tag, start, end).firstOrNull()?.item
+}
+
+private data class SharedNativeSelectedTextRange(
+    val info: SharedNativeTextLayoutInfo,
+    val start: Int,
+    val end: Int
+)
+
+private data class SharedNativeSelectionEndpoint(
+    val info: SharedNativeTextLayoutInfo,
+    val localOffset: Int
+)
+
+private fun sharedNativeSelectionMenuOffset(
+    selection: SharedNativeReaderTextSelection,
+    readerCoordinates: LayoutCoordinates?,
+    density: Density
+): IntOffset {
+    val coordinates = readerCoordinates?.takeIf { it.isAttached } ?: return IntOffset(16, 16)
+    if (selection.rect == Rect.Zero) return IntOffset(16, 16)
+    val centerX = (selection.rect.left + selection.rect.right) / 2f
+    val topLocal = coordinates.windowToLocal(Offset(centerX, selection.rect.top))
+    val bottomLocal = coordinates.windowToLocal(Offset(centerX, selection.rect.bottom))
+    val paddingPx = with(density) { 16.dp.toPx() }
+    val estimatedWidthPx = with(density) { 300.dp.toPx() }
+    val estimatedHeightPx = with(density) { 154.dp.toPx() }
+    val maxX = (coordinates.size.width - estimatedWidthPx - paddingPx).coerceAtLeast(paddingPx)
+    val x = (topLocal.x - estimatedWidthPx / 2f).coerceIn(paddingPx, maxX)
+    val yAbove = topLocal.y - estimatedHeightPx - paddingPx
+    val y = if (yAbove >= paddingPx) {
+        yAbove
+    } else {
+        (bottomLocal.y + paddingPx).coerceAtMost(
+            (coordinates.size.height - estimatedHeightPx - paddingPx).coerceAtLeast(paddingPx)
+        )
+    }
+    return IntOffset(x.roundToInt(), y.roundToInt())
+}
+
+private fun sharedNativeSelectionHandleOffset(
+    selection: SharedNativeReaderTextSelection,
+    handle: SharedNativeSelectionHandle,
+    layouts: Collection<SharedNativeTextLayoutInfo>,
+    readerCoordinates: LayoutCoordinates?,
+    density: Density
+): IntOffset? {
+    val reader = readerCoordinates?.takeIf { it.isAttached } ?: return null
+    val endpoint = sharedNativeSelectionEndpoint(selection, handle, layouts) ?: return null
+    val textLength = endpoint.info.descriptor.text.length
+    if (textLength <= 0) return null
+    val safeOffset = endpoint.localOffset.coerceIn(0, textLength)
+    val probeStart = when (handle) {
+        SharedNativeSelectionHandle.START -> safeOffset.coerceIn(0, textLength - 1)
+        SharedNativeSelectionHandle.END -> (safeOffset - 1).coerceIn(0, textLength - 1)
+    }
+    val probeEnd = (probeStart + 1).coerceAtMost(textLength)
+    val localRect = runCatching {
+        endpoint.info.layout.getPathForRange(probeStart, probeEnd).getBounds()
+    }.getOrNull() ?: return null
+    val localX = when (handle) {
+        SharedNativeSelectionHandle.START -> if (safeOffset >= textLength) localRect.right else localRect.left
+        SharedNativeSelectionHandle.END -> if (safeOffset <= probeStart) localRect.left else localRect.right
+    }
+    val windowPosition = endpoint.info.coordinates.localToWindow(Offset(localX, localRect.bottom))
+    val readerPosition = reader.windowToLocal(windowPosition)
+    val halfHandlePx = with(density) { 14.dp.toPx() }
+    return IntOffset(
+        x = (readerPosition.x - halfHandlePx).roundToInt(),
+        y = readerPosition.y.roundToInt()
+    )
+}
+
+private fun sharedNativeSelectionWithHandleMoved(
+    selection: SharedNativeReaderTextSelection,
+    handle: SharedNativeSelectionHandle,
+    windowPosition: Offset,
+    layouts: Collection<SharedNativeTextLayoutInfo>
+): SharedNativeReaderTextSelection? {
+    val moved = sharedNativeReaderTextPositionAtWindow(windowPosition, layouts) ?: return null
+    val opposite = sharedNativeSelectionEndpointPosition(
+        selection = selection,
+        handle = if (handle == SharedNativeSelectionHandle.START) SharedNativeSelectionHandle.END else SharedNativeSelectionHandle.START,
+        layouts = layouts
+    ) ?: return null
+    return if (handle == SharedNativeSelectionHandle.START) {
+        sharedNativeReaderSelectionBetween(moved, opposite, layouts)
+    } else {
+        sharedNativeReaderSelectionBetween(opposite, moved, layouts)
+    }
+}
+
+private fun sharedNativeSelectionEndpointPosition(
+    selection: SharedNativeReaderTextSelection,
+    handle: SharedNativeSelectionHandle,
+    layouts: Collection<SharedNativeTextLayoutInfo>
+): SharedNativeTextPosition? {
+    val endpoint = sharedNativeSelectionEndpoint(selection, handle, layouts) ?: return null
+    return SharedNativeTextPosition(
+        descriptor = endpoint.info.descriptor,
+        localOffset = endpoint.localOffset.coerceIn(0, endpoint.info.descriptor.text.length)
+    )
+}
+
+private fun sharedNativeSelectionEndpoint(
+    selection: SharedNativeReaderTextSelection,
+    handle: SharedNativeSelectionHandle,
+    layouts: Collection<SharedNativeTextLayoutInfo>
+): SharedNativeSelectionEndpoint? {
+    val pageIndex = if (handle == SharedNativeSelectionHandle.START) {
+        selection.startPageIndex
+    } else {
+        selection.endPageIndex
+    }
+    val blockIndex = if (handle == SharedNativeSelectionHandle.START) {
+        selection.startBlockIndex
+    } else {
+        selection.endBlockIndex
+    }
+    val blockCharOffset = if (handle == SharedNativeSelectionHandle.START) {
+        selection.startBlockCharOffset
+    } else {
+        selection.endBlockCharOffset
+    }
+    val localOffset = if (handle == SharedNativeSelectionHandle.START) {
+        selection.startLocalOffset
+    } else {
+        selection.endLocalOffset
+    }
+    val key = SharedNativeSelectionBlockKey(pageIndex, blockIndex, blockCharOffset)
+    val info = layouts.firstOrNull { it.coordinates.isAttached && it.descriptor.key == key } ?: return null
+    return SharedNativeSelectionEndpoint(info, localOffset)
+}
+
+private fun sharedNativeReaderTextPositionAtWindow(
+    windowPosition: Offset,
+    layouts: Collection<SharedNativeTextLayoutInfo>
+): SharedNativeTextPosition? {
+    val target = layouts
+        .asSequence()
+        .filter { it.coordinates.isAttached && it.descriptor.text.isNotEmpty() }
+        .minByOrNull { info ->
+            val rect = info.coordinates.boundsInWindow()
+            val dx = maxOf(rect.left - windowPosition.x, 0f, windowPosition.x - rect.right)
+            val dy = maxOf(rect.top - windowPosition.y, 0f, windowPosition.y - rect.bottom)
+            dx * dx + dy * dy
+        } ?: return null
+    val localPosition = target.coordinates.windowToLocal(windowPosition)
+    return SharedNativeTextPosition(
+        descriptor = target.descriptor,
+        localOffset = target.layout.getOffsetForPosition(localPosition)
+            .coerceIn(0, target.descriptor.text.length)
+    )
+}
+
+private fun sharedNativeReaderSelectionBetween(
+    start: SharedNativeTextPosition,
+    end: SharedNativeTextPosition,
+    layouts: Collection<SharedNativeTextLayoutInfo>
+): SharedNativeReaderTextSelection? {
+    if (start.descriptor.chapterIndex != end.descriptor.chapterIndex) return null
+    val (orderedStart, orderedEnd) = if (sharedNativeCompareTextPositions(start, end) <= 0) {
+        start to end
+    } else {
+        end to start
+    }
+    val selectedRanges = layouts
+        .asSequence()
+        .filter { it.coordinates.isAttached }
+        .filter { info ->
+            sharedNativeSelectionRangeInBlock(
+                start = orderedStart,
+                end = orderedEnd,
+                block = info.descriptor,
+                textLength = info.descriptor.text.length
+            ) != null
+        }
+        .sortedWith(
+            compareBy<SharedNativeTextLayoutInfo> { it.descriptor.pageIndex }
+                .thenBy { it.descriptor.blockIndex }
+                .thenBy { it.descriptor.blockCharOffset }
+        )
+        .mapNotNull { info ->
+            val range = sharedNativeSelectionRangeInBlock(
+                start = orderedStart,
+                end = orderedEnd,
+                block = info.descriptor,
+                textLength = info.descriptor.text.length
+            ) ?: return@mapNotNull null
+            SharedNativeSelectedTextRange(info, range.start, range.end)
+        }
+        .toMutableList()
+    sharedNativeTrimSelectedRanges(selectedRanges)
+    if (selectedRanges.isEmpty()) return null
+    val selectedText = selectedRanges.joinToString(" ") { range ->
+        range.info.descriptor.text.substring(range.start, range.end)
+    }.trim()
+    if (selectedText.isBlank()) return null
+    val first = selectedRanges.first()
+    val last = selectedRanges.last()
+    val startAbsoluteOffset = first.info.descriptor.blockCharOffset + first.start
+    val endAbsoluteOffset = last.info.descriptor.blockCharOffset + last.end
+    return SharedNativeReaderTextSelection(
+        chapterIndex = first.info.descriptor.chapterIndex,
+        pageIndex = first.info.descriptor.pageIndex,
+        startOffset = startAbsoluteOffset,
+        endOffset = endAbsoluteOffset,
+        text = selectedText,
+        startPageIndex = first.info.descriptor.pageIndex,
+        endPageIndex = last.info.descriptor.pageIndex,
+        startBlockIndex = first.info.descriptor.blockIndex,
+        endBlockIndex = last.info.descriptor.blockIndex,
+        startBlockCharOffset = first.info.descriptor.blockCharOffset,
+        endBlockCharOffset = last.info.descriptor.blockCharOffset,
+        startLocalOffset = first.start,
+        endLocalOffset = last.end,
+        startBaseCfi = first.info.descriptor.baseCfi,
+        endBaseCfi = last.info.descriptor.baseCfi,
+        rect = sharedNativeSelectionRect(selectedRanges),
+        textPerBlock = selectedRanges.associate { range ->
+            range.info.descriptor.key.stableKey to range.info.descriptor.text.substring(range.start, range.end)
+        }
+    )
+}
+
+private fun sharedNativeSelectionRangeInBlock(
+    start: SharedNativeTextPosition,
+    end: SharedNativeTextPosition,
+    block: SharedNativeTextBlockDescriptor,
+    textLength: Int
+): SharedNativeReaderTextRange? {
+    if (sharedNativeCompareBlockToPosition(block, start) < 0) return null
+    if (sharedNativeCompareBlockToPosition(block, end) > 0) return null
+    val isStart = block.key == start.descriptor.key
+    val isEnd = block.key == end.descriptor.key
+    val localStart = if (isStart) start.localOffset else 0
+    val localEnd = if (isEnd) end.localOffset else textLength
+    val safeStart = localStart.coerceIn(0, textLength)
+    val safeEnd = localEnd.coerceIn(safeStart, textLength)
+    return if (safeStart < safeEnd) SharedNativeReaderTextRange(safeStart, safeEnd) else null
+}
+
+private fun sharedNativeSelectionRangeInBlock(
+    selection: SharedNativeReaderTextSelection,
+    pageIndex: Int,
+    blockIndex: Int,
+    blockCharOffset: Int,
+    textLength: Int
+): SharedNativeReaderTextRange? {
+    if (selection.startBlockIndex < 0 || selection.endBlockIndex < 0) return null
+    val blockPosition = SharedNativeSelectionBlockKey(pageIndex, blockIndex, blockCharOffset)
+    val startPosition = SharedNativeSelectionBlockKey(
+        selection.startPageIndex,
+        selection.startBlockIndex,
+        selection.startBlockCharOffset
+    )
+    val endPosition = SharedNativeSelectionBlockKey(
+        selection.endPageIndex,
+        selection.endBlockIndex,
+        selection.endBlockCharOffset
+    )
+    if (sharedNativeCompareBlockKeys(blockPosition, startPosition) < 0) return null
+    if (sharedNativeCompareBlockKeys(blockPosition, endPosition) > 0) return null
+    val isStart = blockPosition == startPosition
+    val isEnd = blockPosition == endPosition
+    val localStart = if (isStart) selection.startLocalOffset else 0
+    val localEnd = if (isEnd) selection.endLocalOffset else textLength
+    val safeStart = localStart.coerceIn(0, textLength)
+    val safeEnd = localEnd.coerceIn(safeStart, textLength)
+    return if (safeStart < safeEnd) SharedNativeReaderTextRange(safeStart, safeEnd) else null
+}
+
+private fun sharedNativeCompareTextPositions(
+    first: SharedNativeTextPosition,
+    second: SharedNativeTextPosition
+): Int {
+    val blockCompare = sharedNativeCompareBlockKeys(first.descriptor.key, second.descriptor.key)
+    return if (blockCompare != 0) blockCompare else first.localOffset.compareTo(second.localOffset)
+}
+
+private fun sharedNativeCompareBlockToPosition(
+    block: SharedNativeTextBlockDescriptor,
+    position: SharedNativeTextPosition
+): Int = sharedNativeCompareBlockKeys(block.key, position.descriptor.key)
+
+private fun sharedNativeCompareBlockKeys(
+    first: SharedNativeSelectionBlockKey,
+    second: SharedNativeSelectionBlockKey
+): Int {
+    if (first.pageIndex != second.pageIndex) return first.pageIndex.compareTo(second.pageIndex)
+    if (first.blockIndex != second.blockIndex) return first.blockIndex.compareTo(second.blockIndex)
+    return first.blockCharOffset.compareTo(second.blockCharOffset)
+}
+
+private fun sharedNativeTrimSelectedRanges(ranges: MutableList<SharedNativeSelectedTextRange>) {
+    while (ranges.isNotEmpty()) {
+        val first = ranges.first()
+        val text = first.info.descriptor.text
+        var start = first.start
+        while (start < first.end && text[start].isWhitespace()) start++
+        if (start < first.end) {
+            if (start != first.start) ranges[0] = first.copy(start = start)
+            break
+        }
+        ranges.removeAt(0)
+    }
+    while (ranges.isNotEmpty()) {
+        val lastIndex = ranges.lastIndex
+        val last = ranges[lastIndex]
+        val text = last.info.descriptor.text
+        var end = last.end
+        while (end > last.start && text[end - 1].isWhitespace()) end--
+        if (end > last.start) {
+            if (end != last.end) ranges[lastIndex] = last.copy(end = end)
+            break
+        }
+        ranges.removeAt(lastIndex)
+    }
+}
+
+private fun sharedNativeSelectionRect(ranges: List<SharedNativeSelectedTextRange>): Rect {
+    var left = Float.POSITIVE_INFINITY
+    var top = Float.POSITIVE_INFINITY
+    var right = Float.NEGATIVE_INFINITY
+    var bottom = Float.NEGATIVE_INFINITY
+    ranges.forEach { range ->
+        val coordinates = range.info.coordinates
+        val windowRect = runCatching {
+            val localRect = range.info.layout.getPathForRange(range.start, range.end).getBounds()
+            Rect(
+                coordinates.localToWindow(localRect.topLeft),
+                coordinates.localToWindow(localRect.bottomRight)
+            )
+        }.getOrElse {
+            coordinates.boundsInWindow()
+        }
+        left = minOf(left, windowRect.left, windowRect.right)
+        top = minOf(top, windowRect.top, windowRect.bottom)
+        right = maxOf(right, windowRect.left, windowRect.right)
+        bottom = maxOf(bottom, windowRect.top, windowRect.bottom)
+    }
+    return if (left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite()) {
+        Rect(left, top, right, bottom)
+    } else {
+        Rect.Zero
+    }
 }
 
 internal data class SharedNativeReaderTextRange(
@@ -1349,6 +2234,91 @@ internal fun sharedNativeReaderTrimmedWordRange(
     }
 }
 
+private data class SharedNativeCfiPoint(
+    val path: String,
+    val offset: Int
+)
+
+private fun sharedNativeHighlightRangeInBlock(
+    highlight: UserHighlight,
+    blockCfi: String?,
+    textLength: Int,
+    text: String?
+): SharedNativeReaderTextRange? {
+    val cfi = highlight.cfi.takeIf { it.contains('|') || it.startsWith("/") } ?: return null
+    val blockPath = blockCfi?.takeIf { it.startsWith("/") } ?: return null
+    val parts = cfi.split('|')
+    val start = parts.firstOrNull()?.sharedNativeCfiPointOrNull() ?: return null
+    val end = parts.lastOrNull()?.sharedNativeCfiPointOrNull() ?: start
+    val startMatches = sharedNativeCfiPathsEquivalent(start.path, blockPath)
+    val endMatches = sharedNativeCfiPathsEquivalent(end.path, blockPath)
+    val isIntermediate = !startMatches && !endMatches &&
+        parts.size > 1 &&
+        sharedNativeCfiPathStrictlyBetween(blockPath, start.path, end.path)
+    if (!startMatches && !endMatches && !isIntermediate) return null
+
+    var localStart = if (startMatches) start.offset else 0
+    var localEnd = if (endMatches) end.offset else textLength
+    if (startMatches && endMatches && localEnd < localStart) {
+        localStart = localEnd.also { localEnd = localStart }
+    }
+    localStart = localStart.coerceIn(0, textLength)
+    localEnd = localEnd.coerceIn(localStart, textLength)
+    if (localStart < localEnd) {
+        return SharedNativeReaderTextRange(localStart, localEnd)
+    }
+
+    val quote = highlight.text.takeIf { it.isNotBlank() }
+    val blockText = text
+    if (quote != null && blockText != null) {
+        val exact = blockText.indexOf(quote, ignoreCase = false)
+        if (exact >= 0) return SharedNativeReaderTextRange(exact, (exact + quote.length).coerceAtMost(textLength))
+        val relaxed = blockText.indexOf(quote, ignoreCase = true)
+        if (relaxed >= 0) return SharedNativeReaderTextRange(relaxed, (relaxed + quote.length).coerceAtMost(textLength))
+    }
+    return null
+}
+
+private fun String.sharedNativeCfiPointOrNull(): SharedNativeCfiPoint? {
+    val separator = lastIndexOf(':')
+    if (separator <= 0 || separator == lastIndex) return null
+    val path = substring(0, separator).takeIf { it.startsWith("/") } ?: return null
+    val offset = substring(separator + 1).toIntOrNull() ?: return null
+    return SharedNativeCfiPoint(path, offset)
+}
+
+private fun sharedNativeCfiPathsEquivalent(first: String, second: String): Boolean {
+    val firstParts = first.split('/').filter { it.isNotEmpty() }
+    val secondParts = second.split('/').filter { it.isNotEmpty() }
+    if (firstParts == secondParts) return true
+    return firstParts.size == secondParts.size &&
+        firstParts.isNotEmpty() &&
+        firstParts.drop(1) == secondParts.drop(1)
+}
+
+private fun sharedNativeCfiPathStrictlyBetween(candidate: String, start: String, end: String): Boolean {
+    val candidateParts = candidate.sharedNativeCfiNumericPathParts() ?: return false
+    val startParts = start.sharedNativeCfiNumericPathParts() ?: return false
+    val endParts = end.sharedNativeCfiNumericPathParts() ?: return false
+    return sharedNativeCompareCfiPathParts(candidateParts, startParts) > 0 &&
+        sharedNativeCompareCfiPathParts(candidateParts, endParts) < 0
+}
+
+private fun String.sharedNativeCfiNumericPathParts(): List<Int>? {
+    val parts = split('/').filter { it.isNotEmpty() }
+    if (parts.isEmpty()) return null
+    return parts.map { it.toIntOrNull() ?: return null }
+}
+
+private fun sharedNativeCompareCfiPathParts(first: List<Int>, second: List<Int>): Int {
+    val length = minOf(first.size, second.size)
+    for (index in 0 until length) {
+        val comparison = first[index].compareTo(second[index])
+        if (comparison != 0) return comparison
+    }
+    return first.size.compareTo(second.size)
+}
+
 internal fun sharedNativeReaderHighlightForSelection(
     selection: SharedNativeReaderTextSelection,
     color: HighlightColor
@@ -1362,7 +2332,7 @@ internal fun sharedNativeReaderHighlightForSelection(
         cfi = selection.cfi
     )
     return UserHighlight(
-        id = "native-${selection.chapterIndex}-${selection.startOffset}-${selection.endOffset}-${color.id}",
+        id = "native-${selection.chapterIndex}-${selection.startPageIndex}-${selection.startBlockIndex}-${selection.startLocalOffset}-${selection.endPageIndex}-${selection.endBlockIndex}-${selection.endLocalOffset}-${color.id}",
         cfi = selection.cfi,
         text = selection.text,
         color = color,
