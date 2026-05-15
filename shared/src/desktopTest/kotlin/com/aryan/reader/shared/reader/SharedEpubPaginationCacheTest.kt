@@ -97,6 +97,36 @@ class SharedEpubPaginationCacheTest {
         }
     }
 
+    @Test
+    fun `clear all removes persisted and memory pagination pages`() = runBlocking {
+        val root = Files.createTempDirectory("reader-page-cache").toFile()
+        try {
+            val cache = SharedEpubPaginationCache(root)
+            val book = cacheBook()
+            val settings = ReaderSettings()
+            val viewport = ReaderViewportSpec(widthPx = 960, heightPx = 720)
+            val pages = listOf(
+                ReaderPage(
+                    pageIndex = 0,
+                    chapterIndex = 0,
+                    chapterTitle = "One",
+                    text = "Cached page",
+                    startOffset = 0,
+                    endOffset = 11
+                )
+            )
+
+            cache.save(book, settings, viewport, pages)
+            assertNotNull(cache.load(book, settings, viewport))
+
+            cache.clearAll()
+
+            assertNull(cache.load(book, settings, viewport))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun cacheBook(): SharedEpubBook {
         return SharedEpubBook(
             id = "book-id",

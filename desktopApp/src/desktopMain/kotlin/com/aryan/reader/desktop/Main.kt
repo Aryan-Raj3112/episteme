@@ -315,6 +315,7 @@ import com.aryan.reader.shared.opds.SharedOpdsController
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.ui.DesktopEpubNativeImage
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
 import com.aryan.reader.shared.ui.ReaderContentRenderPlan
@@ -1034,6 +1035,8 @@ private fun EpistemeDesktopApp(
         mutableStateOf(initialLibrarySnapshot.customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() })
     }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
+    val desktopEpubPaginationCache = remember { SharedEpubPaginationCache() }
+    var epubPaginationCacheGeneration by remember { mutableStateOf(0) }
     LaunchedEffect(webViewRuntimeRequested) {
         if (!shouldStartDesktopWebViewRuntime(webViewRuntimeRequested, webViewRuntimeState)) {
             return@LaunchedEffect
@@ -1109,6 +1112,7 @@ private fun EpistemeDesktopApp(
     var showTagSelectionDialog by remember { mutableStateOf(false) }
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
+    var showClearBookCacheDialog by remember { mutableStateOf(false) }
     var settingsQuery by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
@@ -1191,6 +1195,17 @@ private fun EpistemeDesktopApp(
         val projected = projectState(next)
         state = projected
         persistSnapshot(projected)
+    }
+
+    fun clearDesktopBookCache() {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                desktopEpubPaginationCache.clearAll()
+                SharedJvmBookLoader.clearCache()
+            }
+            epubPaginationCacheGeneration++
+            updateState(state.withBanner("Book cache cleared. EPUB pagination will be recreated on demand."))
+        }
     }
 
     fun updateAiByokSettings(next: ReaderAiByokSettings) {
@@ -2516,7 +2531,7 @@ private fun EpistemeDesktopApp(
                                     SharedSettingsAction.HELP_FEEDBACK -> selectedTab = SharedAppTab.FEEDBACK
                                     SharedSettingsAction.SUPPORT -> selectedTab = SharedAppTab.SUPPORT
                                     SharedSettingsAction.ABOUT -> selectedTab = SharedAppTab.ABOUT
-                                    SharedSettingsAction.CLEAR_BOOK_CACHE,
+                                    SharedSettingsAction.CLEAR_BOOK_CACHE -> showClearBookCacheDialog = true
                                     SharedSettingsAction.CLEAR_REFLOW_CACHE,
                                     SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
@@ -2775,7 +2790,9 @@ private fun EpistemeDesktopApp(
                                     readerCustomTextureIds = readerCustomTextureIds,
                                     onImportReaderTexture = ::importDesktopReaderTexture,
                                     webViewRuntimeState = webViewRuntimeState,
-                                    webViewNetworkAccessEnabled = featurePolicy.networkAccess
+                                    webViewNetworkAccessEnabled = featurePolicy.networkAccess,
+                                    epubPaginationCache = desktopEpubPaginationCache,
+                                    epubPaginationCacheGeneration = epubPaginationCacheGeneration
                                 )
                             }
                         }
@@ -2809,6 +2826,19 @@ private fun EpistemeDesktopApp(
                 onCustomThemeAdded = { theme -> updateState(state.reduce(AppAction.CustomAppThemeAdded(theme))) },
                 onCustomThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) },
                 onDismiss = { showDesktopAppThemeSettingsDialog = false }
+            )
+        }
+
+        if (showClearBookCacheDialog) {
+            SharedConfirmDialog(
+                title = "Clear book cache",
+                body = "Delete generated desktop book and EPUB pagination cache files? They will be recreated the next time books are opened.",
+                confirmLabel = "Clear",
+                onDismiss = { showClearBookCacheDialog = false },
+                onConfirm = {
+                    clearDesktopBookCache()
+                    showClearBookCacheDialog = false
+                }
             )
         }
 
@@ -10675,26 +10705,27 @@ private fun ReaderScreen(
     readerCustomTextureIds: List<String>,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
     webViewRuntimeState: DesktopWebViewRuntimeState,
-    webViewNetworkAccessEnabled: Boolean
+    webViewNetworkAccessEnabled: Boolean,
+    epubPaginationCache: SharedEpubPaginationCache,
+    epubPaginationCacheGeneration: Int
 ) {
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
-    val paginationCache = remember { SharedEpubPaginationCache() }
     val paginationCacheWriteScope = rememberCoroutineScope()
     val measuredPaginator = remember(
         textMeasurer,
         density,
         session.reader.settings.fontFamily,
         session.reader.settings.customFontPath,
-        paginationCache,
+        epubPaginationCache,
         paginationCacheWriteScope
     ) {
         SharedMeasuredEpubPaginator(
             textMeasurer = textMeasurer,
             density = density,
             fontFamily = session.reader.settings.toDesktopReaderFontFamily(),
-            pageCache = paginationCache,
+            pageCache = epubPaginationCache,
             cacheWriteScope = paginationCacheWriteScope
         )
     }
@@ -10712,7 +10743,8 @@ private fun ReaderScreen(
         paginationContentSignature,
         paginationLayoutSignature,
         readerViewport,
-        paginationDensitySignature
+        paginationDensitySignature,
+        epubPaginationCacheGeneration
     ) {
         if (session.reader.settings.readingMode == ReaderReadingMode.PAGINATED && readerViewport.isSpecified) {
             DesktopEpubPaginationRequest(
@@ -10720,7 +10752,8 @@ private fun ReaderScreen(
                 chapterSignature = paginationContentSignature,
                 layoutSignature = paginationLayoutSignature,
                 viewport = readerViewport,
-                density = paginationDensitySignature
+                density = paginationDensitySignature,
+                cacheGeneration = epubPaginationCacheGeneration
             )
         } else {
             null
@@ -11024,6 +11057,12 @@ private fun ReaderScreen(
                             onLinkClicked = { link ->
                                 handleDesktopEpubLinkClicked(link.toDesktopEpubLinkClick())
                             },
+                            imageContent = { image, imageModifier ->
+                                DesktopEpubNativeImage(
+                                    image = image,
+                                    modifier = imageModifier
+                                )
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -11038,7 +11077,8 @@ private data class DesktopEpubPaginationRequest(
     val chapterSignature: Int,
     val layoutSignature: ReaderLayoutSignature,
     val viewport: ReaderViewportSpec,
-    val density: DesktopEpubPaginationDensity
+    val density: DesktopEpubPaginationDensity,
+    val cacheGeneration: Int
 )
 
 private data class DesktopEpubPaginationDensity(

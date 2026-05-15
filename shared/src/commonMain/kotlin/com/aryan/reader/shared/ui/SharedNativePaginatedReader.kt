@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -43,6 +45,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
@@ -100,7 +103,8 @@ fun SharedNativePaginatedReader(
     onSelectionAction: (SharedNativeReaderSelectionAction, String) -> Unit = { _, _ -> },
     onHighlightCreated: (UserHighlight) -> Unit = {},
     onHighlightSelected: (String) -> Unit = {},
-    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {}
+    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null
 ) {
     val visiblePages = renderPlan.visiblePages
     val firstPage = visiblePages.firstOrNull()
@@ -135,17 +139,19 @@ fun SharedNativePaginatedReader(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .background(renderPlan.background)
-                .padding(12.dp),
+                .background(renderPlan.background),
             contentAlignment = Alignment.Center
         ) {
-            val pageGap = 16.dp
-            val maxConfiguredPageWidth = renderPlan.settings.pageWidth.dp
-            val pageWidth = if (visiblePages.size > 1) {
-                val availableSpreadWidth = if (maxWidth > pageGap) maxWidth - pageGap else maxWidth
-                minOf(availableSpreadWidth / 2f, maxConfiguredPageWidth)
+            val pageGap = 28.dp
+            val horizontalMargin = renderPlan.settings.resolvedHorizontalMargin.dp
+            val configuredContentWidth = renderPlan.settings.pageWidth.dp
+            val pageOuterWidth = if (visiblePages.size > 1) {
+                val availablePageOuterWidth = ((maxWidth - pageGap).coerceAtLeast(1.dp)) / 2f
+                val availableContentWidth = (availablePageOuterWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
+                minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
             } else {
-                minOf(maxWidth, maxConfiguredPageWidth)
+                val availableContentWidth = (maxWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
+                minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
             }
             Row(
                 modifier = Modifier.fillMaxSize(),
@@ -163,8 +169,9 @@ fun SharedNativePaginatedReader(
                         onSelectionChange = { activeSelection = it },
                         onHighlightSelected = onHighlightSelected,
                         onLinkClicked = onLinkClicked,
+                        imageContent = imageContent,
                         modifier = Modifier
-                            .width(pageWidth)
+                            .width(pageOuterWidth)
                             .fillMaxHeight()
                     )
                 }
@@ -207,6 +214,7 @@ private fun SharedNativePaginatedPage(
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     modifier: Modifier = Modifier
 ) {
     val settings = renderPlan.settings
@@ -228,7 +236,7 @@ private fun SharedNativePaginatedPage(
                     horizontal = settings.resolvedHorizontalMargin.dp,
                     vertical = settings.resolvedVerticalMargin.dp
                 ),
-            verticalArrangement = Arrangement.spacedBy((settings.fontSize * settings.paragraphSpacing * 0.45f).dp)
+            verticalArrangement = Arrangement.Top
         ) {
             val blocks = page.semanticBlocks
             if (blocks.isEmpty()) {
@@ -255,24 +263,24 @@ private fun SharedNativePaginatedPage(
                     onLinkClicked = onLinkClicked
                 )
             } else {
-                blocks.forEach { block ->
-                    SharedSemanticBlockView(
-                        block = block,
-                        page = page,
-                        foreground = renderPlan.foreground,
-                        searchQuery = renderPlan.searchQuery,
-                        searchHighlight = searchHighlight,
-                        highlights = visibleHighlights,
-                        activeSelection = activeSelection,
-                        selectionHighlight = selectionHighlight,
-                        fallbackTextAlign = fallbackTextAlign,
-                        fallbackFontFamily = readerFontFamily,
-                        settings = settings,
-                        onSelectionChange = onSelectionChange,
-                        onHighlightSelected = onHighlightSelected,
-                        onLinkClicked = onLinkClicked
-                    )
-                }
+                SharedSemanticBlockStack(
+                    blocks = blocks,
+                    page = page,
+                    foreground = renderPlan.foreground,
+                    searchQuery = renderPlan.searchQuery,
+                    searchHighlight = searchHighlight,
+                    highlights = visibleHighlights,
+                    activeSelection = activeSelection,
+                    selectionHighlight = selectionHighlight,
+                    fallbackTextAlign = fallbackTextAlign,
+                    fallbackFontFamily = readerFontFamily,
+                    settings = settings,
+                    includeTrailingBottomMargin = false,
+                    onSelectionChange = onSelectionChange,
+                    onHighlightSelected = onHighlightSelected,
+                    onLinkClicked = onLinkClicked,
+                    imageContent = imageContent
+                )
             }
         }
     }
@@ -507,6 +515,54 @@ private fun String.toReaderAnnotatedString(
 }
 
 @Composable
+private fun SharedSemanticBlockStack(
+    blocks: List<SemanticBlock>,
+    page: ReaderPage,
+    foreground: Color,
+    searchQuery: String,
+    searchHighlight: Color,
+    highlights: List<UserHighlight>,
+    activeSelection: SharedNativeReaderTextSelection?,
+    selectionHighlight: Color,
+    fallbackTextAlign: TextAlign,
+    fallbackFontFamily: FontFamily,
+    settings: ReaderSettings,
+    includeTrailingBottomMargin: Boolean,
+    onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
+    onHighlightSelected: (String) -> Unit,
+    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?
+) {
+    var previous: SemanticBlock? = null
+    blocks.forEachIndexed { index, block ->
+        SharedSemanticBlockView(
+            block = block,
+            page = page,
+            foreground = foreground,
+            searchQuery = searchQuery,
+            searchHighlight = searchHighlight,
+            highlights = highlights,
+            activeSelection = activeSelection,
+            selectionHighlight = selectionHighlight,
+            fallbackTextAlign = fallbackTextAlign,
+            fallbackFontFamily = fallbackFontFamily,
+            settings = settings,
+            marginTop = block.collapsedTopMarginDp(previous, settings),
+            marginBottom = if (includeTrailingBottomMargin && index == blocks.lastIndex) {
+                block.effectiveBottomMarginDp(settings)
+            } else {
+                0.dp
+            },
+            onSelectionChange = onSelectionChange,
+            onHighlightSelected = onHighlightSelected,
+            onLinkClicked = onLinkClicked,
+            imageContent = imageContent
+        )
+        previous = block
+    }
+}
+
+@Composable
 private fun SharedSemanticBlockView(
     block: SemanticBlock,
     page: ReaderPage,
@@ -519,17 +575,20 @@ private fun SharedSemanticBlockView(
     fallbackTextAlign: TextAlign,
     fallbackFontFamily: FontFamily,
     settings: ReaderSettings,
+    marginTop: Dp,
+    marginBottom: Dp,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onHighlightSelected: (String) -> Unit,
-    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit
+    onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?
 ) {
     val modifier = Modifier
         .fillMaxWidth()
         .padding(
             start = block.style.blockStyle.margin.left.safeDp(),
-            top = block.style.blockStyle.margin.top.safeDp(),
+            top = marginTop,
             end = block.style.blockStyle.margin.right.safeDp(),
-            bottom = block.style.blockStyle.margin.bottom.safeDp()
+            bottom = marginBottom
         )
         .then(
             if (block.style.blockStyle.backgroundColor.isSpecified) {
@@ -572,9 +631,16 @@ private fun SharedSemanticBlockView(
         is SemanticTextBlock -> SharedSemanticTextView(block, page, modifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked)
 
         is SemanticList -> {
-            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(modifier = modifier, verticalArrangement = Arrangement.Top) {
+                var previous: SemanticBlock? = null
                 block.items.forEachIndexed { index, item ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.padding(
+                            top = item.collapsedTopMarginDp(previous, settings),
+                            bottom = if (index == block.items.lastIndex) item.effectiveBottomMarginDp(settings) else 0.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(if (block.isOrdered) "${index + 1}." else "\u2022", color = foreground)
                         SharedSemanticTextView(
                             block = item,
@@ -594,36 +660,81 @@ private fun SharedSemanticBlockView(
                             onLinkClicked = onLinkClicked
                         )
                     }
+                    previous = item
                 }
             }
         }
 
         is SemanticFlexContainer -> {
-            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                block.children.forEach {
-                    SharedSemanticBlockView(it, page, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange, onHighlightSelected, onLinkClicked)
-                }
+            Column(modifier = modifier, verticalArrangement = Arrangement.Top) {
+                SharedSemanticBlockStack(
+                    blocks = block.children,
+                    page = page,
+                    foreground = foreground,
+                    searchQuery = searchQuery,
+                    searchHighlight = searchHighlight,
+                    highlights = highlights,
+                    activeSelection = activeSelection,
+                    selectionHighlight = selectionHighlight,
+                    fallbackTextAlign = fallbackTextAlign,
+                    fallbackFontFamily = fallbackFontFamily,
+                    settings = settings,
+                    includeTrailingBottomMargin = true,
+                    onSelectionChange = onSelectionChange,
+                    onHighlightSelected = onHighlightSelected,
+                    onLinkClicked = onLinkClicked,
+                    imageContent = imageContent
+                )
             }
         }
 
         is SemanticWrappingBlock -> {
-            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SharedSemanticBlockView(block.floatedImage, page, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange, onHighlightSelected, onLinkClicked)
-                block.paragraphsToWrap.forEach {
-                    SharedSemanticBlockView(it, page, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange, onHighlightSelected, onLinkClicked)
-                }
+            Column(modifier = modifier, verticalArrangement = Arrangement.Top) {
+                SharedSemanticBlockStack(
+                    blocks = listOf(block.floatedImage) + block.paragraphsToWrap,
+                    page = page,
+                    foreground = foreground,
+                    searchQuery = searchQuery,
+                    searchHighlight = searchHighlight,
+                    highlights = highlights,
+                    activeSelection = activeSelection,
+                    selectionHighlight = selectionHighlight,
+                    fallbackTextAlign = fallbackTextAlign,
+                    fallbackFontFamily = fallbackFontFamily,
+                    settings = settings,
+                    includeTrailingBottomMargin = true,
+                    onSelectionChange = onSelectionChange,
+                    onHighlightSelected = onHighlightSelected,
+                    onLinkClicked = onLinkClicked,
+                    imageContent = imageContent
+                )
             }
         }
 
         is SemanticTable -> {
-            Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(modifier = modifier, verticalArrangement = Arrangement.Top) {
                 block.rows.forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { cell ->
                             Column(modifier = Modifier.weight(cell.colspan.toFloat().coerceAtLeast(1f))) {
-                                cell.content.forEach {
-                                    SharedSemanticBlockView(it, page, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange, onHighlightSelected, onLinkClicked)
-                                }
+                                SharedSemanticBlockStack(
+                                    blocks = cell.content,
+                                    page = page,
+                                    foreground = foreground,
+                                    searchQuery = searchQuery,
+                                    searchHighlight = searchHighlight,
+                                    highlights = highlights,
+                                    activeSelection = activeSelection,
+                                    selectionHighlight = selectionHighlight,
+                                    fallbackTextAlign = fallbackTextAlign,
+                                    fallbackFontFamily = fallbackFontFamily,
+                                    settings = settings,
+                                    includeTrailingBottomMargin = true,
+                                    onSelectionChange = onSelectionChange,
+                                    onHighlightSelected = onHighlightSelected,
+                                    onLinkClicked = onLinkClicked,
+                                    imageContent = imageContent
+                                )
                             }
                         }
                     }
@@ -632,11 +743,12 @@ private fun SharedSemanticBlockView(
         }
 
         is SemanticImage -> {
-            Text(
-                text = block.altText?.takeIf { it.isNotBlank() } ?: block.path.substringAfterLast('/').substringAfterLast('\\'),
-                color = foreground.copy(alpha = 0.7f),
-                modifier = modifier,
-                style = MaterialTheme.typography.bodySmall
+            SharedNativeImageBlock(
+                block = block,
+                foreground = foreground,
+                settings = settings,
+                imageContent = imageContent,
+                modifier = modifier
             )
         }
 
@@ -650,6 +762,117 @@ private fun SharedSemanticBlockView(
         }
 
         is SemanticSpacer -> Spacer(modifier.height(if (block.isExplicitLineBreak) 8.dp else 16.dp))
+    }
+}
+
+@Composable
+private fun SharedNativeImageBlock(
+    block: SemanticImage,
+    foreground: Color,
+    settings: ReaderSettings,
+    imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = block.imageContentAlignment()
+    ) {
+        val imageModifier = Modifier.sharedNativeImageSize(block, settings, maxWidth)
+        if (imageContent != null) {
+            imageContent(block, imageModifier)
+        } else {
+            Text(
+                text = block.altText?.takeIf { it.isNotBlank() } ?: block.path.substringAfterLast('/').substringAfterLast('\\'),
+                color = foreground.copy(alpha = 0.7f),
+                modifier = imageModifier,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+private fun SemanticImage.imageContentAlignment(): Alignment {
+    val style = style.blockStyle
+    return when {
+        style.float == "right" || style.horizontalAlign == "right" || style.horizontalAlign == "end" -> Alignment.CenterEnd
+        style.float == "left" || style.horizontalAlign == "left" || style.horizontalAlign == "start" -> Alignment.CenterStart
+        else -> Alignment.Center
+    }
+}
+
+@Composable
+private fun Modifier.sharedNativeImageSize(
+    block: SemanticImage,
+    settings: ReaderSettings,
+    maxWidth: Dp
+): Modifier {
+    val density = LocalDensity.current
+    val style = block.style.blockStyle
+    val imageScale = settings.imageScale.coerceIn(0.5f, 2f)
+    val scaledSize = sharedNativeImageRenderSizeDp(
+        block = block,
+        density = density,
+        maxWidth = maxWidth,
+        imageScale = imageScale
+    )
+
+    return this
+        .then(
+            if (scaledSize != null) {
+                Modifier
+                    .width(scaledSize.first)
+                    .height(scaledSize.second)
+            } else if (style.width.isPositiveSpecified()) {
+                Modifier.width(style.width)
+            } else {
+                Modifier.fillMaxWidth()
+            }
+        )
+        .then(
+            if (scaledSize == null && style.maxWidth.isPositiveSpecified()) {
+                Modifier.widthIn(max = style.maxWidth)
+            } else {
+                Modifier
+            }
+        )
+        .then(
+            if (scaledSize == null) {
+                val fallbackHeight = style.height.takeIfPositiveSpecified()
+                    ?: with(density) { (settings.fontSize * 8f).sp.toDp() }
+                Modifier.height(fallbackHeight)
+            } else {
+                Modifier
+            }
+        )
+}
+
+private fun sharedNativeImageRenderSizeDp(
+    block: SemanticImage,
+    density: Density,
+    maxWidth: Dp,
+    imageScale: Float
+): Pair<Dp, Dp>? {
+    val intrinsicWidth = block.intrinsicWidth
+    val intrinsicHeight = block.intrinsicHeight
+    if (intrinsicWidth == null || intrinsicHeight == null || intrinsicWidth <= 0f || intrinsicHeight <= 0f) {
+        return null
+    }
+
+    val style = block.style.blockStyle
+    val aspectRatio = intrinsicHeight / intrinsicWidth
+    val maxWidthPx = with(density) { maxWidth.toPx() }
+    val baseWidthPx = with(density) {
+        if (style.width.isPositiveSpecified()) style.width.toPx() else maxWidth.toPx()
+    }
+
+    var scaledWidthPx = baseWidthPx * imageScale
+    if (style.maxWidth.isPositiveSpecified()) {
+        scaledWidthPx = scaledWidthPx.coerceAtMost(with(density) { style.maxWidth.toPx() } * imageScale)
+    }
+    scaledWidthPx = scaledWidthPx.coerceAtMost(maxWidthPx)
+
+    return with(density) {
+        scaledWidthPx.toDp() to (scaledWidthPx * aspectRatio).toDp()
     }
 }
 
@@ -858,6 +1081,45 @@ private fun headerScale(level: Int): Float {
 }
 
 private fun Dp.safeDp(): Dp = if (isSpecified) this else 0.dp
+
+private fun Dp.isPositiveSpecified(): Boolean = isSpecified && this > 0.dp
+
+private fun Dp.takeIfPositiveSpecified(): Dp? = takeIf { it.isPositiveSpecified() }
+
+@Composable
+private fun SemanticBlock.collapsedTopMarginDp(
+    previous: SemanticBlock?,
+    settings: ReaderSettings
+): Dp {
+    val top = style.blockStyle.margin.top.safeDp()
+    return previous?.let { maxOf(it.effectiveBottomMarginDp(settings), top) } ?: top
+}
+
+@Composable
+private fun SemanticBlock.effectiveBottomMarginDp(settings: ReaderSettings): Dp {
+    val explicit = style.blockStyle.margin.bottom.safeDp()
+    if (explicit != 0.dp) return explicit
+    return renderedDefaultBottomSpacingDp(settings)
+}
+
+@Composable
+private fun SemanticBlock.renderedDefaultBottomSpacingDp(settings: ReaderSettings): Dp {
+    return when (this) {
+        is SemanticParagraph,
+        is SemanticHeader,
+        is SemanticList,
+        is SemanticTable,
+        is SemanticImage -> settings.renderedDefaultBlockSpacingDp()
+        is SemanticMath -> if (svgContent == null) settings.renderedDefaultBlockSpacingDp() else 0.dp
+        else -> 0.dp
+    }
+}
+
+@Composable
+private fun ReaderSettings.renderedDefaultBlockSpacingDp(): Dp {
+    val density = LocalDensity.current
+    return with(density) { (fontSize * paragraphSpacing).sp.toDp() }
+}
 
 private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
     return when (this) {

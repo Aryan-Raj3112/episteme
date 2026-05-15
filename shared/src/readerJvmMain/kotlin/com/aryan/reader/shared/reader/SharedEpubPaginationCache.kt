@@ -144,6 +144,14 @@ class SharedEpubPaginationCache(
         }
     }
 
+    fun clearAll() {
+        cacheRoot.deleteRecursively()
+        cacheRoot.mkdirs()
+        synchronized(memoryCache) {
+            memoryCache.clear()
+        }
+    }
+
     private fun cacheFile(key: SharedEpubPaginationCacheKey): File {
         return File(File(cacheRoot, key.bookHash), "${key.configHash.toUInt().toString(16)}.pages.pb")
     }

@@ -77,6 +77,13 @@ object SharedJvmBookLoader {
         return loaded.withOverrides(titleOverride = titleOverride, authorOverride = authorOverride)
     }
 
+    fun clearCache() {
+        persistentBookCache.clear()
+        synchronized(loadedBookCache) {
+            loadedBookCache.clear()
+        }
+    }
+
     fun loadEpub(file: File): SharedEpubBook {
         ZipFile(file).use { zip ->
             val container = zip.readTextOrNull("META-INF/container.xml")

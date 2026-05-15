@@ -408,13 +408,24 @@ class SharedMeasuredEpubPaginator(
     private fun measureImage(block: SemanticImage, geometry: MeasuredPageGeometry, settings: ReaderSettings): Int {
         val width = block.intrinsicWidth?.takeIf { it > 0f }
         val height = block.intrinsicHeight?.takeIf { it > 0f }
-        val maxWidth = geometry.pageWidthPx * settings.imageScale.coerceIn(0.5f, 2.0f)
+        val imageScale = settings.imageScale.coerceIn(0.5f, 2.0f)
         val measured = when {
             width != null && height != null -> {
-                val scale = (maxWidth / width).coerceAtMost(1.0f)
-                (height * scale).roundToInt()
+                val style = block.style.blockStyle
+                val contentMaxWidth = geometry.pageWidthPx.toFloat()
+                val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
+                    style.width.toPxInt().toFloat()
+                } else {
+                    contentMaxWidth
+                }
+                var scaledWidth = baseWidth * imageScale
+                if (style.maxWidth.isSpecified && style.maxWidth > 0.dp) {
+                    scaledWidth = scaledWidth.coerceAtMost(style.maxWidth.toPxInt() * imageScale)
+                }
+                scaledWidth = scaledWidth.coerceAtMost(contentMaxWidth)
+                (scaledWidth * (height / width)).roundToInt()
             }
-            block.style.blockStyle.height.isSpecified -> block.style.blockStyle.height.toPxInt()
+            block.style.blockStyle.height.isSpecified && block.style.blockStyle.height > 0.dp -> block.style.blockStyle.height.toPxInt()
             else -> with(density) { (settings.fontSize * 8f).sp.toPx().roundToInt() }
         }
         return measured.coerceIn(24, (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24))
