@@ -67,6 +67,18 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `reader tabs setting can be omitted for platforms without visible tabs`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.DESKTOP,
+                includeReaderTabs = false
+            )
+        )
+
+        assertFalse(SharedSettingsAction.TABS_TOGGLE in model.visibleNestedActions())
+    }
+
+    @Test
     fun `local override note appears on reader detail pages only`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(platform = SharedSettingsPlatform.DESKTOP)

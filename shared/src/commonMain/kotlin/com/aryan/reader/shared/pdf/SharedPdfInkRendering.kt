@@ -42,6 +42,7 @@ object SharedPdfInkRenderer {
         canvasSize: IntSize
     ): SharedPdfInkRenderData? {
         if (annotation.kind != PdfAnnotationKind.INK || annotation.points.isEmpty()) return null
+        if (annotation.tool == PdfInkTool.NONE) return null
         val widthPx = canvasSize.width.coerceAtLeast(1).toFloat()
         val heightPx = canvasSize.height.coerceAtLeast(1).toFloat()
         val strokeWidthPx = effectiveStrokeWidthPx(annotation.strokeWidth, widthPx)
@@ -87,6 +88,7 @@ object SharedPdfInkRenderer {
         }
 
         return when (annotation.tool) {
+            PdfInkTool.NONE -> null
             PdfInkTool.PENCIL -> {
                 val path = annotation.points.toSmoothPath(widthPx, heightPx)
                 val velocityAlpha = annotation.points.velocityAlpha(widthPx, heightPx)
@@ -335,6 +337,7 @@ object SharedPdfInkRenderer {
 
 fun PdfInkTool.sharedPdfStrokeWidthRange(): ClosedFloatingPointRange<Float> {
     return when (this) {
+        PdfInkTool.NONE -> 0.001f..0.015f
         PdfInkTool.HIGHLIGHTER,
         PdfInkTool.HIGHLIGHTER_ROUND -> 0.01f..0.06f
         PdfInkTool.ERASER -> 0.002f..0.10f

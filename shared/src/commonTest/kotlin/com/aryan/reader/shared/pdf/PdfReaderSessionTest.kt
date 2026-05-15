@@ -20,6 +20,14 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `initial interaction mode is neutral`() {
+        val state = SharedPdfReaderState.initial(pageCount = 1)
+
+        assertEquals(PdfInkTool.NONE, state.selectedTool)
+        assertEquals(false, state.isTextSelectionMode)
+    }
+
+    @Test
     fun `page navigation clamps to document bounds`() {
         val state = SharedPdfReaderState.initial(pageCount = 3, initialPageIndex = 1)
             .reduce(SharedPdfReaderAction.NextPage)
@@ -150,6 +158,22 @@ class PdfReaderSessionTest {
         assertEquals(PdfInkTool.HIGHLIGHTER, state.selectedTool)
         assertEquals(config.colorArgb, state.selectedColorArgb)
         assertEquals(config.strokeWidth, state.strokeWidth)
+    }
+
+    @Test
+    fun `text selection markup tools and neutral mode are exclusive`() {
+        val selectingText = SharedPdfReaderState.initial(pageCount = 1)
+            .reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.PEN))
+            .reduce(SharedPdfReaderAction.TextSelectionModeChanged(true))
+        val addingTextAnnotation = selectingText.reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.TEXT))
+        val neutral = addingTextAnnotation.reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.NONE))
+
+        assertEquals(true, selectingText.isTextSelectionMode)
+        assertEquals(PdfInkTool.NONE, selectingText.selectedTool)
+        assertEquals(false, addingTextAnnotation.isTextSelectionMode)
+        assertEquals(PdfInkTool.TEXT, addingTextAnnotation.selectedTool)
+        assertEquals(false, neutral.isTextSelectionMode)
+        assertEquals(PdfInkTool.NONE, neutral.selectedTool)
     }
 
     @Test

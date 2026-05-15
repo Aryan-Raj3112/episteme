@@ -183,6 +183,7 @@ fun SharedHomeScreen(
     onRecentLimitChange: (Int) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    showActiveTabs: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val model = state.toNonReaderHomeLayoutModel()
@@ -262,7 +263,7 @@ fun SharedHomeScreen(
                         )
                     }
                 }
-                if (state.isTabsEnabled && model.activeTabs.isNotEmpty()) {
+                if (showActiveTabs && state.isTabsEnabled && model.activeTabs.isNotEmpty()) {
                     item(key = "tabs") {
                         ActiveTabStrip(
                             openTabs = model.activeTabs,

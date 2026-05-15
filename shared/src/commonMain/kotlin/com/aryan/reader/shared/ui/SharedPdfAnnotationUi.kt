@@ -1300,6 +1300,7 @@ private fun SharedPdfPenIcon(
                 drawMatteCylinder(animatedBodyColor, collarRect)
                 drawMarkerHead(animatedBodyColor, tipRect)
             }
+            PdfInkTool.NONE,
             PdfInkTool.TEXT,
             PdfInkTool.ERASER -> Unit
         }

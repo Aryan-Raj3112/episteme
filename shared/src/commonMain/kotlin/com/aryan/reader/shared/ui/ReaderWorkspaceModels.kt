@@ -209,7 +209,7 @@ fun pdfReaderWorkspaceModel(
             searchActive = searchActive || state.searchQuery.isNotBlank(),
             leftPanelOpen = false,
             inspectorOpen = false,
-            annotationEditing = annotationEditing || state.selectedAnnotationId != null || state.selectedTool != PdfInkTool.PEN,
+            annotationEditing = annotationEditing || state.selectedAnnotationId != null || state.selectedTool != PdfInkTool.NONE,
             richTextEditing = richTextEditing,
             loading = loading,
             errorMessage = errorMessage,

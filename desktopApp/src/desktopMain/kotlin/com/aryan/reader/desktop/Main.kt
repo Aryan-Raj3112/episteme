@@ -132,6 +132,7 @@ import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isCtrlPressed as isPointerCtrlPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -2451,6 +2452,7 @@ private fun EpistemeDesktopApp(
                                     includeScreenCaptureProtection = false,
                                     includeExternalFileBehavior = false,
                                     includeStrictFileFilter = false,
+                                    includeReaderTabs = false,
                                     includeHideReaderAi = false,
                                     isTabsEnabled = state.isTabsEnabled,
                                     isFolderSyncEnabled = state.isFolderSyncEnabled
@@ -3237,7 +3239,8 @@ private fun HomeScreen(
         onCloseAllTabs = onCloseAllTabs,
         onRecentLimitChange = onRecentLimitChange,
         onTogglePinned = onTogglePinned,
-        onOpenSettings = onOpenSettings
+        onOpenSettings = onOpenSettings,
+        showActiveTabs = false
     )
 }
 
@@ -4114,8 +4117,6 @@ private fun PdfReaderScreen(
         mutableStateOf(initialReaderSettings.toDesktopPdfReaderSettings())
     }
     var pdfState by remember(document.path) {
-        val defaultTool = PdfInkTool.PEN
-        val defaultToolConfig = SharedPdfAnnotationDefaults.configFor(defaultTool)
         mutableStateOf(
             SharedPdfReaderState.initial(
                 pageCount = document.pageCount,
@@ -4123,11 +4124,7 @@ private fun PdfReaderScreen(
                 zoomSpec = zoomSpec
             ).copy(
                 displayMode = restoredInitialViewport?.displayMode ?: DesktopDefaultPdfDisplayMode,
-                zoom = restoredInitialViewport?.zoom ?: zoomSpec.clamp(zoomSpec.default),
-                isTextSelectionMode = true,
-                selectedTool = defaultTool,
-                selectedColorArgb = defaultToolConfig.colorArgb,
-                strokeWidth = defaultToolConfig.strokeWidth
+                zoom = restoredInitialViewport?.zoom ?: zoomSpec.clamp(zoomSpec.default)
             )
         )
     }
@@ -5512,6 +5509,19 @@ private fun PdfReaderScreen(
         }
     }
 
+    fun selectPdfPanMode() {
+        SharedPdfRichTextLog.d(
+            "desktop.tool.select tool=${PdfInkTool.NONE} richMode=$isRichTextMode page=${pdfState.pageIndex}"
+        )
+        deactivateRichTextMode()
+        commitActiveTextDraft()
+        clearPdfInteractionState()
+        if (pdfState.isTextSelectionMode) {
+            dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(false))
+        }
+        dispatchPdf(SharedPdfReaderAction.ToolSelected(PdfInkTool.NONE))
+    }
+
     LaunchedEffect(pdfExtrasState.autoScroll.sanitized(), pageIndex, canGoNext, displayMode) {
         val autoScroll = pdfExtrasState.autoScroll.sanitized()
         if (!autoScroll.enabled) return@LaunchedEffect
@@ -5756,8 +5766,8 @@ private fun PdfReaderScreen(
         searchActive = isPdfSearchActive || searchQuery.isNotBlank(),
         annotationEditing = activeTextDraft != null ||
             selectedAnnotation != null ||
-            selectedTool != PdfInkTool.PEN ||
-            !isTextSelectionMode,
+            selectedTool != PdfInkTool.NONE ||
+            isTextSelectionMode,
         richTextEditing = isRichTextMode,
         loading = isRendering || isSearchIndexing,
         errorMessage = renderError,
@@ -6530,6 +6540,11 @@ private fun PdfReaderScreen(
                                         DesktopPdfInspectorSection("Interaction") {
                                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                                 FilterChip(
+                                                    selected = !isTextSelectionMode && selectedTool == PdfInkTool.NONE && !isRichTextMode,
+                                                    onClick = ::selectPdfPanMode,
+                                                    label = { Text("Pan") }
+                                                )
+                                                FilterChip(
                                                     selected = isTextSelectionMode,
                                                     onClick = {
                                                         val enabled = !isTextSelectionMode
@@ -6774,6 +6789,12 @@ private fun PdfReaderScreen(
                                 onTextDraftStarted = ::startActiveTextDraft,
                                 onTextDraftChanged = ::updateActiveTextDraft,
                                 onTextDraftBoundsChanged = ::updateActiveTextDraftBounds,
+                                onPan = { delta ->
+                                    pdfScope.launch {
+                                        pageHorizontalScrollState.scrollBy(-delta.x)
+                                        verticalListState.scrollBy(-delta.y)
+                                    }
+                                },
                                 onPagePositioned = { page, offset ->
                                     verticalPageRootOffsets[page] = offset
                                 }
@@ -7018,6 +7039,40 @@ private fun PdfReaderScreen(
                                         }
                                     )
                                 }
+                                .pointerInput(pageIndex, selectedTool, isTextSelectionMode, isRichTextMode) {
+                                    if (isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) return@pointerInput
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+                                        val pointerId = down.id
+                                        var dragStarted = false
+                                        var dragDistance = 0f
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == pointerId }
+                                                ?: return@awaitEachGesture
+                                            if (change.changedToUp()) {
+                                                return@awaitEachGesture
+                                            }
+                                            if (!change.positionChanged()) continue
+                                            val delta = change.positionChange()
+                                            if (!dragStarted) {
+                                                dragDistance += delta.getDistance()
+                                                if (dragDistance <= viewConfiguration.touchSlop) {
+                                                    continue
+                                                }
+                                                dragStarted = true
+                                                change.consume()
+                                                continue
+                                            }
+                                            pdfScope.launch {
+                                                pageHorizontalScrollState.scrollBy(-delta.x)
+                                                pageVerticalScrollState.scrollBy(-delta.y)
+                                            }
+                                            change.consume()
+                                        }
+                                    }
+                                }
                                 .pointerInput(
                                     pageIndex,
                                     isTextSelectionMode,
@@ -7180,7 +7235,7 @@ private fun PdfReaderScreen(
                                                 }
                                             }
                                         )
-                                    } else {
+                                    } else if (selectedTool != PdfInkTool.NONE) {
                                         var eraserPreviousPoint: Offset? = null
                                         awaitEachGesture {
                                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -8652,10 +8707,10 @@ private fun DesktopVerticalPdfPage(
     onTextDraftStarted: (Int, Offset, IntSize) -> Unit,
     onTextDraftChanged: (String, IntSize) -> Unit,
     onTextDraftBoundsChanged: (PdfPageBounds) -> Unit,
+    onPan: (Offset) -> Unit,
     onPagePositioned: (Int, Offset) -> Unit
 ) {
     val density = LocalDensity.current
-    val pageInteractionSource = remember { MutableInteractionSource() }
     var renderedPage by remember(document.path, pageIndex) { mutableStateOf<DesktopPdfPageRender?>(null) }
     var renderError by remember(document.path, pageIndex) { mutableStateOf<String?>(null) }
     var isRendering by remember(document.path, pageIndex) { mutableStateOf(true) }
@@ -8736,11 +8791,6 @@ private fun DesktopVerticalPdfPage(
     }
 
     Column(
-        modifier = Modifier.clickable(
-            interactionSource = pageInteractionSource,
-            indication = null,
-            onClick = { onSelectPage(pageIndex) }
-        ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -8868,6 +8918,37 @@ private fun DesktopVerticalPdfPage(
                             }
                         }
                     )
+                }
+                .pointerInput(pageIndex, selectedTool, isTextSelectionMode, isRichTextMode) {
+                    if (isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
+                        val pointerId = down.id
+                        var dragStarted = false
+                        var dragDistance = 0f
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                                ?: return@awaitEachGesture
+                            if (change.changedToUp()) {
+                                return@awaitEachGesture
+                            }
+                            if (!change.positionChanged()) continue
+                            val delta = change.positionChange()
+                            if (!dragStarted) {
+                                dragDistance += delta.getDistance()
+                                if (dragDistance <= viewConfiguration.touchSlop) {
+                                    continue
+                                }
+                                dragStarted = true
+                                change.consume()
+                                continue
+                            }
+                            onPan(delta)
+                            change.consume()
+                        }
+                    }
                 }
                 .pointerInput(
                     pageIndex,
@@ -9036,7 +9117,7 @@ private fun DesktopVerticalPdfPage(
                                     }
                                 }
                             )
-                        } else {
+                        } else if (selectedTool != PdfInkTool.NONE) {
                             var eraserPreviousPoint: Offset? = null
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
@@ -9235,7 +9316,7 @@ private fun DesktopVerticalPdfPage(
                         pageWidth = pageCanvasSize.width.toFloat(),
                         pageHeight = pageCanvasSize.height.toFloat(),
                         isTextEditingEnabled = isRichTextMode,
-                        onPageTapped = { onSelectPage(pageIndex) }
+                        onPageTapped = {}
                     )
                     PdfSearchHighlightOverlay(
                         bounds = searchHighlightBounds,

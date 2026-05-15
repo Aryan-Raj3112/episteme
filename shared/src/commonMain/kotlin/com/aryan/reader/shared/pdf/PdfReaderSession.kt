@@ -180,9 +180,9 @@ data class SharedPdfReaderState(
     val searchQuery: String = "",
     val activeSearchResultIndex: Int = -1,
     val searchHighlightMode: SearchHighlightMode = SearchHighlightMode.ALL,
-    val selectedTool: PdfInkTool = PdfInkTool.PEN,
-    val selectedColorArgb: Int = SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).colorArgb,
-    val strokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN).strokeWidth,
+    val selectedTool: PdfInkTool = PdfInkTool.NONE,
+    val selectedColorArgb: Int = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE).colorArgb,
+    val strokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE).strokeWidth,
     val isTextSelectionMode: Boolean = false,
     val bookmarks: List<SharedPdfBookmark> = emptyList(),
     val selectedAnnotationId: String? = null,
@@ -331,12 +331,25 @@ fun SharedPdfReaderState.reduce(
             copy(
                 selectedTool = action.tool,
                 selectedColorArgb = config.colorArgb,
-                strokeWidth = config.strokeWidth
+                strokeWidth = config.strokeWidth,
+                isTextSelectionMode = false
             )
         }
         is SharedPdfReaderAction.ColorSelected -> copy(selectedColorArgb = action.colorArgb)
         is SharedPdfReaderAction.StrokeWidthChanged -> copy(strokeWidth = action.strokeWidth.coerceAtLeast(0.0001f))
-        is SharedPdfReaderAction.TextSelectionModeChanged -> copy(isTextSelectionMode = action.enabled)
+        is SharedPdfReaderAction.TextSelectionModeChanged -> {
+            if (action.enabled) {
+                val config = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE)
+                copy(
+                    isTextSelectionMode = true,
+                    selectedTool = PdfInkTool.NONE,
+                    selectedColorArgb = config.colorArgb,
+                    strokeWidth = config.strokeWidth
+                )
+            } else {
+                copy(isTextSelectionMode = false)
+            }
+        }
         is SharedPdfReaderAction.BookmarksLoaded -> copy(bookmarks = action.bookmarks.normalizedBookmarks(lastPageIndex))
         is SharedPdfReaderAction.BookmarkToggled -> {
             val page = action.pageIndex.coerceIn(0, lastPageIndex)

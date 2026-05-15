@@ -13,6 +13,7 @@ enum class PdfAnnotationKind {
 }
 
 enum class PdfInkTool {
+    NONE,
     PEN,
     HIGHLIGHTER,
     HIGHLIGHTER_ROUND,
@@ -160,6 +161,7 @@ object SharedPdfAnnotationDefaults {
 
     fun configFor(tool: PdfInkTool): PdfToolConfig {
         return when (tool) {
+            PdfInkTool.NONE -> PdfToolConfig(0x00000000, 0.008f)
             PdfInkTool.PEN -> PdfToolConfig(0xFFFF0000.toInt(), 0.008f)
             PdfInkTool.FOUNTAIN_PEN -> PdfToolConfig(0xFF0000FF.toInt(), 0.008f)
             PdfInkTool.PENCIL -> PdfToolConfig(0xFF444444.toInt(), 0.008f)

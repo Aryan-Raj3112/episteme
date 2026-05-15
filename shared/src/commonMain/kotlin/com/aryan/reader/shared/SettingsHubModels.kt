@@ -655,6 +655,7 @@ data class SharedSettingsHubInput(
     val includeRecentLimit: Boolean = true,
     val includeCustomFonts: Boolean = true,
     val includeStrictFileFilter: Boolean = true,
+    val includeReaderTabs: Boolean = true,
     val includeHideReaderAi: Boolean = true,
     val includeCloudLocalDataClear: Boolean = false,
     val supportProjectAvailable: Boolean = true,
@@ -923,15 +924,17 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                         )
                     )
                 }
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.TABS_TOGGLE,
-                        title = "Reader tabs",
-                        summary = if (input.isTabsEnabled) "Opening PDFs keeps active tabs." else "PDFs replace the active reader session.",
-                        kind = SharedSettingsItemKind.TOGGLE,
-                        checked = input.isTabsEnabled
+                if (input.includeReaderTabs) {
+                    add(
+                        SharedSettingsItemModel(
+                            action = SharedSettingsAction.TABS_TOGGLE,
+                            title = "Reader tabs",
+                            summary = if (input.isTabsEnabled) "Opening PDFs keeps active tabs." else "PDFs replace the active reader session.",
+                            kind = SharedSettingsItemKind.TOGGLE,
+                            checked = input.isTabsEnabled
+                        )
                     )
-                )
+                }
                 if (input.includeHideReaderAi && input.featurePolicy.aiAndCloud) {
                     add(
                         SharedSettingsItemModel(
