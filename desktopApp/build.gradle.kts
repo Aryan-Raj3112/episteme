@@ -331,6 +331,49 @@ val bundledPdfiumDir = layout.projectDirectory.dir(
     "../third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}"
 )
 val bundledPdfiumLibraryPath = desktopPdfiumLibraryPath(desktopOsName, desktopOsArch)
+val bundledWebViewKeptLocales = setOf(
+    "ar.pak",
+    "de.pak",
+    "en-GB.pak",
+    "en-US.pak",
+    "es-419.pak",
+    "es.pak",
+    "fr.pak",
+    "hi.pak",
+    "pt-BR.pak",
+    "ru.pak",
+    "tr.pak",
+    "vi.pak"
+)
+val bundledWebViewTrimmedRuntimeFiles = listOf(
+    "ct.sym",
+    "jawt.lib",
+    "jvm.lib",
+    "jaccessinspector.exe",
+    "jaccesswalker.exe",
+    "jabswitch.exe",
+    "javac.exe",
+    "javadoc.exe",
+    "jcmd.exe",
+    "jdb.exe",
+    "jfr.exe",
+    "jhsdb.exe",
+    "jinfo.exe",
+    "jmap.exe",
+    "jps.exe",
+    "jrunscript.exe",
+    "jstack.exe",
+    "jstat.exe",
+    "jwebserver.exe",
+    "keytool.exe",
+    "kinit.exe",
+    "klist.exe",
+    "ktab.exe",
+    "rmiregistry.exe",
+    "serialver.exe",
+    "server/classes.jsa",
+    "server/classes_nocoops.jsa"
+)
 val desktopWindowsIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme.ico")
 val desktopLinuxIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme_icon.png")
 val desktopWindowsUpgradeUuid = if (isOssOfflineDesktop) {
@@ -373,6 +416,15 @@ val checkBundledPdfiumRuntime by tasks.registering(CheckBundledPdfiumRuntimeTask
 val prepareBundledDesktopResources by tasks.registering(Sync::class) {
     dependsOn(checkBundledWebViewRuntime, checkBundledPdfiumRuntime)
     from(bundledWebViewDir) {
+        exclude(bundledWebViewTrimmedRuntimeFiles)
+        val localeExcludes = bundledWebViewDir.asFile
+            .resolve("locales")
+            .listFiles { file -> file.isFile && file.extension.equals("pak", ignoreCase = true) }
+            .orEmpty()
+            .map { it.name }
+            .filterNot { it in bundledWebViewKeptLocales }
+            .map { "locales/$it" }
+        exclude(localeExcludes)
         into("common/kcef-bundle")
     }
     from(bundledPdfiumDir) {
