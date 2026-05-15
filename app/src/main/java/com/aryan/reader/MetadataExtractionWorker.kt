@@ -130,9 +130,15 @@ class MetadataExtractionWorker(
 
                     val title = sanitizeTitle(metadata.title)
                     val author = sanitizeAuthor(metadata.author)
+                    val description = metadata.description?.trim()?.takeIf { it.isNotBlank() }
+                    val seriesName = metadata.seriesName?.trim()?.takeIf { it.isNotBlank() }
+                    val seriesIndex = metadata.seriesIndex?.takeIf { it > 0.0 }
                     val sizeChanged = fileSize > 0L && fileSize != item.fileSize
                     val titleChanged = title != null && title != item.title
                     val authorChanged = author != null && author != item.author
+                    val descriptionChanged = description != null && description != item.description
+                    val seriesChanged = seriesName != null && seriesName != item.seriesName
+                    val seriesIndexChanged = seriesIndex != null && seriesIndex != item.seriesIndex
                     val coverPath = if (needsEmbeddedCover) {
                         metadata.cover?.let { cover ->
                             recentFilesRepository.saveEmbeddedCoverToCache(cover.bytes, uri, cover.extension)
@@ -144,18 +150,21 @@ class MetadataExtractionWorker(
                     val coverMetadataParsed = item.folderCoverMetadataParsed || needsEmbeddedCover
                     val textMetadataParsed = item.folderTextMetadataParsed || needsTextMetadata
 
-                    if (needsTextMetadata || needsEmbeddedCover || sizeChanged || titleChanged || authorChanged || coverChanged) {
+                    if (needsTextMetadata || needsEmbeddedCover || sizeChanged || titleChanged || authorChanged || descriptionChanged || seriesChanged || seriesIndexChanged || coverChanged) {
                         pendingUpdates.add(
                             item.copy(
                                 coverImagePath = coverPath ?: item.coverImagePath,
                                 title = title ?: item.title ?: item.displayName,
                                 author = author ?: item.author,
+                                description = description ?: item.description,
+                                seriesName = seriesName ?: item.seriesName,
+                                seriesIndex = seriesIndex ?: item.seriesIndex,
                                 fileSize = if (fileSize > 0L) fileSize else item.fileSize,
                                 folderTextMetadataParsed = textMetadataParsed,
                                 folderCoverMetadataParsed = coverMetadataParsed
                             )
                         )
-                        if (sizeChanged || titleChanged || authorChanged || coverChanged) {
+                        if (sizeChanged || titleChanged || authorChanged || descriptionChanged || seriesChanged || seriesIndexChanged || coverChanged) {
                             updated++
                         }
                         if (coverChanged) coversUpdated++
@@ -336,12 +345,22 @@ class MetadataExtractionWorker(
     }
 
     private fun EmbeddedEbookMetadata.toTextMetadata(): TextMetadata {
-        return TextMetadata(title = title, author = author, cover = cover)
+        return TextMetadata(
+            title = title,
+            author = author,
+            description = description,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex,
+            cover = cover
+        )
     }
 
     private data class TextMetadata(
         val title: String? = null,
         val author: String? = null,
+        val description: String? = null,
+        val seriesName: String? = null,
+        val seriesIndex: Double? = null,
         val cover: EmbeddedEbookCover? = null
     )
 }

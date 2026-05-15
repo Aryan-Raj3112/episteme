@@ -173,6 +173,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val odtParser by lazy { com.aryan.reader.epub.OdtParser(appContext) }
     private val singleFileImporter by lazy { SingleFileImporter(appContext) }
     private val bookImporter by lazy { BookImporter(appContext) }
+    private val epubMetadataFileEditor by lazy { EpubMetadataFileEditor(appContext) }
     private val pageLayoutRepository by lazy { PageLayoutRepository(appContext) }
     private val pdfRichTextRepository by lazy { com.aryan.reader.pdf.PdfRichTextRepository(appContext) }
     private val pdfTextBoxRepository by lazy { PdfTextBoxRepository(appContext) }
@@ -1421,7 +1422,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 FileType.EPUB -> epubParser.createEpubBook(
                     inputStream = inputStream,
                     bookId = bookId,
-                    originalBookNameHint = displayName
+                    originalBookNameHint = displayName,
+                    sourceFingerprint = epubSourceFingerprint(uri)
                 )
 
                 FileType.MOBI -> mobiParser.createMobiBook(
@@ -2977,6 +2979,54 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun shouldDownloadRemoteBookContent(local: RecentFileItem, remote: RecentFileItem): Boolean {
+        return local.sourceFolderUri == null &&
+            !local.isDeleted &&
+            local.type == FileType.EPUB &&
+            remote.type == FileType.EPUB &&
+            !remote.isDeleted &&
+            remote.fileContentModifiedTimestamp > 0L &&
+            remote.fileContentModifiedTimestamp > local.fileContentModifiedTimestamp
+    }
+
+    private fun shouldUploadLocalBookContent(local: RecentFileItem, remote: RecentFileItem?): Boolean {
+        return local.sourceFolderUri == null &&
+            local.type == FileType.EPUB &&
+            local.fileContentModifiedTimestamp > 0L &&
+            local.fileContentModifiedTimestamp > (remote?.fileContentModifiedTimestamp ?: 0L)
+    }
+
+    private suspend fun downloadCloudBookFile(accessToken: String, remote: RecentFileItem): Boolean {
+        val fileExtension = remote.type.name.lowercase()
+        val fileName = "${remote.bookId}.$fileExtension"
+        val driveFileId = googleDriveRepository.getFiles(accessToken)
+            ?.files
+            .orEmpty()
+            .firstOrNull { it.name == fileName }
+            ?.id
+            ?: return false
+
+        val destinationFile = bookImporter.createBookFile(fileName)
+        if (!googleDriveRepository.downloadFile(accessToken, driveFileId, destinationFile)) {
+            destinationFile.delete()
+            return false
+        }
+
+        if (remote.fileContentModifiedTimestamp > 0L) {
+            destinationFile.setLastModified(remote.fileContentModifiedTimestamp)
+        }
+        cleanupBookDataLocally(remote.bookId)
+        addFileToRecent(
+            destinationFile.toUri(),
+            remote.type,
+            remote.bookId,
+            customDisplayName = remote.displayName,
+            isRecent = remote.isRecent,
+            sourceFolderUri = null
+        )
+        return true
+    }
+
     fun setFolderSyncEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_FOLDER_SYNC_ENABLED, enabled) }
         _internalState.update { it.copy(isFolderSyncEnabled = enabled) }
@@ -3051,6 +3101,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val local = localBooksMap[bookId]
                 val remote = remoteBooksMap[bookId]
 
+                if (local?.sourceFolderUri != null) {
+                    Timber.d("Skipping cloud book metadata merge for local folder book: ${local.displayName}")
+                    return@forEach
+                }
+
                 if (local != null && remote != null) {
                     Timber.tag("AnnotationSync").d(
                         "Checking $bookId. LocalTS: ${local.lastModifiedTimestamp}, RemoteTS: ${remote.lastModifiedTimestamp}, RemoteHasAnn: ${remote.hasAnnotations}"
@@ -3059,7 +3114,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 when {
                     local != null && remote == null -> {
-                        uploadSingleBookMetadata(local)
+                        if (local.isDeleted) {
+                            uploadSingleBookMetadata(local)
+                        } else {
+                            uploadNewBookAndMetadata(local)
+                        }
                     }
 
                     local == null && remote != null -> {
@@ -3070,15 +3129,34 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
 
                     local != null && remote != null -> {
+                        val remoteItem = remote.toRecentFileItem()
+                        val shouldDownloadContent = shouldDownloadRemoteBookContent(local, remoteItem)
+                        val downloadedRemoteContent = if (shouldDownloadContent) {
+                            downloadCloudBookFile(accessToken, remoteItem.copy(displayName = remoteItem.displayName.ifBlank { local.displayName }))
+                        } else {
+                            false
+                        }
+
                         if (local.lastModifiedTimestamp > remote.lastModifiedTimestamp) {
-                            uploadSingleBookMetadata(local)
+                            if (shouldUploadLocalBookContent(local, remoteItem)) {
+                                uploadNewBookAndMetadata(local)
+                            } else {
+                                uploadSingleBookMetadata(local)
+                            }
                         } else {
                             val isMetadataNewer =
                                 remote.lastModifiedTimestamp > local.lastModifiedTimestamp
 
                             if (isMetadataNewer) {
-                                recentFilesRepository.addRecentFile(
+                                val remoteForLocalDb = if (shouldDownloadContent && !downloadedRemoteContent) {
+                                    remote.toRecentFileItem().copy(
+                                        fileContentModifiedTimestamp = local.fileContentModifiedTimestamp
+                                    )
+                                } else {
                                     remote.toRecentFileItem()
+                                }
+                                recentFilesRepository.addRecentFile(
+                                    remoteForLocalDb
                                 )
                             }
 
@@ -3192,6 +3270,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val downloadJobs = mutableListOf<Job>()
 
             finalMergedBooks.forEach { book ->
+                if (book.sourceFolderUri != null) return@forEach
                 val fileExtension = book.type.name.lowercase()
                 val fileName = "${book.bookId}.$fileExtension"
                 if (book.isDeleted) {
@@ -3200,7 +3279,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         googleDriveRepository.deleteDriveFile(accessToken, fileId)
                     }
                     recentFilesRepository.deleteFilePermanently(listOf(book.bookId))
-                } else if (book.isAvailable && !remoteFiles.containsKey(fileName)) {
+                } else if (
+                    book.sourceFolderUri == null &&
+                    book.isAvailable &&
+                    !remoteFiles.containsKey(fileName)
+                ) {
                     book.getUri()?.path?.let { path ->
                         val file = File(path)
                         if (file.exists()) {
@@ -3364,6 +3447,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to get file size for $uri")
+                0L
+            }
+        }
+        val fileContentModifiedTimestamp = withContext(Dispatchers.IO) {
+            try {
+                if (uri.scheme == "file") {
+                    uri.path?.let { File(it).lastModified() } ?: 0L
+                } else {
+                    DocumentFile.fromSingleUri(appContext, uri)?.lastModified() ?: 0L
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to get file modified time for $uri")
                 0L
             }
         }
@@ -3572,6 +3667,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             isRecent = isRecent,
             sourceFolderUri = sourceFolderUri,
             fileSize = fileSize,
+            fileContentModifiedTimestamp = fileContentModifiedTimestamp,
             seriesName = seriesName,
             seriesIndex = seriesIndex,
             description = description
@@ -4085,6 +4181,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun epubSourceFingerprint(uri: Uri): String? {
+        return try {
+            if (uri.scheme == "file") {
+                val path = uri.path ?: return null
+                val file = File(path)
+                if (!file.isFile) return null
+                "${file.length()}:${file.lastModified()}"
+            } else {
+                val document = DocumentFile.fromSingleUri(appContext, uri) ?: return null
+                val length = document.length()
+                val modified = document.lastModified()
+                if (length <= 0L && modified <= 0L) null else "$length:$modified"
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to compute EPUB source fingerprint for $uri")
+            null
+        }
+    }
+
     private fun openBook(
         uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null, suppressNavigation: Boolean = false, bundleResult: CalibreBundleResult? = null
     ) {
@@ -4498,7 +4613,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         epubParser.createEpubBook(
                             inputStream = inputStream,
                             bookId = bookId,
-                            originalBookNameHint = customDisplayName ?: getFileNameFromUri(uri, appContext) ?: "unknown.epub"
+                            originalBookNameHint = customDisplayName ?: getFileNameFromUri(uri, appContext) ?: "unknown.epub",
+                            sourceFingerprint = epubSourceFingerprint(uri)
                         )
                     }
                 }
@@ -4729,6 +4845,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun uploadNewBookAndMetadata(book: RecentFileItem) {
         if (!uiState.value.isSyncEnabled) return
+
+        if (book.uriString?.startsWith("opds-pse") == true) {
+            Timber.d("Skipping book content sync for OPDS stream book: ${book.displayName}")
+            return
+        }
+
+        if (book.sourceFolderUri != null) {
+            Timber.d("Skipping book content sync for local folder book: ${book.displayName}")
+            return
+        }
+
+        if (book.isManualOnlyReaderFile()) {
+            Timber.d("Skipping book content sync for manual-only reader file: ${book.displayName}")
+            return
+        }
 
         viewModelScope.launch {
             _internalState.update { it.copy(uploadingBookIds = it.uploadingBookIds + book.bookId) }
@@ -5384,36 +5515,81 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateBookMetadata(bookId: String, metadata: BookMetadataEdit) {
         viewModelScope.launch {
-            recentFilesRepository.updateUserEditableMetadata(bookId, metadata)
-            val updatedItem = recentFilesRepository.getFileByBookId(bookId)
-            if (updatedItem != null) {
-                if (uiState.value.isSyncEnabled) {
-                    uploadSingleBookMetadata(updatedItem)
-                }
+            val currentItem = recentFilesRepository.getFileByBookId(bookId) ?: return@launch
+            if (currentItem.type != FileType.EPUB) {
+                showBanner("Only EPUB files support embedded metadata editing right now.", isError = true)
+                return@launch
+            }
 
-                if (updatedItem.sourceFolderUri != null) {
-                    launch(Dispatchers.IO) {
-                        recentFilesRepository.syncLocalMetadataToFolder(bookId, force = true)
-                    }
+            val editResult = epubMetadataFileEditor.writeMetadata(currentItem, metadata)
+            editResult.onFailure { error ->
+                Timber.e(error, "Failed to update EPUB metadata for $bookId")
+                showBanner("Could not update EPUB metadata.", isError = true)
+            }.onSuccess { result ->
+                cleanupBookDataLocally(bookId)
+                val savedMetadata = BookMetadataEdit(
+                    title = result.metadata.title ?: metadata.title,
+                    author = result.metadata.author,
+                    seriesName = result.metadata.seriesName,
+                    seriesIndex = result.metadata.seriesIndex,
+                    description = result.metadata.description
+                )
+                recentFilesRepository.updateUserEditableMetadata(
+                    bookId = bookId,
+                    metadata = savedMetadata,
+                    fileSize = result.fileSize,
+                    fileContentModifiedTimestamp = result.fileContentModifiedTimestamp
+                )
+                val updatedItem = recentFilesRepository.getFileByBookId(bookId)
+                if (updatedItem != null && uiState.value.isSyncEnabled && updatedItem.sourceFolderUri == null) {
+                    uploadNewBookAndMetadata(updatedItem)
                 }
+                showBanner("EPUB metadata updated.")
             }
         }
     }
 
     fun restoreOriginalBookMetadata(bookId: String) {
         viewModelScope.launch {
-            recentFilesRepository.restoreOriginalMetadata(bookId)
-            val restoredItem = recentFilesRepository.getFileByBookId(bookId)
-            if (restoredItem != null) {
-                if (uiState.value.isSyncEnabled) {
-                    uploadSingleBookMetadata(restoredItem)
-                }
+            val currentItem = recentFilesRepository.getFileByBookId(bookId) ?: return@launch
+            if (currentItem.type != FileType.EPUB) {
+                showBanner("Only EPUB files support embedded metadata restore right now.", isError = true)
+                return@launch
+            }
+            val originalTitle = currentItem.originalTitle ?: currentItem.title
+            if (originalTitle.isNullOrBlank() &&
+                currentItem.originalAuthor.isNullOrBlank() &&
+                currentItem.originalSeriesName.isNullOrBlank() &&
+                currentItem.originalDescription.isNullOrBlank() &&
+                currentItem.originalSeriesIndex == null
+            ) {
+                showBanner("No original EPUB metadata is available.", isError = true)
+                return@launch
+            }
 
-                if (restoredItem.sourceFolderUri != null) {
-                    launch(Dispatchers.IO) {
-                        recentFilesRepository.syncLocalMetadataToFolder(bookId, force = true)
-                    }
+            val metadata = BookMetadataEdit(
+                title = originalTitle ?: currentItem.displayName.substringBeforeLast('.', currentItem.displayName),
+                author = currentItem.originalAuthor,
+                seriesName = currentItem.originalSeriesName,
+                seriesIndex = currentItem.originalSeriesIndex,
+                description = currentItem.originalDescription
+            )
+            val editResult = epubMetadataFileEditor.writeMetadata(currentItem, metadata)
+            editResult.onFailure { error ->
+                Timber.e(error, "Failed to restore EPUB metadata for $bookId")
+                showBanner("Could not restore EPUB metadata.", isError = true)
+            }.onSuccess { result ->
+                cleanupBookDataLocally(bookId)
+                recentFilesRepository.restoreOriginalMetadata(
+                    bookId = bookId,
+                    fileSize = result.fileSize,
+                    fileContentModifiedTimestamp = result.fileContentModifiedTimestamp
+                )
+                val restoredItem = recentFilesRepository.getFileByBookId(bookId)
+                if (restoredItem != null && uiState.value.isSyncEnabled && restoredItem.sourceFolderUri == null) {
+                    uploadNewBookAndMetadata(restoredItem)
                 }
+                showBanner("Original EPUB metadata restored.")
             }
         }
     }

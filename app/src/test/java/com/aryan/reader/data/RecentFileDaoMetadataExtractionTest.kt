@@ -6,6 +6,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -49,7 +50,11 @@ class RecentFileDaoMetadataExtractionTest {
             coverImagePath = null,
             title = null,
             author = null,
+            seriesName = null,
+            seriesIndex = null,
+            description = null,
             fileSize = 0L,
+            fileContentModifiedTimestamp = 0L,
             textMetadataParsed = false,
             coverMetadataParsed = true
         )
@@ -87,7 +92,11 @@ class RecentFileDaoMetadataExtractionTest {
             coverImagePath = null,
             title = "Extracted title",
             author = "Extracted author",
+            seriesName = null,
+            seriesIndex = null,
+            description = null,
             fileSize = 0L,
+            fileContentModifiedTimestamp = 0L,
             textMetadataParsed = true,
             coverMetadataParsed = false
         )
@@ -115,7 +124,11 @@ class RecentFileDaoMetadataExtractionTest {
             coverImagePath = null,
             title = "Extracted title",
             author = "Extracted author",
+            seriesName = null,
+            seriesIndex = null,
+            description = null,
             fileSize = 0L,
+            fileContentModifiedTimestamp = 0L,
             textMetadataParsed = true,
             coverMetadataParsed = false
         )
@@ -145,7 +158,7 @@ class RecentFileDaoMetadataExtractionTest {
             )
         )
 
-        dao.restoreOriginalMetadata("book-1", timestamp = 9_000L)
+        dao.restoreOriginalMetadata("book-1", fileSize = 0L, fileContentModifiedTimestamp = 0L, timestamp = 9_000L)
 
         val saved = dao.getFileByBookId("book-1")!!
         assertEquals("Original title", saved.title)
@@ -163,6 +176,7 @@ class RecentFileDaoMetadataExtractionTest {
             recentFileEntity().copy(
                 title = "Existing title",
                 author = "Existing author",
+                customName = "Display override",
                 originalTitle = null,
                 originalAuthor = null
             )
@@ -175,6 +189,8 @@ class RecentFileDaoMetadataExtractionTest {
             seriesName = null,
             seriesIndex = null,
             description = null,
+            fileSize = 0L,
+            fileContentModifiedTimestamp = 0L,
             timestamp = 5_000L
         )
 
@@ -183,6 +199,7 @@ class RecentFileDaoMetadataExtractionTest {
         assertEquals("Edited author", saved.author)
         assertEquals("Existing title", saved.originalTitle)
         assertEquals("Existing author", saved.originalAuthor)
+        assertNull(saved.customName)
     }
 
     private fun recentFileEntity(
@@ -216,6 +233,7 @@ class RecentFileDaoMetadataExtractionTest {
             customName = null,
             highlights = null,
             fileSize = 123L,
+            fileContentModifiedTimestamp = 1_234L,
             seriesName = null,
             seriesIndex = null,
             description = null,

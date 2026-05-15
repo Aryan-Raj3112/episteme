@@ -33,8 +33,6 @@ data class FolderBookMetadata(
     fun toJsonString(): String {
         val json = JSONObject()
         json.put("bookId", bookId)
-        json.put("title", title)
-        json.put("author", author)
         json.put("displayName", displayName)
         json.put("type", type)
         json.put("lastChapterIndex", lastChapterIndex ?: -1)
@@ -48,14 +46,6 @@ data class FolderBookMetadata(
         json.put("locatorCharOffset", locatorCharOffset ?: -1)
         json.put("customName", customName)
         json.put("highlightsJson", highlightsJson)
-        json.put("seriesName", seriesName)
-        json.put("seriesIndex", seriesIndex)
-        json.put("description", description)
-        json.put("originalTitle", originalTitle)
-        json.put("originalAuthor", originalAuthor)
-        json.put("originalSeriesName", originalSeriesName)
-        json.put("originalSeriesIndex", originalSeriesIndex)
-        json.put("originalDescription", originalDescription)
         return json.toString()
     }
 
@@ -74,8 +64,8 @@ data class FolderBookMetadata(
 
             return FolderBookMetadata(
                 bookId = json.getString("bookId"),
-                title = json.optStringNull("title"),
-                author = json.optStringNull("author"),
+                title = null,
+                author = null,
                 displayName = json.optString("displayName", "Unknown"),
                 type = json.optString("type", "PDF"),
                 lastChapterIndex = json.optIntNull("lastChapterIndex"),
@@ -89,14 +79,14 @@ data class FolderBookMetadata(
                 locatorCharOffset = json.optIntNull("locatorCharOffset"),
                 customName = json.optStringNull("customName"),
                 highlightsJson = json.optStringNull("highlightsJson"),
-                seriesName = json.optStringNull("seriesName"),
-                seriesIndex = if (json.has("seriesIndex") && !json.isNull("seriesIndex")) json.optDouble("seriesIndex") else null,
-                description = json.optStringNull("description"),
-                originalTitle = json.optStringNull("originalTitle"),
-                originalAuthor = json.optStringNull("originalAuthor"),
-                originalSeriesName = json.optStringNull("originalSeriesName"),
-                originalSeriesIndex = if (json.has("originalSeriesIndex") && !json.isNull("originalSeriesIndex")) json.optDouble("originalSeriesIndex") else null,
-                originalDescription = json.optStringNull("originalDescription")
+                seriesName = null,
+                seriesIndex = null,
+                description = null,
+                originalTitle = null,
+                originalAuthor = null,
+                originalSeriesName = null,
+                originalSeriesIndex = null,
+                originalDescription = null
             )
         }
     }
@@ -110,8 +100,8 @@ fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, 
         displayName = this.displayName,
         timestamp = System.currentTimeMillis(),
         coverImagePath = coverPath,
-        title = this.title,
-        author = this.author,
+        title = this.displayName.substringBeforeLast('.', this.displayName),
+        author = null,
         lastChapterIndex = this.lastChapterIndex,
         lastPage = this.lastPage,
         lastPositionCfi = this.lastPositionCfi,
@@ -126,13 +116,13 @@ fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, 
         sourceFolderUri = sourceFolderUri,
         customName = this.customName,
         highlightsJson = this.highlightsJson,
-        seriesName = this.seriesName,
-        seriesIndex = this.seriesIndex,
-        description = this.description,
-        originalTitle = this.originalTitle,
-        originalAuthor = this.originalAuthor,
-        originalSeriesName = this.originalSeriesName,
-        originalSeriesIndex = this.originalSeriesIndex,
-        originalDescription = this.originalDescription
+        seriesName = null,
+        seriesIndex = null,
+        description = null,
+        originalTitle = null,
+        originalAuthor = null,
+        originalSeriesName = null,
+        originalSeriesIndex = null,
+        originalDescription = null
     )
 }

@@ -505,6 +505,9 @@ fun HomeScreen(
                                 onSaveMetadata = { metadata ->
                                     viewModel.updateBookMetadata(item.bookId, metadata)
                                 },
+                                onSaveDisplayName = { name ->
+                                    viewModel.updateCustomName(item.bookId, name)
+                                },
                                 onRestoreMetadata = {
                                     viewModel.restoreOriginalBookMetadata(item.bookId)
                                 },

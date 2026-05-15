@@ -297,6 +297,8 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SampleReaderBooks
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
+import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
+import com.aryan.reader.shared.reader.SharedEpubMetadataUpdate
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.reader.ReaderViewportSpec
@@ -1820,9 +1822,64 @@ private fun EpistemeDesktopApp(
     }
 
     fun updateBookMetadata(updated: BookItem) {
+        val original = state.rawLibraryBooks.firstOrNull { it.id == updated.id }
+        if (original != null && original.type == FileType.EPUB && original.hasEmbeddedMetadataChange(updated)) {
+            scope.launch {
+                val rewritten = runCatching {
+                    withContext(Dispatchers.IO) {
+                        writeDesktopEpubMetadata(original, updated)
+                    }
+                }
+                rewritten.onSuccess(::applyBookMetadataUpdate)
+                    .onFailure { error ->
+                        println("Failed to update EPUB metadata for ${updated.displayName}: ${error.message}")
+                        updateState(state.copy(bannerMessage = BannerMessage("Could not update EPUB metadata.")))
+                    }
+            }
+            return
+        }
+
+        applyBookMetadataUpdate(updated)
+    }
+
+    private fun applyBookMetadataUpdate(updated: BookItem) {
         val result = SharedLibraryEditor.updateBookMetadata(state, shelfRecords, shelfRefs, updated, System.currentTimeMillis())
         replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
         result.state.rawLibraryBooks.firstOrNull { it.id == updated.id }?.let(::syncBookSidecars)
+    }
+
+    private fun writeDesktopEpubMetadata(original: BookItem, updated: BookItem): BookItem {
+        val file = File(original.path ?: error("Book path is missing."))
+        require(file.isFile && file.canWrite()) { "EPUB file is not writable." }
+        val backup = File(
+            File(desktopUserDataRoot(), "metadata_backups").apply { mkdirs() },
+            "${original.id.toDesktopSafeFileName()}.epub"
+        )
+        val snapshot = SharedEpubMetadataEditor.rewriteInPlace(
+            source = file,
+            backup = backup,
+            update = SharedEpubMetadataUpdate(
+                title = updated.title,
+                author = updated.author,
+                description = updated.description,
+                seriesName = updated.seriesName,
+                seriesIndex = updated.seriesIndex
+            )
+        )
+        return updated.copy(
+            title = snapshot.title ?: updated.title,
+            author = snapshot.author,
+            description = snapshot.description,
+            seriesName = snapshot.seriesName,
+            seriesIndex = snapshot.seriesIndex,
+            originalTitle = original.originalTitle ?: original.title,
+            originalAuthor = original.originalAuthor ?: original.author,
+            originalSeriesName = original.originalSeriesName ?: original.seriesName,
+            originalSeriesIndex = original.originalSeriesIndex ?: original.seriesIndex,
+            originalDescription = original.originalDescription ?: original.description,
+            fileSize = file.length(),
+            fileContentModifiedTimestamp = file.lastModified()
+        )
     }
 
     fun recordBookOpened(bookId: String) {
@@ -2823,10 +2880,16 @@ private fun EpistemeDesktopApp(
         }
 
         bookInfoDialogFor?.let { book ->
+            val canEditEmbeddedMetadata = book.type == FileType.EPUB &&
+                book.path?.let { File(it).isFile && File(it).canWrite() } == true
+            val canRenameDisplayName = book.type != FileType.EPUB
             SharedBookInfoDialog(
                 book = book,
                 knownTags = state.allTags,
-                initiallyEditing = bookInfoInitiallyEditing,
+                initiallyEditing = bookInfoInitiallyEditing && (canEditEmbeddedMetadata || canRenameDisplayName),
+                canEditEmbeddedMetadata = canEditEmbeddedMetadata,
+                canRenameDisplayName = canRenameDisplayName,
+                canRestoreEmbeddedMetadata = canEditEmbeddedMetadata,
                 onDismiss = {
                     bookInfoInitiallyEditing = false
                     bookInfoDialogFor = null
@@ -2852,6 +2915,18 @@ private data class DesktopDropImportState(
     val totalFileCount: Int = 0,
     val hasFilePayload: Boolean = false
 )
+
+private fun BookItem.hasEmbeddedMetadataChange(updated: BookItem): Boolean {
+    return title != updated.title ||
+        author != updated.author ||
+        description != updated.description ||
+        seriesName != updated.seriesName ||
+        seriesIndex != updated.seriesIndex
+}
+
+private fun String.toDesktopSafeFileName(): String {
+    return replace(Regex("[^A-Za-z0-9._-]"), "_").take(120).ifBlank { "book" }
+}
 
 @Composable
 private fun DesktopFileDropTarget(
@@ -3078,6 +3153,8 @@ private fun BookItem.withDesktopImportMetadata(
         originalSeriesIndex = originalSeriesIndex ?: enriched.originalSeriesIndex ?: enriched.seriesIndex,
         originalDescription = originalDescription ?: enriched.originalDescription ?: enriched.description,
         fileSize = enriched.fileSize.takeIf { it > 0L } ?: fileSize,
+        fileContentModifiedTimestamp = enriched.fileContentModifiedTimestamp.takeIf { it > 0L }
+            ?: fileContentModifiedTimestamp,
         coverImagePath = coverImagePath?.takeIf { File(it).isFile } ?: enriched.coverImagePath,
         folderTextMetadataParsed = folderTextMetadataParsed || enriched.folderTextMetadataParsed
     )

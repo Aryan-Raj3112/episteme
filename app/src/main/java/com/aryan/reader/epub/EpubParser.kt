@@ -80,7 +80,8 @@ class EpubParser(private val context: Context) {
         val originalBookNameHint: String,
         val parserVersion: Int,
         val parseContent: Boolean,
-        val shouldUseToc: Boolean
+        val shouldUseToc: Boolean,
+        val sourceFingerprint: String? = null
     )
 
     // EpubFile can still represent in-memory file data during initial parsing before extraction
@@ -190,7 +191,8 @@ class EpubParser(private val context: Context) {
         shouldUseToc: Boolean = true,
         originalBookNameHint: String = "streamed_book",
         parseContent: Boolean = true,
-        extractionDirOverride: File? = null
+        extractionDirOverride: File? = null,
+        sourceFingerprint: String? = null
     ): EpubBook {
         return withContext(Dispatchers.IO) {
             Timber.d("Parsing EPUB input stream for bookId: $bookId")
@@ -206,7 +208,8 @@ class EpubParser(private val context: Context) {
                     extractionDir = activeDir,
                     bookId = bookId,
                     originalBookNameHint = originalBookNameHint,
-                    shouldUseToc = shouldUseToc
+                    shouldUseToc = shouldUseToc,
+                    sourceFingerprint = sourceFingerprint
                 )?.let { cachedBook ->
                     Timber.tag("FileOpenPerf").d("[EPUB] Loaded extracted book from cache | bookId=$bookId")
                     return@withContext cachedBook
@@ -239,6 +242,7 @@ class EpubParser(private val context: Context) {
                     bookId = bookId,
                     originalBookNameHint = originalBookNameHint,
                     shouldUseToc = shouldUseToc,
+                    sourceFingerprint = sourceFingerprint,
                     book = book
                 )
             }
@@ -253,7 +257,8 @@ class EpubParser(private val context: Context) {
         extractionDir: File,
         bookId: String,
         originalBookNameHint: String,
-        shouldUseToc: Boolean
+        shouldUseToc: Boolean,
+        sourceFingerprint: String?
     ): EpubBook? {
         val metadataFile = File(extractionDir, BOOK_METADATA_FILE)
         val manifestFile = File(extractionDir, CACHE_MANIFEST_FILE)
@@ -265,7 +270,8 @@ class EpubParser(private val context: Context) {
                 manifest.originalBookNameHint == originalBookNameHint &&
                 manifest.parserVersion == EPUB_EXTRACTION_CACHE_VERSION &&
                 manifest.parseContent &&
-                manifest.shouldUseToc == shouldUseToc
+                manifest.shouldUseToc == shouldUseToc &&
+                manifest.sourceFingerprint == sourceFingerprint
 
             if (!isCompatible) {
                 Timber.d("EPUB extraction cache manifest is stale for bookId=$bookId")
@@ -287,6 +293,7 @@ class EpubParser(private val context: Context) {
         bookId: String,
         originalBookNameHint: String,
         shouldUseToc: Boolean,
+        sourceFingerprint: String?,
         book: EpubBook
     ) {
         try {
@@ -298,7 +305,8 @@ class EpubParser(private val context: Context) {
                         originalBookNameHint = originalBookNameHint,
                         parserVersion = EPUB_EXTRACTION_CACHE_VERSION,
                         parseContent = true,
-                        shouldUseToc = shouldUseToc
+                        shouldUseToc = shouldUseToc,
+                        sourceFingerprint = sourceFingerprint
                     )
                 )
             )

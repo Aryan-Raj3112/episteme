@@ -53,7 +53,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 18
+    private const val SCHEMA_VERSION = 19
 
     private val json = Json {
         prettyPrint = true
@@ -262,6 +262,7 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         progressPercentage = obj.float("progressPercentage"),
         isRecent = obj.boolean("isRecent", true),
         fileSize = obj.long("fileSize"),
+        fileContentModifiedTimestamp = obj.long("fileContentModifiedTimestamp"),
         sourceFolder = obj.string("sourceFolder"),
         folderTextMetadataParsed = obj.boolean("folderTextMetadataParsed", false),
         seriesName = obj.string("seriesName"),
@@ -362,6 +363,7 @@ private fun BookItem.toJsonObject(): JsonObject {
             "progressPercentage" to progressPercentage.asJson(),
             "isRecent" to JsonPrimitive(isRecent),
             "fileSize" to JsonPrimitive(fileSize),
+            "fileContentModifiedTimestamp" to JsonPrimitive(fileContentModifiedTimestamp),
             "sourceFolder" to sourceFolder.asJson(),
             "folderTextMetadataParsed" to JsonPrimitive(folderTextMetadataParsed),
             "seriesName" to seriesName.asJson(),

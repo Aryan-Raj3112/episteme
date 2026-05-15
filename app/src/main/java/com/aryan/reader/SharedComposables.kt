@@ -385,6 +385,7 @@ fun FileInfoDialog(
     item: RecentFileItem,
     onDismiss: () -> Unit,
     onSaveMetadata: (BookMetadataEdit) -> Unit,
+    onSaveDisplayName: (String?) -> Unit,
     onRestoreMetadata: () -> Unit,
     onOpenTags: () -> Unit
 ) {
@@ -398,6 +399,9 @@ fun FileInfoDialog(
         mutableStateOf(item.seriesIndex?.formatMetadataNumber().orEmpty())
     }
     var descriptionInput by remember(item.bookId, item.description) { mutableStateOf(item.description.orEmpty()) }
+    var displayNameInput by remember(item.bookId, item.customName, item.title, item.displayName) {
+        mutableStateOf(item.customName ?: item.cardTitle())
+    }
     var showRestoreConfirmation by remember(item.bookId) { mutableStateOf(false) }
 
     val formattedDate = remember(item.timestamp) {
@@ -421,6 +425,8 @@ fun FileInfoDialog(
     }
     val hasOriginalMetadata = item.hasOriginalMetadata()
     val hasMetadataChanges = item.hasMetadataChanges()
+    val canEditEmbeddedMetadata = item.type == FileType.EPUB && !isOpdsStream && item.uriString != null
+    val canRenameDisplayName = !canEditEmbeddedMetadata
 
     Dialog(
         onDismissRequest = {
@@ -444,7 +450,11 @@ fun FileInfoDialog(
                     .imePadding()
             ) {
                 FileInfoTopBar(
-                    title = if (isEditing) "Edit metadata" else stringResource(R.string.file_information),
+                    title = if (isEditing) {
+                        if (canEditEmbeddedMetadata) "Edit EPUB metadata" else "Rename in app"
+                    } else {
+                        stringResource(R.string.file_information)
+                    },
                     subtitle = item.cardTitle(),
                     onClose = {
                         if (isEditing) {
@@ -465,18 +475,26 @@ fun FileInfoDialog(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     if (isEditing) {
-                        BookMetadataEditContent(
-                            titleInput = titleInput,
-                            onTitleChange = { titleInput = it },
-                            authorInput = authorInput,
-                            onAuthorChange = { authorInput = it },
-                            seriesInput = seriesInput,
-                            onSeriesChange = { seriesInput = it },
-                            seriesIndexInput = seriesIndexInput,
-                            onSeriesIndexChange = { seriesIndexInput = it },
-                            descriptionInput = descriptionInput,
-                            onDescriptionChange = { descriptionInput = it }
-                        )
+                        if (canEditEmbeddedMetadata) {
+                            BookMetadataEditContent(
+                                titleInput = titleInput,
+                                onTitleChange = { titleInput = it },
+                                authorInput = authorInput,
+                                onAuthorChange = { authorInput = it },
+                                seriesInput = seriesInput,
+                                onSeriesChange = { seriesInput = it },
+                                seriesIndexInput = seriesIndexInput,
+                                onSeriesIndexChange = { seriesIndexInput = it },
+                                descriptionInput = descriptionInput,
+                                onDescriptionChange = { descriptionInput = it }
+                            )
+                        } else if (canRenameDisplayName) {
+                            BookDisplayNameEditContent(
+                                displayNameInput = displayNameInput,
+                                onDisplayNameChange = { displayNameInput = it },
+                                originalFileName = item.displayName
+                            )
+                        }
                     } else {
                         BookMetadataInfoContent(
                             item = item,
@@ -494,7 +512,8 @@ fun FileInfoDialog(
 
                 FileInfoBottomBar(
                     isEditing = isEditing,
-                    canRestore = hasOriginalMetadata && (hasMetadataChanges || isEditing),
+                    canRestore = canEditEmbeddedMetadata && hasOriginalMetadata && (hasMetadataChanges || isEditing),
+                    editLabel = if (canEditEmbeddedMetadata) "Edit metadata" else "Rename",
                     onCancel = {
                         if (isEditing) {
                             isEditing = false
@@ -506,15 +525,19 @@ fun FileInfoDialog(
                         showRestoreConfirmation = true
                     },
                     onSave = {
-                        onSaveMetadata(
-                            BookMetadataEdit(
-                                title = titleInput.toMetadataValue() ?: item.displayName.substringBeforeLast('.', item.displayName),
-                                author = authorInput.toMetadataValue(),
-                                seriesName = seriesInput.toMetadataValue(),
-                                seriesIndex = seriesIndexInput.toSeriesIndexOrNull(),
-                                description = descriptionInput.toMetadataValue()
+                        if (canEditEmbeddedMetadata) {
+                            onSaveMetadata(
+                                BookMetadataEdit(
+                                    title = titleInput.toMetadataValue() ?: item.displayName.substringBeforeLast('.', item.displayName),
+                                    author = authorInput.toMetadataValue(),
+                                    seriesName = seriesInput.toMetadataValue(),
+                                    seriesIndex = seriesIndexInput.toSeriesIndexOrNull(),
+                                    description = descriptionInput.toMetadataValue()
+                                )
                             )
-                        )
+                        } else if (canRenameDisplayName) {
+                            onSaveDisplayName(displayNameInput.toMetadataValue())
+                        }
                         onDismiss()
                     },
                     onEdit = { isEditing = true }
@@ -530,7 +553,7 @@ fun FileInfoDialog(
             title = { Text("Restore original metadata?") },
             text = {
                 Text(
-                    "This will restore the title, author, series, and summary saved from the original file metadata. It will also clear any custom display name. Reading progress, tags, notes, and the file itself will not change."
+                    "This will write the original title, author, series, and summary back into the EPUB file. Reading progress, tags, and notes will not change."
                 )
             },
             confirmButton = {
@@ -618,8 +641,14 @@ private fun BookMetadataInfoContent(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            val provenance = when {
+                item.type == FileType.EPUB && hasMetadataChanges -> "EPUB metadata edited"
+                item.type == FileType.EPUB -> "Metadata from EPUB file"
+                !item.customName.isNullOrBlank() -> "Display name changed in app"
+                else -> "Metadata from file"
+            }
             Text(
-                if (hasMetadataChanges) "Metadata edited in library" else "Metadata from file",
+                provenance,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (hasMetadataChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -750,9 +779,40 @@ private fun BookMetadataEditContent(
 }
 
 @Composable
+private fun BookDisplayNameEditContent(
+    displayNameInput: String,
+    onDisplayNameChange: (String) -> Unit,
+    originalFileName: String
+) {
+    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Display name", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = displayNameInput,
+                onValueChange = onDisplayNameChange,
+                label = { Text("Name shown in Reader") },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 3
+            )
+            Text(
+                "Original file: $originalFileName",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
 private fun FileInfoBottomBar(
     isEditing: Boolean,
     canRestore: Boolean,
+    editLabel: String,
     onCancel: () -> Unit,
     onRestore: () -> Unit,
     onSave: () -> Unit,
@@ -790,7 +850,7 @@ private fun FileInfoBottomBar(
             Button(onClick = onEdit) {
                 Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Edit")
+                Text(editLabel)
             }
         }
     }

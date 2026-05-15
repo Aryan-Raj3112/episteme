@@ -25,6 +25,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.core.net.toUri
+import com.aryan.reader.FileType
 import com.aryan.reader.ReaderPerfLog
 import com.aryan.reader.scaledToCanvasLimit
 import timber.log.Timber
@@ -175,8 +176,20 @@ class RecentFilesRepository(private val context: Context) {
         val entityToInsert = if (existingItem != null) {
             val folderFileChanged = item.sourceFolderUri != null &&
                 existingItem.sourceFolderUri == item.sourceFolderUri &&
-                item.fileSize > 0L &&
-                item.fileSize != existingItem.fileSize
+                ((item.fileSize > 0L && item.fileSize != existingItem.fileSize) ||
+                    (item.fileContentModifiedTimestamp > 0L &&
+                        item.fileContentModifiedTimestamp != existingItem.fileContentModifiedTimestamp))
+            val appOwnedFileChanged = item.sourceFolderUri == null &&
+                existingItem.sourceFolderUri == null &&
+                ((item.fileSize > 0L && item.fileSize != existingItem.fileSize) ||
+                    (item.fileContentModifiedTimestamp > 0L &&
+                        item.fileContentModifiedTimestamp != existingItem.fileContentModifiedTimestamp))
+            val keepExistingEmbeddedMetadata = item.sourceFolderUri == null &&
+                existingItem.sourceFolderUri == null &&
+                item.type == FileType.EPUB &&
+                existingItem.type == FileType.EPUB &&
+                !appOwnedFileChanged &&
+                existingItem.hasEmbeddedMetadataChanges()
 
             item.toRecentFileEntity().copy(
                 uriString = existingItem.uriString ?: item.uriString,
@@ -186,8 +199,20 @@ class RecentFilesRepository(private val context: Context) {
                 } else {
                     item.coverImagePath ?: existingItem.coverImagePath
                 },
-                title = item.title ?: existingItem.title,
-                author = item.author ?: existingItem.author,
+                title = if (folderFileChanged) {
+                    item.title ?: item.displayName.substringBeforeLast('.', item.displayName)
+                } else if (keepExistingEmbeddedMetadata) {
+                    existingItem.title
+                } else {
+                    item.title ?: existingItem.title
+                },
+                author = if (folderFileChanged) {
+                    item.author
+                } else if (keepExistingEmbeddedMetadata) {
+                    existingItem.author
+                } else {
+                    item.author ?: existingItem.author
+                },
                 lastChapterIndex = item.lastChapterIndex ?: existingItem.lastChapterIndex,
                 lastPage = item.lastPage ?: existingItem.lastPage,
                 lastPositionCfi = item.lastPositionCfi ?: existingItem.lastPositionCfi,
@@ -200,9 +225,28 @@ class RecentFilesRepository(private val context: Context) {
                 sourceFolderUri = item.sourceFolderUri ?: existingItem.sourceFolderUri,
                 highlights = item.highlightsJson ?: existingItem.highlights,
                 fileSize = if (item.fileSize > 0) item.fileSize else existingItem.fileSize,
-                seriesName = item.seriesName ?: existingItem.seriesName,
-                seriesIndex = item.seriesIndex ?: existingItem.seriesIndex,
-                description = item.description ?: existingItem.description,
+                fileContentModifiedTimestamp = if (item.fileContentModifiedTimestamp > 0) item.fileContentModifiedTimestamp else existingItem.fileContentModifiedTimestamp,
+                seriesName = if (folderFileChanged) {
+                    item.seriesName
+                } else if (keepExistingEmbeddedMetadata) {
+                    existingItem.seriesName
+                } else {
+                    item.seriesName ?: existingItem.seriesName
+                },
+                seriesIndex = if (folderFileChanged) {
+                    item.seriesIndex
+                } else if (keepExistingEmbeddedMetadata) {
+                    existingItem.seriesIndex
+                } else {
+                    item.seriesIndex ?: existingItem.seriesIndex
+                },
+                description = if (folderFileChanged) {
+                    item.description
+                } else if (keepExistingEmbeddedMetadata) {
+                    existingItem.description
+                } else {
+                    item.description ?: existingItem.description
+                },
                 originalTitle = if (folderFileChanged) item.originalTitle ?: item.title else existingItem.originalTitle ?: item.originalTitle ?: item.title,
                 originalAuthor = if (folderFileChanged) item.originalAuthor ?: item.author else existingItem.originalAuthor ?: item.originalAuthor ?: item.author,
                 originalSeriesName = if (folderFileChanged) item.originalSeriesName ?: item.seriesName else existingItem.originalSeriesName ?: item.originalSeriesName ?: item.seriesName,
@@ -228,7 +272,29 @@ class RecentFilesRepository(private val context: Context) {
         Timber.d("Added/Updated recent file in DB: ${item.displayName}")
     }
 
-    suspend fun updateUserEditableMetadata(bookId: String, metadata: BookMetadataEdit) = withContext(Dispatchers.IO) {
+    private fun RecentFileEntity.hasEmbeddedMetadataChanges(): Boolean {
+        val hasOriginalMetadata = listOf(originalTitle, originalAuthor, originalSeriesName, originalDescription)
+            .any { !it.isNullOrBlank() } || originalSeriesIndex != null
+        return (hasOriginalMetadata && (
+            metadataValueChanged(title, originalTitle) ||
+                metadataValueChanged(author, originalAuthor) ||
+                metadataValueChanged(seriesName, originalSeriesName) ||
+                seriesIndex != originalSeriesIndex ||
+                metadataValueChanged(description, originalDescription)
+            )) ||
+            !customName.isNullOrBlank()
+    }
+
+    private fun metadataValueChanged(current: String?, original: String?): Boolean {
+        return current.orEmpty().trim() != original.orEmpty().trim()
+    }
+
+    suspend fun updateUserEditableMetadata(
+        bookId: String,
+        metadata: BookMetadataEdit,
+        fileSize: Long = 0L,
+        fileContentModifiedTimestamp: Long = 0L
+    ) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateUserEditableMetadata(
             bookId = bookId,
@@ -237,14 +303,20 @@ class RecentFilesRepository(private val context: Context) {
             seriesName = metadata.seriesName,
             seriesIndex = metadata.seriesIndex,
             description = metadata.description,
+            fileSize = fileSize,
+            fileContentModifiedTimestamp = fileContentModifiedTimestamp,
             timestamp = currentTime
         )
         Timber.d("Updated user-editable metadata for $bookId")
     }
 
-    suspend fun restoreOriginalMetadata(bookId: String) = withContext(Dispatchers.IO) {
+    suspend fun restoreOriginalMetadata(
+        bookId: String,
+        fileSize: Long = 0L,
+        fileContentModifiedTimestamp: Long = 0L
+    ) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
-        recentFileDao.restoreOriginalMetadata(bookId, currentTime)
+        recentFileDao.restoreOriginalMetadata(bookId, fileSize, fileContentModifiedTimestamp, currentTime)
         Timber.d("Restored original metadata for $bookId")
     }
 
@@ -518,7 +590,11 @@ class RecentFilesRepository(private val context: Context) {
                         coverImagePath = item.coverImagePath,
                         title = item.title,
                         author = item.author,
+                        seriesName = item.seriesName,
+                        seriesIndex = item.seriesIndex,
+                        description = item.description,
                         fileSize = item.fileSize,
+                        fileContentModifiedTimestamp = item.fileContentModifiedTimestamp,
                         textMetadataParsed = item.folderTextMetadataParsed,
                         coverMetadataParsed = item.folderCoverMetadataParsed
                     )

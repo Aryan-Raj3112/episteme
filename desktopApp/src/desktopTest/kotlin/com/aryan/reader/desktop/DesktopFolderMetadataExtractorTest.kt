@@ -25,6 +25,8 @@ class DesktopFolderMetadataExtractorTest {
                     <dc:title>Direct EPUB</dc:title>
                     <dc:creator>Ada Lovelace</dc:creator>
                     <dc:description>&lt;p&gt;Metadata summary&lt;/p&gt;</dc:description>
+                    <meta name="calibre:series" content="Computing Notes" />
+                    <meta name="calibre:series_index" content="2" />
                     <meta name="cover" content="cover-image" />
                   </metadata>
                   <manifest>
@@ -44,9 +46,14 @@ class DesktopFolderMetadataExtractorTest {
         assertEquals("Direct EPUB", enriched.title)
         assertEquals("Ada Lovelace", enriched.author)
         assertEquals("<p>Metadata summary</p>", enriched.description)
+        assertEquals("Computing Notes", enriched.seriesName)
+        assertEquals(2.0, enriched.seriesIndex)
         assertEquals("Direct EPUB", enriched.originalTitle)
         assertEquals("Ada Lovelace", enriched.originalAuthor)
+        assertEquals("Computing Notes", enriched.originalSeriesName)
+        assertEquals(2.0, enriched.originalSeriesIndex)
         assertEquals("<p>Metadata summary</p>", enriched.originalDescription)
+        assertEquals(epub.lastModified(), enriched.fileContentModifiedTimestamp)
         assertTrue(enriched.folderTextMetadataParsed)
         assertTrue(File(assertNotNull(enriched.coverImagePath)).isFile)
         assertEquals(1, result.stats.updatedBooks)

@@ -115,6 +115,8 @@ object DesktopFolderMetadataExtractor {
         var extractedTitle: String? = null
         var extractedAuthor: String? = null
         var extractedDescription: String? = null
+        var extractedSeriesName: String? = null
+        var extractedSeriesIndex: Double? = null
         var textMetadataParsed = book.folderTextMetadataParsed
         var embeddedCover: EmbeddedCover? = null
 
@@ -124,6 +126,8 @@ object DesktopFolderMetadataExtractor {
                 extractedTitle = sanitizeTitle(metadata.title)
                 extractedAuthor = sanitizeAuthor(metadata.author)
                 extractedDescription = sanitizeDescription(metadata.description)
+                extractedSeriesName = sanitizeDescription(metadata.seriesName)
+                extractedSeriesIndex = metadata.seriesIndex?.takeIf { it > 0.0 }
                 embeddedCover = metadata.cover
                 textMetadataParsed = true
             }
@@ -174,15 +178,30 @@ object DesktopFolderMetadataExtractor {
         } else {
             book.description
         }
+        val nextSeriesName = if (book.shouldApplyExtractedText(book.seriesName, book.originalSeriesName)) {
+            extractedSeriesName ?: book.seriesName
+        } else {
+            book.seriesName
+        }
+        val nextSeriesIndex = if (book.seriesIndex == null || book.seriesIndex == book.originalSeriesIndex) {
+            extractedSeriesIndex ?: book.seriesIndex
+        } else {
+            book.seriesIndex
+        }
 
         return book.copy(
             title = nextTitle,
             author = nextAuthor,
             description = nextDescription,
+            seriesName = nextSeriesName,
+            seriesIndex = nextSeriesIndex,
             originalTitle = book.originalTitle ?: extractedTitle,
             originalAuthor = book.originalAuthor ?: extractedAuthor,
+            originalSeriesName = book.originalSeriesName ?: extractedSeriesName,
+            originalSeriesIndex = book.originalSeriesIndex ?: extractedSeriesIndex,
             originalDescription = book.originalDescription ?: extractedDescription,
             fileSize = size,
+            fileContentModifiedTimestamp = file.lastModified(),
             coverImagePath = coverPath,
             folderTextMetadataParsed = textMetadataParsed
         )
@@ -214,6 +233,8 @@ object DesktopFolderMetadataExtractor {
                 title = opf.tagText("title"),
                 author = opf.tagText("creator"),
                 description = opf.tagInnerContent("description"),
+                seriesName = opf.metaContent("calibre:series"),
+                seriesIndex = opf.metaContent("calibre:series_index")?.toDoubleOrNull(),
                 cover = cover
             )
         }
@@ -523,6 +544,17 @@ object DesktopFolderMetadataExtractor {
             .orEmpty()
     }
 
+    private fun String.metaContent(name: String): String? {
+        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+            .findAll(this)
+            .firstOrNull { it.value.attr("name").equals(name, ignoreCase = true) }
+            ?.value
+            ?.attr("content")
+            ?.decodeEntities()
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
     private fun String.decodeEntities(): String {
         return replace("&nbsp;", " ")
             .replace("&amp;", "&")
@@ -603,6 +635,8 @@ object DesktopFolderMetadataExtractor {
         val title: String? = null,
         val author: String? = null,
         val description: String? = null,
+        val seriesName: String? = null,
+        val seriesIndex: Double? = null,
         val cover: EmbeddedCover? = null
     )
 

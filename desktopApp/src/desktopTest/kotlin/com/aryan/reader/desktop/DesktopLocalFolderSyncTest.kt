@@ -54,7 +54,7 @@ class DesktopLocalFolderSyncTest {
             assertEquals(1, result.state.rawLibraryBooks.size)
             val syncedBook = result.state.rawLibraryBooks.single()
             assertEquals(existingId, syncedBook.id)
-            assertEquals("Remote Title", syncedBook.title)
+            assertEquals("Local Title", syncedBook.title)
             assertEquals(72f, syncedBook.progressPercentage)
             assertNull(result.state.rawLibraryBooks.firstOrNull { it.id == "local_New.pdf" })
             assertEquals(0, result.stats.scannedFiles)

@@ -168,6 +168,35 @@ class EpubParserUnitTest {
     }
 
     @Test
+    fun `createEpubBook invalidates active extraction cache when source fingerprint changes`() = runTest {
+        val cacheDir = temp.newFolder("cache-source-change")
+        val context = contextWithCache(cacheDir)
+        val parser = EpubParser(context)
+
+        val first = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(sampleEpubBytes()),
+            bookId = "changed-book",
+            shouldUseToc = true,
+            originalBookNameHint = "changed.epub",
+            sourceFingerprint = "100:1000"
+        )
+        val activeDir = ImportedFileCache.activeBookDir(context, "changed-book")
+        File(activeDir, "sentinel.txt").writeText("old extraction")
+
+        val second = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(sampleEpubBytes(author = "Edited Writer")),
+            bookId = "changed-book",
+            shouldUseToc = true,
+            originalBookNameHint = "changed.epub",
+            sourceFingerprint = "120:2000"
+        )
+
+        assertEquals("Jane Writer", first.author)
+        assertEquals("Edited Writer", second.author)
+        assertFalse(File(activeDir, "sentinel.txt").isFile)
+    }
+
+    @Test
     fun `metadata only parse does not clear active extracted content`() = runTest {
         val cacheDir = temp.newFolder("cache-metadata-preserve")
         val context = contextWithCache(cacheDir)
@@ -363,7 +392,7 @@ class EpubParserUnitTest {
         return context
     }
 
-    private fun sampleEpubBytes(): ByteArray = zipBytes(
+    private fun sampleEpubBytes(author: String = "Jane Writer"): ByteArray = zipBytes(
         "META-INF/container.xml" to """
             <container version="1.0">
                 <rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles>
@@ -373,7 +402,7 @@ class EpubParserUnitTest {
             <package xmlns:dc="http://purl.org/dc/elements/1.1/">
                 <metadata>
                     <dc:title>Sample/Book</dc:title>
-                    <dc:creator>Jane Writer</dc:creator>
+                    <dc:creator>$author</dc:creator>
                     <dc:language>en</dc:language>
                     <dc:description>Long description</dc:description>
                     <meta name="calibre:series" content="Series Name"/>

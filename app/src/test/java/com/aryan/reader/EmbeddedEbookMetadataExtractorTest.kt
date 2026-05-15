@@ -31,6 +31,9 @@ class EmbeddedEbookMetadataExtractorTest {
                     <metadata>
                         <dc:title>Folder EPUB</dc:title>
                         <dc:creator>Octavia Butler</dc:creator>
+                        <dc:description>&lt;p&gt;Folder summary&lt;/p&gt;</dc:description>
+                        <meta content="Patternist" name="calibre:series"/>
+                        <meta content="3" name="calibre:series_index"/>
                         <meta name="cover" content="cover-image"/>
                     </metadata>
                     <manifest>
@@ -49,6 +52,9 @@ class EmbeddedEbookMetadataExtractorTest {
 
         assertEquals("Folder EPUB", metadata.title)
         assertEquals("Octavia Butler", metadata.author)
+        assertEquals("<p>Folder summary</p>", metadata.description)
+        assertEquals("Patternist", metadata.seriesName)
+        assertEquals(3.0, metadata.seriesIndex)
         val cover = metadata.cover
         assertNotNull(cover)
         assertEquals("png", cover!!.extension)

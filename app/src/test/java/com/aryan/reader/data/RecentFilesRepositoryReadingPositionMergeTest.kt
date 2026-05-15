@@ -116,7 +116,35 @@ class RecentFilesRepositoryReadingPositionMergeTest {
     }
 
     @Test
-    fun `addRecentFile clears extracted cover metadata when folder file size changes`() = runTest {
+    fun `addRecentFile keeps edited embedded epub metadata when cached parser returns original metadata`() = runTest {
+        val inserted = slot<RecentFileEntity>()
+        coEvery { recentFileDao.getFileByBookId("book-1") } returns existingEntity().copy(
+            author = "Edited Author",
+            originalAuthor = "Author",
+            fileContentModifiedTimestamp = 5_000L
+        )
+        coEvery { recentFileDao.insertOrUpdateFile(capture(inserted)) } just Runs
+
+        repository.addRecentFile(
+            RecentFileItem(
+                bookId = "book-1",
+                uriString = "content://new",
+                type = FileType.EPUB,
+                displayName = "New.epub",
+                timestamp = 2_000L,
+                title = "Old",
+                author = "Author",
+                fileContentModifiedTimestamp = 5_000L,
+                isRecent = true
+            )
+        )
+
+        assertEquals("Edited Author", inserted.captured.author)
+        assertEquals("Author", inserted.captured.originalAuthor)
+    }
+
+    @Test
+    fun `addRecentFile clears extracted metadata when folder file size changes`() = runTest {
         val inserted = slot<RecentFileEntity>()
         coEvery { recentFileDao.getFileByBookId("book-1") } returns existingEntity(
             fileSize = 123L,
@@ -141,6 +169,11 @@ class RecentFilesRepositoryReadingPositionMergeTest {
 
         assertEquals(456L, inserted.captured.fileSize)
         assertNull(inserted.captured.coverImagePath)
+        assertEquals("New", inserted.captured.title)
+        assertNull(inserted.captured.author)
+        assertNull(inserted.captured.seriesName)
+        assertNull(inserted.captured.description)
+        assertNull(inserted.captured.originalTitle)
         assertFalse(inserted.captured.folderTextMetadataParsed)
         assertFalse(inserted.captured.folderCoverMetadataParsed)
     }

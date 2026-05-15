@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.cardTitle
@@ -180,6 +181,9 @@ fun SharedBookInfoDialog(
     book: BookItem,
     knownTags: List<Tag> = emptyList(),
     initiallyEditing: Boolean = false,
+    canEditEmbeddedMetadata: Boolean = book.type == FileType.EPUB,
+    canRenameDisplayName: Boolean = true,
+    canRestoreEmbeddedMetadata: Boolean = canEditEmbeddedMetadata,
     onDismiss: () -> Unit,
     onSave: (BookItem) -> Unit,
     onRestore: (BookItem) -> Unit
@@ -193,6 +197,7 @@ fun SharedBookInfoDialog(
         mutableStateOf(book.seriesIndex?.formatMetadataNumber().orEmpty())
     }
     var descriptionInput by remember(book.id, book.description) { mutableStateOf(book.description.orEmpty()) }
+    var displayNameInput by remember(book.id, book.displayName) { mutableStateOf(book.displayName) }
     var tagInput by remember(book.id, book.tags) { mutableStateOf(book.tags.joinToString(", ") { it.name }) }
     var showRestoreConfirmation by remember(book.id) { mutableStateOf(false) }
 
@@ -215,7 +220,11 @@ fun SharedBookInfoDialog(
         ) {
             Column(Modifier.fillMaxSize()) {
                 SharedBookInfoTopBar(
-                    title = if (isEditing) "Edit metadata" else "Book information",
+                    title = if (isEditing) {
+                        if (canEditEmbeddedMetadata) "Edit EPUB metadata" else "Rename in app"
+                    } else {
+                        "Book information"
+                    },
                     subtitle = book.cardTitle(),
                     onClose = {
                         if (isEditing) {
@@ -236,21 +245,31 @@ fun SharedBookInfoDialog(
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     if (isEditing) {
-                        SharedBookMetadataEditContent(
-                            titleInput = titleInput,
-                            onTitleChange = { titleInput = it },
-                            authorInput = authorInput,
-                            onAuthorChange = { authorInput = it },
-                            seriesInput = seriesInput,
-                            onSeriesChange = { seriesInput = it },
-                            seriesIndexInput = seriesIndexInput,
-                            onSeriesIndexChange = { seriesIndexInput = it },
-                            descriptionInput = descriptionInput,
-                            onDescriptionChange = { descriptionInput = it },
-                            tagInput = tagInput,
-                            onTagChange = { tagInput = it },
-                            knownTags = knownTags
-                        )
+                        if (canEditEmbeddedMetadata) {
+                            SharedBookMetadataEditContent(
+                                titleInput = titleInput,
+                                onTitleChange = { titleInput = it },
+                                authorInput = authorInput,
+                                onAuthorChange = { authorInput = it },
+                                seriesInput = seriesInput,
+                                onSeriesChange = { seriesInput = it },
+                                seriesIndexInput = seriesIndexInput,
+                                onSeriesIndexChange = { seriesIndexInput = it },
+                                descriptionInput = descriptionInput,
+                                onDescriptionChange = { descriptionInput = it },
+                                tagInput = tagInput,
+                                onTagChange = { tagInput = it },
+                                knownTags = knownTags
+                            )
+                        } else if (canRenameDisplayName) {
+                            SharedBookDisplayNameEditContent(
+                                displayNameInput = displayNameInput,
+                                onDisplayNameChange = { displayNameInput = it },
+                                tagInput = tagInput,
+                                onTagChange = { tagInput = it },
+                                knownTags = knownTags
+                            )
+                        }
                     } else {
                         SharedBookMetadataInfoContent(
                             book = book,
@@ -266,7 +285,9 @@ fun SharedBookInfoDialog(
 
                 SharedBookInfoBottomBar(
                     isEditing = isEditing,
-                    canRestore = hasOriginalMetadata && (hasMetadataChanges || isEditing),
+                    canEdit = canEditEmbeddedMetadata || canRenameDisplayName,
+                    canRestore = canRestoreEmbeddedMetadata && hasOriginalMetadata && (hasMetadataChanges || isEditing),
+                    editLabel = if (canEditEmbeddedMetadata) "Edit metadata" else "Rename",
                     onCancel = {
                         if (isEditing) {
                             isEditing = false
@@ -276,7 +297,7 @@ fun SharedBookInfoDialog(
                     },
                     onRestore = { showRestoreConfirmation = true },
                     onSave = {
-                        onSave(
+                        val updated = if (canEditEmbeddedMetadata) {
                             book.copy(
                                 title = titleInput.toMetadataValue()
                                     ?: book.displayName.substringBeforeLast('.', book.displayName),
@@ -291,7 +312,13 @@ fun SharedBookInfoDialog(
                                 originalDescription = book.originalDescription ?: book.description,
                                 tags = parseTagList(tagInput, knownTags)
                             )
-                        )
+                        } else {
+                            book.copy(
+                                displayName = displayNameInput.toMetadataValue() ?: book.displayName,
+                                tags = parseTagList(tagInput, knownTags)
+                            )
+                        }
+                        onSave(updated)
                         onDismiss()
                     },
                     onEdit = { isEditing = true }
@@ -307,7 +334,7 @@ fun SharedBookInfoDialog(
             title = { Text("Restore original metadata?") },
             text = {
                 Text(
-                    "This will restore the title, author, series, and summary saved from the original file metadata. Reading progress, tags, notes, and the file itself will not change."
+                    "This will write the original title, author, series, and summary back into the EPUB file. Reading progress, tags, and notes will not change."
                 )
             },
             confirmButton = {
@@ -387,8 +414,14 @@ private fun SharedBookMetadataInfoContent(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+        val provenance = when {
+            book.type == FileType.EPUB && hasMetadataChanges -> "EPUB metadata edited"
+            book.type == FileType.EPUB -> "Metadata from EPUB file"
+            hasMetadataChanges -> "Display name changed in app"
+            else -> "Metadata from file"
+        }
         Text(
-            if (hasMetadataChanges) "Metadata edited in library" else "Metadata from file",
+            provenance,
             style = MaterialTheme.typography.labelMedium,
             color = if (hasMetadataChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -528,9 +561,51 @@ private fun SharedBookMetadataEditContent(
 }
 
 @Composable
+private fun SharedBookDisplayNameEditContent(
+    displayNameInput: String,
+    onDisplayNameChange: (String) -> Unit,
+    tagInput: String,
+    onTagChange: (String) -> Unit,
+    knownTags: List<Tag>
+) {
+    SharedInfoSection(title = "Display name") {
+        SharedStableOutlinedTextField(
+            value = displayNameInput,
+            onValueChange = onDisplayNameChange,
+            label = { Text("Name shown in Reader") },
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = 3,
+            selectionKey = "displayName"
+        )
+    }
+
+    SharedInfoSection(title = "Library tags") {
+        SharedStableOutlinedTextField(
+            value = tagInput,
+            onValueChange = onTagChange,
+            label = { Text("Tags, comma separated") },
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = 3,
+            selectionKey = "renameTags"
+        )
+        if (knownTags.isNotEmpty()) {
+            Text(
+                "Existing: ${knownTags.joinToString { it.name }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
 private fun SharedBookInfoBottomBar(
     isEditing: Boolean,
+    canEdit: Boolean,
     canRestore: Boolean,
+    editLabel: String,
     onCancel: () -> Unit,
     onRestore: () -> Unit,
     onSave: () -> Unit,
@@ -564,11 +639,11 @@ private fun SharedBookInfoBottomBar(
                 Spacer(Modifier.width(8.dp))
                 Text("Save")
             }
-        } else {
+        } else if (canEdit) {
             Button(onClick = onEdit) {
                 Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Edit")
+                Text(editLabel)
             }
         }
     }

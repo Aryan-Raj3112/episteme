@@ -36,6 +36,7 @@ class SharedLibrarySnapshotJsonTest {
                     originalDescription = "Original summary",
                     progressPercentage = 42f,
                     fileSize = 99L,
+                    fileContentModifiedTimestamp = 123_456L,
                     sourceFolder = "C:/Books",
                     folderTextMetadataParsed = true,
                     seriesName = "Series",

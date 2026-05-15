@@ -43,8 +43,8 @@ fun localFolderSyncAnnotationTempFileName(bookId: String): String {
 
 data class SharedFolderBookMetadata(
     val bookId: String,
-    val title: String?,
-    val author: String?,
+    val title: String? = null,
+    val author: String? = null,
     val displayName: String,
     val type: String,
     val lastChapterIndex: Int?,
@@ -73,8 +73,6 @@ data class SharedFolderBookMetadata(
             JsonObject(
                 mapOf(
                     "bookId" to JsonPrimitive(bookId),
-                    "title" to title.asJson(),
-                    "author" to author.asJson(),
                     "displayName" to JsonPrimitive(displayName),
                     "type" to JsonPrimitive(type),
                     "lastChapterIndex" to JsonPrimitive(lastChapterIndex ?: -1),
@@ -87,15 +85,7 @@ data class SharedFolderBookMetadata(
                     "locatorBlockIndex" to JsonPrimitive(locatorBlockIndex ?: -1),
                     "locatorCharOffset" to JsonPrimitive(locatorCharOffset ?: -1),
                     "customName" to customName.asJson(),
-                    "highlightsJson" to highlightsJson.asJson(),
-                    "seriesName" to seriesName.asJson(),
-                    "seriesIndex" to seriesIndex.asJson(),
-                    "description" to description.asJson(),
-                    "originalTitle" to originalTitle.asJson(),
-                    "originalAuthor" to originalAuthor.asJson(),
-                    "originalSeriesName" to originalSeriesName.asJson(),
-                    "originalSeriesIndex" to originalSeriesIndex.asJson(),
-                    "originalDescription" to originalDescription.asJson()
+                    "highlightsJson" to highlightsJson.asJson()
                 )
             )
         )
@@ -114,7 +104,6 @@ data class SharedFolderBookMetadata(
         val parsedType = runCatching { FileType.valueOf(type) }.getOrNull() ?: file.type
         val metadataTimestamp = lastModifiedTimestamp.takeIf { it > 0L } ?: nowMillis
         val parsedReaderPosition = readerPositionOrNull()
-        val hasEditableMetadata = hasEditableMetadataPayload()
 
         return (existing ?: BookItem(
             id = bookId,
@@ -122,15 +111,9 @@ data class SharedFolderBookMetadata(
             type = parsedType,
             displayName = displayName.ifBlank { file.name },
             timestamp = metadataTimestamp,
-            title = title ?: displayName.ifBlank { file.name },
-            author = author,
-            description = description,
-            originalTitle = originalTitle,
-            originalAuthor = originalAuthor,
-            originalSeriesName = originalSeriesName,
-            originalSeriesIndex = originalSeriesIndex,
-            originalDescription = originalDescription,
+            title = file.name.substringBeforeLast('.', missingDelimiterValue = file.name),
             fileSize = file.size,
+            fileContentModifiedTimestamp = file.lastModified,
             sourceFolder = file.sourceFolder,
             isRecent = isRecent
         )).copy(
@@ -140,25 +123,22 @@ data class SharedFolderBookMetadata(
             displayName = displayName.ifBlank { file.name },
             timestamp = if (isRecent || existing == null) metadataTimestamp else existing.timestamp,
             coverImagePath = existing?.coverImagePath,
-            title = if (hasEditableMetadata) {
-                title ?: displayName.ifBlank { file.name }
-            } else {
-                title ?: existing?.title ?: displayName.ifBlank { file.name }
-            },
-            author = if (hasEditableMetadata) author else author ?: existing?.author,
-            description = if (hasEditableMetadata) description else description ?: existing?.description,
-            originalTitle = originalTitle ?: existing?.originalTitle,
-            originalAuthor = originalAuthor ?: existing?.originalAuthor,
-            originalSeriesName = originalSeriesName ?: existing?.originalSeriesName,
-            originalSeriesIndex = originalSeriesIndex ?: existing?.originalSeriesIndex,
-            originalDescription = originalDescription ?: existing?.originalDescription,
+            title = existing?.title ?: file.name.substringBeforeLast('.', missingDelimiterValue = file.name),
+            author = existing?.author,
+            description = existing?.description,
+            originalTitle = existing?.originalTitle,
+            originalAuthor = existing?.originalAuthor,
+            originalSeriesName = existing?.originalSeriesName,
+            originalSeriesIndex = existing?.originalSeriesIndex,
+            originalDescription = existing?.originalDescription,
             progressPercentage = progressPercentage,
             isRecent = isRecent || (existing?.isRecent ?: false),
             fileSize = file.size.takeIf { it > 0L } ?: existing?.fileSize ?: 0L,
+            fileContentModifiedTimestamp = file.lastModified.takeIf { it > 0L } ?: existing?.fileContentModifiedTimestamp ?: 0L,
             sourceFolder = file.sourceFolder,
             folderTextMetadataParsed = existing?.folderTextMetadataParsed ?: false,
-            seriesName = if (hasEditableMetadata) seriesName else seriesName ?: existing?.seriesName,
-            seriesIndex = if (hasEditableMetadata) seriesIndex else seriesIndex ?: existing?.seriesIndex,
+            seriesName = existing?.seriesName,
+            seriesIndex = existing?.seriesIndex,
             lastPageIndex = lastPage,
             readerPosition = parsedReaderPosition ?: existing?.readerPosition,
             readerBookmarks = parsedBookmarks ?: existing?.readerBookmarks.orEmpty(),
@@ -173,19 +153,6 @@ data class SharedFolderBookMetadata(
             cfi = lastPositionCfi,
             pageIndex = lastPage
         )
-    }
-
-    private fun hasEditableMetadataPayload(): Boolean {
-        return listOf(
-            seriesName,
-            description,
-            originalTitle,
-            originalAuthor,
-            originalSeriesName,
-            originalDescription
-        ).any { !it.isNullOrBlank() } ||
-            seriesIndex != null ||
-            originalSeriesIndex != null
     }
 
     private fun parseReaderBookmarks(bookId: String): List<ReaderBookmark> {
@@ -215,8 +182,8 @@ data class SharedFolderBookMetadata(
             val bookId = obj.string("bookId")?.takeIf { it.isNotBlank() } ?: return null
             return SharedFolderBookMetadata(
                 bookId = bookId,
-                title = obj.string("title"),
-                author = obj.string("author"),
+                title = null,
+                author = null,
                 displayName = obj.string("displayName") ?: "Unknown",
                 type = obj.string("type") ?: FileType.PDF.name,
                 lastChapterIndex = obj.sentinelInt("lastChapterIndex"),
@@ -230,14 +197,14 @@ data class SharedFolderBookMetadata(
                 locatorCharOffset = obj.sentinelInt("locatorCharOffset"),
                 customName = obj.string("customName"),
                 highlightsJson = obj.string("highlightsJson"),
-                seriesName = obj.string("seriesName"),
-                seriesIndex = obj.double("seriesIndex"),
-                description = obj.string("description"),
-                originalTitle = obj.string("originalTitle"),
-                originalAuthor = obj.string("originalAuthor"),
-                originalSeriesName = obj.string("originalSeriesName"),
-                originalSeriesIndex = obj.double("originalSeriesIndex"),
-                originalDescription = obj.string("originalDescription")
+                seriesName = null,
+                seriesIndex = null,
+                description = null,
+                originalTitle = null,
+                originalAuthor = null,
+                originalSeriesName = null,
+                originalSeriesIndex = null,
+                originalDescription = null
             )
         }
     }
@@ -374,7 +341,10 @@ object LocalFolderSyncEngine {
                     } else {
                         val updatedForFile = existing.withScannedFile(file)
                         val updated = metadata
-                            ?.takeIf { it.lastModifiedTimestamp > updatedForFile.localFolderModifiedTimestamp() }
+                            ?.takeIf {
+                                it.lastModifiedTimestamp > 0L &&
+                                    it.lastModifiedTimestamp >= updatedForFile.localFolderModifiedTimestamp()
+                            }
                             ?.toBookItem(file = file, existing = updatedForFile, nowMillis = nowMillis)
                             ?: updatedForFile
                         booksById[stableId] = updated
@@ -440,7 +410,6 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
     val hasProgress = (progressPercentage ?: 0f) > 0f || lastPageIndex != null || position != null
     val isDirty = isRecent ||
         hasProgress ||
-        hasSidecarMetadata() ||
         !bookmarksJson.isNullOrBlank() ||
         !highlightsJson.isNullOrBlank()
     if (!isDirty) return null
@@ -457,8 +426,8 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
 
     return SharedFolderBookMetadata(
         bookId = id,
-        title = title,
-        author = author,
+        title = null,
+        author = null,
         displayName = displayName,
         type = type.name,
         lastChapterIndex = position?.chapterIndex,
@@ -472,14 +441,14 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
         locatorCharOffset = null,
         customName = null,
         highlightsJson = highlightsJson,
-        seriesName = seriesName,
-        seriesIndex = seriesIndex,
-        description = description,
-        originalTitle = originalTitle,
-        originalAuthor = originalAuthor,
-        originalSeriesName = originalSeriesName,
-        originalSeriesIndex = originalSeriesIndex,
-        originalDescription = originalDescription
+        seriesName = null,
+        seriesIndex = null,
+        description = null,
+        originalTitle = null,
+        originalAuthor = null,
+        originalSeriesName = null,
+        originalSeriesIndex = null,
+        originalDescription = null
     )
 }
 
@@ -513,35 +482,36 @@ private fun SharedFolderScannedFile.toBookItem(bookId: String, nowMillis: Long):
         timestamp = nowMillis,
         title = name.substringBeforeLast('.', missingDelimiterValue = name),
         fileSize = size,
+        fileContentModifiedTimestamp = lastModified,
         sourceFolder = sourceFolder,
         isRecent = false
     )
 }
 
-private fun BookItem.hasSidecarMetadata(): Boolean {
-    val fallbackTitle = displayName.substringBeforeLast('.', missingDelimiterValue = displayName)
-    return title.orEmpty().trim() != fallbackTitle.trim() ||
-        !author.isNullOrBlank() ||
-        !seriesName.isNullOrBlank() ||
-        seriesIndex != null ||
-        !description.isNullOrBlank() ||
-        !originalTitle.isNullOrBlank() ||
-        !originalAuthor.isNullOrBlank() ||
-        !originalSeriesName.isNullOrBlank() ||
-        originalSeriesIndex != null ||
-        !originalDescription.isNullOrBlank()
-}
-
 private fun BookItem.withScannedFile(file: SharedFolderScannedFile): BookItem {
     val sizeChanged = fileSize > 0L && file.size > 0L && fileSize != file.size
+    val modifiedChanged = file.lastModified > 0L &&
+        file.lastModified != fileContentModifiedTimestamp
+    val contentChanged = sizeChanged || modifiedChanged
     return copy(
         path = file.path,
         type = file.type,
         displayName = file.name,
-        coverImagePath = if (sizeChanged) null else coverImagePath,
+        coverImagePath = if (contentChanged) null else coverImagePath,
+        title = if (contentChanged) file.name.substringBeforeLast('.', missingDelimiterValue = file.name) else title,
+        author = if (contentChanged) null else author,
+        description = if (contentChanged) null else description,
+        originalTitle = if (contentChanged) null else originalTitle,
+        originalAuthor = if (contentChanged) null else originalAuthor,
+        originalSeriesName = if (contentChanged) null else originalSeriesName,
+        originalSeriesIndex = if (contentChanged) null else originalSeriesIndex,
+        originalDescription = if (contentChanged) null else originalDescription,
+        seriesName = if (contentChanged) null else seriesName,
+        seriesIndex = if (contentChanged) null else seriesIndex,
         fileSize = file.size.takeIf { it > 0L } ?: fileSize,
+        fileContentModifiedTimestamp = file.lastModified.takeIf { it > 0L } ?: fileContentModifiedTimestamp,
         sourceFolder = file.sourceFolder,
-        folderTextMetadataParsed = if (sizeChanged) false else folderTextMetadataParsed
+        folderTextMetadataParsed = if (contentChanged) false else folderTextMetadataParsed
     )
 }
 
@@ -630,4 +600,3 @@ private fun JsonObject.sentinelInt(name: String): Int? {
 }
 
 private fun String?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
-private fun Double?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull

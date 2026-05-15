@@ -17,6 +17,7 @@ class RecentFileItemReadingPositionMappingTest {
         assertEquals(item.locatorBlockIndex, roundTripped.locatorBlockIndex)
         assertEquals(item.locatorCharOffset, roundTripped.locatorCharOffset)
         assertEquals(item.progressPercentage, roundTripped.progressPercentage)
+        assertEquals(item.fileContentModifiedTimestamp, roundTripped.fileContentModifiedTimestamp)
     }
 
     @Test
@@ -30,6 +31,20 @@ class RecentFileItemReadingPositionMappingTest {
         assertEquals(item.locatorBlockIndex, roundTripped.locatorBlockIndex)
         assertEquals(item.locatorCharOffset, roundTripped.locatorCharOffset)
         assertEquals(item.progressPercentage, roundTripped.progressPercentage)
+        assertEquals(item.fileContentModifiedTimestamp, roundTripped.fileContentModifiedTimestamp)
+    }
+
+    @Test
+    fun `cloud metadata mapping preserves non epub display rename as custom name`() {
+        val item = recentFileItem().copy(
+            type = FileType.PDF,
+            customName = "Reader Display Name"
+        )
+
+        val roundTripped = item.toBookMetadata().toRecentFileItem()
+
+        assertEquals("Reader Display Name", roundTripped.customName)
+        assertEquals("One.epub", roundTripped.displayName)
     }
 
     @Test
@@ -86,6 +101,7 @@ class RecentFileItemReadingPositionMappingTest {
             locatorCharOffset = 88,
             progressPercentage = 61.5f,
             lastModifiedTimestamp = 2_000L,
+            fileContentModifiedTimestamp = 3_000L,
             bookmarksJson = """[{"cfi":"/4/2"}]""",
             highlightsJson = """[{"cfi":"/4/2/6:88"}]"""
         )

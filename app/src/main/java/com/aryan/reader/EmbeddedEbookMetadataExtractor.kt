@@ -11,6 +11,9 @@ import java.util.zip.ZipInputStream
 internal data class EmbeddedEbookMetadata(
     val title: String? = null,
     val author: String? = null,
+    val description: String? = null,
+    val seriesName: String? = null,
+    val seriesIndex: Double? = null,
     val cover: EmbeddedEbookCover? = null
 )
 
@@ -97,6 +100,9 @@ internal object EmbeddedEbookMetadataExtractor {
         return EmbeddedEbookMetadata(
             title = opf.tagText("title"),
             author = opf.tagText("creator"),
+            description = opf.tagInnerContent("description"),
+            seriesName = opf.metaContent("calibre:series"),
+            seriesIndex = opf.metaContent("calibre:series_index")?.toDoubleOrNull(),
             cover = cover
         )
     }
@@ -559,6 +565,30 @@ internal object EmbeddedEbookMetadataExtractor {
             ?.replace(Regex("<[^>]+>"), " ")
             ?.decodeEntities()
             ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun String.tagInnerContent(tag: String): String? {
+        return Regex(
+            "<(?:[^:>]+:)?$tag\\b[^>]*>(.*?)</(?:[^:>]+:)?$tag>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+            .find(this)
+            ?.groupValues
+            ?.get(1)
+            ?.decodeEntities()
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    private fun String.metaContent(name: String): String? {
+        return Regex("""<meta\s+[^>]*>""", RegexOption.IGNORE_CASE)
+            .findAll(this)
+            .firstOrNull { it.value.attr("name").equals(name, ignoreCase = true) }
+            ?.value
+            ?.attr("content")
+            ?.decodeEntities()
             ?.trim()
             ?.takeIf { it.isNotBlank() }
     }

@@ -380,7 +380,7 @@ class FolderSyncWorker(
                                                 timestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
                                                 lastModifiedTimestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
                                                 coverImagePath = null,
-                                                title = remoteMeta?.title ?: name,
+                                                title = name.substringBeforeLast('.', name),
                                                 author = remoteMeta?.author,
                                                 isAvailable = true,
                                                 isDeleted = false,
@@ -395,7 +395,8 @@ class FolderSyncWorker(
                                                 customName = remoteMeta?.customName,
                                                 locatorBlockIndex = remoteMeta?.locatorBlockIndex,
                                                 locatorCharOffset = remoteMeta?.locatorCharOffset,
-                                                fileSize = size
+                                                fileSize = size,
+                                                fileContentModifiedTimestamp = lastModified
                                             )
                                             newOrUpdatedItems.add(newItem)
                                             newBooks++
@@ -403,13 +404,26 @@ class FolderSyncWorker(
                                             var needsUpdate = false
                                             var updatedItem = existingItem
 
-                                            if (size > 0L && existingItem.fileSize != size) {
-                                                Timber.tag("FolderSync").i("File size changed for $name (${existingItem.fileSize} -> $size).")
+                                            val modifiedChanged = lastModified > 0L &&
+                                                existingItem.fileContentModifiedTimestamp != lastModified
+                                            if ((size > 0L && existingItem.fileSize != size) || modifiedChanged) {
+                                                Timber.tag("FolderSync").i("File content changed for $name; refreshing extracted metadata.")
                                                 recentFilesRepository.clearLocalCachesForBook(stableId)
                                                 updatedItem = updatedItem.copy(
                                                     fileSize = size,
+                                                    fileContentModifiedTimestamp = lastModified,
                                                     lastModifiedTimestamp = lastModified,
                                                     coverImagePath = null,
+                                                    title = name.substringBeforeLast('.', name),
+                                                    author = null,
+                                                    seriesName = null,
+                                                    seriesIndex = null,
+                                                    description = null,
+                                                    originalTitle = null,
+                                                    originalAuthor = null,
+                                                    originalSeriesName = null,
+                                                    originalSeriesIndex = null,
+                                                    originalDescription = null,
                                                     folderTextMetadataParsed = false,
                                                     folderCoverMetadataParsed = false
                                                 )

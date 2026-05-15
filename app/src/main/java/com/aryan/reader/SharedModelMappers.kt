@@ -44,6 +44,7 @@ fun RecentFileItem.toSharedBookItem(): SharedBookItem {
         progressPercentage = progressPercentage,
         isRecent = isRecent,
         fileSize = fileSize,
+        fileContentModifiedTimestamp = fileContentModifiedTimestamp,
         sourceFolder = sourceFolderUri,
         folderTextMetadataParsed = folderTextMetadataParsed,
         seriesName = seriesName,
@@ -83,6 +84,7 @@ fun SharedBookItem.toRecentFileItem(
             isRecent = isRecent,
             sourceFolderUri = sourceFolder,
             fileSize = fileSize,
+            fileContentModifiedTimestamp = fileContentModifiedTimestamp,
             seriesName = seriesName,
             seriesIndex = seriesIndex,
             folderTextMetadataParsed = folderTextMetadataParsed
@@ -107,6 +109,7 @@ fun SharedBookItem.toRecentFileItem(
             isRecent = isRecent,
             sourceFolderUri = sourceFolder,
             fileSize = fileSize,
+            fileContentModifiedTimestamp = fileContentModifiedTimestamp,
             seriesName = seriesName,
             seriesIndex = seriesIndex,
             folderTextMetadataParsed = folderTextMetadataParsed,

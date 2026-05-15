@@ -90,6 +90,7 @@ data class BookItem(
     val progressPercentage: Float? = null,
     val isRecent: Boolean = true,
     val fileSize: Long = 0L,
+    val fileContentModifiedTimestamp: Long = 0L,
     val sourceFolder: String? = null,
     val folderTextMetadataParsed: Boolean = false,
     val seriesName: String? = null,
