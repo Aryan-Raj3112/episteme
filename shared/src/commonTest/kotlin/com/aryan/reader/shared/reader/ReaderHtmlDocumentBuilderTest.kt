@@ -66,6 +66,37 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `stored highlights split around paragraph markup`() {
+        val text = "alpha\n\nbeta"
+        val highlight = UserHighlight(
+            id = "highlight-1",
+            cfi = "desktop:0:0:${text.length}",
+            text = "alpha beta",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0,
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                pageIndex = 0,
+                startOffset = 0,
+                endOffset = text.length,
+                textQuote = "alpha beta",
+                cfi = "desktop:0:0:${text.length}"
+            )
+        )
+
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook(text),
+            page = ReaderPage(0, 0, "One", text, 0, text.length),
+            settings = ReaderSettings(),
+            highlights = listOf(highlight)
+        )
+
+        assertEquals(2, Regex("<mark class=\"reader-user-highlight").findAll(html).count())
+        assertFalse(html.contains("<mark class=\"reader-user-highlight user-highlight-yellow\" data-reader-highlight-id=\"highlight-1\" data-reader-start-offset=\"0\" data-reader-end-offset=\"${text.length}\"><p"))
+        assertFalse(html.contains("</p></mark>"))
+    }
+
+    @Test
     fun `reader highlight script verifies stored text before painting offsets`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta alpha beta"),
@@ -84,6 +115,40 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("startOffset >= pageEnd || endOffset <= pageStart"))
         assertTrue(html.contains("normalizedRangeForText(searchRoot, expectedNormalized, false)"))
         assertTrue(html.contains("locator.textQuote || highlight.text"))
+    }
+
+    @Test
+    fun `reader highlight script paints locally before guarded bridge send`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
+            settings = ReaderSettings()
+        )
+        val localPaintIndex = html.indexOf("wrapRangeTextSegments(localRange")
+        val bridgeSendIndex = html.indexOf("sendReaderHighlightCreated(payload, 0)")
+
+        assertTrue(html.contains("function sendReaderHighlightCreated(payload, attempt)"))
+        assertTrue(html.contains("highlight_bridge_error attempt="))
+        assertTrue(html.contains("paintUserHighlightRange(payload, localRange, colorId || 'yellow')"))
+        assertTrue(localPaintIndex >= 0)
+        assertTrue(bridgeSendIndex > localPaintIndex)
+    }
+
+    @Test
+    fun `reader highlight script repaints text fallback highlights`() {
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("alpha beta"),
+            page = ReaderPage(0, 0, "One", "alpha beta", 0, 10),
+            settings = ReaderSettings()
+        )
+
+        assertTrue(html.contains("function applyHighlightTextFallback(highlight)"))
+        assertTrue(html.contains("function paintUserHighlightRange(highlight, range, colorId)"))
+        assertTrue(html.contains("var readerHighlightColors = {"))
+        assertTrue(html.contains("clearUserHighlightLayer();"))
+        assertTrue(html.contains("applyHighlightTextFallback(highlight);"))
+        assertTrue(html.contains("normalizedRangeForText(content, expectedText, false)"))
+        assertTrue(html.contains("paintUserHighlightRange(highlight, range, highlight.colorId || 'yellow')"))
     }
 
     @Test
@@ -249,6 +314,41 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("element.closest('#reader-selection-menu, .reader-selection-handle')"))
         assertFalse(html.contains("next.toString().trim().length"))
         assertTrue(html.contains("document.caretRangeFromPoint"))
+        assertTrue(html.contains("wrapRangeTextSegments(range"))
+        assertFalse(html.contains("surroundContents"))
+    }
+
+    @Test
+    fun `paginated spread script targets the actual page host for locator highlights`() {
+        val left = ReaderPage(
+            pageIndex = 2,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "left page",
+            startOffset = 0,
+            endOffset = 9
+        )
+        val right = ReaderPage(
+            pageIndex = 3,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "right page",
+            startOffset = 10,
+            endOffset = 20
+        )
+
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("left page\n\nright page"),
+            page = left,
+            visiblePages = listOf(left, right),
+            settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+        )
+
+        assertTrue(html.contains("function readerHostForLocator(chapterIndex, startOffset, endOffset)"))
+        assertTrue(html.contains("var targetChapter = readerHostForLocator(chapterIndex, startOffset, endOffset);"))
+        assertTrue(html.contains("var chapter = readerHostForLocator(chapterIndex, startOffset, endOffset);"))
+        assertTrue(html.contains("data-reader-active-page-index"))
+        assertTrue(html.contains("positionFromReaderHost(activePage, activeStart)"))
     }
 
     @Test

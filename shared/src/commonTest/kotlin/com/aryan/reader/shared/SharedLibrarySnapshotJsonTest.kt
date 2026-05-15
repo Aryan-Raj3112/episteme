@@ -36,6 +36,14 @@ class SharedLibrarySnapshotJsonTest {
                     seriesIndex = 2.0,
                     tags = listOf(tag),
                     lastPageIndex = 4,
+                    readerPosition = ReaderLocator(
+                        chapterIndex = 1,
+                        pageIndex = 4,
+                        startOffset = 220,
+                        endOffset = 220,
+                        textQuote = "Precise place",
+                        cfi = "desktop:1:220:220"
+                    ),
                     readerSettings = ReaderSettings(
                         fontSize = 22,
                         lineSpacing = 1.7f,
@@ -190,6 +198,22 @@ class SharedLibrarySnapshotJsonTest {
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty("""{"schemaVersion":14}""")
 
         assertTrue(decoded.isTabsEnabled)
+    }
+
+    @Test
+    fun `legacy untouched epub default settings migrate to vertical mode`() {
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """
+            {
+              "schemaVersion": 16,
+              "readerDefaultSettings": {
+                "readingMode": "PAGINATED"
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(ReaderReadingMode.VERTICAL, decoded.readerDefaultSettings.readingMode)
     }
 
     @Test

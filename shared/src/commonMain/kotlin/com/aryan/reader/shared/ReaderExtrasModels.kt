@@ -319,8 +319,18 @@ object ReaderTtsPlanner {
     }
 
     fun chunksFromCurrentLocation(session: ReaderSessionState): List<ReaderTtsChunk> {
-        val pageIndex = session.reader.currentPageIndex
-        return chunksForPages(session.reader.book, session.reader.pages.drop(pageIndex.coerceAtLeast(0)))
+        val anchor = session.navigationLocator
+        val pageIndex = anchor?.pageIndex ?: session.reader.currentPageIndex
+        val pages = session.reader.pages.dropWhile { it.pageIndex < pageIndex.coerceAtLeast(0) }
+        val chunks = chunksForPages(session.reader.book, pages)
+        val chapterIndex = anchor?.chapterIndex
+        val startOffset = anchor?.startOffset
+        if (chapterIndex == null && startOffset == null) return chunks
+        var nextIndex = 0
+        return chunks.mapNotNull { chunk ->
+            chunk.afterLocator(chapterIndex = chapterIndex, startOffset = startOffset)
+                ?.copy(index = nextIndex++)
+        }
     }
 
     fun chunksForText(
@@ -386,6 +396,35 @@ object ReaderTtsPlanner {
                 )
             }
         }
+    }
+
+    private fun ReaderTtsChunk.afterLocator(chapterIndex: Int?, startOffset: Int?): ReaderTtsChunk? {
+        if (chapterIndex != null) {
+            if (this.chapterIndex < chapterIndex) return null
+            if (this.chapterIndex > chapterIndex) return this
+        }
+        val anchorOffset = startOffset ?: return this
+        if (endOffset <= anchorOffset) return null
+        if (anchorOffset <= this.startOffset) return this
+        return trimStartTo(anchorOffset)
+    }
+
+    private fun ReaderTtsChunk.trimStartTo(sourceOffset: Int): ReaderTtsChunk? {
+        val boundedOffset = sourceOffset.coerceIn(startOffset, endOffset)
+        if (boundedOffset <= startOffset) return this
+        if (boundedOffset >= endOffset) return null
+        val rawDrop = (boundedOffset - startOffset).coerceIn(0, text.length)
+        val remaining = text.drop(rawDrop)
+        val leadingWhitespace = remaining.indexOfFirst { !it.isWhitespace() }
+        if (leadingWhitespace < 0) return null
+        val nextText = remaining.drop(leadingWhitespace)
+        if (nextText.isBlank()) return null
+        val nextStartOffset = (boundedOffset + leadingWhitespace).coerceAtMost(endOffset)
+        return copy(
+            text = nextText,
+            spokenText = nextText,
+            startOffset = nextStartOffset
+        )
     }
 
     private fun chunksForSemanticPages(

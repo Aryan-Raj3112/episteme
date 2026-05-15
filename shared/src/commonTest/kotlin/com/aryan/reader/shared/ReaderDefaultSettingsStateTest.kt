@@ -9,6 +9,11 @@ import kotlin.test.assertEquals
 class ReaderDefaultSettingsStateTest {
 
     @Test
+    fun `epub reader defaults to vertical mode`() {
+        assertEquals(ReaderReadingMode.VERTICAL, ReaderSettings().readingMode)
+    }
+
+    @Test
     fun `reader default settings reducer updates shared state`() {
         val defaults = ReaderSettings(
             fontSize = 24,

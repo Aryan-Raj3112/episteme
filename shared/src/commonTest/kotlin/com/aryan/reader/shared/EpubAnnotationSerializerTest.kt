@@ -153,9 +153,11 @@ class EpubAnnotationSerializerTest {
     fun `highlight bridge parser accepts raw or wrapped json payloads`() {
         val payload = """{"cfi":"desktop:0:4:9","text":"word","colorId":"yellow","chapterIndex":0,"locator":{"chapterIndex":0,"startOffset":4,"endOffset":9,"textQuote":"word","cfi":"desktop:0:4:9"}}"""
         val wrappedPayload = "\"${payload.replace("\"", "\\\"")}\""
+        val arrayPayload = "[$wrappedPayload]"
 
         assertEquals(4, EpubAnnotationSerializer.parseHighlightJsonLenient(payload)?.locator?.startOffset)
         assertEquals(9, EpubAnnotationSerializer.parseHighlightJsonLenient(wrappedPayload)?.locator?.endOffset)
+        assertEquals("word", EpubAnnotationSerializer.parseHighlightJsonLenient(arrayPayload)?.text)
     }
 
     @Test

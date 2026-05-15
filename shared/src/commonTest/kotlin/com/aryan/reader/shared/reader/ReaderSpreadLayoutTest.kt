@@ -18,7 +18,10 @@ class ReaderSpreadLayoutTest {
 
     @Test
     fun `two page mode normalizes direct jumps to the spread start`() {
-        val settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+        val settings = ReaderSettings(
+            readingMode = ReaderReadingMode.PAGINATED,
+            pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE
+        )
 
         assertEquals(2, ReaderSpreadLayout.normalizePageIndex(3, pageCount = 10, settings = settings))
         assertEquals(listOf(2, 3), ReaderSpreadLayout.visiblePageIndices(3, pageCount = 10, settings = settings))
@@ -29,7 +32,10 @@ class ReaderSpreadLayoutTest {
 
     @Test
     fun `two page mode advances by spread and clamps odd final page`() {
-        val settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+        val settings = ReaderSettings(
+            readingMode = ReaderReadingMode.PAGINATED,
+            pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE
+        )
 
         assertEquals(3, ReaderSpreadLayout.sliderStepCount(pageCount = 5, settings = settings))
         assertEquals(2, ReaderSpreadLayout.nextPageIndex(0, pageCount = 5, settings = settings))
@@ -42,7 +48,10 @@ class ReaderSpreadLayoutTest {
 
     @Test
     fun `two page progress uses the visible spread end`() {
-        val settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+        val settings = ReaderSettings(
+            readingMode = ReaderReadingMode.PAGINATED,
+            pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE
+        )
         val state = PaginatedReaderState(
             book = SharedEpubBook("book", "book.epub", "Book", chapters = emptyList()),
             pages = (0 until 4).map { index ->

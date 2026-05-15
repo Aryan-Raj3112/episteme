@@ -109,8 +109,8 @@ fun ReaderWorkspaceShell(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-    ) {
-        val wide = maxWidth >= 1120.dp
+    ) shellConstraints@ {
+        val wide = this@shellConstraints.maxWidth >= 1120.dp
         LaunchedEffect(wide, leftPanelOpen, rightPanelOpen) {
             if (!wide && leftPanelOpen && rightPanelOpen) {
                 rightPanelOpen = false
@@ -179,6 +179,8 @@ fun ReaderWorkspaceShell(
                             logReaderGapLayout("content_slot", coordinates.boundsInWindow())
                         }
                 ) {
+                    val showLeftPanel = !isFullscreen && leftPanelOpen && model.leftSections.isNotEmpty()
+                    val showRightPanel = !isFullscreen && rightPanelOpen && model.inspectorSections.isNotEmpty()
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -198,10 +200,9 @@ fun ReaderWorkspaceShell(
                     ) {
                         content()
                     }
-
                     ReaderWorkspacePanelOverlays(
-                        showLeftPanel = !isFullscreen && leftPanelOpen && model.leftSections.isNotEmpty(),
-                        showRightPanel = !isFullscreen && rightPanelOpen && model.inspectorSections.isNotEmpty(),
+                        showLeftPanel = showLeftPanel,
+                        showRightPanel = showRightPanel,
                         wide = wide,
                         onCloseLeftPanel = { leftPanelOpen = false },
                         onCloseRightPanel = { rightPanelOpen = false },
@@ -248,27 +249,38 @@ private fun ReaderWorkspacePanelOverlays(
 ) {
     if (!showLeftPanel && !showRightPanel) return
 
-    Box(Modifier.fillMaxSize()) {
-        if (showLeftPanel) {
-            ReaderWorkspaceOverlayPanel(
-                title = "Reader",
-                onClose = onCloseLeftPanel,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .width(if (wide) 340.dp else 320.dp)
-            ) {
-                leftSidebar(onCloseLeftPanel)
-            }
+    SharedReaderModalLayer(
+        level = SharedReaderModalLevel.Panel,
+        onDismiss = {
+            if (showLeftPanel) onCloseLeftPanel()
+            if (showRightPanel) onCloseRightPanel()
         }
-        if (showRightPanel) {
-            ReaderWorkspaceOverlayPanel(
-                title = "Tools",
-                onClose = onCloseRightPanel,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .width(if (wide) 380.dp else 360.dp)
-            ) {
-                rightInspector()
+    ) {
+        BoxWithConstraints(Modifier.fillMaxSize()) panelConstraints@ {
+            val availableWidth = this@panelConstraints.maxWidth
+            val leftPanelWidth = if (wide) 340.dp else minOf(320.dp, availableWidth * 0.92f)
+            val rightPanelWidth = if (wide) 380.dp else minOf(360.dp, availableWidth * 0.92f)
+            if (showLeftPanel) {
+                ReaderWorkspaceOverlayPanel(
+                    title = "Reader",
+                    onClose = onCloseLeftPanel,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .width(leftPanelWidth)
+                ) {
+                    leftSidebar(onCloseLeftPanel)
+                }
+            }
+            if (showRightPanel) {
+                ReaderWorkspaceOverlayPanel(
+                    title = "Tools",
+                    onClose = onCloseRightPanel,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(rightPanelWidth)
+                ) {
+                    rightInspector()
+                }
             }
         }
     }

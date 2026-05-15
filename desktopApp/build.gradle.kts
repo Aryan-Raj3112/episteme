@@ -322,7 +322,7 @@ val desktopPackageDescription = if (isOssOfflineDesktop) {
 } else {
     "Episteme desktop reader"
 }
-val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan Raj")
+val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan")
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")

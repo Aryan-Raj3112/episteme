@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 class ReaderWorkspaceModelsTest {
 
     @Test
-    fun `epub workspace maps shared toolbar preferences to reader sidebars and inspector`() {
+    fun `epub workspace maps shared toolbar preferences without toolbar tab`() {
         val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
         val preferences = ReaderToolbarPreferences(
             hiddenToolIds = setOf(ReaderTool.THEME.id, ReaderTool.FORMAT.id, ReaderTool.BOOKMARK.id),
@@ -45,7 +45,7 @@ class ReaderWorkspaceModelsTest {
         assertFalse(ReaderWorkspaceTopAction.BOOKMARK in model.topActions)
         assertFalse(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
-        assertTrue(ReaderWorkspaceInspectorSection.TOOLBAR in model.inspectorSections)
+        assertFalse(ReaderWorkspaceInspectorSection.TOOLBAR in model.inspectorSections)
         assertTrue(ReaderWorkspaceTopAction.SEARCH in model.topActions)
         assertTrue(ReaderWorkspaceTopAction.FULL_SCREEN in model.topActions)
         assertTrue(ReaderWorkspaceTopAction.AI in model.topActions)
@@ -76,6 +76,48 @@ class ReaderWorkspaceModelsTest {
             setOf("search", "inspector", "annotation", "rich-text", "loading", "error", "auto-scroll", "tts"),
             model.forceVisibleReasons
         )
+    }
+
+    @Test
+    fun `epub workspace ignores desktop visual options in inspector`() {
+        val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
+        val preferences = ReaderToolbarPreferences(
+            hiddenToolIds = ReaderTool.entries
+                .filterNot { it == ReaderTool.VISUAL_OPTIONS }
+                .mapTo(mutableSetOf()) { it.id }
+        )
+
+        val model = epubReaderWorkspaceModel(
+            session = session,
+            toolbarPreferences = preferences,
+            extrasState = ReaderExtrasState(),
+            aiAvailable = true
+        )
+
+        assertFalse(ReaderWorkspaceInspectorSection.TOOLS in model.inspectorSections)
+        assertFalse(ReaderWorkspaceTopAction.TOOLS in model.topActions)
+    }
+
+    @Test
+    fun `epub workspace ignores external lookup in inspector`() {
+        val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
+        val preferences = ReaderToolbarPreferences(
+            hiddenToolIds = ReaderTool.entries
+                .filterNot { it == ReaderTool.DICTIONARY }
+                .mapTo(mutableSetOf()) { it.id }
+        )
+
+        val model = epubReaderWorkspaceModel(
+            session = session,
+            toolbarPreferences = preferences,
+            extrasState = ReaderExtrasState(),
+            aiAvailable = false,
+            cloudTtsAvailable = false,
+            externalLookupAvailable = true
+        )
+
+        assertFalse(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
+        assertFalse(ReaderWorkspaceTopAction.TOOLS in model.topActions)
     }
 
     @Test
@@ -176,6 +218,7 @@ class ReaderWorkspaceModelsTest {
         assertTrue(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.TOOLS in model.inspectorSections)
         assertTrue(ReaderWorkspaceInspectorSection.AI_TTS in model.inspectorSections)
+        assertTrue(ReaderWorkspaceInspectorSection.TOOLBAR in model.inspectorSections)
         assertTrue(ReaderWorkspaceTopAction.BOOKMARK in model.topActions)
         assertTrue(ReaderWorkspaceTopAction.FULL_SCREEN in model.topActions)
         assertTrue(ReaderWorkspaceTopAction.AI in model.topActions)

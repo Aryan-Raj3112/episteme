@@ -90,6 +90,7 @@ data class BookItem(
     val seriesIndex: Double? = null,
     val tags: List<Tag> = emptyList(),
     val lastPageIndex: Int? = null,
+    val readerPosition: ReaderLocator? = null,
     val readerSettings: ReaderSettings? = null,
     val readerBookmarks: List<ReaderBookmark> = emptyList(),
     val readerHighlights: List<UserHighlight> = emptyList(),

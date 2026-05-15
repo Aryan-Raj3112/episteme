@@ -1268,14 +1268,17 @@ private fun EpistemeDesktopApp(
             val next = state.copy(
                 rawLibraryBooks = state.rawLibraryBooks.map { book ->
                     if (book.id == bookId) {
+                        val readerPosition = session?.navigationLocator ?: book.readerPosition
                         shouldSyncSidecars = session != null ||
                             book.lastPageIndex != pageIndex ||
-                            book.progressPercentage != progress
+                            book.progressPercentage != progress ||
+                            book.readerPosition != readerPosition
                         book.copy(
                             progressPercentage = progress,
                             timestamp = System.currentTimeMillis(),
                             isRecent = true,
                             lastPageIndex = pageIndex,
+                            readerPosition = readerPosition,
                             readerSettings = session?.reader?.settings ?: book.readerSettings,
                             readerBookmarks = session?.bookmarks ?: book.readerBookmarks,
                             readerHighlights = session?.highlights ?: book.readerHighlights,
@@ -2008,11 +2011,12 @@ private fun EpistemeDesktopApp(
                                 book = loadedBook,
                                 settings = restoredSettings,
                                 initialPageIndex = book.lastPageIndex ?: 0,
+                                initialLocator = book.readerPosition,
                                 bookmarks = book.readerBookmarks,
                                 highlights = book.readerHighlights
                             )
                             val restoredProgress = book.progressPercentage
-                            val session = if (book.lastPageIndex == null && restoredProgress != null) {
+                            val session = if (book.readerPosition == null && book.lastPageIndex == null && restoredProgress != null) {
                                 readerEngine.goToProgress(restoredSession, restoredProgress.coerceIn(0f, 100f) / 100f)
                             } else {
                                 restoredSession
@@ -10761,7 +10765,10 @@ private fun DesktopEpubWebView(
                 navigator: WebViewNavigator?,
                 callback: (String) -> Unit
             ) {
-                EpubAnnotationSerializer.parseHighlightJsonLenient(message.params)?.let { highlight ->
+                val highlight = EpubAnnotationSerializer.parseHighlightJsonLenient(message.params)
+                if (highlight == null) {
+                    logEpubSelectionDebug("highlight_parse_failed params=${message.params.logPreview(900)}")
+                } else {
                     scope.launch { latestOnHighlightCreated(highlight) }
                 }
             }

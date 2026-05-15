@@ -53,11 +53,8 @@ object EpubAnnotationSerializer {
 
     fun parseHighlightJsonLenient(rawJson: String?): UserHighlight? {
         if (rawJson.isNullOrBlank()) return null
-        parseHighlightJson(rawJson)?.let { return it }
-        val unwrapped = runCatching {
-            json.parseToJsonElement(rawJson).jsonPrimitive.content
-        }.getOrNull()
-        return parseHighlightJson(unwrapped)
+        val element = runCatching { json.parseToJsonElement(rawJson) }.getOrNull() ?: return null
+        return element.asHighlightLenientOrNull()
     }
 
     fun highlightsToJson(highlights: Collection<UserHighlight>): String {
@@ -200,6 +197,22 @@ object EpubAnnotationSerializer {
                     textQuote = text
                 )
         )
+    }
+
+    private fun JsonElement.asHighlightLenientOrNull(): UserHighlight? {
+        return when (this) {
+            is JsonObject -> asHighlightOrNull()
+            is JsonArray -> {
+                for (element in this) {
+                    element.asHighlightLenientOrNull()?.let { return it }
+                }
+                null
+            }
+            else -> contentOrNull()
+                ?.trim()
+                ?.takeIf { it.startsWith("{") || it.startsWith("[") }
+                ?.let { parseHighlightJsonLenient(it) }
+        }
     }
 
     private fun UserHighlight.toJsonObject(): JsonObject {

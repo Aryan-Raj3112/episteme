@@ -63,6 +63,87 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `createSession restores precise locator ahead of fallback page index`() {
+        val engine = ReaderEngine()
+        val book = longBook()
+        val base = engine.createSession(book)
+        val targetPage = base.reader.pages.getOrNull(2) ?: error("Expected multiple pages")
+        val locator = ReaderLocator(
+            chapterIndex = targetPage.chapterIndex,
+            pageIndex = targetPage.pageIndex,
+            startOffset = targetPage.startOffset + 12,
+            endOffset = targetPage.startOffset + 12,
+            cfi = "desktop:${targetPage.chapterIndex}:${targetPage.startOffset + 12}:${targetPage.startOffset + 12}"
+        )
+
+        val restored = engine.createSession(
+            book = book,
+            initialPageIndex = 0,
+            initialLocator = locator
+        )
+
+        assertEquals(targetPage.pageIndex, restored.navigationLocator?.pageIndex)
+        assertEquals(targetPage.pageIndex, restored.reader.currentPageIndex)
+        assertEquals(locator.startOffset, restored.navigationLocator?.startOffset)
+    }
+
+    @Test
+    fun `layout settings update keeps precise visible locator across reading modes`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(longBook())
+        val targetPage = session.reader.pages.getOrNull(1) ?: error("Expected multiple pages")
+        val visibleLocator = ReaderLocator(
+            chapterIndex = targetPage.chapterIndex,
+            pageIndex = targetPage.pageIndex,
+            startOffset = targetPage.startOffset + 40,
+            endOffset = targetPage.startOffset + 40,
+            textQuote = "visible text",
+            cfi = "desktop:${targetPage.chapterIndex}:${targetPage.startOffset + 40}:${targetPage.startOffset + 40}"
+        )
+        val synced = engine.syncVisiblePage(session, targetPage.pageIndex, visibleLocator)
+
+        val updated = engine.updateSettings(
+            synced,
+            synced.reader.settings.copy(
+                readingMode = ReaderReadingMode.VERTICAL,
+                pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
+                fontSize = synced.reader.settings.fontSize + 4
+            )
+        )
+
+        val page = updated.reader.currentPage ?: error("Expected current page")
+        assertEquals(visibleLocator.startOffset, updated.navigationLocator?.startOffset)
+        assertTrue(visibleLocator.startOffset!! in page.startOffset..page.endOffset)
+    }
+
+    @Test
+    fun `two page spread keeps right page locator while normalizing visible spread start`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(longBook())
+        val targetPage = session.reader.pages.getOrNull(3) ?: error("Expected multiple pages")
+        val locator = ReaderLocator(
+            chapterIndex = targetPage.chapterIndex,
+            pageIndex = targetPage.pageIndex,
+            startOffset = targetPage.startOffset + 20,
+            endOffset = targetPage.startOffset + 20,
+            cfi = "desktop:${targetPage.chapterIndex}:${targetPage.startOffset + 20}:${targetPage.startOffset + 20}"
+        )
+        val synced = engine.syncVisiblePage(session, targetPage.pageIndex, locator)
+
+        val updated = engine.updateSettings(
+            synced,
+            synced.reader.settings.copy(
+                readingMode = ReaderReadingMode.PAGINATED,
+                pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE
+            )
+        )
+
+        assertEquals(targetPage.pageIndex - 1, updated.reader.currentPageIndex)
+        assertEquals(targetPage.pageIndex, updated.navigationLocator?.pageIndex)
+        assertEquals(locator.startOffset, updated.navigationLocator?.startOffset)
+    }
+
+    @Test
     fun `search returns every match on a page`() {
         val engine = ReaderEngine()
         val session = engine.createSession(

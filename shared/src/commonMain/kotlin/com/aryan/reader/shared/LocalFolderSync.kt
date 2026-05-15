@@ -97,6 +97,7 @@ data class SharedFolderBookMetadata(
             .takeIf { it.isNotEmpty() }
         val parsedType = runCatching { FileType.valueOf(type) }.getOrNull() ?: file.type
         val metadataTimestamp = lastModifiedTimestamp.takeIf { it > 0L } ?: nowMillis
+        val parsedReaderPosition = readerPositionOrNull()
 
         return (existing ?: BookItem(
             id = bookId,
@@ -124,8 +125,18 @@ data class SharedFolderBookMetadata(
             sourceFolder = file.sourceFolder,
             folderTextMetadataParsed = existing?.folderTextMetadataParsed ?: false,
             lastPageIndex = lastPage,
+            readerPosition = parsedReaderPosition ?: existing?.readerPosition,
             readerBookmarks = parsedBookmarks ?: existing?.readerBookmarks.orEmpty(),
             readerHighlights = parsedHighlights ?: existing?.readerHighlights.orEmpty()
+        )
+    }
+
+    private fun readerPositionOrNull(): ReaderLocator? {
+        if (lastChapterIndex == null && lastPage == null && lastPositionCfi.isNullOrBlank()) return null
+        return ReaderLocator.fromLegacy(
+            chapterIndex = lastChapterIndex,
+            cfi = lastPositionCfi,
+            pageIndex = lastPage
         )
     }
 
@@ -369,9 +380,20 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
     val highlightsJson = readerHighlights
         .takeIf { it.isNotEmpty() }
         ?.let(EpubAnnotationSerializer::highlightsToJson)
-    val hasProgress = (progressPercentage ?: 0f) > 0f || lastPageIndex != null
+    val position = readerPosition
+    val hasProgress = (progressPercentage ?: 0f) > 0f || lastPageIndex != null || position != null
     val isDirty = isRecent || hasProgress || !bookmarksJson.isNullOrBlank() || !highlightsJson.isNullOrBlank()
     if (!isDirty) return null
+    val positionCfi = position?.cfi ?: position?.let { locator ->
+        val chapterIndex = locator.chapterIndex
+        val startOffset = locator.startOffset
+        val endOffset = locator.endOffset ?: startOffset
+        if (chapterIndex != null && startOffset != null && endOffset != null) {
+            "desktop:$chapterIndex:$startOffset:$endOffset"
+        } else {
+            null
+        }
+    }
 
     return SharedFolderBookMetadata(
         bookId = id,
@@ -379,9 +401,9 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
         author = author,
         displayName = displayName,
         type = type.name,
-        lastChapterIndex = null,
-        lastPage = lastPageIndex,
-        lastPositionCfi = null,
+        lastChapterIndex = position?.chapterIndex,
+        lastPage = position?.pageIndex ?: lastPageIndex,
+        lastPositionCfi = positionCfi,
         progressPercentage = progressPercentage ?: 0f,
         isRecent = isRecent,
         lastModifiedTimestamp = localFolderModifiedTimestamp(),

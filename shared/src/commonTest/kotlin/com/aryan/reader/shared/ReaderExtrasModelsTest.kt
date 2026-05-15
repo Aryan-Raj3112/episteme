@@ -126,7 +126,7 @@ class ReaderExtrasModelsTest {
             )
         )
         val engine = ReaderEngine()
-        val paginated = engine.createSession(book)
+        val paginated = engine.createSession(book, settings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED))
             .reduce(ReaderAction.GoToChapter(1), engine)
         val vertical = engine.createSession(book, settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL))
             .reduce(ReaderAction.GoToChapter(1), engine)
@@ -192,6 +192,33 @@ class ReaderExtrasModelsTest {
         assertEquals(listOf(0), ReaderTtsPlanner.chunksForCurrentPage(session).map { it.chapterIndex }.distinct())
         assertEquals(listOf(0), ReaderTtsPlanner.chunksForCurrentChapter(session).map { it.chapterIndex }.distinct())
         assertEquals(listOf(0, 1), ReaderTtsPlanner.chunksFromCurrentLocation(session).map { it.chapterIndex }.distinct())
+    }
+
+    @Test
+    fun `tts planner starts onward reading at visible locator offset`() {
+        val source = "First hidden sentence. Second visible sentence. Third visible sentence."
+        val visibleOffset = source.indexOf("Second")
+        val book = SharedEpubBook(
+            id = "tts-visible",
+            fileName = "tts-visible.epub",
+            title = "TTS visible",
+            chapters = listOf(SharedEpubChapter("one", "One", source))
+        )
+        val session = ReaderEngine().createSession(book).copy(
+            navigationLocator = ReaderLocator(
+                chapterIndex = 0,
+                pageIndex = 0,
+                startOffset = visibleOffset,
+                endOffset = visibleOffset,
+                textQuote = "Second visible sentence."
+            )
+        )
+
+        val chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
+
+        assertEquals(visibleOffset, chunks.first().startOffset)
+        assertTrue(chunks.first().text.startsWith("Second visible sentence."))
+        assertFalse(chunks.any { it.text.startsWith("First hidden") })
     }
 
     @Test

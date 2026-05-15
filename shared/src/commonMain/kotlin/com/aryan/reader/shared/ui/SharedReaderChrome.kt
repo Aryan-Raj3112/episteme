@@ -413,19 +413,14 @@ fun SharedReaderScreen(
             SharedReaderControlPanel(
                 session = session,
                 toolbarPreferences = toolbarPreferences,
-                onToolbarPreferencesChange = onToolbarPreferencesChange,
                 onPickCustomFont = onPickCustomFont,
                 customFonts = customFonts,
                 extrasState = readerExtrasState,
                 aiByokSettings = byokSettings,
-                externalLookupAvailable = externalLookupAvailable,
                 cloudTtsControlsAvailable = cloudTtsControlsAvailable,
-                onExternalLookup = onExternalLookup,
                 onAiAction = onAiAction,
                 onCloudTtsStart = onCloudTtsStart,
-                onCloudTtsPauseResume = onCloudTtsPauseResume,
                 onCloudTtsStop = onCloudTtsStop,
-                onCloudTtsClearCache = onCloudTtsClearCache,
                 onAutoScrollChange = onAutoScrollChange,
                 ttsReplacementPreferences = ttsReplacementPreferences,
                 ttsReplacementBookId = ttsReplacementBookId ?: session.reader.book.title,
@@ -476,6 +471,7 @@ fun SharedReaderScreen(
                 onPrevious = { dispatch(ReaderAction.PreviousPage) },
                 onNext = { dispatch(ReaderAction.NextPage) },
                 onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) },
+                backgroundColor = background,
                 contentColor = foreground
             )
         }
@@ -519,7 +515,6 @@ fun SharedReaderScreen(
                     documentLayoutSignature,
                     session.searchQuery,
                     session.searchOptions,
-                    highlightPalette,
                     readerState.pages,
                     byokSettings.areReaderAiFeaturesAvailable,
                     effectiveCloudTtsAvailable,
@@ -1211,19 +1206,14 @@ private fun SharedReaderQuickActions(
 private fun SharedReaderControlPanel(
     session: ReaderSessionState,
     toolbarPreferences: ReaderToolbarPreferences,
-    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     onPickCustomFont: (() -> String?)?,
     customFonts: List<CustomFontItem>,
     extrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
-    externalLookupAvailable: Boolean,
     cloudTtsControlsAvailable: Boolean,
-    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
-    onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
-    onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     ttsReplacementBookId: String,
@@ -1305,24 +1295,16 @@ private fun SharedReaderControlPanel(
                         extrasState = extrasState,
                         aiByokSettings = aiByokSettings,
                         toolbarPreferences = toolbarPreferences,
-                        externalLookupAvailable = externalLookupAvailable,
                         cloudTtsControlsAvailable = cloudTtsControlsAvailable,
-                        onExternalLookup = onExternalLookup,
                         onAiAction = onAiAction,
                         onCloudTtsStart = onCloudTtsStart,
-                        onCloudTtsPauseResume = onCloudTtsPauseResume,
                         onCloudTtsStop = onCloudTtsStop,
-                        onCloudTtsClearCache = onCloudTtsClearCache,
                         onAutoScrollChange = onAutoScrollChange,
                         ttsReplacementPreferences = ttsReplacementPreferences,
                         ttsReplacementBookId = ttsReplacementBookId,
                         onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
                     )
 
-                    ReaderControlSection.TOOLBAR -> SharedReaderToolbarControls(
-                        toolbarPreferences = toolbarPreferences,
-                        onToolbarPreferencesChange = onToolbarPreferencesChange
-                    )
                 }
             }
         }
@@ -1333,8 +1315,7 @@ private enum class ReaderControlSection(val title: String) {
     PAGE("Page"),
     FORMAT("Format"),
     THEME("Theme"),
-    EXTRAS("Extras"),
-    TOOLBAR("Toolbar")
+    EXTRAS("Extras")
 }
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(session: ReaderSessionState): List<ReaderControlSection> {
@@ -1345,7 +1326,6 @@ private fun ReaderToolbarPreferences.availableReaderControlSections(session: Rea
         if (isVisible(ReaderTool.FORMAT) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.FORMAT)
         if (isVisible(ReaderTool.THEME)) add(ReaderControlSection.THEME)
         if (
-            isVisible(ReaderTool.DICTIONARY) ||
             isVisible(ReaderTool.AI_FEATURES) ||
             isVisible(ReaderTool.TTS_CONTROLS) ||
             isVisible(ReaderTool.TTS_SETTINGS) ||
@@ -1354,7 +1334,6 @@ private fun ReaderToolbarPreferences.availableReaderControlSections(session: Rea
         ) {
             add(ReaderControlSection.EXTRAS)
         }
-        add(ReaderControlSection.TOOLBAR)
     }
 }
 
@@ -1948,14 +1927,10 @@ private fun SharedReaderExtrasControls(
     extrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
     toolbarPreferences: ReaderToolbarPreferences,
-    externalLookupAvailable: Boolean,
     cloudTtsControlsAvailable: Boolean,
-    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
-    onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
-    onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     ttsReplacementBookId: String,
@@ -1967,21 +1942,6 @@ private fun SharedReaderExtrasControls(
     val recapText = ReaderContextExtractor.textBeforeCurrentLocation(session)
 
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        if (externalLookupAvailable) {
-            SharedReaderPanelSection("External Apps") {
-                SharedReaderChoiceRow {
-                    ReaderExternalLookupAction.entries.forEach { action ->
-                        FilterChip(
-                            selected = false,
-                            enabled = currentPageText.isNotBlank(),
-                            onClick = { onExternalLookup(action, currentPageText) },
-                            label = { Text(action.title) }
-                        )
-                    }
-                }
-            }
-        }
-
         SharedReaderPanelSection("Auto Scroll") {
             val autoScroll = extrasState.autoScroll.sanitized()
             Row(
@@ -2047,61 +2007,6 @@ private fun SharedReaderExtrasControls(
                         }
                     ) {
                         Text(if (ttsBusy) "Stop" else "Read")
-                    }
-                }
-                if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused) {
-                    SharedReaderChoiceRow {
-                        TextButton(onClick = onCloudTtsPauseResume) {
-                            Text(if (extrasState.cloudTts.isPaused) "Resume" else "Pause")
-                        }
-                    }
-                }
-                SharedReaderChoiceRow {
-                    TextButton(
-                        enabled = settings.isCloudTtsAvailable && !ttsBusy && currentPageText.isNotBlank(),
-                        onClick = {
-                            onCloudTtsStart(
-                                ReaderTtsReadScope.PAGE,
-                                ReaderTtsPlanner.chunksForCurrentPage(session)
-                            )
-                        }
-                    ) {
-                        Text("Page")
-                    }
-                    TextButton(
-                        enabled = settings.isCloudTtsAvailable && !ttsBusy && currentChapterText.isNotBlank(),
-                        onClick = {
-                            onCloudTtsStart(
-                                ReaderTtsReadScope.CHAPTER,
-                                ReaderTtsPlanner.chunksForCurrentChapter(session)
-                            )
-                        }
-                    ) {
-                        Text("Chapter")
-                    }
-                    TextButton(
-                        enabled = settings.isCloudTtsAvailable && !ttsBusy && currentPageText.isNotBlank(),
-                        onClick = {
-                            onCloudTtsStart(
-                                ReaderTtsReadScope.BOOK,
-                                ReaderTtsPlanner.chunksFromCurrentLocation(session)
-                            )
-                        }
-                    ) {
-                        Text("From here")
-                    }
-                }
-                val cacheSummary = extrasState.cloudTts.cacheSummary
-                if (cacheSummary.hasCachedAudio) {
-                    Text(
-                        "Cache: ${cacheSummary.currentVoiceLabel}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (cacheSummary.hasCurrentVoiceCachedAudio) {
-                        TextButton(onClick = onCloudTtsClearCache) {
-                            Text("Clear voice cache")
-                        }
                     }
                 }
             }
@@ -2975,6 +2880,7 @@ private fun SharedReaderFullscreenNavigation(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onPageNumberChange: (Int) -> Unit,
+    backgroundColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier
 ) {
@@ -2987,52 +2893,60 @@ private fun SharedReaderFullscreenNavigation(
         pageCount = totalPages,
         settings = readerState.settings
     )
-    Row(
+    Surface(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .fillMaxWidth(),
+        color = backgroundColor,
+        contentColor = contentColor,
+        tonalElevation = 0.dp
     ) {
-        IconButton(
-            enabled = readerState.canGoPrevious,
-            onClick = onPrevious
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.AutoMirrored.Filled.NavigateBefore,
-                contentDescription = "Previous page",
-                tint = contentColor.copy(alpha = if (readerState.canGoPrevious) 0.78f else 0.32f),
-                modifier = Modifier.size(22.dp)
-            )
-        }
-        ReaderMinimalSlider(
-            value = currentSliderPosition.toFloat(),
-            onValueChange = { value ->
-                onPageNumberChange(
-                    ReaderSpreadLayout.pageNumberForSliderPosition(
-                        position = value.roundToInt(),
-                        pageCount = totalPages,
-                        settings = readerState.settings
-                    )
+            IconButton(
+                enabled = readerState.canGoPrevious,
+                onClick = onPrevious
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.NavigateBefore,
+                    contentDescription = "Previous page",
+                    tint = contentColor.copy(alpha = if (readerState.canGoPrevious) 0.78f else 0.32f),
+                    modifier = Modifier.size(22.dp)
                 )
-            },
-            valueRange = 1f..sliderMax.toFloat(),
-            enabled = sliderSteps > 1,
-            activeColor = contentColor.copy(alpha = 0.62f),
-            inactiveColor = contentColor.copy(alpha = 0.18f),
-            thumbColor = contentColor.copy(alpha = 0.86f),
-            modifier = Modifier.weight(1f)
-        )
-        IconButton(
-            enabled = readerState.canGoNext,
-            onClick = onNext
-        ) {
-            Icon(
-                Icons.AutoMirrored.Filled.NavigateNext,
-                contentDescription = "Next page",
-                tint = contentColor.copy(alpha = if (readerState.canGoNext) 0.78f else 0.32f),
-                modifier = Modifier.size(22.dp)
+            }
+            ReaderMinimalSlider(
+                value = currentSliderPosition.toFloat(),
+                onValueChange = { value ->
+                    onPageNumberChange(
+                        ReaderSpreadLayout.pageNumberForSliderPosition(
+                            position = value.roundToInt(),
+                            pageCount = totalPages,
+                            settings = readerState.settings
+                        )
+                    )
+                },
+                valueRange = 1f..sliderMax.toFloat(),
+                enabled = sliderSteps > 1,
+                activeColor = contentColor.copy(alpha = 0.68f),
+                inactiveColor = contentColor.copy(alpha = 0.24f),
+                thumbColor = contentColor.copy(alpha = 0.92f),
+                modifier = Modifier.weight(1f)
             )
+            IconButton(
+                enabled = readerState.canGoNext,
+                onClick = onNext
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.NavigateNext,
+                    contentDescription = "Next page",
+                    tint = contentColor.copy(alpha = if (readerState.canGoNext) 0.78f else 0.32f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
     }
 }

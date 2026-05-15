@@ -53,7 +53,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 15
+    private const val SCHEMA_VERSION = 17
 
     private val json = Json {
         prettyPrint = true
@@ -67,6 +67,10 @@ object SharedLibrarySnapshotJson {
 
         val schemaVersion = root.int("schemaVersion", 1)
         val openTabIds = root.stringArray("openTabIds")
+        val readerDefaultSettings = root["readerDefaultSettings"]
+            ?.takeUnless { it is JsonNull }
+            ?.asReaderSettingsOrNull()
+            ?: ReaderSettings()
         return SharedLibrarySnapshot(
             books = root.array("books")
                 .mapNotNull { it.asBookItemOrNull() }
@@ -97,10 +101,7 @@ object SharedLibrarySnapshotJson {
                 ?: 1.0f,
             appSeedColor = root.int("appSeedColor")?.let { Color(it) },
             customAppThemes = root.array("customAppThemes").mapNotNull { it.asCustomAppThemeOrNull() },
-            readerDefaultSettings = root["readerDefaultSettings"]
-                ?.takeUnless { it is JsonNull }
-                ?.asReaderSettingsOrNull()
-                ?: ReaderSettings(),
+            readerDefaultSettings = readerDefaultSettings.migrateLegacyDefaultReadingMode(schemaVersion),
             pdfReaderDefaultSettings = root["pdfReaderDefaultSettings"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderSettingsOrNull()
@@ -224,11 +225,18 @@ private fun List<BookItem>.migrateLegacyRecentState(schemaVersion: Int, openTabI
 private fun BookItem.hasReaderFootprint(openedBookIds: Set<String>): Boolean {
     return id in openedBookIds ||
         lastPageIndex != null ||
+        readerPosition != null ||
         (progressPercentage ?: 0f) > 0f ||
         readerSettings != null ||
         readerBookmarks.isNotEmpty() ||
         readerHighlights.isNotEmpty() ||
         pdfReaderViewport != null
+}
+
+private fun ReaderSettings.migrateLegacyDefaultReadingMode(schemaVersion: Int): ReaderSettings {
+    if (schemaVersion >= 17 || readingMode != ReaderReadingMode.PAGINATED) return this
+    val oldDefaultSettings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
+    return if (this == oldDefaultSettings) copy(readingMode = ReaderReadingMode.VERTICAL) else this
 }
 
 private fun JsonElement.asBookItemOrNull(): BookItem? {
@@ -254,6 +262,7 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         seriesIndex = obj.double("seriesIndex"),
         tags = obj.array("tags").mapNotNull { it.asTagOrNull() },
         lastPageIndex = obj.int("lastPageIndex"),
+        readerPosition = obj["readerPosition"]?.takeUnless { it is JsonNull }?.asReaderLocatorOrNull(),
         readerSettings = obj["readerSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
         readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() },
         readerHighlights = obj.array("readerHighlights").mapNotNull { it.asReaderHighlightOrNull() },
@@ -347,6 +356,7 @@ private fun BookItem.toJsonObject(): JsonObject {
             "seriesIndex" to seriesIndex.asJson(),
             "tags" to JsonArray(tags.map { it.toJsonObject() }),
             "lastPageIndex" to lastPageIndex.asJson(),
+            "readerPosition" to readerPosition.asJson(),
             "readerSettings" to readerSettings.asJson(),
             "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() }),
             "readerHighlights" to JsonArray(readerHighlights.map { it.toJsonObject() }),
@@ -715,4 +725,8 @@ private fun ReaderLocator.toJsonObject(): JsonObject {
             cfi?.let { put("cfi", JsonPrimitive(it)) }
         }
     )
+}
+
+private fun ReaderLocator?.asJson(): JsonElement {
+    return this?.toJsonObject() ?: JsonNull
 }

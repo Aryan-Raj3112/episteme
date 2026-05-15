@@ -54,7 +54,7 @@ data class ReaderSettings(
     val lineSpacing: Float = 1.45f,
     val margin: Int = 48,
     val darkMode: Boolean = false,
-    val readingMode: ReaderReadingMode = ReaderReadingMode.PAGINATED,
+    val readingMode: ReaderReadingMode = ReaderReadingMode.VERTICAL,
     val textAlign: SharedReaderTextAlign = SharedReaderTextAlign.START,
     val pageWidth: Int = 760,
     val fontFamily: String = "Default",

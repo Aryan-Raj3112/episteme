@@ -215,6 +215,35 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `metadata sidecar preserves precise reader position`() {
+        val locator = ReaderLocator(
+            chapterIndex = 2,
+            pageIndex = 7,
+            startOffset = 320,
+            endOffset = 320,
+            cfi = "desktop:2:320:320"
+        )
+
+        val metadata = book(
+            id = "local_Book.pdf",
+            progress = 45f,
+            readerPosition = locator
+        ).toSharedFolderBookMetadata() ?: error("Expected sidecar")
+        val restored = metadata.toBookItem(
+            file = scannedFile("Book.pdf", "Book.pdf"),
+            existing = null,
+            nowMillis = 2_000L
+        )
+
+        assertEquals(2, metadata.lastChapterIndex)
+        assertEquals(7, metadata.lastPage)
+        assertEquals("desktop:2:320:320", metadata.lastPositionCfi)
+        assertNull(metadata.locatorBlockIndex)
+        assertNull(metadata.locatorCharOffset)
+        assertEquals(locator, restored.readerPosition)
+    }
+
+    @Test
     fun `sync resets extracted metadata and cover when folder file size changes`() {
         val existing = book(
             id = "local_Book.pdf",
@@ -274,7 +303,8 @@ class LocalFolderSyncEngineTest {
         isRecent: Boolean = false,
         fileSize: Long = 0L,
         coverImagePath: String? = null,
-        folderTextMetadataParsed: Boolean = false
+        folderTextMetadataParsed: Boolean = false,
+        readerPosition: ReaderLocator? = null
     ): BookItem {
         return BookItem(
             id = id,
@@ -288,7 +318,8 @@ class LocalFolderSyncEngineTest {
             fileSize = fileSize,
             sourceFolder = sourceFolder,
             isRecent = isRecent,
-            folderTextMetadataParsed = folderTextMetadataParsed
+            folderTextMetadataParsed = folderTextMetadataParsed,
+            readerPosition = readerPosition
         )
     }
 

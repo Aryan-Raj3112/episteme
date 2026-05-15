@@ -87,18 +87,16 @@ fun epubReaderWorkspaceModel(
         if (preferences.isVisible(ReaderTool.THEME) || preferences.isVisible(ReaderTool.FORMAT)) {
             add(ReaderWorkspaceInspectorSection.APPEARANCE)
         }
-        if (preferences.isVisible(ReaderTool.READING_MODE) || preferences.isVisible(ReaderTool.VISUAL_OPTIONS)) {
+        if (preferences.isVisible(ReaderTool.READING_MODE)) {
             add(ReaderWorkspaceInspectorSection.TOOLS)
         }
         if (
-            (externalLookupAvailable && preferences.isVisible(ReaderTool.DICTIONARY)) ||
             (aiAvailable && preferences.isVisible(ReaderTool.AI_FEATURES)) ||
             (cloudTtsAvailable && preferences.isVisible(ReaderTool.TTS_CONTROLS)) ||
             preferences.isVisible(ReaderTool.AUTO_SCROLL)
         ) {
             add(ReaderWorkspaceInspectorSection.AI_TTS)
         }
-        add(ReaderWorkspaceInspectorSection.TOOLBAR)
     }.distinct()
     val topActions = buildList {
         if (ReaderWorkspaceLeftSection.CONTENTS in leftSections) add(ReaderWorkspaceTopAction.CONTENTS)
