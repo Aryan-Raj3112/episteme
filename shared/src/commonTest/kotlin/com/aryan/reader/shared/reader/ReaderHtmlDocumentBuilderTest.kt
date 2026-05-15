@@ -386,11 +386,45 @@ class ReaderHtmlDocumentBuilderTest {
             settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
         )
 
+        assertTrue(html.contains("function readerHostsForLocator(chapterIndex, startOffset, endOffset)"))
         assertTrue(html.contains("function readerHostForLocator(chapterIndex, startOffset, endOffset)"))
-        assertTrue(html.contains("var targetChapter = readerHostForLocator(chapterIndex, startOffset, endOffset);"))
+        assertTrue(html.contains("var targetChapters = readerHostsForLocator(chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("var chapter = readerHostForLocator(chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("data-reader-active-page-index"))
         assertTrue(html.contains("positionFromReaderHost(activePage, activeStart)"))
+    }
+
+    @Test
+    fun `paginated spread script can create one highlight from a selection crossing visible pages`() {
+        val left = ReaderPage(
+            pageIndex = 2,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "left page",
+            startOffset = 0,
+            endOffset = 9
+        )
+        val right = ReaderPage(
+            pageIndex = 3,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "right page",
+            startOffset = 10,
+            endOffset = 20
+        )
+
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = repeatedWordBook("left page\n\nright page"),
+            page = left,
+            visiblePages = listOf(left, right),
+            settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+        )
+
+        assertTrue(html.contains("function selectionSegmentsForRange(range)"))
+        assertTrue(html.contains("var sameChapter = segments.every(function (segment)"))
+        assertTrue(html.contains("var cfi = 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;"))
+        assertTrue(html.contains("payloads.forEach(function (payload)"))
+        assertTrue(html.contains("wrapRangeTextSegments(segment.range"))
     }
 
     @Test

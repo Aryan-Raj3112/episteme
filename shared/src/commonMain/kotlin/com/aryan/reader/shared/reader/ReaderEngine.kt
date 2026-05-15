@@ -229,6 +229,9 @@ class ReaderEngine(
     }
 
     fun jumpBack(state: ReaderSessionState): ReaderSessionState {
+        if (state.reader.settings.readingMode == ReaderReadingMode.PAGINATED) {
+            return state.copy(jumpHistory = state.jumpHistory.clear())
+        }
         val history = state.jumpHistory.pruned(state.reader.book.chapters.size)
         val target = history.backLocator ?: return state.copy(jumpHistory = history)
         return goToLocator(state.copy(jumpHistory = history), target)
@@ -236,6 +239,9 @@ class ReaderEngine(
     }
 
     fun jumpForward(state: ReaderSessionState): ReaderSessionState {
+        if (state.reader.settings.readingMode == ReaderReadingMode.PAGINATED) {
+            return state.copy(jumpHistory = state.jumpHistory.clear())
+        }
         val history = state.jumpHistory.pruned(state.reader.book.chapters.size)
         val target = history.forwardLocator ?: return state.copy(jumpHistory = history)
         return goToLocator(state.copy(jumpHistory = history), target)
@@ -349,9 +355,15 @@ class ReaderEngine(
 
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
         val layoutChanged = state.reader.settings.layoutSignature() != settings.layoutSignature()
+        val nextJumpHistory = if (settings.readingMode == ReaderReadingMode.PAGINATED) {
+            state.jumpHistory.clear()
+        } else {
+            state.jumpHistory
+        }
         if (!layoutChanged) {
             return state.copy(
-                reader = state.reader.copy(settings = settings)
+                reader = state.reader.copy(settings = settings),
+                jumpHistory = nextJumpHistory
             )
         }
         val anchor = state.navigationLocator ?: state.reader.currentPage?.toLocator(state.reader.book)
@@ -370,7 +382,8 @@ class ReaderEngine(
                 currentPageIndex = newIndex,
                 settings = settings
             ),
-            navigationLocator = normalizedLocator
+            navigationLocator = normalizedLocator,
+            jumpHistory = nextJumpHistory
         )
         return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
     }
@@ -419,7 +432,12 @@ class ReaderEngine(
                 currentPageIndex = normalizedIndex
             ),
             activeSearchResultIndex = activeSearchIndex,
-            navigationLocator = normalizedLocator
+            navigationLocator = normalizedLocator,
+            jumpHistory = if (state.reader.settings.readingMode == ReaderReadingMode.PAGINATED) {
+                state.jumpHistory.clear()
+            } else {
+                state.jumpHistory
+            }
         )
         return if (updated.searchQuery.isNotBlank()) refreshSearchResults(updated) else updated
     }
@@ -685,6 +703,12 @@ private fun ReaderSessionState.withRecordedJumpFrom(
     previous: ReaderSessionState,
     requestedTarget: ReaderLocator? = null
 ): ReaderSessionState {
+    if (
+        previous.reader.settings.readingMode == ReaderReadingMode.PAGINATED ||
+        reader.settings.readingMode == ReaderReadingMode.PAGINATED
+    ) {
+        return copy(jumpHistory = previous.jumpHistory.clear())
+    }
     val current = previous.currentJumpLocator()
     val target = navigationLocator ?: requestedTarget ?: currentJumpLocator()
     return copy(

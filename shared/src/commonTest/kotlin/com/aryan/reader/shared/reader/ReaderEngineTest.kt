@@ -298,6 +298,36 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `paginated mode does not record or use jump history`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(
+            book = multiChapterBook(),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
+        )
+
+        val jumped = engine.jumpToChapter(session, 1)
+        val verticalWithHistory = engine.jumpToChapter(engine.createSession(multiChapterBook()), 1)
+        val switchedToPaginated = engine.updateSettings(
+            verticalWithHistory,
+            verticalWithHistory.reader.settings.copy(readingMode = ReaderReadingMode.PAGINATED)
+        )
+        val withLegacyHistory = jumped.copy(
+            jumpHistory = ReaderJumpHistory()
+                .record(
+                    currentLocator = ReaderLocator(chapterIndex = 0, cfi = "desktop:0:0:0"),
+                    targetLocator = ReaderLocator(chapterIndex = 1, cfi = "desktop:1:0:0"),
+                    chapterCount = 3
+                )
+        )
+        val back = engine.jumpBack(withLegacyHistory)
+
+        assertTrue(jumped.jumpHistory.locators.isEmpty())
+        assertTrue(switchedToPaginated.jumpHistory.locators.isEmpty())
+        assertEquals(jumped.reader.currentPageIndex, back.reader.currentPageIndex)
+        assertTrue(back.jumpHistory.locators.isEmpty())
+    }
+
+    @Test
     fun `replacePages uses captured reflow anchor when no newer navigation happened`() {
         val engine = ReaderEngine()
         val book = manualRangeBook()

@@ -733,28 +733,33 @@ object ReaderHtmlDocumentBuilder {
                     });
                   }
                   window.readerPaginationLayoutLog = readerPaginationLayoutLog;
-                  function readerHostForLocator(chapterIndex, startOffset, endOffset) {
+                  function readerHostsForLocator(chapterIndex, startOffset, endOffset) {
                     var selector = '[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]';
                     var hosts = Array.prototype.slice.call(document.querySelectorAll(selector));
-                    if (!hosts.length) return null;
+                    if (!hosts.length) return [];
                     var parsedStart = parseInt(startOffset, 10);
                     var parsedEnd = parseInt(endOffset === undefined || endOffset === null ? parsedStart : endOffset, 10);
                     var hasOffsets = Number.isFinite(parsedStart);
-                    if (!hasOffsets) return hosts[0];
+                    if (!hasOffsets) return [hosts[0]];
                     var rangeEnd = Number.isFinite(parsedEnd) && parsedEnd >= parsedStart ? parsedEnd : parsedStart;
-                    var containing = hosts.find(function (host) {
+                    var containing = hosts.filter(function (host) {
                       var pageStart = numberAttribute(host, 'data-reader-page-start', null);
                       var pageEnd = numberAttribute(host, 'data-reader-page-end', null);
                       if (pageStart === null || pageEnd === null) return true;
                       if (parsedStart === rangeEnd) return parsedStart >= pageStart && parsedStart <= pageEnd;
                       return parsedStart < pageEnd && rangeEnd > pageStart;
                     });
-                    if (containing) return containing;
-                    return hosts.reduce(function (best, host) {
+                    if (containing.length) return containing;
+                    var best = hosts.reduce(function (best, host) {
                       var bestStart = numberAttribute(best, 'data-reader-page-start', 0);
                       var hostStart = numberAttribute(host, 'data-reader-page-start', 0);
                       return Math.abs(hostStart - parsedStart) < Math.abs(bestStart - parsedStart) ? host : best;
                     }, hosts[0]);
+                    return [best];
+                  }
+                  function readerHostForLocator(chapterIndex, startOffset, endOffset) {
+                    var hosts = readerHostsForLocator(chapterIndex, startOffset, endOffset);
+                    return hosts.length ? hosts[0] : null;
                   }
                   function scrollToLocator(locator) {
                     locator = locator || {};
@@ -1636,6 +1641,105 @@ object ReaderHtmlDocumentBuilder {
                     var rawEnd = absoluteOffsetForBoundary(content, range.endContainer, range.endOffset);
                     return trimSourceOffsets(rawStart, rawEnd, range.toString());
                   }
+                  function rangeIntersectsRange(range, candidate) {
+                    if (!range || !candidate) return false;
+                    try {
+                      return range.compareBoundaryPoints(Range.END_TO_START, candidate) > 0 &&
+                        range.compareBoundaryPoints(Range.START_TO_END, candidate) < 0;
+                    } catch (error) {
+                      return false;
+                    }
+                  }
+                  function nodeInside(root, node) {
+                    return !!root && !!node && (root === node || (root.contains && root.contains(node)));
+                  }
+                  function firstTextBoundary(root) {
+                    var nodes = textNodesUnder(root, false);
+                    if (nodes.length) return { node: nodes[0], offset: 0 };
+                    return { node: root, offset: 0 };
+                  }
+                  function lastTextBoundary(root) {
+                    var nodes = textNodesUnder(root, false);
+                    if (nodes.length) {
+                      var last = nodes[nodes.length - 1];
+                      return { node: last, offset: (last.nodeValue || '').length };
+                    }
+                    return { node: root, offset: root && root.childNodes ? root.childNodes.length : 0 };
+                  }
+                  function clippedRangeForContent(content, range) {
+                    if (!content || !range) return null;
+                    var contentRange = document.createRange();
+                    try {
+                      contentRange.selectNodeContents(content);
+                      if (!rangeIntersectsRange(range, contentRange)) return null;
+                      var clipped = document.createRange();
+                      if (nodeInside(content, range.startContainer)) {
+                        clipped.setStart(range.startContainer, range.startOffset);
+                      } else {
+                        var first = firstTextBoundary(content);
+                        clipped.setStart(first.node, first.offset);
+                      }
+                      if (nodeInside(content, range.endContainer)) {
+                        clipped.setEnd(range.endContainer, range.endOffset);
+                      } else {
+                        var last = lastTextBoundary(content);
+                        clipped.setEnd(last.node, last.offset);
+                      }
+                      if (clipped.collapsed) {
+                        clipped.detach && clipped.detach();
+                        return null;
+                      }
+                      return clipped;
+                    } catch (error) {
+                      return null;
+                    } finally {
+                      contentRange.detach && contentRange.detach();
+                    }
+                  }
+                  function selectionSegmentsForRange(range) {
+                    if (!range) return [];
+                    var contents = Array.prototype.slice.call(document.querySelectorAll('.page[data-reader-page-index] .reader-content'));
+                    if (!contents.length) {
+                      contents = Array.prototype.slice.call(document.querySelectorAll('[data-reader-chapter-index] .reader-content'));
+                    }
+                    if (!contents.length) {
+                      var container = range.commonAncestorContainer;
+                      if (container && container.nodeType !== Node.ELEMENT_NODE) container = container.parentElement;
+                      var content = container && container.closest ? container.closest('.reader-content') : null;
+                      if (content) contents = [content];
+                    }
+                    return contents.map(function (content) {
+                      var segmentRange = clippedRangeForContent(content, range);
+                      if (!segmentRange) return null;
+                      var offsets = rangeOffsetsWithinContent(content, segmentRange);
+                      if (offsets.start === null || offsets.end === null || offsets.end <= offsets.start) {
+                        segmentRange.detach && segmentRange.detach();
+                        return null;
+                      }
+                      var readerHost = content.closest ? content.closest('[data-reader-chapter-index]') : null;
+                      if (!readerHost) {
+                        segmentRange.detach && segmentRange.detach();
+                        return null;
+                      }
+                      var segmentText = segmentRange.toString().trim();
+                      if (!segmentText) {
+                        segmentRange.detach && segmentRange.detach();
+                        return null;
+                      }
+                      return {
+                        range: segmentRange,
+                        content: content,
+                        readerHost: readerHost,
+                        text: segmentText,
+                        chapterIndex: parseInt(readerHost.getAttribute('data-reader-chapter-index') || '0', 10),
+                        chapterId: readerHost.getAttribute('data-reader-chapter-id'),
+                        chapterHref: readerHost.getAttribute('data-reader-chapter-href'),
+                        pageIndex: parseInt(readerHost.getAttribute('data-reader-page-index') || '-1', 10),
+                        startOffset: offsets.start,
+                        endOffset: offsets.end
+                      };
+                    }).filter(Boolean);
+                  }
                   function rangeMatchesStoredOffsets(content, range, startOffset, endOffset) {
                     var offsets = rangeOffsetsWithinContent(content, range);
                     if (offsets.start === null || offsets.end === null) return false;
@@ -1928,69 +2032,90 @@ object ReaderHtmlDocumentBuilder {
                       applyHighlightTextFallback(highlight);
                       return;
                     }
-                    var targetChapter = readerHostForLocator(chapterIndex, startOffset, endOffset);
-                    if (!targetChapter) {
+                    var targetChapters = readerHostsForLocator(chapterIndex, startOffset, endOffset);
+                    if (!targetChapters.length) {
                       applyHighlightTextFallback(highlight);
                       return;
                     }
-                    var pageStart = numberAttribute(targetChapter, 'data-reader-page-start', null);
-                    var pageEnd = numberAttribute(targetChapter, 'data-reader-page-end', null);
-                    if (pageStart !== null && pageEnd !== null && (startOffset >= pageEnd || endOffset <= pageStart)) return;
                     var sourceCfi = locator.cfi || highlight.cfi;
-                    var range = rangeForOffsets(chapterIndex, startOffset, endOffset, sourceCfi);
                     var expectedText = locator.textQuote || highlight.text || '';
                     var expectedNormalized = readerTtsNormalized(expectedText);
-                    var actualNormalized = range && !range.collapsed ? readerTtsNormalized(range.toString()) : '';
-                    if (expectedNormalized && (!range || range.collapsed || actualNormalized !== expectedNormalized)) {
-                      var chapter = targetChapter;
-                      var content = chapter ? (chapter.querySelector('.reader-content') || chapter) : null;
-                      var searchRoot = content;
-                      if (content && sourceCfi) {
-                        searchRoot = content.querySelector('[data-reader-cfi="' + selectorValue(sourceCfi) + '"]') || content;
-                      }
-                      if (content && searchRoot === content) {
-                        var hosts = Array.prototype.slice.call(content.querySelectorAll('[data-reader-text-start][data-reader-text-end]'));
-                        var containing = null;
-                        var bestSpan = Number.MAX_SAFE_INTEGER;
-                        hosts.forEach(function (host) {
-                          var hostStart = numberAttribute(host, 'data-reader-text-start', null);
-                          var hostEnd = numberAttribute(host, 'data-reader-text-end', null);
-                          if (hostStart === null || hostEnd === null || hostEnd < hostStart) return;
-                          if (startOffset >= hostEnd || endOffset <= hostStart) return;
-                          var span = hostEnd - hostStart;
-                          if (span < bestSpan) {
-                            containing = host;
-                            bestSpan = span;
-                          }
-                        });
-                        searchRoot = containing || content;
-                      }
-                      var textRange = normalizedRangeForText(searchRoot, expectedNormalized, false);
-                      if (textRange && !textRange.collapsed && rangeMatchesStoredOffsets(content, textRange, startOffset, endOffset)) {
-                        if (range && range.detach) range.detach();
-                        range = textRange;
-                      } else {
-                        if (textRange && textRange.detach) textRange.detach();
+                    var applied = false;
+                    targetChapters.forEach(function (targetChapter) {
+                      var pageStart = numberAttribute(targetChapter, 'data-reader-page-start', null);
+                      var pageEnd = numberAttribute(targetChapter, 'data-reader-page-end', null);
+                      if (pageStart !== null && pageEnd !== null && (startOffset >= pageEnd || endOffset <= pageStart)) return;
+                      var segmentStart = pageStart === null ? startOffset : Math.max(startOffset, pageStart);
+                      var segmentEnd = pageEnd === null ? endOffset : Math.min(endOffset, pageEnd);
+                      if (segmentEnd <= segmentStart) return;
+                      var range = rangeForOffsets(chapterIndex, segmentStart, segmentEnd, sourceCfi);
+                      var actualNormalized = range && !range.collapsed ? readerTtsNormalized(range.toString()) : '';
+                      var isSegment = segmentStart !== startOffset || segmentEnd !== endOffset || targetChapters.length > 1;
+                      if (expectedNormalized && isSegment && actualNormalized && expectedNormalized.indexOf(actualNormalized) < 0) {
                         if (range && range.detach) range.detach();
                         readerSelectionDebugLog(
-                          'highlight_expected_mismatch id=' + (highlight.id || '') +
-                          ' offsets=' + startOffset + '..' + endOffset +
+                          'highlight_segment_mismatch id=' + (highlight.id || '') +
+                          ' offsets=' + segmentStart + '..' + segmentEnd +
                           ' expected="' + readerTtsPreview(expectedText, 120) + '"' +
                           ' actual="' + readerTtsPreview(actualNormalized, 120) + '"'
                         );
                         return;
                       }
-                    }
-                    if (!range || range.collapsed) {
-                      applyHighlightTextFallback(highlight);
-                      return;
-                    }
-                    wrapRangeTextSegments(range, function () {
-                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', startOffset, endOffset);
-                      marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
-                      return marker;
+                      if (expectedNormalized && !isSegment && (!range || range.collapsed || actualNormalized !== expectedNormalized)) {
+                        var chapter = targetChapter;
+                        var content = chapter ? (chapter.querySelector('.reader-content') || chapter) : null;
+                        var searchRoot = content;
+                        if (content && sourceCfi) {
+                          searchRoot = content.querySelector('[data-reader-cfi="' + selectorValue(sourceCfi) + '"]') || content;
+                        }
+                        if (content && searchRoot === content) {
+                          var hosts = Array.prototype.slice.call(content.querySelectorAll('[data-reader-text-start][data-reader-text-end]'));
+                          var containing = null;
+                          var bestSpan = Number.MAX_SAFE_INTEGER;
+                          hosts.forEach(function (host) {
+                            var hostStart = numberAttribute(host, 'data-reader-text-start', null);
+                            var hostEnd = numberAttribute(host, 'data-reader-text-end', null);
+                            if (hostStart === null || hostEnd === null || hostEnd < hostStart) return;
+                            if (segmentStart >= hostEnd || segmentEnd <= hostStart) return;
+                            var span = hostEnd - hostStart;
+                            if (span < bestSpan) {
+                              containing = host;
+                              bestSpan = span;
+                            }
+                          });
+                          searchRoot = containing || content;
+                        }
+                        var textRange = normalizedRangeForText(searchRoot, expectedNormalized, false);
+                        if (textRange && !textRange.collapsed && rangeMatchesStoredOffsets(content, textRange, segmentStart, segmentEnd)) {
+                          if (range && range.detach) range.detach();
+                          range = textRange;
+                        } else {
+                          if (textRange && textRange.detach) textRange.detach();
+                          if (range && range.detach) range.detach();
+                          readerSelectionDebugLog(
+                            'highlight_expected_mismatch id=' + (highlight.id || '') +
+                            ' offsets=' + segmentStart + '..' + segmentEnd +
+                            ' expected="' + readerTtsPreview(expectedText, 120) + '"' +
+                            ' actual="' + readerTtsPreview(actualNormalized, 120) + '"'
+                          );
+                          return;
+                        }
+                      }
+                      if (!range || range.collapsed) {
+                        if (range && range.detach) range.detach();
+                        return;
+                      }
+                      wrapRangeTextSegments(range, function () {
+                        var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd);
+                        marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
+                        return marker;
+                      });
+                      applied = true;
+                      range.detach && range.detach();
                     });
-                    range.detach && range.detach();
+                    if (!applied) {
+                      applyHighlightTextFallback(highlight);
+                    }
                   }
                   function applyHighlightTextFallback(highlight) {
                     var locator = highlight && highlight.locator ? highlight.locator : {};
@@ -2156,63 +2281,99 @@ object ReaderHtmlDocumentBuilder {
                     var selection = window.getSelection();
                     if (!selection || selection.rangeCount === 0) return;
                     var range = selection.getRangeAt(0);
-                    var container = range.commonAncestorContainer;
-                    if (container && container.nodeType !== 1) container = container.parentElement;
-                    var contentHost = container && container.closest ? container.closest('.reader-content') : null;
-                    var textHost = container && container.closest ? container.closest('[data-reader-text-start]') : null;
-                    var readerHost = contentHost && contentHost.closest
-                      ? contentHost.closest('[data-reader-chapter-index]')
-                      : (container && container.closest ? container.closest('[data-reader-chapter-index]') : null);
-                    var chapterIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-chapter-index') || '0', 10) : 0;
-                    var chapterId = readerHost ? readerHost.getAttribute('data-reader-chapter-id') : null;
-                    var chapterHref = readerHost ? readerHost.getAttribute('data-reader-chapter-href') : null;
-                    var pageIndex = readerHost ? parseInt(readerHost.getAttribute('data-reader-page-index') || '-1', 10) : -1;
-                    var offsetHost = textHost || contentHost || readerHost;
-                    var fallbackStart = readerHost ? readerHost.getAttribute('data-reader-page-start') : '0';
-                    var pageStart = offsetHost ? parseInt(offsetHost.getAttribute('data-reader-text-start') || offsetHost.getAttribute('data-reader-content-start') || fallbackStart || '0', 10) : 0;
-                    var sourceOffsets = contentHost ? selectionSourceOffsetsWithin(contentHost, range) : { start: null, end: null };
-                    var fallbackOffsets = sourceOffsets.start === null || sourceOffsets.end === null
-                      ? (offsetHost ? selectionOffsetsWithin(offsetHost, range) : { start: null, end: null })
-                      : null;
-                    var startOffset = sourceOffsets.start !== null ? sourceOffsets.start : (fallbackOffsets && fallbackOffsets.start !== null ? pageStart + fallbackOffsets.start : null);
-                    var endOffset = sourceOffsets.end !== null ? sourceOffsets.end : (fallbackOffsets && fallbackOffsets.end !== null ? pageStart + fallbackOffsets.end : null);
                     var text = selection.toString().trim();
-                    if (pageIndex < 0 && startOffset !== null) {
-                      var anchorPage = pageForLocator(chapterIndex, startOffset);
-                      if (anchorPage) pageIndex = anchorPage.pageIndex;
+                    if (!text) return;
+                    var segments = selectionSegmentsForRange(range);
+                    if (!segments.length) {
+                      readerSelectionDebugLog('highlight_selection_segments_missing text="' + readerTtsPreview(text, 120) + '"');
+                      return;
                     }
-                    var cfi = startOffset === null || endOffset === null
-                      ? 'desktop:' + chapterIndex + ':' + pageIndex + ':' + Date.now()
-                      : 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;
-                    var payload = {
-                      cfi: cfi,
-                      text: text,
-                      colorId: colorId || 'yellow',
-                      chapterIndex: chapterIndex,
-                      locator: {
-                        chapterIndex: chapterIndex,
-                        chapterId: chapterId,
-                        href: chapterHref || null,
-                        pageIndex: pageIndex >= 0 ? pageIndex : null,
-                        startOffset: startOffset,
-                        endOffset: endOffset,
-                        textQuote: text,
-                        cfi: cfi
+                    var firstSegment = segments[0];
+                    var lastSegment = segments[segments.length - 1];
+                    var sameChapter = segments.every(function (segment) {
+                      return segment.chapterIndex === firstSegment.chapterIndex;
+                    });
+                    var payloads = [];
+                    if (sameChapter) {
+                      var chapterIndex = firstSegment.chapterIndex;
+                      var startOffset = firstSegment.startOffset;
+                      var endOffset = lastSegment.endOffset;
+                      var pageIndex = firstSegment.pageIndex;
+                      if (pageIndex < 0 && startOffset !== null) {
+                        var anchorPage = pageForLocator(chapterIndex, startOffset);
+                        if (anchorPage) pageIndex = anchorPage.pageIndex;
                       }
-                    };
-                    var localRange = range.cloneRange ? range.cloneRange() : range;
-                    try {
-                      wrapRangeTextSegments(localRange, function () {
-                        var marker = createReaderHighlightMarker(null, colorId || 'yellow', startOffset, endOffset);
-                        marker.setAttribute('data-cfi', cfi);
-                        return marker;
+                      var cfi = 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;
+                      payloads.push({
+                        cfi: cfi,
+                        text: text,
+                        colorId: colorId || 'yellow',
+                        chapterIndex: chapterIndex,
+                        locator: {
+                          chapterIndex: chapterIndex,
+                          chapterId: firstSegment.chapterId,
+                          href: firstSegment.chapterHref || null,
+                          pageIndex: pageIndex >= 0 ? pageIndex : null,
+                          startOffset: startOffset,
+                          endOffset: endOffset,
+                          textQuote: text,
+                          cfi: cfi
+                        }
                       });
+                    } else {
+                      segments.forEach(function (segment) {
+                        var cfi = 'desktop:' + segment.chapterIndex + ':' + segment.startOffset + ':' + segment.endOffset;
+                        payloads.push({
+                          cfi: cfi,
+                          text: segment.text,
+                          colorId: colorId || 'yellow',
+                          chapterIndex: segment.chapterIndex,
+                          locator: {
+                            chapterIndex: segment.chapterIndex,
+                            chapterId: segment.chapterId,
+                            href: segment.chapterHref || null,
+                            pageIndex: segment.pageIndex >= 0 ? segment.pageIndex : null,
+                            startOffset: segment.startOffset,
+                            endOffset: segment.endOffset,
+                            textQuote: segment.text,
+                            cfi: cfi
+                          }
+                        });
+                      });
+                    }
+                    try {
+                      if (sameChapter) {
+                        var payload = payloads[0];
+                        var localRange = range.cloneRange ? range.cloneRange() : range;
+                        try {
+                          wrapRangeTextSegments(localRange, function () {
+                            var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset);
+                            marker.setAttribute('data-cfi', payload.cfi);
+                            return marker;
+                          });
+                        } finally {
+                          if (localRange !== range && localRange.detach) localRange.detach();
+                        }
+                      } else {
+                        segments.forEach(function (segment, index) {
+                          var payload = payloads[index];
+                          wrapRangeTextSegments(segment.range, function () {
+                            var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset);
+                            marker.setAttribute('data-cfi', payload.cfi);
+                            return marker;
+                          });
+                        });
+                      }
                     } catch (error) {
                       readerSelectionDebugLog('highlight_local_wrap_error error=' + readerTtsPreview(error, 180));
                     } finally {
-                      if (localRange !== range && localRange.detach) localRange.detach();
+                      segments.forEach(function (segment) {
+                        if (segment.range && segment.range.detach) segment.range.detach();
+                      });
                     }
-                    if (text.length > 0) sendReaderHighlightCreated(payload, 0);
+                    payloads.forEach(function (payload) {
+                      if (payload.text.length > 0) sendReaderHighlightCreated(payload, 0);
+                    });
                     scheduleReaderHighlightReconcile();
                     selection.removeAllRanges();
                     hideMenu();

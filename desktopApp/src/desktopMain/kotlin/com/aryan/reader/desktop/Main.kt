@@ -291,6 +291,7 @@ import com.aryan.reader.shared.pdf.withSharedPdfTextStyle
 import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderLayoutSignature
 import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -316,7 +317,11 @@ import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
+import com.aryan.reader.shared.ui.ReaderContentRenderPlan
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.shared.ui.SharedNativeReaderLinkClick
+import com.aryan.reader.shared.ui.SharedNativeReaderSelectionAction
+import com.aryan.reader.shared.ui.SharedNativePaginatedReader
 import com.aryan.reader.shared.ui.ReaderWorkspaceShell
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
@@ -908,8 +913,7 @@ internal data class DesktopWebViewRuntimeState(
 )
 
 internal fun shouldRequestDesktopWebViewRuntime(readerSurface: ReaderFeatureSurface?): Boolean {
-    return readerSurface == ReaderFeatureSurface.EPUB_READER ||
-        readerSurface == ReaderFeatureSurface.TEXT_READER
+    return readerSurface == ReaderFeatureSurface.TEXT_READER
 }
 
 internal fun shouldStartDesktopWebViewRuntime(
@@ -1076,6 +1080,14 @@ private fun EpistemeDesktopApp(
         }
     }
     var readerSession by remember { mutableStateOf(readerEngine.createSession(desktopEmptyReaderBook())) }
+    LaunchedEffect(readerSession.reader.book.id, readerSession.reader.settings.readingMode) {
+        if (
+            readerSession.reader.book.chapters.isNotEmpty() &&
+            readerSession.reader.settings.readingMode == ReaderReadingMode.VERTICAL
+        ) {
+            webViewRuntimeRequested = true
+        }
+    }
     var readerExtrasState by remember {
         mutableStateOf(
             ReaderExtrasState(
@@ -10688,6 +10700,40 @@ private fun ReaderScreen(
     }
     var readerViewport by remember(session.reader.book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
     val paginationLayoutSignature = session.reader.settings.layoutSignature()
+    val paginationContentSignature = remember(session.reader.book) {
+        session.reader.book.desktopPaginationContentSignature()
+    }
+    val paginationDensitySignature = DesktopEpubPaginationDensity(
+        density = density.density,
+        fontScale = density.fontScale
+    )
+    val measuredPaginationRequest = remember(
+        session.reader.book.id,
+        paginationContentSignature,
+        paginationLayoutSignature,
+        readerViewport,
+        paginationDensitySignature
+    ) {
+        if (session.reader.settings.readingMode == ReaderReadingMode.PAGINATED && readerViewport.isSpecified) {
+            DesktopEpubPaginationRequest(
+                bookId = session.reader.book.id,
+                chapterSignature = paginationContentSignature,
+                layoutSignature = paginationLayoutSignature,
+                viewport = readerViewport,
+                density = paginationDensitySignature
+            )
+        } else {
+            null
+        }
+    }
+    var completedMeasuredPaginationRequest by remember(session.reader.book.id) {
+        mutableStateOf<DesktopEpubPaginationRequest?>(null)
+    }
+    var runningMeasuredPaginationRequest by remember(session.reader.book.id) {
+        mutableStateOf<DesktopEpubPaginationRequest?>(null)
+    }
+    val paginatedLayoutReady = session.reader.settings.readingMode != ReaderReadingMode.PAGINATED ||
+        (measuredPaginationRequest != null && completedMeasuredPaginationRequest == measuredPaginationRequest)
     val latestSession by rememberUpdatedState(session)
     val latestOnSessionChange by rememberUpdatedState(onSessionChange)
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
@@ -10725,6 +10771,13 @@ private fun ReaderScreen(
         onKeyPressed = { event -> handleReaderFullscreenAwtKeyEvent(event) }
     )
 
+    LaunchedEffect(session.reader.settings.readingMode) {
+        if (session.reader.settings.readingMode != ReaderReadingMode.PAGINATED) {
+            completedMeasuredPaginationRequest = null
+            runningMeasuredPaginationRequest = null
+        }
+    }
+
     DisposableEffect(session.reader.book.id) {
         onDispose {
             if (currentReaderFullscreen) {
@@ -10734,44 +10787,125 @@ private fun ReaderScreen(
     }
 
     LaunchedEffect(
-        session.reader.book.id,
-        paginationLayoutSignature,
-        readerViewport,
+        measuredPaginationRequest,
         measuredPaginator
     ) {
-        val settings = session.reader.settings
-        if (settings.readingMode != ReaderReadingMode.PAGINATED || !readerViewport.isSpecified) return@LaunchedEffect
-        delay(280L)
-        val reflowStartSession = latestSession
-        val reflowStartRequestId = reflowStartSession.navigationRequestId
-        val reflowAnchor = readerEngine.reflowAnchorFor(reflowStartSession)
-        logEpubPagination(
-            "reflow_start book=\"${session.reader.book.title.logPreview()}\" " +
-                "viewport=${readerViewport.widthPx}x${readerViewport.heightPx} " +
-                "spread=${settings.pageSpreadMode} font=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
-                "margins=${settings.resolvedHorizontalMargin}x${settings.resolvedVerticalMargin} " +
-                "pageWidthSetting=${settings.pageWidth} oldPages=${reflowStartSession.reader.pages.size} " +
-                "anchorPage=${reflowAnchor?.pageIndex} anchorOffsets=${reflowAnchor?.startOffset}..${reflowAnchor?.endOffset}"
-        )
-        val pages = measuredPaginator.paginate(
-            book = session.reader.book,
-            settings = settings,
-            viewport = readerViewport
-        )
-        val layoutChanged = pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)
-        logEpubPagination(
-            "reflow_result book=\"${session.reader.book.title.logPreview()}\" pages=${pages.size} " +
-                "layoutChanged=$layoutChanged currentPages=${latestSession.reader.pages.size}"
-        )
-        if (layoutChanged) {
-            latestOnSessionChange(
-                readerEngine.replacePages(
-                    state = latestSession,
-                    pages = pages,
-                    reflowAnchor = reflowAnchor,
-                    navigationRequestIdAtReflowStart = reflowStartRequestId
-                )
+        val request = measuredPaginationRequest ?: return@LaunchedEffect
+        if (completedMeasuredPaginationRequest == request) {
+            logEpubPagination(
+                "reflow_skip reason=request_already_measured book=\"${session.reader.book.title.logPreview()}\" " +
+                    "viewport=${request.viewport.widthPx}x${request.viewport.heightPx}"
             )
+            return@LaunchedEffect
+        }
+        delay(280L)
+        val settings = latestSession.reader.settings
+        if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
+        if (settings.layoutSignature() != request.layoutSignature) return@LaunchedEffect
+        runningMeasuredPaginationRequest = request
+        try {
+            val reflowStartSession = latestSession
+            val reflowStartRequestId = reflowStartSession.navigationRequestId
+            val reflowAnchor = readerEngine.reflowAnchorFor(reflowStartSession)
+            logEpubPagination(
+                "reflow_start book=\"${session.reader.book.title.logPreview()}\" " +
+                    "viewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
+                    "spread=${settings.pageSpreadMode} font=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
+                    "margins=${settings.resolvedHorizontalMargin}x${settings.resolvedVerticalMargin} " +
+                    "pageWidthSetting=${settings.pageWidth} oldPages=${reflowStartSession.reader.pages.size} " +
+                    "anchorPage=${reflowAnchor?.pageIndex} anchorOffsets=${reflowAnchor?.startOffset}..${reflowAnchor?.endOffset}"
+            )
+            val pages = measuredPaginator.paginate(
+                book = session.reader.book,
+                settings = settings,
+                viewport = request.viewport
+            )
+            val layoutChanged = pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)
+            logEpubPagination(
+                "reflow_result book=\"${session.reader.book.title.logPreview()}\" pages=${pages.size} " +
+                    "layoutChanged=$layoutChanged currentPages=${latestSession.reader.pages.size}"
+            )
+            if (layoutChanged) {
+                latestOnSessionChange(
+                    readerEngine.replacePages(
+                        state = latestSession,
+                        pages = pages,
+                        reflowAnchor = reflowAnchor,
+                        navigationRequestIdAtReflowStart = reflowStartRequestId
+                    )
+                )
+            }
+            if (pages.isNotEmpty()) {
+                completedMeasuredPaginationRequest = request
+            }
+        } finally {
+            if (runningMeasuredPaginationRequest == request) {
+                runningMeasuredPaginationRequest = null
+            }
+        }
+    }
+
+    val handleDesktopSelectionAction: (DesktopReaderSelectionAction, String) -> Unit = { action, text ->
+        val settings = aiByokSettings.sanitized()
+        when (action) {
+            DesktopReaderSelectionAction.DEFINE -> {
+                if (settings.areReaderAiFeaturesAvailable) onAiAction(ReaderAiFeature.DEFINE, text)
+            }
+            DesktopReaderSelectionAction.SPEAK -> {
+                if (settings.isCloudTtsAvailable) onCloudTtsToggle(text)
+            }
+            DesktopReaderSelectionAction.SEARCH -> onExternalLookup(ReaderExternalLookupAction.SEARCH, text)
+        }
+    }
+    val nativeSelectionActions = buildSet {
+        val settings = aiByokSettings.sanitized()
+        if (settings.areReaderAiFeaturesAvailable) add(SharedNativeReaderSelectionAction.DEFINE)
+        if (externalLookupAvailable) add(SharedNativeReaderSelectionAction.SEARCH)
+        if (settings.isCloudTtsAvailable) add(SharedNativeReaderSelectionAction.SPEAK)
+    }
+    val handleNativeSelectionAction: (SharedNativeReaderSelectionAction, String) -> Unit = { action, text ->
+        when (action) {
+            SharedNativeReaderSelectionAction.DEFINE ->
+                handleDesktopSelectionAction(DesktopReaderSelectionAction.DEFINE, text)
+            SharedNativeReaderSelectionAction.SPEAK ->
+                handleDesktopSelectionAction(DesktopReaderSelectionAction.SPEAK, text)
+            SharedNativeReaderSelectionAction.SEARCH ->
+                handleDesktopSelectionAction(DesktopReaderSelectionAction.SEARCH, text)
+        }
+    }
+    val handleDesktopEpubLinkClicked: (DesktopEpubLinkClick) -> Unit = { link ->
+        val now = System.currentTimeMillis()
+        val last = lastHandledLink
+        if (last != null && last.href == link.href && now - last.handledAtMs < 900L) {
+            logEpubLink(
+                "click_duplicate_ignored source=${link.source} href=\"${link.href.logPreview()}\" " +
+                    "ageMs=${now - last.handledAtMs}"
+            )
+        } else {
+            lastHandledLink = DesktopEpubHandledLink(link.href, now)
+            logEpubLink(
+                "click source=${link.source} href=\"${link.href.logPreview()}\" " +
+                    "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\" " +
+                    "text=\"${link.text.orEmpty().logPreview()}\""
+            )
+            when (val target = readerEngine.resolveLink(session, link.href, link.chapterIndex)) {
+                is ReaderLinkTarget.External -> {
+                    logEpubLink("resolved_external url=\"${target.url.logPreview()}\"")
+                    if (externalLookupAvailable) {
+                        externalLinkDialogUrl = target.url
+                    }
+                }
+                is ReaderLinkTarget.Internal -> {
+                    logEpubLink(
+                        "resolved_internal chapter=${target.locator.chapterIndex} " +
+                            "page=${target.locator.pageIndex} offset=${target.locator.startOffset}"
+                    )
+                    onSessionChange(readerEngine.jumpToLocator(session, target.locator))
+                }
+                ReaderLinkTarget.Ignored -> {
+                    logEpubLink("resolved_ignored href=\"${link.href.logPreview()}\"")
+                }
+            }
         }
     }
 
@@ -10807,9 +10941,9 @@ private fun ReaderScreen(
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
         onImportReaderTexture = onImportReaderTexture
-    ) { html, background, appearanceScript, navigationTarget, highlights, onVisiblePageChanged, onHighlightSelected ->
+    ) { renderPlan, onVisiblePageChanged, onHighlightSelected ->
         Surface(
-            color = background,
+            color = renderPlan.background,
             shape = RoundedCornerShape(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -10818,7 +10952,7 @@ private fun ReaderScreen(
                 .onSizeChanged { size ->
                     val next = ReaderViewportSpec(size.width, size.height)
                     logReaderGap(
-                        "desktop_webview_surface size=${size.width}x${size.height} " +
+                        "desktop_epub_reader_surface size=${size.width}x${size.height} " +
                             "mode=${session.reader.settings.readingMode} " +
                             "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)}"
                     )
@@ -10831,85 +10965,119 @@ private fun ReaderScreen(
                     }
                 }
         ) {
-            if (webViewRuntimeState.initialized) {
-                DesktopEpubWebView(
-                    html = html,
-                    appearanceScript = appearanceScript,
-                    navigationTarget = navigationTarget,
-                    highlights = highlights,
-                    onHighlightCreated = { highlight ->
-                        onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
-                    },
-                    onHighlightSelected = onHighlightSelected,
-                    isFullscreen = isFullscreen,
-                    onKeyboardNavigation = { action ->
-                        when (action) {
-                            DesktopReaderKeyNavigation.NEXT -> onSessionChange(session.reduce(ReaderAction.NextPage, readerEngine))
-                            DesktopReaderKeyNavigation.PREVIOUS -> onSessionChange(session.reduce(ReaderAction.PreviousPage, readerEngine))
-                            DesktopReaderKeyNavigation.FIRST -> onSessionChange(session.reduce(ReaderAction.JumpToPage(0), readerEngine))
-                            DesktopReaderKeyNavigation.LAST -> onSessionChange(session.reduce(ReaderAction.JumpToPage(session.reader.pages.lastIndex), readerEngine))
-                            DesktopReaderKeyNavigation.SEARCH -> onSessionChange(session.reduce(ReaderAction.SearchOpened, readerEngine))
-                            DesktopReaderKeyNavigation.NEXT_SEARCH -> onSessionChange(session.reduce(ReaderAction.JumpToNextSearchResult, readerEngine))
-                            DesktopReaderKeyNavigation.EXIT_FULLSCREEN -> if (isFullscreen) setReaderFullscreen(false)
-                        }
-                    },
-                    onSelectionAction = { action, text ->
-                        val settings = aiByokSettings.sanitized()
-                        when (action) {
-                            DesktopReaderSelectionAction.DEFINE -> {
-                                if (settings.areReaderAiFeaturesAvailable) onAiAction(ReaderAiFeature.DEFINE, text)
-                            }
-                            DesktopReaderSelectionAction.SPEAK -> {
-                                if (settings.isCloudTtsAvailable) onCloudTtsToggle(text)
-                            }
-                            DesktopReaderSelectionAction.SEARCH -> onExternalLookup(ReaderExternalLookupAction.SEARCH, text)
-                        }
-                    },
-                    onLinkClicked = { link ->
-                        val now = System.currentTimeMillis()
-                        val last = lastHandledLink
-                        if (last != null && last.href == link.href && now - last.handledAtMs < 900L) {
-                            logEpubLink(
-                                "click_duplicate_ignored source=${link.source} href=\"${link.href.logPreview()}\" " +
-                                    "ageMs=${now - last.handledAtMs}"
-                            )
-                        } else {
-                            lastHandledLink = DesktopEpubHandledLink(link.href, now)
-                            logEpubLink(
-                                "click source=${link.source} href=\"${link.href.logPreview()}\" " +
-                                    "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\" " +
-                                    "text=\"${link.text.orEmpty().logPreview()}\""
-                            )
-                            when (val target = readerEngine.resolveLink(session, link.href, link.chapterIndex)) {
-                                is ReaderLinkTarget.External -> {
-                                    logEpubLink("resolved_external url=\"${target.url.logPreview()}\"")
-                                    if (externalLookupAvailable) {
-                                        externalLinkDialogUrl = target.url
-                                    }
-                                }
-                                is ReaderLinkTarget.Internal -> {
-                                    logEpubLink(
-                                        "resolved_internal chapter=${target.locator.chapterIndex} " +
-                                            "page=${target.locator.pageIndex} offset=${target.locator.startOffset}"
-                                    )
-                                    onSessionChange(readerEngine.jumpToLocator(session, target.locator))
-                                }
-                                ReaderLinkTarget.Ignored -> {
-                                    logEpubLink("resolved_ignored href=\"${link.href.logPreview()}\"")
-                                }
-                            }
-                        }
-                    },
-                    onVisiblePageChanged = onVisiblePageChanged,
-                    networkAccessEnabled = webViewNetworkAccessEnabled,
+            if (renderPlan is ReaderContentRenderPlan.NativePaginatedPages && !paginatedLayoutReady) {
+                DesktopEpubPaginationPreparing(
+                    active = runningMeasuredPaginationRequest != null,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                DesktopWebViewRuntimeIndicator(
-                    state = webViewRuntimeState,
-                    modifier = Modifier.fillMaxSize()
-                )
+                when (renderPlan) {
+                    is ReaderContentRenderPlan.WebDocument -> {
+                        if (webViewRuntimeState.initialized) {
+                            DesktopEpubWebView(
+                                html = renderPlan.html,
+                                appearanceScript = renderPlan.appearanceScript,
+                                navigationTarget = renderPlan.navigationTarget,
+                                highlights = renderPlan.highlights,
+                                onHighlightCreated = { highlight ->
+                                    onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
+                                },
+                                onHighlightSelected = onHighlightSelected,
+                                isFullscreen = isFullscreen,
+                                onKeyboardNavigation = { action ->
+                                    when (action) {
+                                        DesktopReaderKeyNavigation.NEXT -> onSessionChange(session.reduce(ReaderAction.NextPage, readerEngine))
+                                        DesktopReaderKeyNavigation.PREVIOUS -> onSessionChange(session.reduce(ReaderAction.PreviousPage, readerEngine))
+                                        DesktopReaderKeyNavigation.FIRST -> onSessionChange(session.reduce(ReaderAction.JumpToPage(0), readerEngine))
+                                        DesktopReaderKeyNavigation.LAST -> onSessionChange(session.reduce(ReaderAction.JumpToPage(session.reader.pages.lastIndex), readerEngine))
+                                        DesktopReaderKeyNavigation.SEARCH -> onSessionChange(session.reduce(ReaderAction.SearchOpened, readerEngine))
+                                        DesktopReaderKeyNavigation.NEXT_SEARCH -> onSessionChange(session.reduce(ReaderAction.JumpToNextSearchResult, readerEngine))
+                                        DesktopReaderKeyNavigation.EXIT_FULLSCREEN -> if (isFullscreen) setReaderFullscreen(false)
+                                    }
+                                },
+                                onSelectionAction = handleDesktopSelectionAction,
+                                onLinkClicked = handleDesktopEpubLinkClicked,
+                                onVisiblePageChanged = onVisiblePageChanged,
+                                networkAccessEnabled = webViewNetworkAccessEnabled,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            DesktopWebViewRuntimeIndicator(
+                                state = webViewRuntimeState,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                    is ReaderContentRenderPlan.NativePaginatedPages -> {
+                        SharedNativePaginatedReader(
+                            renderPlan = renderPlan,
+                            readerFontFamily = renderPlan.settings.toDesktopReaderFontFamily(),
+                            searchHighlight = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f),
+                            onVisiblePageChanged = onVisiblePageChanged,
+                            enabledSelectionActions = nativeSelectionActions,
+                            onCopyText = { text -> clipboardManager.setText(AnnotatedString(text)) },
+                            onSelectionAction = handleNativeSelectionAction,
+                            onHighlightCreated = { highlight ->
+                                onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
+                            },
+                            onHighlightSelected = onHighlightSelected,
+                            onLinkClicked = { link ->
+                                handleDesktopEpubLinkClicked(link.toDesktopEpubLinkClick())
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
             }
+        }
+    }
+}
+
+private data class DesktopEpubPaginationRequest(
+    val bookId: String,
+    val chapterSignature: Int,
+    val layoutSignature: ReaderLayoutSignature,
+    val viewport: ReaderViewportSpec,
+    val density: DesktopEpubPaginationDensity
+)
+
+private data class DesktopEpubPaginationDensity(
+    val density: Float,
+    val fontScale: Float
+)
+
+private fun SharedEpubBook.desktopPaginationContentSignature(): Int {
+    return chapters.fold(31 * id.hashCode() + css.hashCode()) { acc, chapter ->
+        31 * acc +
+            chapter.id.hashCode() +
+            chapter.plainText.length +
+            chapter.plainText.hashCode() +
+            chapter.semanticBlocks.hashCode() +
+            chapter.htmlContent.length +
+            chapter.htmlContent.hashCode() +
+            chapter.baseHref.orEmpty().hashCode()
+    }
+}
+
+@Composable
+private fun DesktopEpubPaginationPreparing(
+    active: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CircularProgressIndicator()
+            Text(
+                if (active) "Preparing pages" else "Measuring reader layout",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -11283,6 +11451,15 @@ private data class DesktopEpubLinkClick(
     val source: String = "bridge"
 )
 
+private fun SharedNativeReaderLinkClick.toDesktopEpubLinkClick(): DesktopEpubLinkClick {
+    return DesktopEpubLinkClick(
+        href = href,
+        chapterIndex = chapterIndex,
+        text = text,
+        source = "native"
+    )
+}
+
 private data class DesktopEpubHandledLink(
     val href: String,
     val handledAtMs: Long
@@ -11613,26 +11790,6 @@ private fun DesktopWebViewRuntimeIndicator(
                     modifier = Modifier.width(260.dp)
                 )
             }
-        }
-    }
-}
-
-private fun String.highlightQuery(query: String, color: Color): AnnotatedString {
-    val normalized = query.trim()
-    if (normalized.length < 2) return AnnotatedString(this)
-
-    return buildAnnotatedString {
-        append(this@highlightQuery)
-        var startIndex = 0
-        while (startIndex < this@highlightQuery.length) {
-            val index = this@highlightQuery.indexOf(normalized, startIndex, ignoreCase = true)
-            if (index < 0) break
-            addStyle(
-                style = SpanStyle(background = color),
-                start = index,
-                end = index + normalized.length
-            )
-            startIndex = index + normalized.length
         }
     }
 }

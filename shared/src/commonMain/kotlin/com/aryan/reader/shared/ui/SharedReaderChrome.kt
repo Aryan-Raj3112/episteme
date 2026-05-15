@@ -158,15 +158,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-data class ReaderContentNavigationTarget(
-    val locator: ReaderLocator?,
-    val requestId: Long,
-    val readingMode: ReaderReadingMode,
-    val autoScroll: ReaderAutoScrollState = ReaderAutoScrollState(),
-    val ttsLocator: ReaderLocator? = null,
-    val ttsRequestId: Long = 0L
-)
-
 @Composable
 fun SharedScreenScaffold(
     title: String,
@@ -226,11 +217,7 @@ fun SharedReaderScreen(
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     readerContent: @Composable ColumnScope.(
-        html: String,
-        background: Color,
-        appearanceScript: String,
-        navigationTarget: ReaderContentNavigationTarget,
-        highlights: List<UserHighlight>,
+        renderPlan: ReaderContentRenderPlan,
         onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
         onHighlightSelected: (String) -> Unit
     ) -> Unit
@@ -451,7 +438,7 @@ fun SharedReaderScreen(
                 border = BorderStroke(1.dp, foreground.copy(alpha = 0.12f))
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                    val showJumpHistory = !session.isSearchActive && session.jumpHistory.hasJumpTargets
+                    val showJumpHistory = !session.isSearchActive && session.shouldShowJumpHistory
                     if (showJumpHistory) {
                         SharedReaderJumpHistoryBar(
                             session = session,
@@ -512,19 +499,27 @@ fun SharedReaderScreen(
             }
 
             val documentLayoutSignature = settings.layoutSignature()
-            val appearanceSignature = settings.appearanceSignature()
             val textureDataUri = remember(settings.textureId) {
                 settings.textureId?.let(readerTextureDataUri)
             }
-            val appearanceScript = remember(appearanceSignature, textureDataUri) {
-                ReaderHtmlDocumentBuilder.appearanceUpdateScript(
-                    settings = settings,
-                    textureDataUri = textureDataUri
-                )
-            }
-            val html = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+            val navigationTarget = ReaderContentNavigationTarget(
+                locator = navigationLocator,
+                requestId = session.navigationRequestId,
+                readingMode = settings.readingMode,
+                autoScroll = readerExtrasState.autoScroll.sanitized(),
+                ttsLocator = activeTtsLocator,
+                ttsRequestId = ttsRequestId
+            )
+            val renderPlan = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+                val appearanceSignature = settings.appearanceSignature()
+                val appearanceScript = remember(appearanceSignature, textureDataUri) {
+                    ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+                        settings = settings,
+                        textureDataUri = textureDataUri
+                    )
+                }
                 // Keep the initial locator in the document so its first position report is not the top of the book.
-                remember(
+                val html = remember(
                     readerState.book,
                     documentLayoutSignature,
                     session.searchQuery,
@@ -549,49 +544,29 @@ fun SharedReaderScreen(
                         textureDataUri = textureDataUri
                     )
                 }
+                ReaderContentRenderPlan.WebDocument(
+                    html = html,
+                    appearanceScript = appearanceScript,
+                    background = background,
+                    foreground = foreground,
+                    navigationTarget = navigationTarget,
+                    highlights = session.highlights
+                )
             } else {
-                remember(
-                    readerState.book,
-                    page,
-                    documentLayoutSignature,
-                    session.searchQuery,
-                    session.searchOptions,
-                    highlightPalette,
-                    navigationLocator,
-                    byokSettings.areReaderAiFeaturesAvailable,
-                    effectiveCloudTtsAvailable,
-                    externalLookupAvailable
-                ) {
-                    ReaderHtmlDocumentBuilder.pageDocument(
-                        book = readerState.book,
-                        page = page,
-                        visiblePages = readerState.visiblePages,
-                        settings = settings,
-                        searchQuery = session.searchQuery,
-                        searchOptions = session.searchOptions,
-                        highlights = emptyList(),
-                        highlightPalette = highlightPalette,
-                        navigationLocator = navigationLocator,
-                        readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
-                        cloudTtsEnabled = effectiveCloudTtsAvailable,
-                        externalLookupEnabled = externalLookupAvailable,
-                        textureDataUri = textureDataUri
-                    )
-                }
+                ReaderContentRenderPlan.NativePaginatedPages(
+                    visiblePages = readerState.visiblePages,
+                    settings = settings,
+                    searchQuery = session.searchQuery,
+                    searchOptions = session.searchOptions,
+                    highlightPalette = highlightPalette,
+                    background = background,
+                    foreground = foreground,
+                    navigationTarget = navigationTarget,
+                    highlights = session.highlights
+                )
             }
             readerContent(
-                html,
-                background,
-                appearanceScript,
-                ReaderContentNavigationTarget(
-                    locator = navigationLocator,
-                    requestId = session.navigationRequestId,
-                    readingMode = settings.readingMode,
-                    autoScroll = readerExtrasState.autoScroll.sanitized(),
-                    ttsLocator = activeTtsLocator,
-                    ttsRequestId = ttsRequestId
-                ),
-                session.highlights,
+                renderPlan,
                 { pageIndex, locator -> dispatch(ReaderAction.VisiblePageChanged(pageIndex, locator)) },
                 { highlightId ->
                     if (sidebarNavigationHighlightId == highlightId) {
@@ -1334,7 +1309,7 @@ private enum class ReaderControlSection(val title: String) {
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(session: ReaderSessionState): List<ReaderControlSection> {
     return buildList {
-        if (session.jumpHistory.backLocator != null || session.jumpHistory.forwardLocator != null) {
+        if (session.shouldShowJumpHistory) {
             add(ReaderControlSection.PAGE)
         }
         if (isVisible(ReaderTool.FORMAT) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.FORMAT)
@@ -1357,7 +1332,7 @@ private fun SharedReaderPageControls(
     onReaderAction: (ReaderAction) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (session.jumpHistory.backLocator != null || session.jumpHistory.forwardLocator != null) {
+        if (session.shouldShowJumpHistory) {
             Text("Jump history", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             SharedReaderJumpHistoryBar(
                 session = session,
@@ -2918,7 +2893,7 @@ private fun SharedReaderFullscreenNavigation(
         tonalElevation = 0.dp
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            if (!session.isSearchActive && session.jumpHistory.hasJumpTargets) {
+            if (!session.isSearchActive && session.shouldShowJumpHistory) {
                 SharedReaderJumpHistoryBar(
                     session = session,
                     onBack = onJumpBack,
@@ -3667,6 +3642,9 @@ private fun ReaderToolbarPreferences.moveTool(tool: ReaderTool, delta: Int): Rea
     order.add(target, moved)
     return withToolOrder(order)
 }
+
+private val ReaderSessionState.shouldShowJumpHistory: Boolean
+    get() = reader.settings.readingMode != ReaderReadingMode.PAGINATED && jumpHistory.hasJumpTargets
 
 @Composable
 private fun SharedReaderJumpHistoryBar(
