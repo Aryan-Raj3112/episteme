@@ -300,6 +300,36 @@ fun normalizeDesktopFlavor(rawFlavor: String): String {
     }
 }
 
+fun normalizeDesktopPackageArchitecture(osArch: String): String {
+    val normalizedArch = desktopArchId(osArch)
+    return if (normalizedArch != "unknown") {
+        normalizedArch
+    } else {
+        osArch.lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .ifBlank { "unknown" }
+    }
+}
+
+fun renameDesktopMsiOutput(
+    msiDirectory: File,
+    packageName: String,
+    packageVersion: String,
+    architecture: String
+) {
+    val source = msiDirectory.resolve("$packageName-$packageVersion.msi")
+    if (!source.isFile) return
+
+    val target = msiDirectory.resolve("$packageName-$packageVersion-$architecture.msi")
+    if (target.exists() && !target.delete()) {
+        throw GradleException("Could not replace existing MSI at ${target.absolutePath}.")
+    }
+    if (!source.renameTo(target)) {
+        throw GradleException("Could not rename MSI from ${source.absolutePath} to ${target.absolutePath}.")
+    }
+}
+
 val desktopVersionName = "1.0.0"
 val desktopFlavor = providers.gradleProperty("desktopFlavor")
     .orElse("standard")
@@ -325,6 +355,7 @@ val desktopPackageDescription = if (isOssOfflineDesktop) {
 val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan")
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
+val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
 val bundledWebViewDir = layout.projectDirectory.dir(desktopKcefBundleDirectoryName(desktopOsName, desktopOsArch))
 val bundledPdfiumDir = layout.projectDirectory.dir(
@@ -527,6 +558,22 @@ tasks.withType<Jar>().configureEach {
             "Implementation-Version" to desktopResolvedVersionName.get(),
             "Implementation-Vendor" to desktopVendor.get()
         )
+    }
+}
+
+mapOf(
+    "packageMsi" to "main",
+    "packageReleaseMsi" to "main-release"
+).forEach { (taskName, distributionName) ->
+    tasks.matching { it.name == taskName }.configureEach {
+        doLast {
+            renameDesktopMsiOutput(
+                msiDirectory = layout.buildDirectory.dir("compose/binaries/$distributionName/msi").get().asFile,
+                packageName = desktopPackageName,
+                packageVersion = desktopPackageVersion.get(),
+                architecture = desktopPackageArchitecture
+            )
+        }
     }
 }
 

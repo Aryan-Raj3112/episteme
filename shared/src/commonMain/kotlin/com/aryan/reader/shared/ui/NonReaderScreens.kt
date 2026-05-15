@@ -235,16 +235,24 @@ fun SharedHomeScreen(
         }
 
         if (model.isEmpty) {
-            SharedEmptyState(
-                icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
-                title = if (model.isLibraryEmpty) "Your library is empty" else "No recent files",
-                body = if (model.isLibraryEmpty) "Import files into app storage or add a folder to read files in place." else "Open books from the library and they will appear here.",
-                actionLabel = "Import files",
-                onAction = onImportBooks,
-                secondaryActionLabel = "Add folder",
-                onSecondaryAction = onImportFolder,
-                modifier = Modifier.weight(1f)
-            )
+            if (model.isLibraryEmpty) {
+                LibraryImportEmptyState(
+                    onImportBooks = onImportBooks,
+                    onImportFolder = onImportFolder,
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                SharedEmptyState(
+                    icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                    title = "No recent files",
+                    body = "Open books from the library and they will appear here.",
+                    actionLabel = "Import files",
+                    onAction = onImportBooks,
+                    secondaryActionLabel = "Add folder",
+                    onSecondaryAction = onImportFolder,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -333,6 +341,7 @@ fun SharedLibraryScreen(
     onSyncFolderMetadata: () -> Unit = {},
     onScanFolders: () -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
+    useImportEmptyStateWhenLibraryEmpty: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val organization = state.toNonReaderLibraryOrganizationModel()
@@ -375,17 +384,67 @@ fun SharedLibraryScreen(
             )
         }
 
-        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            val useSidebar = maxWidth >= 980.dp
-            if (useSidebar) {
-                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                    LibraryOrganizationSidebar(
-                        organization = organization,
-                        selectedTab = activeLibraryTab,
-                        onTabSelected = ::selectLibraryTab,
-                        modifier = Modifier.width(232.dp).fillMaxHeight()
-                    )
-                    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (useImportEmptyStateWhenLibraryEmpty && state.rawLibraryBooks.isEmpty()) {
+            LibraryImportEmptyState(
+                onImportBooks = onImportBooks,
+                onImportFolder = onImportFolder,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                val useSidebar = maxWidth >= 980.dp
+                if (useSidebar) {
+                    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        LibraryOrganizationSidebar(
+                            organization = organization,
+                            selectedTab = activeLibraryTab,
+                            onTabSelected = ::selectLibraryTab,
+                            modifier = Modifier.width(232.dp).fillMaxHeight()
+                        )
+                        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            LibraryToolbar(
+                                state = state,
+                                viewMode = viewMode,
+                                showFilters = showFilters,
+                                onViewModeChange = { viewMode = it },
+                                onToggleFilters = { showFilters = !showFilters },
+                                onStateChange = onStateChange,
+                                onImportBooks = onImportBooks,
+                                onImportFolder = onImportFolder,
+                                onCreateShelf = onCreateShelf,
+                                onCreateSmartShelf = onCreateSmartShelf
+                            )
+                            LibraryContent(
+                                state = state,
+                                selectedTab = activeLibraryTab,
+                                viewMode = viewMode,
+                                showFilters = showFilters,
+                                onStateChange = onStateChange,
+                                onTabChange = ::selectLibraryTab,
+                                onImportBooks = onImportBooks,
+                                onImportFolder = onImportFolder,
+                                useImportEmptyStateWhenLibraryEmpty = useImportEmptyStateWhenLibraryEmpty,
+                                onOpenBook = onOpenBook,
+                                onToggleSelection = onToggleSelection,
+                                onShowBookInfo = onShowBookInfo,
+                                onEditBook = onEditBook,
+                                onTogglePinned = onTogglePinned,
+                                onRenameShelf = onRenameShelf,
+                                onDeleteShelf = onDeleteShelf,
+                                onRemoveFolder = onRemoveFolder,
+                                onSyncFolderMetadata = onSyncFolderMetadata,
+                                onScanFolders = onScanFolders,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                } else {
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        LibraryTabStrip(
+                            organization = organization,
+                            selectedTab = activeLibraryTab,
+                            onTabSelected = ::selectLibraryTab
+                        )
                         LibraryToolbar(
                             state = state,
                             viewMode = viewMode,
@@ -406,6 +465,8 @@ fun SharedLibraryScreen(
                             onStateChange = onStateChange,
                             onTabChange = ::selectLibraryTab,
                             onImportBooks = onImportBooks,
+                            onImportFolder = onImportFolder,
+                            useImportEmptyStateWhenLibraryEmpty = useImportEmptyStateWhenLibraryEmpty,
                             onOpenBook = onOpenBook,
                             onToggleSelection = onToggleSelection,
                             onShowBookInfo = onShowBookInfo,
@@ -419,46 +480,6 @@ fun SharedLibraryScreen(
                             modifier = Modifier.weight(1f)
                         )
                     }
-                }
-            } else {
-                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    LibraryTabStrip(
-                        organization = organization,
-                        selectedTab = activeLibraryTab,
-                        onTabSelected = ::selectLibraryTab
-                    )
-                    LibraryToolbar(
-                        state = state,
-                        viewMode = viewMode,
-                        showFilters = showFilters,
-                        onViewModeChange = { viewMode = it },
-                        onToggleFilters = { showFilters = !showFilters },
-                        onStateChange = onStateChange,
-                        onImportBooks = onImportBooks,
-                        onImportFolder = onImportFolder,
-                        onCreateShelf = onCreateShelf,
-                        onCreateSmartShelf = onCreateSmartShelf
-                    )
-                    LibraryContent(
-                        state = state,
-                        selectedTab = activeLibraryTab,
-                        viewMode = viewMode,
-                        showFilters = showFilters,
-                        onStateChange = onStateChange,
-                        onTabChange = ::selectLibraryTab,
-                        onImportBooks = onImportBooks,
-                        onOpenBook = onOpenBook,
-                        onToggleSelection = onToggleSelection,
-                        onShowBookInfo = onShowBookInfo,
-                        onEditBook = onEditBook,
-                        onTogglePinned = onTogglePinned,
-                        onRenameShelf = onRenameShelf,
-                        onDeleteShelf = onDeleteShelf,
-                        onRemoveFolder = onRemoveFolder,
-                        onSyncFolderMetadata = onSyncFolderMetadata,
-                        onScanFolders = onScanFolders,
-                        modifier = Modifier.weight(1f)
-                    )
                 }
             }
         }
@@ -957,6 +978,8 @@ private fun LibraryContent(
     onStateChange: (SharedReaderScreenState) -> Unit,
     onTabChange: (NonReaderLibraryTab) -> Unit = {},
     onImportBooks: () -> Unit,
+    onImportFolder: () -> Unit,
+    useImportEmptyStateWhenLibraryEmpty: Boolean = false,
     onOpenBook: (BookItem) -> Unit,
     onToggleSelection: (String) -> Unit,
     onShowBookInfo: (BookItem) -> Unit,
@@ -986,20 +1009,28 @@ private fun LibraryContent(
             NonReaderLibraryTab.COMPLETED -> {
                 val books = state.libraryBooks
                 if (books.isEmpty()) {
-                    SharedEmptyState(
-                        icon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(56.dp)) },
-                        title = if (state.rawLibraryBooks.isEmpty()) "Your library is empty" else "No books match",
-                        body = if (state.rawLibraryBooks.isEmpty()) "Import files into app storage or add a folder from the toolbar." else "Adjust search, sort, or filters to see more books.",
-                        actionLabel = if (state.rawLibraryBooks.isEmpty()) "Import files" else "Clear filters",
-                        onAction = {
-                            if (state.rawLibraryBooks.isEmpty()) {
-                                onImportBooks()
-                            } else {
-                                onStateChange(state.reduce(LibraryAction.SearchChanged("")).reduce(LibraryAction.FiltersChanged(LibraryFilters())))
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                    if (state.rawLibraryBooks.isEmpty() && useImportEmptyStateWhenLibraryEmpty) {
+                        LibraryImportEmptyState(
+                            onImportBooks = onImportBooks,
+                            onImportFolder = onImportFolder,
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        SharedEmptyState(
+                            icon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                            title = if (state.rawLibraryBooks.isEmpty()) "Your library is empty" else "No books match",
+                            body = if (state.rawLibraryBooks.isEmpty()) "Import files into app storage or add a folder from the toolbar." else "Adjust search, sort, or filters to see more books.",
+                            actionLabel = if (state.rawLibraryBooks.isEmpty()) "Import files" else "Clear filters",
+                            onAction = {
+                                if (state.rawLibraryBooks.isEmpty()) {
+                                    onImportBooks()
+                                } else {
+                                    onStateChange(state.reduce(LibraryAction.SearchChanged("")).reduce(LibraryAction.FiltersChanged(LibraryFilters())))
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 } else {
                     BookGrid(
                         books = books,
@@ -2182,6 +2213,24 @@ private fun SortMenu(
             }
         }
     }
+}
+
+@Composable
+private fun LibraryImportEmptyState(
+    onImportBooks: () -> Unit,
+    onImportFolder: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    SharedEmptyState(
+        icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
+        title = "Your library is empty",
+        body = "Import files into app storage or add a folder to read files in place.",
+        actionLabel = "Import files",
+        onAction = onImportBooks,
+        secondaryActionLabel = "Add folder",
+        onSecondaryAction = onImportFolder,
+        modifier = modifier
+    )
 }
 
 @Composable

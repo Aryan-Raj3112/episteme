@@ -8,7 +8,8 @@ import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.reader.ReaderEngine
-import com.aryan.reader.shared.reader.SampleReaderBooks
+import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.SharedEpubChapter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -19,7 +20,7 @@ class ReaderWorkspaceModelsTest {
 
     @Test
     fun `epub workspace maps shared toolbar preferences without toolbar tab`() {
-        val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
+        val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(
             hiddenToolIds = setOf(ReaderTool.THEME.id, ReaderTool.FORMAT.id, ReaderTool.BOOKMARK.id),
             bottomToolIds = setOf(ReaderTool.SLIDER.id, ReaderTool.SEARCH.id)
@@ -80,7 +81,7 @@ class ReaderWorkspaceModelsTest {
 
     @Test
     fun `epub workspace ignores desktop visual options in inspector`() {
-        val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
+        val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(
             hiddenToolIds = ReaderTool.entries
                 .filterNot { it == ReaderTool.VISUAL_OPTIONS }
@@ -100,7 +101,7 @@ class ReaderWorkspaceModelsTest {
 
     @Test
     fun `epub workspace ignores external lookup in inspector`() {
-        val session = ReaderEngine().createSession(SampleReaderBooks.desktopWelcomeBook())
+        val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(
             hiddenToolIds = ReaderTool.entries
                 .filterNot { it == ReaderTool.DICTIONARY }
@@ -256,5 +257,20 @@ class ReaderWorkspaceModelsTest {
         assertTrue("auto-scroll" in model.chrome.forceVisibleReasons)
         assertTrue("tts" in model.chrome.forceVisibleReasons)
         assertFalse(ReaderWorkspaceTopAction.AI in model.topActions)
+    }
+
+    private fun readerFixtureBook(): SharedEpubBook {
+        return SharedEpubBook(
+            id = "reader_fixture",
+            fileName = "Reader Fixture.epub",
+            title = "Reader Fixture",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "intro",
+                    title = "Intro",
+                    plainText = "A short reader fixture for workspace model tests."
+                )
+            )
+        )
     }
 }

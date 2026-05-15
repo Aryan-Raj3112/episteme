@@ -296,7 +296,8 @@ import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSessionState
-import com.aryan.reader.shared.reader.SampleReaderBooks
+import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
 import com.aryan.reader.shared.reader.SharedEpubMetadataUpdate
@@ -455,6 +456,21 @@ private sealed interface DesktopReaderOpenResult {
 
 fun main() {
     launchEpistemeDesktopApplication()
+}
+
+private fun desktopEmptyReaderBook(): SharedEpubBook {
+    return SharedEpubBook(
+        id = "desktop_empty_reader",
+        fileName = "",
+        title = "No book open",
+        chapters = listOf(
+            SharedEpubChapter(
+                id = "empty",
+                title = "No book open",
+                plainText = ""
+            )
+        )
+    )
 }
 
 private fun SharedLibrarySnapshot.withDesktopDefaults(): SharedLibrarySnapshot {
@@ -1059,7 +1075,7 @@ private fun EpistemeDesktopApp(
             webViewRuntimeState = webViewRuntimeState.copy(errorMessage = error.message ?: error.toString())
         }
     }
-    var readerSession by remember { mutableStateOf(readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())) }
+    var readerSession by remember { mutableStateOf(readerEngine.createSession(desktopEmptyReaderBook())) }
     var readerExtrasState by remember {
         mutableStateOf(
             ReaderExtrasState(
@@ -1698,7 +1714,7 @@ private fun EpistemeDesktopApp(
                 activePdfDocument?.close()
                 activePdfDocument = null
                 activeReaderBookId = null
-                readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+                readerSession = readerEngine.createSession(desktopEmptyReaderBook())
                 selectedTab = SharedAppTab.HOME
             }
         }
@@ -2052,17 +2068,13 @@ private fun EpistemeDesktopApp(
 
                         ReaderFeatureSurface.EPUB_READER,
                         ReaderFeatureSurface.TEXT_READER -> {
-                            val loadedBook = book.path
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { path ->
-                                    SharedJvmBookLoader.load(
-                                        file = File(path),
-                                        type = book.type,
-                                        titleOverride = book.title?.takeIf { it.isNotBlank() },
-                                        authorOverride = book.author?.takeIf { it.isNotBlank() }
-                                    )
-                                }
-                                ?: SampleReaderBooks.desktopWelcomeBook()
+                            val path = book.path?.takeIf { it.isNotBlank() } ?: error("Book path is missing.")
+                            val loadedBook = SharedJvmBookLoader.load(
+                                file = File(path),
+                                type = book.type,
+                                titleOverride = book.title?.takeIf { it.isNotBlank() },
+                                authorOverride = book.author?.takeIf { it.isNotBlank() }
+                            )
                             val restoredSettings = resolvedDesktopReaderSettings(book, readerDefaultSettings)
                             val restoredSession = readerEngine.createSession(
                                 book = loadedBook,
@@ -2113,7 +2125,7 @@ private fun EpistemeDesktopApp(
                 if (nextTabBook != null) {
                     openReader(nextTabBook)
                 } else {
-                    readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+                    readerSession = readerEngine.createSession(desktopEmptyReaderBook())
                     selectedTab = SharedAppTab.HOME
                 }
             }
@@ -2139,7 +2151,7 @@ private fun EpistemeDesktopApp(
         if (nextBook != null) {
             openReader(nextBook)
         } else {
-            readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+            readerSession = readerEngine.createSession(desktopEmptyReaderBook())
             selectedTab = SharedAppTab.HOME
         }
     }
@@ -2149,7 +2161,7 @@ private fun EpistemeDesktopApp(
         activePdfDocument?.close()
         activePdfDocument = null
         activeReaderBookId = null
-        readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+        readerSession = readerEngine.createSession(desktopEmptyReaderBook())
         selectedTab = SharedAppTab.HOME
         updateState(state.reduce(AppAction.AllTabsClosed))
     }
@@ -2228,7 +2240,7 @@ private fun EpistemeDesktopApp(
                 activePdfDocument?.close()
                 activePdfDocument = null
                 activeReaderBookId = null
-                readerSession = readerEngine.createSession(SampleReaderBooks.desktopWelcomeBook())
+                readerSession = readerEngine.createSession(desktopEmptyReaderBook())
                 selectedTab = SharedAppTab.HOME
             }
             updateState(
@@ -3291,7 +3303,8 @@ private fun LibraryScreen(
         onImportFolder = onImportFolder,
         onSyncFolderMetadata = onSyncFolderMetadata,
         onScanFolders = onScanFolders,
-        onTogglePinned = onTogglePinned
+        onTogglePinned = onTogglePinned,
+        useImportEmptyStateWhenLibraryEmpty = true
     )
 }
 

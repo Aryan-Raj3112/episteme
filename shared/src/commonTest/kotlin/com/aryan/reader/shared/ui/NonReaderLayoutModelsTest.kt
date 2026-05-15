@@ -214,7 +214,7 @@ class NonReaderLayoutModelsTest {
         )
 
         assertEquals(
-            listOf(SharedAppTab.HOME, SharedAppTab.LIBRARY, SharedAppTab.CATALOGS, SharedAppTab.READER),
+            listOf(SharedAppTab.HOME, SharedAppTab.LIBRARY, SharedAppTab.CATALOGS),
             model.primaryTabs
         )
         assertEquals(SharedAppTab.HOME, model.selectedPrimaryTab)
@@ -258,7 +258,7 @@ class NonReaderLayoutModelsTest {
             featurePolicy = SharedFeaturePolicy.OssOffline
         )
 
-        assertEquals(listOf(SharedAppTab.HOME, SharedAppTab.LIBRARY, SharedAppTab.READER), model.primaryTabs)
+        assertEquals(listOf(SharedAppTab.HOME, SharedAppTab.LIBRARY), model.primaryTabs)
         assertEquals(SharedAppTab.HOME, model.selectedPrimaryTab)
         assertFalse(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertFalse(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)

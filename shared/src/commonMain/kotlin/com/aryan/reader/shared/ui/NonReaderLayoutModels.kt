@@ -42,7 +42,6 @@ fun sharedAppShellModel(
         add(SharedAppTab.HOME)
         add(SharedAppTab.LIBRARY)
         if (featurePolicy.opdsCatalogs) add(SharedAppTab.CATALOGS)
-        add(SharedAppTab.READER)
     }
     val selectedPrimaryTab = when (selectedTab) {
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY

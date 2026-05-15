@@ -250,36 +250,3 @@ object ReaderSpreadLayout {
 fun ReaderSettings.isTwoPageSpreadEnabled(): Boolean {
     return readingMode == ReaderReadingMode.PAGINATED && pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE
 }
-
-object SampleReaderBooks {
-    fun desktopWelcomeBook(): SharedEpubBook {
-        return SharedEpubBook(
-            id = "desktop_welcome",
-            fileName = "Desktop Welcome.epub",
-            title = "Welcome to Episteme",
-            author = "Episteme",
-            chapters = listOf(
-                SharedEpubChapter(
-                    id = "intro",
-                    title = "Start Reading",
-                    plainText = """
-                        Welcome to Episteme on desktop.
-
-                        Import a book from Library, open a recent file, or connect a local folder to build a library that stays on this computer.
-
-                        Your reading settings, custom fonts, shelves, folder sync, and theme choices are shared across the desktop experience so the app feels familiar when you move between formats.
-                    """.trimIndent()
-                ),
-                SharedEpubChapter(
-                    id = "scope",
-                    title = "Desktop Edition",
-                    plainText = """
-                        Episteme for Windows focuses on local reading first: EPUB, PDF, comic archives, text files, reader themes, annotations, bookmarks, and local folder sync.
-
-                        Episteme oss uses the same local-first desktop surface with offline policies enabled, so network-backed features stay hidden while core reading flows remain available.
-                    """.trimIndent()
-                )
-            )
-        )
-    }
-}
