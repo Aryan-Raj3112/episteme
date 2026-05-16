@@ -3,6 +3,7 @@
 package com.aryan.reader.pdf
 
 import androidx.compose.foundation.clickable
+import androidx.annotation.StringRes
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -80,7 +81,8 @@ data class PdfFlatToolItem(
     val type: PdfFlatItemType,
     val tool: PdfReaderTool? = null,
     val section: PdfToolbarSection? = null,
-    val title: String? = null
+    val title: String? = null,
+    @StringRes val titleRes: Int? = null
 )
 
 fun sanitizePdfPlaceholders(list: List<PdfFlatToolItem>): List<PdfFlatToolItem> {
@@ -95,7 +97,7 @@ fun sanitizePdfPlaceholders(list: List<PdfFlatToolItem>): List<PdfFlatToolItem> 
     }
 
     PdfToolbarSection.entries.forEach { section ->
-        result.add(PdfFlatToolItem("header_${section.name}", PdfFlatItemType.SECTION_HEADER, section = section, title = section.title))
+        result.add(PdfFlatToolItem("header_${section.name}", PdfFlatItemType.SECTION_HEADER, section = section, titleRes = section.titleRes))
         val tools = sectionMap[section] ?: emptyList()
         if (tools.isEmpty()) {
             result.add(PdfFlatToolItem("empty_${section.name}", PdfFlatItemType.EMPTY_PLACEHOLDER, section = section))
@@ -138,7 +140,7 @@ internal fun buildPdfToolbarItems(
             PdfToolbarSection.BOTTOM -> bottomToolsList
             PdfToolbarSection.HIDDEN -> hiddenToolsList
         }
-        list.add(PdfFlatToolItem("header_${section.name}", PdfFlatItemType.SECTION_HEADER, section = section, title = section.title))
+        list.add(PdfFlatToolItem("header_${section.name}", PdfFlatItemType.SECTION_HEADER, section = section, titleRes = section.titleRes))
         if (tools.isEmpty()) {
             list.add(PdfFlatToolItem("empty_${section.name}", PdfFlatItemType.EMPTY_PLACEHOLDER, section = section))
         } else {
@@ -148,7 +150,7 @@ internal fun buildPdfToolbarItems(
         }
     }
 
-    list.add(PdfFlatToolItem("more_header", PdfFlatItemType.MORE_HEADER, title = "More menu"))
+    list.add(PdfFlatToolItem("more_header", PdfFlatItemType.MORE_HEADER, titleRes = R.string.toolbar_more_menu))
     moreTools.forEach { tool ->
         list.add(PdfFlatToolItem("more_${tool.name}", PdfFlatItemType.MORE_TOOL, tool = tool))
     }
@@ -335,8 +337,9 @@ fun PdfCustomizeToolsSheet(
                         ) {
                             when (item.type) {
                                 PdfFlatItemType.SECTION_HEADER -> {
+                                    val titleRes = item.titleRes
                                     Text(
-                                        text = item.title ?: "",
+                                        text = if (titleRes != null) stringResource(titleRes) else item.title.orEmpty(),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface,
@@ -352,7 +355,7 @@ fun PdfCustomizeToolsSheet(
                                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text("Drop tools here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(stringResource(R.string.toolbar_drop_tools_here), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                                 PdfFlatItemType.TOOL -> {
@@ -369,8 +372,9 @@ fun PdfCustomizeToolsSheet(
                                     )
                                 }
                                 PdfFlatItemType.MORE_HEADER -> {
+                                    val titleRes = item.titleRes
                                     Text(
-                                        text = item.title ?: "More menu",
+                                        text = if (titleRes != null) stringResource(titleRes) else item.title ?: stringResource(R.string.toolbar_more_menu),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(top = 24.dp, bottom = 8.dp, start = 4.dp)
@@ -378,7 +382,7 @@ fun PdfCustomizeToolsSheet(
                                 }
                                 PdfFlatItemType.MORE_TOOL -> {
                                     PdfMoreToolVisibilityRow(
-                                        title = item.tool!!.title,
+                                        title = stringResource(item.tool!!.titleRes),
                                         visible = !localHiddenTools.contains(item.tool.name),
                                         onToggle = {
                                             localHiddenTools = if (localHiddenTools.contains(item.tool.name)) {
@@ -421,14 +425,14 @@ private fun PdfToolbarDragRow(
             PdfToolPreviewIcon(tool)
             Spacer(Modifier.width(16.dp))
             Text(
-                text = tool.title,
+                text = stringResource(tool.titleRes),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
             )
             Icon(
                 Icons.Default.Menu,
-                contentDescription = "Drag to reorder",
+                contentDescription = stringResource(R.string.content_desc_drag_to_reorder),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .size(32.dp)
@@ -489,7 +493,7 @@ private fun PdfToolbarDragRow(
             PdfToolPreviewIcon(tool)
             Spacer(Modifier.width(12.dp))
             Text(
-                text = tool.title,
+                text = stringResource(tool.titleRes),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
@@ -525,27 +529,28 @@ private fun PdfMoreToolVisibilityRow(
     }
 }
 
-enum class PdfToolbarSection(val title: String) {
-    TOP("Top Bar"),
-    BOTTOM("Bottom Bar"),
-    HIDDEN("Hidden Tools")
+enum class PdfToolbarSection(@StringRes val titleRes: Int) {
+    TOP(R.string.toolbar_top_bar),
+    BOTTOM(R.string.toolbar_bottom_bar),
+    HIDDEN(R.string.toolbar_hidden_tools)
 }
 
 @Composable
 private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
+    val title = stringResource(tool.titleRes)
     when (tool) {
-        PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.LOCK_PANNING -> Icon(Icons.Default.LockOpen, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.HIGHLIGHT_ALL -> Icon(painterResource(id = R.drawable.highlight_text), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.EDIT_MODE -> Icon(Icons.Default.Edit, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        PdfReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        else -> Icon(Icons.Default.MoreVert, contentDescription = tool.title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.LOCK_PANNING -> Icon(Icons.Default.LockOpen, contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.HIGHLIGHT_ALL -> Icon(painterResource(id = R.drawable.highlight_text), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.EDIT_MODE -> Icon(Icons.Default.Edit, contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = title, modifier = Modifier.size(20.dp))
+        else -> Icon(Icons.Default.MoreVert, contentDescription = title, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -592,7 +597,7 @@ fun PdfVisualOptionsSheet(
                 options = SystemUiMode.entries,
                 selectedOption = systemUiMode,
                 onOptionSelected = onSystemUiModeChange,
-                getLabel = { it.title }
+                getLabel = { stringResource(it.titleRes) }
             )
 
             Spacer(modifier = Modifier.height(20.dp))

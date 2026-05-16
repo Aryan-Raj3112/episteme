@@ -330,7 +330,7 @@ internal fun PdfTopBar(
 
                                 if (hiddenToolbarTools.isNotEmpty()) {
                                     DropdownMenuItem(
-                                        text = { Text("Hidden tools") },
+                                        text = { Text(stringResource(R.string.toolbar_hidden_tools_menu)) },
                                         onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
                                         trailingIcon = {
                                             Icon(
@@ -665,7 +665,7 @@ private fun HiddenPdfToolMenuItem(
         else -> true
     }
     DropdownMenuItem(
-        text = { Text(tool.title) },
+        text = { Text(stringResource(tool.titleRes)) },
         enabled = enabled,
         onClick = {
             closeMenu()

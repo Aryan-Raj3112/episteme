@@ -239,11 +239,19 @@ const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
 
 enum class AiFeature { DEFINE, SUMMARIZE, RECAP }
 
-private fun AiFeature.displayName(): String {
+private fun AiFeature.displayName(context: Context): String {
     return when (this) {
-        AiFeature.DEFINE -> "Smart dictionary"
-        AiFeature.SUMMARIZE -> "Summaries"
-        AiFeature.RECAP -> "Recaps"
+        AiFeature.DEFINE -> context.getString(R.string.ai_settings_smart_dictionary)
+        AiFeature.SUMMARIZE -> context.getString(R.string.ai_settings_summaries)
+        AiFeature.RECAP -> context.getString(R.string.ai_settings_recaps)
+    }
+}
+
+private fun aiProviderDisplayName(context: Context, provider: String): String {
+    return when (provider) {
+        "gemini" -> context.getString(R.string.provider_gemini)
+        "groq" -> context.getString(R.string.provider_groq)
+        else -> provider.replaceFirstChar { it.titlecase(Locale.ROOT) }
     }
 }
 
@@ -478,7 +486,8 @@ data class CachedSummaryItem(
 )
 
 class SummaryCacheManager(context: Context) {
-    private val cacheDir = File(context.cacheDir, "chapter_summaries")
+    private val appContext = context.applicationContext
+    private val cacheDir = File(appContext.cacheDir, "chapter_summaries")
 
     init {
         if (!cacheDir.exists()) {
@@ -529,7 +538,7 @@ class SummaryCacheManager(context: Context) {
                 val fullText = file.readText()
                 val lines = fullText.lines()
 
-                val title = lines.firstOrNull()?.trim() ?: "Chapter ${index + 1}"
+                val title = lines.firstOrNull()?.trim() ?: appContext.getString(R.string.chapter_number_format, index + 1)
                 val summaryText = if (lines.size > 1) lines.drop(1).joinToString("\n") else ""
 
                 Timber.d("Cache Load: Ch $index, Title: $title")
@@ -914,6 +923,7 @@ fun AiDefinitionPopup(
                     }
 
                     val textToUse = styledContent.text
+                    val aiDefinitionTitle = stringResource(R.string.ai_definition_title)
 
                     if (textToUse.isNotBlank()) {
                         Row(
@@ -937,7 +947,7 @@ fun AiDefinitionPopup(
                                                 val token = getAuthToken()
                                                 ttsController.start(
                                                     chunks = chunks,
-                                                    bookTitle = "AI Definition",
+                                                    bookTitle = aiDefinitionTitle,
                                                     chapterTitle = word,
                                                     coverImageUri = null,
                                                     ttsMode = loadTtsMode(context),
@@ -1178,8 +1188,8 @@ suspend fun fetchAiDefinition(
                 }
             } else {
                 val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
-                val errorDetail = try { errorBody?.let { JSONObject(it).getString("detail") } } catch (_: Exception) { "Could not get definition." }
-                onError("${responseCode}. ${errorDetail ?: context.getString(R.string.error_unknown_server)}")
+                val errorDetail = try { errorBody?.let { JSONObject(it).getString("detail") } } catch (_: Exception) { context.getString(R.string.error_could_not_get_definition) }
+                onError(context.getString(R.string.error_response_code_with_detail, responseCode, errorDetail ?: context.getString(R.string.error_unknown_server)))
             }
         } catch (e: Exception) {
             Timber.e(e, "Network error fetching AI definition: ${e.message}")
@@ -1198,7 +1208,8 @@ fun countWords(text: String): Int {
 private fun streamGeminiAiResponse(
     connection: HttpURLConnection,
     onUpdate: (String) -> Unit,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
+    safetyError: String
 ): Boolean {
     var hasReceivedData = false
     connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
@@ -1243,7 +1254,7 @@ private fun streamGeminiAiResponse(
                             hasReceivedData = true
                         }
                     if (jsonResponse.optJSONArray("candidates")?.optJSONObject(0)?.optString("finishReason") == "SAFETY") {
-                        onError("Blocked for safety reasons.")
+                        onError(safetyError)
                     }
                 } catch (e: Exception) {
                     Timber.w(e, "Could not parse Gemini BYOK stream object")
@@ -1363,12 +1374,12 @@ suspend fun callByokTextAi(
     val settings = loadAiByokSettings(context)
     val model = aiModelById(settings.modelIdFor(feature))
     if (model == null) {
-        onError("Choose a model for ${feature.displayName()} in AI key and model settings.")
+        onError(context.getString(R.string.ai_error_choose_model, feature.displayName(context)))
         return@withContext false
     }
     val apiKey = settings.apiKeyFor(model.provider)
     if (apiKey.isBlank()) {
-        onError("Add a ${model.provider.replaceFirstChar { it.titlecase(Locale.ROOT) }} API key in AI key and model settings.")
+        onError(context.getString(R.string.ai_error_add_provider_key, aiProviderDisplayName(context, model.provider)))
         return@withContext false
     }
 
@@ -1422,13 +1433,13 @@ suspend fun callByokTextAi(
             val hasData = if (model.provider == "groq") {
                 streamGroqAiResponse(connection, onUpdate, onError)
             } else {
-                streamGeminiAiResponse(connection, onUpdate, onError)
+                streamGeminiAiResponse(connection, onUpdate, onError, context.getString(R.string.ai_error_blocked_safety))
             }
-            if (!hasData) onError("The AI provider returned an empty response.")
+            if (!hasData) onError(context.getString(R.string.ai_error_provider_empty_response))
             hasData
         } else {
             val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
-            onError("AI provider error: $responseCode. ${errorBody.orEmpty().take(300)}")
+            onError(context.getString(R.string.ai_error_provider_error, responseCode, errorBody.orEmpty().take(300)))
             false
         }
     } catch (e: Exception) {
@@ -1454,16 +1465,16 @@ suspend fun callByokGeminiInlineAi(
     val settings = loadAiByokSettings(context)
     val model = aiModelById(settings.modelIdFor(feature))
     if (model == null) {
-        onError("Choose a model for ${feature.displayName()} in AI key and model settings.")
+        onError(context.getString(R.string.ai_error_choose_model, feature.displayName(context)))
         return@withContext false
     }
     if (model.provider != "gemini") {
-        onError("This summary needs a Gemini model because the selected Groq models do not support PDF/image input.")
+        onError(context.getString(R.string.ai_error_gemini_required_for_image_summary))
         return@withContext false
     }
     val apiKey = settings.geminiKey.trim()
     if (apiKey.isBlank()) {
-        onError("Add a Gemini API key in AI key and model settings.")
+        onError(context.getString(R.string.ai_error_add_provider_key, context.getString(R.string.provider_gemini)))
         return@withContext false
     }
 
@@ -1502,12 +1513,12 @@ suspend fun callByokGeminiInlineAi(
         connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
         val responseCode = connection.responseCode
         if (responseCode == HttpURLConnection.HTTP_OK) {
-            val hasData = streamGeminiAiResponse(connection, onUpdate, onError)
-            if (!hasData) onError("The AI provider returned an empty response.")
+            val hasData = streamGeminiAiResponse(connection, onUpdate, onError, context.getString(R.string.ai_error_blocked_safety))
+            if (!hasData) onError(context.getString(R.string.ai_error_provider_empty_response))
             hasData
         } else {
             val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
-            onError("AI provider error: $responseCode. ${errorBody.orEmpty().take(300)}")
+            onError(context.getString(R.string.ai_error_provider_error, responseCode, errorBody.orEmpty().take(300)))
             false
         }
     } catch (e: Exception) {
@@ -1692,7 +1703,7 @@ suspend fun fetchRecap(
                 if (!hasReceivedData) onError(context.getString(R.string.error_parse_recap))
             } else {
                 val errorBody = try { connection.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { null }
-                onError("${responseCode}. ${errorBody ?: ""}")
+                onError(context.getString(R.string.error_response_code_with_detail, responseCode, errorBody.orEmpty()))
             }
         } catch (e: Exception) {
             Timber.e(e, "Recap error: ${e.message}")
@@ -2824,10 +2835,10 @@ fun ReaderThemePanel(
 
                     TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
                         Tab(selected = selectedTabIndex == 0, onClick = { selectedTabIndex = 0 }) {
-                            Text("Solid Colors", modifier = Modifier.padding(12.dp))
+                            Text(stringResource(R.string.theme_solid_colors), modifier = Modifier.padding(12.dp))
                         }
                         Tab(selected = selectedTabIndex == 1, onClick = { selectedTabIndex = 1 }) {
-                            Text("Textured", modifier = Modifier.padding(12.dp))
+                            Text(stringResource(R.string.theme_textured), modifier = Modifier.padding(12.dp))
                         }
                     }
 
@@ -2836,7 +2847,7 @@ fun ReaderThemePanel(
                     if (selectedTabIndex == 1) {
                         Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Texture Transparency", style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(R.string.theme_texture_transparency), style = MaterialTheme.typography.labelMedium)
                                 Text("${(globalTextureTransparency * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                             }
                             Slider(
@@ -2894,7 +2905,7 @@ fun ReaderThemePanel(
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(stringResource(R.string.theme_my_themes), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                                 IconButton(onClick = { editingTheme = null; builderIsTextured = selectedTabIndex == 1; showBuilder = true }) {
-                                    Icon(Icons.Default.Add, contentDescription = "New Theme", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.theme_new), tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         }
@@ -2958,7 +2969,7 @@ private fun ThemeGridItem(
                 .clickable { onThemeSelected(theme.id) },
             contentAlignment = Alignment.Center
         ) {
-            Text(text = "Aa", color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            Text(text = stringResource(R.string.label_aa_preview), color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(text = theme.name, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2967,9 +2978,9 @@ private fun ThemeGridItem(
             Spacer(modifier = Modifier.height(6.dp))
             Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                 Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Edit, "Edit", Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.Edit, stringResource(R.string.action_edit), Modifier.size(28.dp).clip(CircleShape).clickable { onEdit(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(4.dp))
-                    Icon(Icons.Default.Delete, "Delete", Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
+                    Icon(Icons.Default.Delete, stringResource(R.string.action_delete), Modifier.size(28.dp).clip(CircleShape).clickable { onDelete(theme) }.padding(6.dp), tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -2985,7 +2996,8 @@ fun ThemeBuilderView(
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
-    var name by remember { mutableStateOf(initialTheme?.name ?: if (isTexturedMode) "Custom Textured" else "Custom Solid") }
+    val defaultThemeName = stringResource(if (isTexturedMode) R.string.theme_custom_textured_default else R.string.theme_custom_solid_default)
+    var name by remember(initialTheme?.id, isTexturedMode, defaultThemeName) { mutableStateOf(initialTheme?.name ?: defaultThemeName) }
     var bgColor by remember { mutableStateOf(initialTheme?.backgroundColor ?: Color(0xFFF5F5F5)) }
     var txtColor by remember { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
     var editingColorType by remember { mutableStateOf<String?>(null) }
@@ -3106,7 +3118,7 @@ private fun CustomTexturePickerSection(
     onImportTexture: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text("Select Custom Texture", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
+        Text(stringResource(R.string.theme_select_custom_texture), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 8.dp))
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             item {
@@ -3118,8 +3130,8 @@ private fun CustomTexturePickerSection(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Icon(Icons.Default.Add, contentDescription = "Import", tint = MaterialTheme.colorScheme.primary)
-                        Text("Import", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.action_import), tint = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.action_import), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }

@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,6 +54,10 @@ fun AiSettingsScreen(
     var pendingKey by remember { mutableStateOf("") }
     var showSaveConfirm by remember { mutableStateOf(false) }
     var providerToDelete by remember { mutableStateOf<String?>(null) }
+    val providerLabels = mapOf(
+        "gemini" to stringResource(R.string.provider_gemini),
+        "groq" to stringResource(R.string.provider_groq),
+    )
 
     fun refresh() {
         settings = loadAiByokSettings(context)
@@ -67,10 +72,10 @@ fun AiSettingsScreen(
         modifier = Modifier.statusBarsPadding(),
         topBar = {
             CustomTopAppBar(
-                title = { Text("AI keys and models") },
+                title = { Text(stringResource(R.string.ai_settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 }
             )
@@ -84,23 +89,23 @@ fun AiSettingsScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("Saved keys", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            SavedKeyRow("Gemini", maskedAiByokKey(context, "gemini"), onDelete = { providerToDelete = "gemini" })
-            SavedKeyRow("Groq", maskedAiByokKey(context, "groq"), onDelete = { providerToDelete = "groq" })
+            Text(stringResource(R.string.ai_settings_saved_keys), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            SavedKeyRow(providerLabels.getValue("gemini"), maskedAiByokKey(context, "gemini"), onDelete = { providerToDelete = "gemini" })
+            SavedKeyRow(providerLabels.getValue("groq"), maskedAiByokKey(context, "groq"), onDelete = { providerToDelete = "groq" })
 
             HorizontalDivider()
 
-            Text("Add or replace key", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.ai_settings_add_or_replace_key), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             ExposedDropdownMenuBox(
                 expanded = providerMenuExpanded,
                 onExpandedChange = { providerMenuExpanded = it },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 OutlinedTextField(
-                    value = selectedProvider.replaceFirstChar { it.titlecase() },
+                    value = providerLabels[selectedProvider].orEmpty(),
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Provider") },
+                    label = { Text(stringResource(R.string.label_provider)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerMenuExpanded) },
                     modifier = Modifier.fillMaxWidth().menuAnchor()
                 )
@@ -110,7 +115,7 @@ fun AiSettingsScreen(
                 ) {
                     listOf("gemini", "groq").forEach { provider ->
                         DropdownMenuItem(
-                            text = { Text(provider.replaceFirstChar { it.titlecase() }) },
+                            text = { Text(providerLabels[provider].orEmpty()) },
                             onClick = {
                                 selectedProvider = provider
                                 providerMenuExpanded = false
@@ -125,7 +130,7 @@ fun AiSettingsScreen(
             OutlinedTextField(
                 value = pendingKey,
                 onValueChange = { pendingKey = it },
-                label = { Text("API key") },
+                label = { Text(stringResource(R.string.label_api_key)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth()
@@ -135,7 +140,7 @@ fun AiSettingsScreen(
                 enabled = pendingKey.isNotBlank(),
                 modifier = Modifier.align(Alignment.End)
             ) {
-                Text("Save key")
+                Text(stringResource(R.string.ai_settings_save_key))
             }
 
             HorizontalDivider()
@@ -146,9 +151,9 @@ fun AiSettingsScreen(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Use one model for all features", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.ai_settings_use_one_model), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "When off, each reader AI feature uses its own selected model.",
+                        stringResource(R.string.ai_settings_use_one_model_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -161,35 +166,35 @@ fun AiSettingsScreen(
 
             if (settings.useOneModel) {
                 ModelSelector(
-                    title = "All AI features",
-                    description = "Smart dictionary, summaries, and recaps all use this model.",
+                    title = stringResource(R.string.ai_settings_all_features),
+                    description = stringResource(R.string.ai_settings_all_features_desc),
                     selectedId = settings.modelForAll,
                     onSelected = { updateModels(settings.copy(modelForAll = it)) }
                 )
             } else {
                 ModelSelector(
-                    title = "Smart dictionary",
-                    description = "Used when defining selected words or phrases.",
+                    title = stringResource(R.string.ai_settings_smart_dictionary),
+                    description = stringResource(R.string.ai_settings_smart_dictionary_desc),
                     selectedId = settings.defineModel,
                     onSelected = { updateModels(settings.copy(defineModel = it)) }
                 )
                 ModelSelector(
-                    title = "Summaries",
-                    description = "Used for EPUB summaries and PDF page summaries. PDF/image summaries need Gemini.",
+                    title = stringResource(R.string.ai_settings_summaries),
+                    description = stringResource(R.string.ai_settings_summaries_desc),
                     selectedId = settings.summarizeModel,
                     onSelected = { updateModels(settings.copy(summarizeModel = it)) }
                 )
                 ModelSelector(
-                    title = "Recaps",
-                    description = "Used for story recap generation.",
+                    title = stringResource(R.string.ai_settings_recaps),
+                    description = stringResource(R.string.ai_settings_recaps_desc),
                     selectedId = settings.recapModel,
                     onSelected = { updateModels(settings.copy(recapModel = it)) }
                 )
             }
 
             ModelSelector(
-                title = "Cloud TTS",
-                description = "Uses the saved Gemini key. Only $GEMINI_CLOUD_TTS_MODEL is supported for now.",
+                title = stringResource(R.string.credits_cloud_tts_title),
+                description = stringResource(R.string.ai_settings_cloud_tts_desc, GEMINI_CLOUD_TTS_MODEL),
                 selectedId = settings.ttsModel,
                 options = listOf(AiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
                 onSelected = { updateModels(settings.copy(ttsModel = it)) }
@@ -198,38 +203,40 @@ fun AiSettingsScreen(
     }
 
     if (showSaveConfirm) {
+        val providerLabel = providerLabels[selectedProvider].orEmpty()
         AlertDialog(
             onDismissRequest = { showSaveConfirm = false },
-            title = { Text("Save ${selectedProvider.replaceFirstChar { it.titlecase() }} key?") },
-            text = { Text("After saving, only the first 3 and last 3 characters will be visible. To change it later, replace or delete it.") },
+            title = { Text(stringResource(R.string.dialog_save_provider_key, providerLabel)) },
+            text = { Text(stringResource(R.string.dialog_save_key_desc)) },
             confirmButton = {
                 TextButton(onClick = {
                     saveAiByokKey(context, selectedProvider, pendingKey)
                     pendingKey = ""
                     showSaveConfirm = false
                     refresh()
-                }) { Text("Save") }
+                }) { Text(stringResource(R.string.action_save)) }
             },
             dismissButton = {
-                TextButton(onClick = { showSaveConfirm = false }) { Text("Cancel") }
+                TextButton(onClick = { showSaveConfirm = false }) { Text(stringResource(R.string.action_cancel)) }
             }
         )
     }
 
     providerToDelete?.let { provider ->
+        val providerLabel = providerLabels[provider].orEmpty()
         AlertDialog(
             onDismissRequest = { providerToDelete = null },
-            title = { Text("Delete ${provider.replaceFirstChar { it.titlecase() }} key?") },
-            text = { Text("Features using this provider will stop working until a new key is saved.") },
+            title = { Text(stringResource(R.string.dialog_delete_provider_key, providerLabel)) },
+            text = { Text(stringResource(R.string.dialog_delete_key_desc)) },
             confirmButton = {
                 TextButton(onClick = {
                     deleteAiByokKey(context, provider)
                     providerToDelete = null
                     refresh()
-                }) { Text("Delete") }
+                }) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { providerToDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { providerToDelete = null }) { Text(stringResource(R.string.action_cancel)) }
             }
         )
     }
@@ -241,14 +248,15 @@ private fun SavedKeyRow(
     maskedKey: String,
     onDelete: () -> Unit
 ) {
+    val noKeySaved = stringResource(R.string.ai_settings_no_key_saved)
     ListItem(
         headlineContent = { Text(label) },
         supportingContent = {
-            Text(maskedKey.ifBlank { "No key saved" })
+            Text(maskedKey.ifBlank { noKeySaved })
         },
         trailingContent = {
             IconButton(onClick = onDelete, enabled = maskedKey.isNotBlank()) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete $label key")
+                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.content_desc_delete_provider_key, label))
             }
         }
     )
@@ -275,10 +283,10 @@ private fun ModelSelector(
             modifier = Modifier.fillMaxWidth()
         ) {
             OutlinedTextField(
-                value = selected?.label ?: "No model selected",
+                value = selected?.label ?: stringResource(R.string.ai_settings_no_model_selected),
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("Model") },
+                label = { Text(stringResource(R.string.label_model)) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 modifier = Modifier.fillMaxWidth().menuAnchor()
             )
@@ -287,7 +295,7 @@ private fun ModelSelector(
                 onDismissRequest = { expanded = false }
             ) {
                 DropdownMenuItem(
-                    text = { Text("No model selected") },
+                    text = { Text(stringResource(R.string.ai_settings_no_model_selected)) },
                     onClick = {
                         onSelected("")
                         expanded = false

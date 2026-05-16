@@ -723,7 +723,7 @@ fun LibraryScreenContent(
                                 }
                             }
                             IconButton(onClick = onSettingsClick) {
-                                Icon(Icons.Default.Settings, contentDescription = "Settings")
+                                Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
                             }
                         }
                     )

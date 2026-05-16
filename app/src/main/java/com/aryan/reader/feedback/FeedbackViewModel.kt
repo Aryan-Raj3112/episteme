@@ -22,10 +22,12 @@ package com.aryan.reader.feedback
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import androidx.annotation.StringRes
 import timber.log.Timber
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aryan.reader.AuthRepository
+import com.aryan.reader.R
 import com.aryan.reader.data.FeedbackMessage
 import com.aryan.reader.data.FeedbackRepository
 import com.aryan.reader.data.FeedbackThread
@@ -61,11 +63,15 @@ class FeedbackViewModel(application: Application) : AndroidViewModel(application
     private var messagesListener: Any? = null
     private val currentUser = authRepository.getSignedInUser()
 
+    private fun string(@StringRes resId: Int, vararg args: Any?): String {
+        return getApplication<Application>().getString(resId, *args)
+    }
+
     init {
         if (currentUser != null) {
             startListeningToThreads(currentUser.uid)
         } else {
-            _uiState.update { it.copy(errorMessage = "You must be signed in to use feedback.") }
+            _uiState.update { it.copy(errorMessage = string(R.string.feedback_error_sign_in_required)) }
         }
     }
 
@@ -127,7 +133,7 @@ class FeedbackViewModel(application: Application) : AndroidViewModel(application
 
     fun onStartCreateTicket() {
         if (currentUser == null) {
-            _uiState.update { it.copy(errorMessage = "You must be signed in to submit feedback.") }
+            _uiState.update { it.copy(errorMessage = string(R.string.feedback_error_sign_in_submit)) }
             return
         }
         _uiState.update { it.copy(isCreatingTicket = true) }
@@ -148,7 +154,7 @@ class FeedbackViewModel(application: Application) : AndroidViewModel(application
     fun onNewTicketImagesSelected(uris: List<Uri>) {
         val current = _uiState.value.newTicketAttachments
         if (current.size + uris.size > 3) {
-            _uiState.update { it.copy(errorMessage = "Max 3 images allowed for tickets.") }
+            _uiState.update { it.copy(errorMessage = string(R.string.feedback_error_ticket_image_limit)) }
             return
         }
         validateAndAddImages(uris) { validUris ->
@@ -167,7 +173,7 @@ class FeedbackViewModel(application: Application) : AndroidViewModel(application
     fun onChatImagesSelected(uris: List<Uri>) {
         val current = _uiState.value.chatInputAttachments
         if (current.size + uris.size > 5) {
-            _uiState.update { it.copy(errorMessage = "Max 5 images allowed per message.") }
+            _uiState.update { it.copy(errorMessage = string(R.string.feedback_error_message_image_limit)) }
             return
         }
         validateAndAddImages(uris) { validUris ->
@@ -186,7 +192,7 @@ class FeedbackViewModel(application: Application) : AndroidViewModel(application
         for (uri in uris) {
             val fileSize = getFileSize(context, uri)
             if (fileSize > maxFileSize) {
-                _uiState.update { it.copy(errorMessage = "One or more images exceed the 5MB limit.") }
+                _uiState.update { it.copy(errorMessage = string(R.string.feedback_error_images_size_limit)) }
                 return
             }
             validUris.add(uri)
@@ -219,7 +225,7 @@ class FeedbackViewModel(application: Application) : AndroidViewModel(application
                 onThreadSelected(threadId)
             } catch (e: Exception) {
                 Timber.e(e, "ViewModel: Error submitting ticket")
-                _uiState.update { it.copy(errorMessage = "Failed to create ticket: ${e.message}") }
+                _uiState.update { it.copy(errorMessage = string(R.string.feedback_error_create_ticket, e.message.orEmpty())) }
             } finally {
                 _uiState.update { it.copy(isLoading = false) }
             }
@@ -271,7 +277,7 @@ class FeedbackViewModel(application: Application) : AndroidViewModel(application
                 Timber.e(e, "ViewModel: Error sending message")
                 _uiState.update {
                     it.copy(
-                        errorMessage = "Failed to send: ${e.message}",
+                        errorMessage = string(R.string.feedback_error_send, e.message.orEmpty()),
                         // Updated reference to id
                         pendingMessages = it.pendingMessages.filterNot { msg -> msg.id == messageId },
                         chatInputMessage = textToSend

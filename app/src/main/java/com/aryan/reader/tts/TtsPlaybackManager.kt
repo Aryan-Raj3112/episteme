@@ -19,6 +19,7 @@
  */
 package com.aryan.reader.tts
 
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import timber.log.Timber
@@ -81,6 +82,7 @@ private const val PREFETCH_LOOKAHEAD = 3
 
 @UnstableApi
 class TtsPlaybackManager(
+    context: Context,
     private val player: Player,
     private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
     private val onResetContext: () -> Unit,
@@ -88,6 +90,7 @@ class TtsPlaybackManager(
     private val onPlaybackSessionStopped: () -> Unit = {}
 ) : MediaSession.Callback, Player.Listener {
 
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var mediaSession: MediaSession? = null
     private val prefetchingJobs = java.util.concurrent.ConcurrentHashMap<Int, Job>()
@@ -388,7 +391,7 @@ class TtsPlaybackManager(
         args: Bundle // Added this parameter
     ) {
         if (chunks.isEmpty()) {
-            _ttsState.value = _ttsState.value.copy(errorMessage = "No text to read.")
+            _ttsState.value = _ttsState.value.copy(errorMessage = appContext.getString(R.string.tts_error_no_text))
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("handleStartTts aborted because chunks is empty.")
             return
         }
@@ -553,7 +556,7 @@ class TtsPlaybackManager(
     private suspend fun prepareAndPlayFirstChunk(startAtIndex: Int = 0, playWhenReady: Boolean = true, startAtPosition: Long = 0L) {
         val firstChunk = textChunks.getOrNull(startAtIndex)
         if (firstChunk == null) {
-            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = "Error starting playback.")
+            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = appContext.getString(R.string.tts_error_starting_playback))
             onPlaybackSessionStopped()
             return
         }
@@ -565,7 +568,7 @@ class TtsPlaybackManager(
         )
 
         val spokenText = firstChunk.spokenText.ifBlank { firstChunk.text }
-        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, startAtIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
+        val ttsAudioData = generateAudioChunk(bookTitle ?: appContext.getString(R.string.tts_unknown_book), chapterTitle, startAtIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
         Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${System.currentTimeMillis() - chunkStartTime}ms")
 
         if (ttsAudioData.error == "INSUFFICIENT_CREDITS") {
@@ -630,7 +633,7 @@ class TtsPlaybackManager(
         } else {
             _ttsState.value = _ttsState.value.copy(
                 isLoading = false,
-                errorMessage = ttsAudioData.error ?: "Failed to load audio."
+                errorMessage = ttsAudioData.error ?: appContext.getString(R.string.tts_error_load_audio)
             )
             onPlaybackSessionStopped()
         }
@@ -827,7 +830,7 @@ class TtsPlaybackManager(
     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
         Timber.tag("TTS_CLOUD_DIAG").e(error, "Player error: [${error.errorCodeName}] ${error.message}")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).e(error, "Player error. code=${error.errorCodeName}, message=${error.message}")
-        _ttsState.value = _ttsState.value.copy(errorMessage = "Playback error: ${error.message}")
+        _ttsState.value = _ttsState.value.copy(errorMessage = appContext.getString(R.string.tts_error_playback, error.message.orEmpty()))
         handleStopTts(userInitiated = true)
     }
 
@@ -854,7 +857,7 @@ class TtsPlaybackManager(
                         Timber.tag("TTS_CLOUD_DIAG").i("Starting prefetch generation for chunk $targetIndex")
 
                         val spokenText = nextChunk.spokenText.ifBlank { nextChunk.text }
-                        val ttsAudioData = generateAudioChunk(bookTitle ?: "Unknown Book", chapterTitle, targetIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
+                        val ttsAudioData = generateAudioChunk(bookTitle ?: appContext.getString(R.string.tts_unknown_book), chapterTitle, targetIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
 
                         Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio setup for chunk $targetIndex took ${System.currentTimeMillis() - prefetchStartTime}ms")
 

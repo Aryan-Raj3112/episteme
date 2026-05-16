@@ -729,7 +729,7 @@ class TtsService : MediaSessionService() {
                                 null
                             }
                             if (directGeminiApiKey.isNullOrBlank() && googleCloudWorkerTtsUrl.isBlank()) {
-                                TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = "Cloud TTS is not configured.")
+                                TtsAudioData(audioFile = null, serverText = null, wordTimings = null, error = getString(R.string.tts_error_cloud_not_configured))
                             } else {
                                 liveClient.ensureConnected(googleCloudWorkerTtsUrl, speaker, authToken, directGeminiApiKey)
                                 liveClient.generateChunk(text, cachedFile)
@@ -810,6 +810,7 @@ class TtsService : MediaSessionService() {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("ExoPlayer created for TTS service.")
 
         playbackManager = TtsPlaybackManager(
+            context = this,
             player = player,
             generateAudioChunk = audioGenerator,
             onResetContext = { liveClient.close() },

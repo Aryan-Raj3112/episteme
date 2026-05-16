@@ -25,6 +25,7 @@ class BillingClientWrapper(
     private val externalScope: CoroutineScope,
     private val onPurchaseVerified: (PurchaseEntity) -> Unit
 ) {
+    private val appContext = context.applicationContext
     private val _proUpgradeState = MutableStateFlow(ProUpgradeState())
     val proUpgradeState = _proUpgradeState.asStateFlow()
 
@@ -41,7 +42,7 @@ class BillingClientWrapper(
         productId: String = PRO_LIFETIME_PRODUCT_ID,
         obfuscatedAccountId: String? = null
     ) {
-        _proUpgradeState.value = _proUpgradeState.value.copy(error = "Not available in Open Source version")
+        _proUpgradeState.value = _proUpgradeState.value.copy(error = appContext.getString(R.string.billing_error_not_available_oss))
     }
     fun consumePurchase(purchaseToken: String) {}
 

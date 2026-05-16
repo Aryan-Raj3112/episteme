@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.aryan.reader.R
 import com.aryan.reader.shared.opds.SharedOpdsDownloadNamer
 import com.aryan.reader.shared.opds.SharedOpdsSearch
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +55,12 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }.onFailure { e ->
-                _uiState.update { it.copy(isLoading = false, errorMessage = "Failed to load feed: ${e.message}") }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = getApplication<Application>().getString(R.string.opds_error_load_feed, e.message.orEmpty())
+                    )
+                }
             }
         }
     }
@@ -83,7 +89,8 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                 val response = client.newCall(request).execute()
 
                 if (response.isSuccessful) {
-                    val body = response.body ?: throw Exception("Empty body")
+                    val body = response.body
+                        ?: throw IllegalStateException(context.getString(R.string.opds_error_empty_response))
                     val contentLength = body.contentLength()
 
                     val ext = resolveOpdsDownloadExtension(acquisition, response)
@@ -121,11 +128,11 @@ class OpdsViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else {
                     Timber.e("Download failed: ${response.code}")
-                    _uiState.update { it.copy(errorMessage = "Download failed: ${response.message}") }
+                    _uiState.update { it.copy(errorMessage = context.getString(R.string.opds_error_download_failed, response.message)) }
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Download error")
-                _uiState.update { it.copy(errorMessage = "Download error: ${e.message}") }
+                _uiState.update { it.copy(errorMessage = context.getString(R.string.opds_error_download_error, e.message.orEmpty())) }
             } finally {
                 _downloadingState.update { it - entry.id }
             }

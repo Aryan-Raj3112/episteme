@@ -2118,7 +2118,7 @@ fun PdfViewerScreen(
                     words.take(6).joinToString(" ") + "..."
                 } else {
                     Timber.d("No words found. Falling back to 'Page X' title.")
-                    "Page ${pageIndex + 1}"
+                    context.getString(R.string.pdf_page_short, pageIndex + 1)
                 }
 
                 val chapterTitle =
@@ -2472,7 +2472,7 @@ fun PdfViewerScreen(
             }
 
         if (virtualPage is VirtualPage.BlankPage) {
-            onUpdate(SummarizationResult(error = "Cannot summarize a blank page."))
+            onUpdate(SummarizationResult(error = context.getString(R.string.pdf_error_blank_page_summary)))
             onFinish()
             return
         }
@@ -2480,7 +2480,7 @@ fun PdfViewerScreen(
         val pdfPageIndex = (virtualPage as? VirtualPage.PdfPage)?.pdfIndex ?: currentPageIndex
 
         val doc = pdfDocument ?: run {
-            onUpdate(SummarizationResult(error = "Document not loaded."))
+            onUpdate(SummarizationResult(error = context.getString(R.string.pdf_error_document_not_loaded)))
             onFinish()
             return
         }
@@ -2593,7 +2593,7 @@ fun PdfViewerScreen(
                     if (fullText.isEmpty() && lastResult?.error == null) {
                         onUpdate(
                             SummarizationResult(
-                                error = "Failed to parse summary from server response."
+                                error = context.getString(R.string.ai_error_parse_summary)
                             )
                         )
                     }
@@ -2607,17 +2607,21 @@ fun PdfViewerScreen(
                     val errorDetail = try {
                         errorBody?.let { JSONObject(it).getString("detail") }
                     } catch (_: Exception) {
-                        "Could not fetch summary."
+                        context.getString(R.string.ai_error_fetch_summary)
                     }
                     onUpdate(
                         SummarizationResult(
-                            error = "Error: $responseCode. ${errorDetail ?: "An unknown server error occurred."}"
+                            error = context.getString(
+                                R.string.ai_error_with_code,
+                                responseCode,
+                                errorDetail ?: context.getString(R.string.error_unknown_server)
+                            )
                         )
                     )
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Exception during PDF page summarization: ${e.message}")
-                onUpdate(SummarizationResult(error = "An error occurred: ${e.localizedMessage}"))
+                onUpdate(SummarizationResult(error = context.getString(R.string.error_occurred_format, e.localizedMessage)))
             } finally {
                 pageBitmap?.recycle()
                 connection?.disconnect()
@@ -2783,8 +2787,8 @@ fun PdfViewerScreen(
                 val chunks = splitTextIntoChunks(textToChunk)
 
                 val bookTitle = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
-                    ?: effectivePdfUri.lastPathSegment ?: "Document"
-                val pageTitle = "Page ${pageToRead + 1}"
+                    ?: effectivePdfUri.lastPathSegment ?: context.getString(R.string.default_document_title)
+                val pageTitle = context.getString(R.string.pdf_page_short, pageToRead + 1)
 
                 val ttsChunks = chunks.mapIndexed { index, text -> TtsChunk(text, "", index) }
 
@@ -2805,8 +2809,8 @@ fun PdfViewerScreen(
                 }
             } else {
                 val finalError = when {
-                    ocrAttempted -> "OCR found no text on this page."
-                    else -> "Page seems empty or text not extractable."
+                    ocrAttempted -> context.getString(R.string.error_no_text_on_page_after_ocr)
+                    else -> context.getString(R.string.error_page_text_not_extractable)
                 }
 
                 val nextPage = pageToRead + 1
@@ -3216,7 +3220,7 @@ fun PdfViewerScreen(
                 }
             } else {
                 Timber.e(e, "Error loading fixed-layout document")
-                errorMessage = "Error loading document: ${e.localizedMessage}"
+                errorMessage = context.getString(R.string.error_loading_document_format, e.localizedMessage)
                 isLoadingDocument = false
             }
             if (pdfDocument == null) {
@@ -3516,7 +3520,7 @@ fun PdfViewerScreen(
                     results.add(
                         SearchResult(
                             locationInSource = match.pageIndex,
-                            locationTitle = "Page ${match.pageIndex + 1}",
+                            locationTitle = context.getString(R.string.pdf_page_short, match.pageIndex + 1),
                             snippet = parseSnippet(match.snippet),
                             query = query,
                             occurrenceIndexInLocation = occurrenceIndex,
@@ -3529,7 +3533,7 @@ fun PdfViewerScreen(
                     results.add(
                         SearchResult(
                             locationInSource = match.pageIndex,
-                            locationTitle = "Page ${match.pageIndex + 1}",
+                            locationTitle = context.getString(R.string.pdf_page_short, match.pageIndex + 1),
                             snippet = parseSnippet(match.snippet),
                             query = query,
                             occurrenceIndexInLocation = 0,
@@ -6402,7 +6406,7 @@ fun PdfViewerScreen(
         AiHubBottomSheet(
             bookTitle = bookTitle,
             currentChapterIndex = currentPageForDisplay,
-            chapterTitle = "Page ${currentPageForDisplay + 1}",
+            chapterTitle = stringResource(R.string.pdf_page_short, currentPageForDisplay + 1),
             summaryCacheManager = summaryCacheManager,
             summarizationResult = summarizationResult,
             isSummarizationLoading = isSummarizationLoading,
@@ -6438,7 +6442,12 @@ fun PdfViewerScreen(
                                 isSummarizationLoading = false
                                 val finalSummary = summarizationResult?.summary
                                 if (!finalSummary.isNullOrBlank() && summarizationResult?.error == null) {
-                                    summaryCacheManager.saveSummary(bookTitle, currentPageForDisplay, "Page ${currentPageForDisplay + 1}", finalSummary)
+                                    summaryCacheManager.saveSummary(
+                                        bookTitle,
+                                        currentPageForDisplay,
+                                        context.getString(R.string.pdf_page_short, currentPageForDisplay + 1),
+                                        finalSummary
+                                    )
                                 }
                             }
                         )
@@ -6985,7 +6994,7 @@ fun PdfViewerScreen(
         AlertDialog(
             onDismissRequest = { clickedLinkUrl = null },
             title = { Text(stringResource(R.string.dialog_external_link_title)) },
-            text = { Text(stringResource(R.string.desc_external_link_warning)) },
+            text = { Text(stringResource(R.string.desc_external_link_warning, url)) },
             confirmButton = {
                 TextButton(
                     onClick = {

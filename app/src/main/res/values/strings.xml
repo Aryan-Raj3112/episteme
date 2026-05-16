@@ -1327,4 +1327,223 @@
     <string name="options_screen_capture_protection">Screen capture protection</string>
     <string name="banner_screen_capture_protection_on">Screen capture protection is on</string>
     <string name="banner_screen_capture_protection_off">Screen capture protection is off</string>
+
+    <!-- Android-only hardcoded UI string cleanup. -->
+    <string name="settings">Settings</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_restore">Restore</string>
+    <!-- %1$s = the selected option label. -->
+    <string name="option_selected_format">%1$s selected</string>
+    <string name="reader_defaults">Reader defaults</string>
+    <!-- Debug-only placeholder, not shown in normal user flows. -->
+    <string name="debug_actions_existing_menus" translatable="false">Debug actions remain in their existing menus.</string>
+    <!-- PDF and OCR are technical feature names; keep the acronyms as-is. -->
+    <string name="pdf_specific_settings_existing_reader">PDF-specific OCR, annotation, and tool settings remain in the PDF reader.</string>
+    <!-- Provider/product name. Do not translate. -->
+    <string name="provider_gemini" translatable="false">Gemini</string>
+    <!-- Provider/product name. Do not translate. -->
+    <string name="provider_groq" translatable="false">Groq</string>
+    <!-- AI = Artificial Intelligence. Keep the acronym "AI" as-is. -->
+    <string name="ai_definition_title">AI Definition</string>
+    <!-- %1$d = 1-indexed chapter number. -->
+    <string name="chapter_number_format">Chapter %1$d</string>
+    <string name="location_generic">Location</string>
+    <string name="custom_font_fallback">Custom Font</string>
+    <!-- Raw status/detail format only. %1$d = response code; %2$s = server/system detail. -->
+    <string name="error_response_code_with_detail" translatable="false">%1$d. %2$s</string>
+    <!-- %1$s = error detail from the system. -->
+    <string name="error_occurred_format">An error occurred: %1$s</string>
+    <!-- %1$s = error detail from the document loader. -->
+    <string name="error_loading_document_format">Error loading document: %1$s</string>
+    <!-- OCR = Optical Character Recognition. Keep the acronym as-is. -->
+    <string name="error_no_text_on_page_after_ocr">OCR found no text on this page.</string>
+    <string name="error_page_text_not_extractable">Page seems empty or text not extractable.</string>
+    <!-- PDF = Portable Document Format. Keep the acronym as-is. -->
+    <string name="pdf_error_blank_page_summary">Cannot summarize a blank page.</string>
+    <!-- PDF = Portable Document Format. Keep the acronym as-is. -->
+    <string name="pdf_error_document_not_loaded">Document not loaded.</string>
+    <!-- AI = Artificial Intelligence; OSS = Open Source Software. Keep both acronyms as-is. -->
+    <string name="ai_error_offline_oss">AI features are unavailable in the offline OSS build.</string>
+    <string name="ai_error_blocked_safety">Blocked for safety reasons.</string>
+    <!-- AI = Artificial Intelligence. %1$s = feature name such as "Summaries". -->
+    <string name="ai_error_choose_model">Choose a model for %1$s in AI key and model settings.</string>
+    <!-- API = Application Programming Interface. %1$s = provider name such as Gemini or Groq. -->
+    <string name="ai_error_add_provider_key">Add a %1$s API key in AI key and model settings.</string>
+    <!-- AI = Artificial Intelligence. -->
+    <string name="ai_error_provider_empty_response">The AI provider returned an empty response.</string>
+    <!-- AI = Artificial Intelligence. %1$d = HTTP/status code; %2$s = raw provider error body. -->
+    <string name="ai_error_provider_error">AI provider error: %1$d. %2$s</string>
+    <!-- Gemini and Groq are provider names. PDF = file format; keep all as-is. -->
+    <string name="ai_error_gemini_required_for_image_summary">This summary needs a Gemini model because the selected Groq models do not support PDF/image input.</string>
+    <string name="feedback_error_sign_in_required">You must be signed in to use feedback.</string>
+    <string name="feedback_error_sign_in_submit">You must be signed in to submit feedback.</string>
+    <string name="feedback_error_ticket_image_limit">Max 3 images allowed for tickets.</string>
+    <string name="feedback_error_message_image_limit">Max 5 images allowed per message.</string>
+    <!-- 5MB = five megabytes; keep the unit compact. -->
+    <string name="feedback_error_images_size_limit">One or more images exceed the 5MB limit.</string>
+    <!-- %1$s = error detail from the feedback backend. -->
+    <string name="feedback_error_create_ticket">Failed to create ticket: %1$s</string>
+    <!-- %1$s = error detail from the feedback backend. -->
+    <string name="feedback_error_send">Failed to send: %1$s</string>
+    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. -->
+    <string name="opds_error_load_feed">Failed to load feed: %1$s</string>
+    <string name="opds_error_empty_response">Empty body</string>
+    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = server message. -->
+    <string name="opds_error_download_failed">Download failed: %1$s</string>
+    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. -->
+    <string name="opds_error_download_error">Download error: %1$s</string>
+    <!-- %1$s = billing debug message from Google Play Billing. -->
+    <string name="billing_error_purchase_failed">Purchase failed: %1$s</string>
+    <string name="billing_error_connect">Could not connect to billing service.</string>
+    <string name="billing_error_products_not_found">Products not found.</string>
+    <string name="billing_error_query_products_failed">Failed to query products</string>
+    <!-- OSS = Open Source Software. Keep the acronym as-is. -->
+    <string name="billing_error_not_available_oss">Not available in Open Source version</string>
+    <!-- TTS = Text-to-Speech. -->
+    <string name="tts_error_no_text">No text to read.</string>
+    <string name="tts_error_starting_playback">Error starting playback.</string>
+    <string name="tts_error_load_audio">Failed to load audio.</string>
+    <!-- TTS = Text-to-Speech. %1$s = playback error detail. -->
+    <string name="tts_error_playback">Playback error: %1$s</string>
+    <!-- TTS = Text-to-Speech. -->
+    <string name="tts_error_cloud_not_configured">Cloud TTS is not configured.</string>
+    <!-- Fallback media title when the source book title is unavailable. -->
+    <string name="tts_unknown_book">Unknown Book</string>
+
+    <!-- AI key/model settings. AI = Artificial Intelligence. -->
+    <string name="ai_settings_title">AI keys and models</string>
+    <string name="ai_settings_saved_keys">Saved keys</string>
+    <string name="ai_settings_add_or_replace_key">Add or replace key</string>
+    <string name="label_provider">Provider</string>
+    <!-- API = Application Programming Interface. Keep the acronym as-is. -->
+    <string name="label_api_key">API key</string>
+    <string name="ai_settings_save_key">Save key</string>
+    <string name="ai_settings_use_one_model">Use one model for all features</string>
+    <string name="ai_settings_use_one_model_desc">When off, each reader AI feature uses its own selected model.</string>
+    <!-- AI = Artificial Intelligence. -->
+    <string name="ai_settings_all_features">All AI features</string>
+    <string name="ai_settings_all_features_desc">Smart dictionary, summaries, and recaps all use this model.</string>
+    <string name="ai_settings_smart_dictionary">Smart dictionary</string>
+    <string name="ai_settings_smart_dictionary_desc">Used when defining selected words or phrases.</string>
+    <string name="ai_settings_summaries">Summaries</string>
+    <!-- EPUB and PDF are file format names. Gemini is a provider name. Keep all as-is. -->
+    <string name="ai_settings_summaries_desc">Used for EPUB summaries and PDF page summaries. PDF/image summaries need Gemini.</string>
+    <string name="ai_settings_recaps">Recaps</string>
+    <string name="ai_settings_recaps_desc">Used for story recap generation.</string>
+    <!-- TTS = Text-to-Speech. Gemini is a provider name. %1$s = exact model identifier; do not translate the inserted value. -->
+    <string name="ai_settings_cloud_tts_desc">Uses the saved Gemini key. Only %1$s is supported for now.</string>
+    <!-- %1$s = provider name, such as Gemini or Groq. -->
+    <string name="dialog_save_provider_key">Save %1$s key?</string>
+    <string name="dialog_save_key_desc">After saving, only the first 3 and last 3 characters will be visible. To change it later, replace or delete it.</string>
+    <!-- %1$s = provider name, such as Gemini or Groq. -->
+    <string name="dialog_delete_provider_key">Delete %1$s key?</string>
+    <string name="dialog_delete_key_desc">Features using this provider will stop working until a new key is saved.</string>
+    <string name="ai_settings_no_key_saved">No key saved</string>
+    <!-- %1$s = provider display name. -->
+    <string name="content_desc_delete_provider_key">Delete %1$s key</string>
+    <string name="label_model">Model</string>
+    <string name="ai_settings_no_model_selected">No model selected</string>
+    <string name="options_show_ai_in_reader">Show AI in reader</string>
+    <string name="options_hide_ai_in_reader">Hide AI in reader</string>
+
+    <!-- Theme and texture editor. -->
+    <string name="theme_solid_colors">Solid Colors</string>
+    <string name="theme_textured">Textured</string>
+    <string name="theme_custom_solid_default">Custom Solid</string>
+    <string name="theme_custom_textured_default">Custom Textured</string>
+    <string name="theme_select_custom_texture">Select Custom Texture</string>
+    <string name="app_theme_text_brightness_light">Text Brightness (Light)</string>
+    <string name="app_theme_text_brightness_dark">Text Brightness (Dark)</string>
+    <string name="label_default">Default</string>
+    <string name="label_left">Left</string>
+    <string name="label_right">Right</string>
+    <string name="label_justify">Justify</string>
+    <string name="label_always_show">Always Show</string>
+    <string name="label_sync_with_menus">Sync with Menus</string>
+    <string name="label_always_hide">Always Hide</string>
+    <string name="label_top">Top</string>
+    <string name="label_bottom">Bottom</string>
+
+    <!-- File metadata dialog. -->
+    <string name="dialog_restore_original_metadata">Restore original metadata?</string>
+    <!-- EPUB is a file format name; keep the acronym as-is. -->
+    <string name="dialog_restore_original_metadata_desc">This will write the original title, author, series, and summary back into the EPUB file. Reading progress, tags, and notes will not change.</string>
+    <!-- EPUB is a file format name; keep the acronym as-is. -->
+    <string name="metadata_provenance_epub_edited">EPUB metadata edited</string>
+    <!-- EPUB is a file format name; keep the acronym as-is. -->
+    <string name="metadata_provenance_from_epub">Metadata from EPUB file</string>
+    <string name="metadata_provenance_display_name_changed">Display name changed in app</string>
+    <string name="metadata_provenance_from_file">Metadata from file</string>
+    <string name="section_metadata">Metadata</string>
+    <string name="section_file">File</string>
+    <string name="label_title">Title</string>
+    <string name="label_series">Series</string>
+    <string name="label_reading">Reading</string>
+    <string name="label_file_name_simple">File name</string>
+    <string name="label_modified">Modified</string>
+    <string name="label_summary">Summary</string>
+    <string name="label_library_tags">Library tags</string>
+    <string name="label_editable_metadata">Editable metadata</string>
+    <string name="label_display_name">Display name</string>
+    <string name="label_name_shown_in_reader">Name shown in Reader</string>
+    <!-- %1$s = original file name. -->
+    <string name="original_file_format">Original file: %1$s</string>
+
+    <!-- Toolbar customization. -->
+    <string name="toolbar_top_bar">Top Bar</string>
+    <string name="toolbar_bottom_bar">Bottom Bar</string>
+    <string name="toolbar_hidden_tools">Hidden Tools</string>
+    <string name="toolbar_more_menu">More menu</string>
+    <string name="toolbar_hidden_tools_menu">Hidden tools</string>
+    <string name="toolbar_drop_tools_here">Drop tools here</string>
+    <string name="content_desc_drag_to_reorder">Drag to reorder</string>
+    <string name="tool_external_apps">External Apps</string>
+    <string name="tool_navigation_slider">Navigation Slider</string>
+    <string name="tool_sidebar">Sidebar</string>
+    <string name="tool_highlight_selectable_text">Highlight selectable text</string>
+    <string name="tool_edit_mode">Edit Mode</string>
+    <!-- TTS = Text-to-Speech. Keep the acronym as-is. -->
+    <string name="tool_tts_controls">TTS Controls</string>
+    <string name="tool_reading_mode">Reading Mode</string>
+    <string name="tool_page_management">Page Management</string>
+    <!-- "Text View" is the PDF reflow feature name. -->
+    <string name="tool_text_view_reflow">Text View (Reflow)</string>
+
+    <!-- TTS word replacement sheet. TTS = Text-to-Speech. -->
+    <string name="tts_replacements_current_book">Current book</string>
+    <string name="tts_replacements_tab_global">Global</string>
+    <string name="tts_replacements_tab_this_book">This book</string>
+    <string name="tts_replacements_enable">Enable replacements</string>
+    <string name="tts_replacements_enable_desc">Rules here apply to every book unless disabled for a specific title.</string>
+    <string name="tts_replacements_add_rule">Add rule</string>
+    <string name="tts_replacements_add_book_rule">Add book rule</string>
+    <string name="tts_replacements_empty_global">No global replacement rules yet.</string>
+    <string name="tts_replacements_empty_book">No book-specific rules yet.</string>
+    <string name="tts_replacements_use_global_here">Use global rules here</string>
+    <string name="tts_replacements_use_global_here_desc">Turn this off when a book needs its own pronunciation choices.</string>
+    <string name="tts_replacements_enable_book_rules">Enable book rules</string>
+    <string name="tts_replacements_enable_book_rules_desc">Local rules run after global rules.</string>
+    <string name="tts_replacements_inherited_global_rules">Inherited global rules</string>
+    <string name="tts_replacements_no_global_rules">No global rules to inherit.</string>
+    <string name="tts_replacements_allowed_in_book">Allowed in this book</string>
+    <string name="tts_replacements_disabled_for_book">Disabled for this book</string>
+    <string name="tts_replacements_suggestions">Suggestions</string>
+    <!-- English sample input for replacement previews; keep abbreviations as written so built-in examples behave consistently. -->
+    <string name="tts_replacements_preview_default" translatable="false">Dr. Smith met NASA at 5 p.m.</string>
+    <string name="tts_replacements_new_replacement">New replacement</string>
+    <string name="tts_replacements_edit_replacement">Edit replacement</string>
+    <string name="tts_replacements_label_replace">Replace</string>
+    <string name="tts_replacements_label_speak_as">Speak as</string>
+    <string name="tts_replacements_chip_enabled">Enabled</string>
+    <!-- Regex is a technical term for regular expression; keep as-is. -->
+    <string name="tts_replacements_chip_regex" translatable="false">Regex</string>
+    <string name="tts_replacements_chip_whole_word">Whole word</string>
+    <string name="tts_replacements_chip_match_case">Match case</string>
+    <string name="tts_replacements_label_preview_input">Preview input</string>
+    <string name="tts_replacements_rules">Rules</string>
+    <!-- Lowercase because it is inserted into summaries like "word -> silence". -->
+    <string name="tts_replacements_silence">silence</string>
+    <string name="tts_replacements_plain_text">Plain text</string>
+    <!-- Lowercase because it is joined into a comma-separated option summary. -->
+    <string name="tts_replacements_case_sensitive">case-sensitive</string>
 </resources>

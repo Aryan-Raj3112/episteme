@@ -66,7 +66,7 @@ suspend fun summarizeBookContent(
     onFinish: () -> Unit
 ) {
     if (content.isBlank()) {
-        onError("The book content is empty.")
+        onError(context.getString(R.string.ai_error_book_content_empty))
         onFinish()
         return
     }
@@ -75,7 +75,7 @@ suspend fun summarizeBookContent(
     @Suppress("KotlinConstantConditions")
     if (BuildConfig.FLAVOR == "oss") {
         if (BuildConfig.IS_OFFLINE) {
-            onError("AI features are unavailable in the offline OSS build.")
+            onError(context.getString(R.string.ai_error_offline_oss))
             onFinish()
             return
         }
@@ -154,7 +154,7 @@ suspend fun summarizeBookContent(
                     }
                 }
                 if (!hasReceivedData) {
-                    onError("Failed to parse summary from server response.")
+                    onError(context.getString(R.string.ai_error_parse_summary))
                 }
             } else {
                 val errorBody = try {
@@ -162,12 +162,12 @@ suspend fun summarizeBookContent(
                 } catch (_: Exception) { null }
                 val errorDetail = try {
                     JSONObject(errorBody.toString()).getString("detail")
-                } catch (_: Exception) { "Could not fetch summary." }
-                onError("Error: $responseCode. $errorDetail")
+                } catch (_: Exception) { context.getString(R.string.ai_error_fetch_summary) }
+                onError(context.getString(R.string.ai_error_with_code, responseCode, errorDetail))
             }
         } catch (e: Exception) {
             Timber.e(e, "Network error during summarization: ${e.message}")
-            onError("Network error. Please check connection and server status.")
+            onError(context.getString(R.string.ai_error_network_server))
         } finally {
             connection?.disconnect()
             onFinish()

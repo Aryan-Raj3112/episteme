@@ -21,6 +21,7 @@ package com.aryan.reader.epubreader
 
 import android.content.Context
 import android.net.Uri
+import androidx.annotation.StringRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -161,28 +162,28 @@ enum class ReaderFont(val id: String, val displayName: String, val fontFamilyNam
     LEXEND("lexend", "Lexend", "Lexend")
 }
 
-enum class ReaderTextAlign(val id: String, val cssValue: String, val iconResId: Int, val displayName: String) {
-    DEFAULT("default", "", R.drawable.format_align_left, "Default"),
-    LEFT("left", "left", R.drawable.format_align_left, "Left"),
-    RIGHT("right", "right", R.drawable.format_align_right, "Right"),
-    JUSTIFY("justify", "justify", R.drawable.format_align_justify, "Justify")
+enum class ReaderTextAlign(val id: String, val cssValue: String, val iconResId: Int, @StringRes val displayNameRes: Int) {
+    DEFAULT("default", "", R.drawable.format_align_left, R.string.label_default),
+    LEFT("left", "left", R.drawable.format_align_left, R.string.label_left),
+    RIGHT("right", "right", R.drawable.format_align_right, R.string.label_right),
+    JUSTIFY("justify", "justify", R.drawable.format_align_justify, R.string.label_justify)
 }
 
-enum class SystemUiMode(val id: Int, val title: String) {
-    DEFAULT(0, "Always Show"),
-    SYNC(1, "Sync with Menus"),
-    HIDDEN(2, "Always Hide")
+enum class SystemUiMode(val id: Int, @StringRes val titleRes: Int) {
+    DEFAULT(0, R.string.label_always_show),
+    SYNC(1, R.string.label_sync_with_menus),
+    HIDDEN(2, R.string.label_always_hide)
 }
 
-enum class PageInfoMode(val id: Int, val title: String) {
-    DEFAULT(0, "Always Show"),
-    SYNC(1, "Sync with Menus"),
-    HIDDEN(2, "Always Hide")
+enum class PageInfoMode(val id: Int, @StringRes val titleRes: Int) {
+    DEFAULT(0, R.string.label_always_show),
+    SYNC(1, R.string.label_sync_with_menus),
+    HIDDEN(2, R.string.label_always_hide)
 }
 
-enum class PageInfoPosition(val id: Int, val title: String) {
-    BOTTOM(0, "Bottom"),
-    TOP(1, "Top")
+enum class PageInfoPosition(val id: Int, @StringRes val titleRes: Int) {
+    BOTTOM(0, R.string.label_bottom),
+    TOP(1, R.string.label_top)
 }
 
 data class FormatSettings(
@@ -650,6 +651,7 @@ fun ReaderTextFormatPanel(
                     Row {
                         ReaderTextAlign.entries.forEach { align ->
                             val isSelected = currentTextAlign == align
+                            val alignDisplayName = stringResource(align.displayNameRes)
                             Column(
                                 modifier = Modifier
                                     .fillMaxHeight()
@@ -662,12 +664,12 @@ fun ReaderTextFormatPanel(
                             ) {
                                 Icon(
                                     painter = painterResource(id = align.iconResId),
-                                    contentDescription = align.displayName,
+                                    contentDescription = alignDisplayName,
                                     tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
                                 )
                                 Text(
-                                    text = align.displayName,
+                                    text = alignDisplayName,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontSize = 11.sp,
                                     color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -924,7 +926,7 @@ fun VisualOptionsSheet(
                 options = SystemUiMode.entries,
                 selectedOption = systemUiMode,
                 onOptionSelected = onSystemUiModeChange,
-                getLabel = { it.title }
+                getLabel = { stringResource(it.titleRes) }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -937,7 +939,7 @@ fun VisualOptionsSheet(
                 options = PageInfoMode.entries,
                 selectedOption = pageInfoMode,
                 onOptionSelected = onPageInfoModeChange,
-                getLabel = { it.title }
+                getLabel = { stringResource(it.titleRes) }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -947,7 +949,7 @@ fun VisualOptionsSheet(
                 options = PageInfoPosition.entries,
                 selectedOption = pageInfoPosition,
                 onOptionSelected = onPageInfoPositionChange,
-                getLabel = { it.title }
+                getLabel = { stringResource(it.titleRes) }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -1004,7 +1006,7 @@ fun <T> OptionSegmentedControl(
     options: List<T>,
     selectedOption: T,
     onOptionSelected: (T) -> Unit,
-    getLabel: (T) -> String
+    getLabel: @Composable (T) -> String
 ) {
     Row(
         modifier = Modifier

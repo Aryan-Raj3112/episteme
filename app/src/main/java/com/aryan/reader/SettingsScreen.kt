@@ -23,6 +23,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
@@ -156,7 +157,7 @@ fun SettingsScreen(
                 title = { Text(settingsPage.title) },
                 navigationIcon = {
                     IconButton(onClick = ::navigateBackFromSettings) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 }
             )
@@ -242,11 +243,11 @@ fun SettingsScreen(
                     SharedSettingsAction.TEST_PANEL_DETECTION -> viewModel.testPanelDetection(context)
                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION -> viewModel.testSpeechBubbleDetection(context)
                     SharedSettingsAction.EXPORT_LOGS -> viewModel.exportLogsToFile(context)
-                    SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner("Debug actions remain in their existing menus.")
+                    SharedSettingsAction.DEBUG_ACTIONS -> viewModel.showBanner(context.getString(R.string.debug_actions_existing_menus))
                     SharedSettingsAction.HELP_FEEDBACK -> navController.navigate(AppDestinations.FEEDBACK_SCREEN_ROUTE)
                     SharedSettingsAction.SUPPORT -> navController.navigate(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE)
                     SharedSettingsAction.ABOUT -> showAboutDialog = true
-                    SharedSettingsAction.PDF_READER_DEFAULTS -> viewModel.showBanner("PDF-specific OCR, annotation, and tool settings remain in the PDF reader.")
+                    SharedSettingsAction.PDF_READER_DEFAULTS -> viewModel.showBanner(context.getString(R.string.pdf_specific_settings_existing_reader))
                     SharedSettingsAction.TEXT_READER_DEFAULTS,
                     SharedSettingsAction.READER_TOOLBAR,
                     SharedSettingsAction.TTS_REPLACEMENTS,
@@ -374,7 +375,7 @@ fun SettingsScreen(
             onSpeakerChange = viewModel.ttsController::changeSpeaker,
             isTtsActive = ttsState.isPlaying,
             getAuthToken = { viewModel.getAuthToken() },
-            bookTitle = "Reader defaults"
+            bookTitle = context.getString(R.string.reader_defaults)
         )
     }
 
@@ -395,19 +396,23 @@ private fun RecentLimitDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Recent files limit") },
+        title = { Text(stringResource(R.string.options_recent_limit)) },
         text = {
             androidx.compose.foundation.layout.Column {
                 listOf(0, 10, 20, 50, 100).forEach { limit ->
                     TextButton(onClick = { onSelect(limit) }) {
-                        val label = if (limit == 0) "No limit" else "$limit files"
-                        Text(if (currentLimit == limit) "$label selected" else label)
+                        val label = if (limit == 0) {
+                            stringResource(R.string.options_no_limit)
+                        } else {
+                            stringResource(R.string.options_files_limit, limit)
+                        }
+                        Text(if (currentLimit == limit) stringResource(R.string.option_selected_format, label) else label)
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
 }

@@ -1,11 +1,13 @@
 package com.aryan.reader.pdf
 
 import android.content.Context
+import androidx.annotation.StringRes
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.R
 import com.aryan.reader.ReaderTheme
 import com.aryan.reader.ReaderTexture
 import com.aryan.reader.epubreader.SystemUiMode
@@ -49,33 +51,33 @@ internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "pdf_hidden_tools_defaults_version"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 2
 
-enum class PdfReaderTool(val title: String, val category: String) {
-    DICTIONARY("External Apps", "Top Bar"),
-    THEME("Theme Settings", "Top Bar"),
-    LOCK_PANNING("Lock Panning", "Top Bar"),
-    VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
-    TAP_TO_TURN("Tap to Turn Pages", "Overflow Menu"),
-    FULL_SCREEN("Full Screen", "Top Bar"),
-    SLIDER("Navigation Slider", "Bottom Bar"),
-    TOC("Sidebar", "Bottom Bar"),
-    SEARCH("Search", "Bottom Bar"),
-    HIGHLIGHT_ALL("Highlight selectable text", "Bottom Bar"),
-    AI_FEATURES("AI Features", "Bottom Bar"),
-    EDIT_MODE("Edit Mode", "Bottom Bar"),
-    TTS_CONTROLS("TTS Controls", "Bottom Bar"),
-    OCR_LANGUAGE("OCR Language", "Overflow Menu"),
-    READING_MODE("Reading Mode", "Overflow Menu"),
-    KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
-    SCREEN_ORIENTATION("Screen Orientation", "Top Bar"),
-    AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
-    TTS_SETTINGS("TTS Settings", "Overflow Menu"),
-    TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu"),
-    BOOKMARK("Bookmark", "Overflow Menu"),
-    PAGE_MANAGEMENT("Page Management", "Overflow Menu"),
-    REFLOW("Text View (Reflow)", "Overflow Menu"),
-    SHARE("Share", "Overflow Menu"),
-    SAVE_COPY("Save Copy", "Overflow Menu"),
-    PRINT("Print", "Overflow Menu")
+enum class PdfReaderTool(@StringRes val titleRes: Int, val category: String) {
+    DICTIONARY(R.string.tool_external_apps, "Top Bar"),
+    THEME(R.string.tooltip_theme_desc, "Top Bar"),
+    LOCK_PANNING(R.string.tooltip_lock_pan, "Top Bar"),
+    VISUAL_OPTIONS(R.string.menu_visual_options, "Overflow Menu"),
+    TAP_TO_TURN(R.string.menu_tap_to_turn_pages, "Overflow Menu"),
+    FULL_SCREEN(R.string.tooltip_fullscreen, "Top Bar"),
+    SLIDER(R.string.tool_navigation_slider, "Bottom Bar"),
+    TOC(R.string.tool_sidebar, "Bottom Bar"),
+    SEARCH(R.string.action_search, "Bottom Bar"),
+    HIGHLIGHT_ALL(R.string.tool_highlight_selectable_text, "Bottom Bar"),
+    AI_FEATURES(R.string.ai_features_title, "Bottom Bar"),
+    EDIT_MODE(R.string.tool_edit_mode, "Bottom Bar"),
+    TTS_CONTROLS(R.string.tool_tts_controls, "Bottom Bar"),
+    OCR_LANGUAGE(R.string.menu_ocr_language, "Overflow Menu"),
+    READING_MODE(R.string.tool_reading_mode, "Overflow Menu"),
+    KEEP_SCREEN_ON(R.string.menu_keep_screen_on, "Overflow Menu"),
+    SCREEN_ORIENTATION(R.string.menu_screen_orientation, "Top Bar"),
+    AUTO_SCROLL(R.string.menu_auto_scroll, "Overflow Menu"),
+    TTS_SETTINGS(R.string.menu_tts_settings, "Overflow Menu"),
+    TTS_REPLACEMENTS(R.string.menu_tts_word_replacements, "Overflow Menu"),
+    BOOKMARK(R.string.content_desc_bookmark, "Overflow Menu"),
+    PAGE_MANAGEMENT(R.string.tool_page_management, "Overflow Menu"),
+    REFLOW(R.string.tool_text_view_reflow, "Overflow Menu"),
+    SHARE(R.string.action_share, "Overflow Menu"),
+    SAVE_COPY(R.string.action_save_copy_to_device, "Overflow Menu"),
+    PRINT(R.string.action_print, "Overflow Menu")
 }
 
 internal fun defaultPdfHiddenTools(): Set<String> {

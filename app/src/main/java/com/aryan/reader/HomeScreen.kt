@@ -1049,7 +1049,7 @@ fun DefaultTopAppBar(
         }
     }, actions = {
         IconButton(onClick = onSettingsClick) {
-            Icon(Icons.Default.Settings, contentDescription = "Settings")
+            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
         }
         Box {
             IconButton(onClick = onAppThemeClick) {
@@ -1139,7 +1139,7 @@ fun DefaultTopAppBar(
 
                 if (!BuildConfig.IS_OFFLINE) {
                     DropdownMenuItem(
-                        text = { Text(if (hideReaderAiFeatures) "Show AI in reader" else "Hide AI in reader") },
+                        text = { Text(stringResource(if (hideReaderAiFeatures) R.string.options_show_ai_in_reader else R.string.options_hide_ai_in_reader)) },
                         onClick = {
                             onToggleHideReaderAi()
                             hideReaderAiFeatures = !hideReaderAiFeatures
@@ -1374,7 +1374,7 @@ private fun AppDrawerContent(
 
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                label = { Text("Settings") },
+                label = { Text(stringResource(R.string.settings)) },
                 selected = false,
                 onClick = onSettingsClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -1391,7 +1391,7 @@ private fun AppDrawerContent(
             if (isOss && !BuildConfig.IS_OFFLINE) {
                 NavigationDrawerItem(
                     icon = { Icon(painterResource(id = R.drawable.ai), contentDescription = null) },
-                    label = { Text("AI keys and models") },
+                    label = { Text(stringResource(R.string.ai_settings_title)) },
                     selected = false,
                     onClick = onAiSettingsClick,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
@@ -1855,7 +1855,7 @@ fun AppThemeBottomSheet(
             Spacer(Modifier.height(24.dp))
 
             if (uiState.appThemeMode == AppThemeMode.SYSTEM) {
-                Text("${stringResource(R.string.app_theme_text_brightness)} (Light)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.app_theme_text_brightness_light), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -1877,7 +1877,7 @@ fun AppThemeBottomSheet(
 
                 Spacer(Modifier.height(16.dp))
 
-                Text("${stringResource(R.string.app_theme_text_brightness)} (Dark)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(stringResource(R.string.app_theme_text_brightness_dark), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier

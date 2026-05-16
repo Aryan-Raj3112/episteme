@@ -26,6 +26,7 @@ import android.graphics.Canvas
 import android.os.Build
 import android.webkit.WebView
 import androidx.annotation.RequiresApi
+import androidx.annotation.StringRes
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -153,26 +154,26 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import kotlin.math.roundToInt
 
-enum class ReaderTool(val title: String, val category: String) {
-    DICTIONARY("External Apps", "Top Bar"),
-    THEME("Theme Settings", "Top Bar"),
-    SLIDER("Navigation Slider", "Bottom Bar"),
-    TOC("Sidebar", "Bottom Bar"),
-    FORMAT("Text Formatting", "Bottom Bar"),
-    SEARCH("Search", "Bottom Bar"),
-    AI_FEATURES("AI Features", "Bottom Bar"),
-    TTS_CONTROLS("TTS Controls", "Bottom Bar"),
-    READING_MODE("Reading Mode", "Overflow Menu"),
-    BOOKMARK("Bookmark", "Overflow Menu"),
-    TAP_TO_TURN("Tap to Turn Pages", "Overflow Menu"),
-    VOLUME_SCROLL("Volume Button Scrolling", "Overflow Menu"),
-    PAGE_TURN_ANIM("Realistic Page Turns", "Overflow Menu"),
-    KEEP_SCREEN_ON("Keep Screen On", "Overflow Menu"),
-    VISUAL_OPTIONS("Visual Options", "Overflow Menu"),
-    SCREEN_ORIENTATION("Screen Orientation", "Top Bar"),
-    AUTO_SCROLL("Auto Scroll", "Overflow Menu"),
-    TTS_SETTINGS("TTS Settings", "Overflow Menu"),
-    TTS_REPLACEMENTS("TTS Word Replacements", "Overflow Menu")
+enum class ReaderTool(@StringRes val titleRes: Int, val category: String) {
+    DICTIONARY(R.string.tool_external_apps, "Top Bar"),
+    THEME(R.string.tooltip_theme_desc, "Top Bar"),
+    SLIDER(R.string.tool_navigation_slider, "Bottom Bar"),
+    TOC(R.string.tool_sidebar, "Bottom Bar"),
+    FORMAT(R.string.content_desc_text_formatting, "Bottom Bar"),
+    SEARCH(R.string.action_search, "Bottom Bar"),
+    AI_FEATURES(R.string.ai_features_title, "Bottom Bar"),
+    TTS_CONTROLS(R.string.tool_tts_controls, "Bottom Bar"),
+    READING_MODE(R.string.tool_reading_mode, "Overflow Menu"),
+    BOOKMARK(R.string.content_desc_bookmark, "Overflow Menu"),
+    TAP_TO_TURN(R.string.menu_tap_to_turn_pages, "Overflow Menu"),
+    VOLUME_SCROLL(R.string.menu_volume_button_scrolling, "Overflow Menu"),
+    PAGE_TURN_ANIM(R.string.menu_realistic_page_turns, "Overflow Menu"),
+    KEEP_SCREEN_ON(R.string.menu_keep_screen_on, "Overflow Menu"),
+    VISUAL_OPTIONS(R.string.menu_visual_options, "Overflow Menu"),
+    SCREEN_ORIENTATION(R.string.menu_screen_orientation, "Top Bar"),
+    AUTO_SCROLL(R.string.menu_auto_scroll, "Overflow Menu"),
+    TTS_SETTINGS(R.string.menu_tts_settings, "Overflow Menu"),
+    TTS_REPLACEMENTS(R.string.menu_tts_word_replacements, "Overflow Menu")
 }
 
 enum class FlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
@@ -182,7 +183,8 @@ data class FlatToolItem(
     val type: FlatItemType,
     val tool: ReaderTool? = null,
     val section: ToolbarSection? = null,
-    val title: String? = null
+    val title: String? = null,
+    @StringRes val titleRes: Int? = null
 )
 
 fun sanitizePlaceholders(list: List<FlatToolItem>): List<FlatToolItem> {
@@ -197,7 +199,7 @@ fun sanitizePlaceholders(list: List<FlatToolItem>): List<FlatToolItem> {
     }
 
     ToolbarSection.entries.forEach { section ->
-        result.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, title = section.title))
+        result.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, titleRes = section.titleRes))
 
         val tools = sectionMap[section] ?: emptyList()
         if (tools.isEmpty()) {
@@ -293,7 +295,7 @@ internal fun buildReaderToolbarItems(
             ToolbarSection.BOTTOM -> bottomToolsList
             ToolbarSection.HIDDEN -> hiddenToolsList
         }
-        list.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, title = section.title))
+        list.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, titleRes = section.titleRes))
         if (tools.isEmpty()) {
             list.add(FlatToolItem("empty_${section.name}", FlatItemType.EMPTY_PLACEHOLDER, section = section))
         } else {
@@ -303,7 +305,7 @@ internal fun buildReaderToolbarItems(
         }
     }
 
-    list.add(FlatToolItem("more_header", FlatItemType.MORE_HEADER, title = "More menu"))
+    list.add(FlatToolItem("more_header", FlatItemType.MORE_HEADER, titleRes = R.string.toolbar_more_menu))
     moreTools.forEach { tool ->
         list.add(FlatToolItem("more_${tool.name}", FlatItemType.MORE_TOOL, tool = tool))
     }
@@ -523,7 +525,7 @@ fun EpubReaderTopBar(
 
                             if (hiddenToolbarTools.isNotEmpty()) {
                                 DropdownMenuItem(
-                                    text = { Text("Hidden tools") },
+                                    text = { Text(stringResource(R.string.toolbar_hidden_tools_menu)) },
                                     onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
                                     trailingIcon = {
                                         Icon(
@@ -1906,8 +1908,9 @@ fun CustomizeToolsSheet(
                         ) {
                             when (item.type) {
                                 FlatItemType.SECTION_HEADER -> {
+                                    val titleRes = item.titleRes
                                     Text(
-                                        text = item.title ?: "",
+                                        text = if (titleRes != null) stringResource(titleRes) else item.title.orEmpty(),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurface,
@@ -1923,7 +1926,7 @@ fun CustomizeToolsSheet(
                                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text("Drop tools here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(stringResource(R.string.toolbar_drop_tools_here), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                                 FlatItemType.TOOL -> {
@@ -1940,8 +1943,9 @@ fun CustomizeToolsSheet(
                                     )
                                 }
                                 FlatItemType.MORE_HEADER -> {
+                                    val titleRes = item.titleRes
                                     Text(
-                                        text = item.title ?: "More menu",
+                                        text = if (titleRes != null) stringResource(titleRes) else item.title ?: stringResource(R.string.toolbar_more_menu),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.padding(top = 24.dp, bottom = 8.dp, start = 4.dp)
@@ -1949,7 +1953,7 @@ fun CustomizeToolsSheet(
                                 }
                                 FlatItemType.MORE_TOOL -> {
                                     MoreToolVisibilityRow(
-                                        title = item.tool!!.title,
+                                        title = stringResource(item.tool!!.titleRes),
                                         visible = !localHiddenTools.contains(item.tool.name),
                                         onToggle = {
                                             localHiddenTools = if (localHiddenTools.contains(item.tool.name)) {
@@ -1992,14 +1996,14 @@ private fun ToolbarDragRow(
             ToolPreviewIcon(tool)
             Spacer(Modifier.width(16.dp))
             Text(
-                text = tool.title,
+                text = stringResource(tool.titleRes),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
             )
             Icon(
                 Icons.Default.Menu,
-                contentDescription = "Drag to reorder",
+                contentDescription = stringResource(R.string.content_desc_drag_to_reorder),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .size(32.dp)
@@ -2047,25 +2051,26 @@ private fun MoreToolVisibilityRow(
     }
 }
 
-enum class ToolbarSection(val title: String) {
-    TOP("Top Bar"),
-    BOTTOM("Bottom Bar"),
-    HIDDEN("Hidden Tools")
+enum class ToolbarSection(@StringRes val titleRes: Int) {
+    TOP(R.string.toolbar_top_bar),
+    BOTTOM(R.string.toolbar_bottom_bar),
+    HIDDEN(R.string.toolbar_hidden_tools)
 }
 
 @Composable
 private fun ToolPreviewIcon(tool: ReaderTool) {
+    val title = stringResource(tool.titleRes)
     when (tool) {
-        ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.FORMAT -> Icon(painterResource(id = R.drawable.format_size), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        ReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = tool.title, modifier = Modifier.size(20.dp))
-        else -> Icon(Icons.Default.MoreVert, contentDescription = tool.title, modifier = Modifier.size(20.dp))
+        ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.FORMAT -> Icon(painterResource(id = R.drawable.format_size), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = title, modifier = Modifier.size(20.dp))
+        else -> Icon(Icons.Default.MoreVert, contentDescription = title, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -2090,7 +2095,7 @@ private fun HiddenEpubToolMenuItem(
         else -> true
     }
     DropdownMenuItem(
-        text = { Text(tool.title) },
+        text = { Text(stringResource(tool.titleRes)) },
         enabled = enabled,
         onClick = {
             showMoreMenu()
@@ -2238,7 +2243,11 @@ fun TtsOverlayControls(
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text(
-                                    if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) "✨ Cloud" else "📱 Device",
+                                    if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
+                                        stringResource(R.string.tts_mode_cloud_ai)
+                                    } else {
+                                        stringResource(R.string.tts_mode_device_native)
+                                    },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -2251,7 +2260,7 @@ fun TtsOverlayControls(
                             ) {
                                 val voiceName = if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
                                     GEMINI_TTS_SPEAKERS.find { it.id == ttsState.speakerId }?.name ?: ttsState.speakerId
-                                } else loadNativeVoice(context)?.split("-")?.lastOrNull() ?: "Default"
+                                } else loadNativeVoice(context)?.split("-")?.lastOrNull() ?: stringResource(R.string.label_default)
 
                                 Text(
                                     voiceName,

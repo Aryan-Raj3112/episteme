@@ -2422,13 +2422,13 @@ fun EpubReaderHost(
         val targetPageIndex = pageIndex
         val targetCfi = cfi.orEmpty()
         if (targetPageIndex != null && (targetCfi.isBlank() || targetCfi.startsWith("android-page:"))) {
-            return "Page ${targetPageIndex + 1}"
+            return context.getString(R.string.pdf_page_short, targetPageIndex + 1)
         }
         val chapter = chapterIndex
         return if (chapter != null) {
-            chapters.getOrNull(chapter)?.title?.takeIf { it.isNotBlank() } ?: "Chapter ${chapter + 1}"
+            chapters.getOrNull(chapter)?.title?.takeIf { it.isNotBlank() } ?: context.getString(R.string.chapter_number_format, chapter + 1)
         } else {
-            "Location"
+            context.getString(R.string.location_generic)
         }
     }
 
@@ -3271,7 +3271,7 @@ fun EpubReaderHost(
                             } ?: run {
                                 isSummarizationLoading = false
                                 summarizationResult =
-                                    SummarizationResult(error = "WebView not available.")
+                                    SummarizationResult(error = context.getString(R.string.error_webview_not_available))
                             }
                         }
                     }
@@ -3342,7 +3342,7 @@ fun EpubReaderHost(
                                             if (fullSummary.isNotBlank()) {
                                                 val chapterTitle =
                                                     chapters.getOrNull(chapterIndex)?.title
-                                                        ?: "Chapter ${chapterIndex + 1}"
+                                                        ?: context.getString(R.string.chapter_number_format, chapterIndex + 1)
                                                 summaryCacheManager.saveSummary(
                                                     epubBook.title,
                                                     chapterIndex,
@@ -3353,12 +3353,12 @@ fun EpubReaderHost(
                                         })
                                 } else {
                                     summarizationResult =
-                                        SummarizationResult(error = "Could not get chapter content.")
+                                        SummarizationResult(error = context.getString(R.string.error_could_not_get_chapter_content))
                                     isSummarizationLoading = false
                                 }
                             } else {
                                 summarizationResult =
-                                    SummarizationResult(error = "Could not determine current chapter.")
+                                    SummarizationResult(error = context.getString(R.string.error_could_not_determine_chapter))
                                 isSummarizationLoading = false
                             }
                         }
@@ -4216,7 +4216,7 @@ fun EpubReaderHost(
                                                             isSummarizationLoading = false
                                                             val fullSummary = finalSummaryBuilder.toString()
                                                             if (fullSummary.isNotBlank()) {
-                                                                val chapterTitle = chapters.getOrNull(chapterIndexToSave)?.title ?: "Chapter ${chapterIndexToSave + 1}"
+                                                    val chapterTitle = chapters.getOrNull(chapterIndexToSave)?.title ?: context.getString(R.string.chapter_number_format, chapterIndexToSave + 1)
                                                                 summaryCacheManager.saveSummary(bookTitleToSave, chapterIndexToSave, chapterTitle, fullSummary)
                                                             }
                                                         }
@@ -4371,7 +4371,7 @@ fun EpubReaderHost(
                                                 )
                                                 val chapterTitle =
                                                     epubBook.chapters.getOrNull(currentChapterIndex)?.title
-                                                        ?: "Unknown Chapter"
+                                                        ?: context.getString(R.string.unknown_chapter)
                                                 val newBookmark = Bookmark(
                                                     cfi = cfi,
                                                     chapterTitle = chapterTitle,
@@ -4787,7 +4787,7 @@ fun EpubReaderHost(
                                     val finalCfi = if (offset > 0) "$baseCfi:$offset" else baseCfi
 
                                     val chapterIndex = paginator?.findChapterIndexForPage(paginatedPagerState.currentPage)
-                                    val chapterTitle = chapterIndex?.let { epubBook.chapters.getOrNull(it)?.title } ?: "Unknown Chapter"
+                                    val chapterTitle = chapterIndex?.let { epubBook.chapters.getOrNull(it)?.title } ?: context.getString(R.string.unknown_chapter)
                                     val snippet = (targetBlockForBookmark as? TextContentBlock)?.content?.text?.take(150) ?: ""
 
                                     val pageInChapter: Int?
@@ -4904,7 +4904,7 @@ fun EpubReaderHost(
                         val textToShow = if (bookPaginator != null && chapterIndex != null) {
                             val chapterTitle =
                                 chapters.getOrNull(chapterIndex)?.title?.take(30)?.trim()
-                                    ?: "Chapter"
+                                    ?: stringResource(R.string.chapter)
                             val totalPagesInChapter = bookPaginator.chapterPageCounts[chapterIndex]
                             val chapterStartPage = bookPaginator.chapterStartPageIndices[chapterIndex]
 
@@ -4916,7 +4916,7 @@ fun EpubReaderHost(
                                 chapterTitle
                             }
                         } else {
-                            "Page ${paginatedPagerState.currentPage + 1}/${paginatedPagerState.pageCount}"
+                            stringResource(R.string.page_number_of_total, paginatedPagerState.currentPage + 1, paginatedPagerState.pageCount)
                         }
 
                         Text(
@@ -5610,7 +5610,7 @@ fun EpubReaderHost(
                     onVerticalMarginChange = { currentVerticalMargin = it },
                     currentFont = currentFontFamily,
                     currentCustomFontName = if(currentCustomFontPath != null) {
-                        customFonts.find { it.path == currentCustomFontPath }?.displayName ?: "Custom Font"
+                        customFonts.find { it.path == currentCustomFontPath }?.displayName ?: stringResource(R.string.custom_font_fallback)
                     } else null,
                     onFontOptionClick = { showFontSelectionSheet = true },
                     currentTextAlign = currentTextAlign,
@@ -5691,7 +5691,7 @@ fun EpubReaderHost(
                     credits = credits,
                     isProUser = isProUser,
                     currentChapterIndex = effectiveCurrentChapterIndex,
-                    chapterTitle = chapters.getOrNull(effectiveCurrentChapterIndex)?.title ?: "Chapter ${effectiveCurrentChapterIndex + 1}",
+                    chapterTitle = chapters.getOrNull(effectiveCurrentChapterIndex)?.title ?: context.getString(R.string.chapter_number_format, effectiveCurrentChapterIndex + 1),
                     showAiHubSheet = showAiHubSheet,
                     onGenerateSummary = handleGenerateSummary,
                     onGenerateRecap = handleGenerateRecap,

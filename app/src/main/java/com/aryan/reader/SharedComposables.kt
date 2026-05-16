@@ -550,10 +550,10 @@ fun FileInfoDialog(
         AlertDialog(
             onDismissRequest = { showRestoreConfirmation = false },
             icon = { Icon(Icons.Default.Restore, contentDescription = null) },
-            title = { Text("Restore original metadata?") },
+            title = { Text(stringResource(R.string.dialog_restore_original_metadata)) },
             text = {
                 Text(
-                    "This will write the original title, author, series, and summary back into the EPUB file. Reading progress, tags, and notes will not change."
+                    stringResource(R.string.dialog_restore_original_metadata_desc)
                 )
             },
             confirmButton = {
@@ -564,7 +564,7 @@ fun FileInfoDialog(
                         onDismiss()
                     }
                 ) {
-                    Text("Restore")
+                    Text(stringResource(R.string.action_restore))
                 }
             },
             dismissButton = {
@@ -642,10 +642,10 @@ private fun BookMetadataInfoContent(
                     )
                 }
             val provenance = when {
-                item.type == FileType.EPUB && hasMetadataChanges -> "EPUB metadata edited"
-                item.type == FileType.EPUB -> "Metadata from EPUB file"
-                !item.customName.isNullOrBlank() -> "Display name changed in app"
-                else -> "Metadata from file"
+                item.type == FileType.EPUB && hasMetadataChanges -> stringResource(R.string.metadata_provenance_epub_edited)
+                item.type == FileType.EPUB -> stringResource(R.string.metadata_provenance_from_epub)
+                !item.customName.isNullOrBlank() -> stringResource(R.string.metadata_provenance_display_name_changed)
+                else -> stringResource(R.string.metadata_provenance_from_file)
             }
             Text(
                 provenance,
@@ -655,23 +655,23 @@ private fun BookMetadataInfoContent(
         }
     }
 
-    FileInfoSection(title = "Metadata") {
-        InfoRowDetailed("Title", item.title?.takeIf { it.isNotBlank() } ?: item.displayName, maxLines = 3)
+    FileInfoSection(title = stringResource(R.string.section_metadata)) {
+        InfoRowDetailed(stringResource(R.string.label_title), item.title?.takeIf { it.isNotBlank() } ?: item.displayName, maxLines = 3)
         item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }?.let {
             InfoRowDetailed(stringResource(R.string.author), it, maxLines = 2)
         }
         item.seriesLabel()?.let {
-            InfoRowDetailed("Series", it, maxLines = 2)
+            InfoRowDetailed(stringResource(R.string.label_series), it, maxLines = 2)
         }
         InfoRowDetailed(stringResource(R.string.format), item.type.name)
         InfoRowDetailed(stringResource(R.string.size), formatFileSize(item.fileSize))
-        InfoRowDetailed("Reading", item.readingProgressText(), maxLines = 2)
+        InfoRowDetailed(stringResource(R.string.label_reading), item.readingProgressText(), maxLines = 2)
     }
 
-    FileInfoSection(title = "File") {
-        InfoRowDetailed("File name", item.displayName, maxLines = 2)
+    FileInfoSection(title = stringResource(R.string.section_file)) {
+        InfoRowDetailed(stringResource(R.string.label_file_name_simple), item.displayName, maxLines = 2)
         InfoRowDetailed(stringResource(R.string.added), formattedDate)
-        lastModifiedDate?.let { InfoRowDetailed("Modified", it) }
+        lastModifiedDate?.let { InfoRowDetailed(stringResource(R.string.label_modified), it) }
         InfoRowDetailed(
             label = stringResource(R.string.location),
             value = pathText,
@@ -686,7 +686,7 @@ private fun BookMetadataInfoContent(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.label_summary), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 ExpandableSummaryText(summary, collapsedMaxLines = 4)
             }
         }
@@ -698,7 +698,7 @@ private fun BookMetadataInfoContent(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Library tags", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.label_library_tags), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = onOpenTags) { Text(stringResource(R.string.action_add_edit)) }
         }
 
@@ -732,11 +732,11 @@ private fun BookMetadataEditContent(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Editable metadata", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.label_editable_metadata), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = titleInput,
                 onValueChange = onTitleChange,
-                label = { Text("Title") },
+                label = { Text(stringResource(R.string.label_title)) },
                 modifier = Modifier.fillMaxWidth(),
                 maxLines = 3
             )
@@ -751,7 +751,7 @@ private fun BookMetadataEditContent(
                 OutlinedTextField(
                     value = seriesInput,
                     onValueChange = onSeriesChange,
-                    label = { Text("Series") },
+                    label = { Text(stringResource(R.string.label_series)) },
                     modifier = Modifier.weight(1f),
                     maxLines = 2
                 )
@@ -767,7 +767,7 @@ private fun BookMetadataEditContent(
             OutlinedTextField(
                 value = descriptionInput,
                 onValueChange = onDescriptionChange,
-                label = { Text("Summary") },
+                label = { Text(stringResource(R.string.label_summary)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 128.dp),
@@ -789,16 +789,16 @@ private fun BookDisplayNameEditContent(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Display name", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.label_display_name), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = displayNameInput,
                 onValueChange = onDisplayNameChange,
-                label = { Text("Name shown in Reader") },
+                label = { Text(stringResource(R.string.label_name_shown_in_reader)) },
                 modifier = Modifier.fillMaxWidth(),
                 maxLines = 3
             )
             Text(
-                "Original file: $originalFileName",
+                stringResource(R.string.original_file_format, originalFileName),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
@@ -833,7 +833,7 @@ private fun FileInfoBottomBar(
             ) {
                 Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Restore")
+                Text(stringResource(R.string.action_restore))
             }
         }
         TextButton(onClick = onCancel) {

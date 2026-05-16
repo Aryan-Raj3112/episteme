@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -49,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -104,12 +106,12 @@ fun TtsWordReplacementsSheet(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "TTS Word Replacements",
+                        text = stringResource(R.string.menu_tts_word_replacements),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        text = bookTitle?.takeIf { it.isNotBlank() } ?: "Current book",
+                        text = bookTitle?.takeIf { it.isNotBlank() } ?: stringResource(R.string.tts_replacements_current_book),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -117,7 +119,7 @@ fun TtsWordReplacementsSheet(
                     )
                 }
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
+                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
                 }
             }
 
@@ -130,7 +132,7 @@ fun TtsWordReplacementsSheet(
                         selectedTab = 0
                         editTarget = null
                     },
-                    text = { Text("Global") },
+                    text = { Text(stringResource(R.string.tts_replacements_tab_global)) },
                 )
                 Tab(
                     selected = selectedTab == 1,
@@ -138,7 +140,7 @@ fun TtsWordReplacementsSheet(
                         selectedTab = 1
                         editTarget = null
                     },
-                    text = { Text("This book") },
+                    text = { Text(stringResource(R.string.tts_replacements_tab_this_book)) },
                 )
             }
 
@@ -179,8 +181,8 @@ private fun GlobalReplacementTab(
     ) {
         item {
             ListItem(
-                headlineContent = { Text("Enable replacements") },
-                supportingContent = { Text("Rules here apply to every book unless disabled for a specific title.") },
+                headlineContent = { Text(stringResource(R.string.tts_replacements_enable)) },
+                supportingContent = { Text(stringResource(R.string.tts_replacements_enable_desc)) },
                 trailingContent = {
                     Switch(
                         checked = preferences.isEnabled,
@@ -206,7 +208,7 @@ private fun GlobalReplacementTab(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Add rule")
+                Text(stringResource(R.string.tts_replacements_add_rule))
             }
         }
         if (editTarget != null) {
@@ -229,7 +231,7 @@ private fun GlobalReplacementTab(
         item {
             ReplacementRuleList(
                 rules = preferences.globalRules,
-                emptyText = "No global replacement rules yet.",
+                emptyTextRes = R.string.tts_replacements_empty_global,
                 onToggle = { rule, enabled ->
                     onPreferencesChange(
                         preferences.copy(
@@ -297,7 +299,7 @@ private fun BookReplacementTab(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Add book rule")
+                Text(stringResource(R.string.tts_replacements_add_book_rule))
             }
         }
         if (editTarget != null) {
@@ -320,7 +322,7 @@ private fun BookReplacementTab(
         item {
             ReplacementRuleList(
                 rules = localRules,
-                emptyText = "No book-specific rules yet.",
+                emptyTextRes = R.string.tts_replacements_empty_book,
                 onToggle = { rule, enabled ->
                     onPreferencesChange(
                         preferences.withBookRules(
@@ -349,8 +351,8 @@ private fun BookSettingsSwitches(
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             ListItem(
-                headlineContent = { Text("Use global rules here") },
-                supportingContent = { Text("Turn this off when a book needs its own pronunciation choices.") },
+                headlineContent = { Text(stringResource(R.string.tts_replacements_use_global_here)) },
+                supportingContent = { Text(stringResource(R.string.tts_replacements_use_global_here_desc)) },
                 trailingContent = {
                     Switch(
                         checked = settings.globalRulesEnabled,
@@ -360,8 +362,8 @@ private fun BookSettingsSwitches(
             )
             HorizontalDivider()
             ListItem(
-                headlineContent = { Text("Enable book rules") },
-                supportingContent = { Text("Local rules run after global rules.") },
+                headlineContent = { Text(stringResource(R.string.tts_replacements_enable_book_rules)) },
+                supportingContent = { Text(stringResource(R.string.tts_replacements_enable_book_rules_desc)) },
                 trailingContent = {
                     Switch(
                         checked = settings.localRulesEnabled,
@@ -381,13 +383,13 @@ private fun InheritedGlobalRules(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Inherited global rules",
+            text = stringResource(R.string.tts_replacements_inherited_global_rules),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
         if (globalRules.isEmpty()) {
             Text(
-                text = "No global rules to inherit.",
+                text = stringResource(R.string.tts_replacements_no_global_rules),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -395,9 +397,10 @@ private fun InheritedGlobalRules(
         }
         globalRules.forEach { rule ->
             val enabledHere = rule.id !in settings.disabledGlobalRuleIds
+            val silenceLabel = stringResource(R.string.tts_replacements_silence)
             ListItem(
-                headlineContent = { Text(rule.summaryText()) },
-                supportingContent = { Text(if (enabledHere) "Allowed in this book" else "Disabled for this book") },
+                headlineContent = { Text(rule.summaryText(silenceLabel)) },
+                supportingContent = { Text(stringResource(if (enabledHere) R.string.tts_replacements_allowed_in_book else R.string.tts_replacements_disabled_for_book)) },
                 trailingContent = {
                     Switch(
                         checked = enabledHere,
@@ -422,15 +425,16 @@ private fun SuggestionChips(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Suggestions",
+            text = stringResource(R.string.tts_replacements_suggestions),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(ReaderTtsReplacementSuggestions.presets) { suggestion ->
+                val silenceLabel = stringResource(R.string.tts_replacements_silence)
                 AssistChip(
                     onClick = { onSuggestionClick(suggestion) },
-                    label = { Text(suggestion.summaryText(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    label = { Text(suggestion.summaryText(silenceLabel), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
                 )
             }
@@ -456,8 +460,9 @@ private fun RuleEditorCard(
     var isRegex by remember(initial.id) { mutableStateOf(initial.isRegex) }
     var wholeWord by remember(initial.id) { mutableStateOf(initial.wholeWord) }
     var matchCase by remember(initial.id) { mutableStateOf(initial.matchCase) }
-    var previewInput by remember(initial.id) {
-        mutableStateOf(initial.from.takeIf { it.isNotBlank() } ?: "Dr. Smith met NASA at 5 p.m.")
+    val defaultPreviewInput = stringResource(R.string.tts_replacements_preview_default)
+    var previewInput by remember(initial.id, defaultPreviewInput) {
+        mutableStateOf(initial.from.takeIf { it.isNotBlank() } ?: defaultPreviewInput)
     }
 
     val draft = ReaderTtsReplacementRule(
@@ -490,7 +495,7 @@ private fun RuleEditorCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = if (seedRule == null) "New replacement" else "Edit replacement",
+                text = stringResource(if (seedRule == null) R.string.tts_replacements_new_replacement else R.string.tts_replacements_edit_replacement),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -498,7 +503,7 @@ private fun RuleEditorCard(
                 value = from,
                 onValueChange = { from = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Replace") },
+                label = { Text(stringResource(R.string.tts_replacements_label_replace)) },
                 singleLine = !isRegex,
                 isError = !validation.isValid,
                 supportingText = if (validation.message != null) {
@@ -515,7 +520,7 @@ private fun RuleEditorCard(
                 value = to,
                 onValueChange = { to = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Speak as") },
+                label = { Text(stringResource(R.string.tts_replacements_label_speak_as)) },
                 singleLine = !isRegex,
             )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -523,7 +528,7 @@ private fun RuleEditorCard(
                     FilterChip(
                         selected = enabled,
                         onClick = { enabled = !enabled },
-                        label = { Text("Enabled") },
+                        label = { Text(stringResource(R.string.tts_replacements_chip_enabled)) },
                         leadingIcon = if (enabled) {
                             { Icon(Icons.Default.Check, contentDescription = null) }
                         } else {
@@ -535,21 +540,21 @@ private fun RuleEditorCard(
                     FilterChip(
                         selected = isRegex,
                         onClick = { isRegex = !isRegex },
-                        label = { Text("Regex") },
+                        label = { Text(stringResource(R.string.tts_replacements_chip_regex)) },
                     )
                 }
                 item {
                     FilterChip(
                         selected = wholeWord,
                         onClick = { wholeWord = !wholeWord },
-                        label = { Text("Whole word") },
+                        label = { Text(stringResource(R.string.tts_replacements_chip_whole_word)) },
                     )
                 }
                 item {
                     FilterChip(
                         selected = matchCase,
                         onClick = { matchCase = !matchCase },
-                        label = { Text("Match case") },
+                        label = { Text(stringResource(R.string.tts_replacements_chip_match_case)) },
                     )
                 }
             }
@@ -557,7 +562,7 @@ private fun RuleEditorCard(
                 value = previewInput,
                 onValueChange = { previewInput = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Preview input") },
+                label = { Text(stringResource(R.string.tts_replacements_label_preview_input)) },
                 minLines = 2,
             )
             Text(
@@ -570,14 +575,14 @@ private fun RuleEditorCard(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onCancel) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.action_cancel))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = { onSave(draft) },
                     enabled = validation.isValid,
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.action_save))
                 }
             }
         }
@@ -587,14 +592,14 @@ private fun RuleEditorCard(
 @Composable
 private fun ReplacementRuleList(
     rules: List<ReaderTtsReplacementRule>,
-    emptyText: String,
+    @StringRes emptyTextRes: Int,
     onToggle: (ReaderTtsReplacementRule, Boolean) -> Unit,
     onEdit: (ReaderTtsReplacementRule) -> Unit,
     onDelete: (ReaderTtsReplacementRule) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            text = "Rules",
+            text = stringResource(R.string.tts_replacements_rules),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
@@ -606,7 +611,7 @@ private fun ReplacementRuleList(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = emptyText,
+                    text = stringResource(emptyTextRes),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -614,10 +619,11 @@ private fun ReplacementRuleList(
             return
         }
         rules.forEach { rule ->
+            val silenceLabel = stringResource(R.string.tts_replacements_silence)
             ListItem(
                 headlineContent = {
                     Text(
-                        text = rule.summaryText(),
+                        text = rule.summaryText(silenceLabel),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -632,10 +638,10 @@ private fun ReplacementRuleList(
                             onCheckedChange = { onToggle(rule, it) },
                         )
                         IconButton(onClick = { onEdit(rule) }) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit")
+                            Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.action_edit))
                         }
                         IconButton(onClick = { onDelete(rule) }) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete")
+                            Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.action_delete))
                         }
                     }
                 },
@@ -648,16 +654,21 @@ private fun ReaderTtsReplacementRule.asEditableRule(scope: String): ReaderTtsRep
     return copy(id = "${scope}_${System.currentTimeMillis()}_${id}", enabled = true)
 }
 
-private fun ReaderTtsReplacementRule.summaryText(): String {
-    val replacement = to.ifBlank { "silence" }
+private fun ReaderTtsReplacementRule.summaryText(silenceLabel: String): String {
+    val replacement = to.ifBlank { silenceLabel }
     return "$from -> $replacement"
 }
 
+@Composable
 private fun ReaderTtsReplacementRule.optionSummary(): String {
+    val regexLabel = stringResource(R.string.tts_replacements_chip_regex)
+    val plainTextLabel = stringResource(R.string.tts_replacements_plain_text)
+    val wholeWordLabel = stringResource(R.string.tts_replacements_chip_whole_word)
+    val caseSensitiveLabel = stringResource(R.string.tts_replacements_case_sensitive)
     val parts = buildList {
-        add(if (isRegex) "Regex" else "Plain text")
-        if (wholeWord) add("whole word")
-        if (matchCase) add("case-sensitive")
+        add(if (isRegex) regexLabel else plainTextLabel)
+        if (wholeWord) add(wholeWordLabel)
+        if (matchCase) add(caseSensitiveLabel)
     }
     return parts.joinToString(" - ")
 }
