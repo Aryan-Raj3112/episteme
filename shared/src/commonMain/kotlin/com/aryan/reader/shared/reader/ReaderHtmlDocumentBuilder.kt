@@ -419,13 +419,14 @@ object ReaderHtmlDocumentBuilder {
                   display: none;
                   flex-direction: column;
                   width: max-content;
-                  max-width: min(300px, calc(100vw - 16px));
+                  max-width: min(280px, calc(100vw - 16px));
                   padding: 0 0 6px;
                   border-radius: 14px;
                   background: color-mix(in srgb, var(--reader-bg) 92%, var(--reader-fg));
                   border: 1px solid color-mix(in srgb, var(--reader-fg) 18%, transparent);
                   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
-                  overflow: hidden;
+                  max-height: calc(100vh - 16px);
+                  overflow: auto;
                 }
                 #reader-selection-menu button {
                   border: 0;
@@ -441,16 +442,16 @@ object ReaderHtmlDocumentBuilder {
                   display: flex;
                   justify-content: center;
                   align-items: center;
-                  gap: 10px;
+                  gap: 8px;
                   width: 100%;
                   box-sizing: border-box;
-                  padding: 10px 12px;
+                  padding: 8px 10px;
                   border-bottom: 1px solid color-mix(in srgb, var(--reader-fg) 12%, transparent);
                   overflow-x: auto;
                 }
                 #reader-selection-menu .reader-selection-color {
-                  width: 28px;
-                  height: 28px;
+                  width: 24px;
+                  height: 24px;
                   flex: 0 0 auto;
                   padding: 0;
                   border-radius: 999px;
@@ -459,34 +460,34 @@ object ReaderHtmlDocumentBuilder {
                 }
                 #reader-selection-menu .reader-selection-actions {
                   display: grid;
-                  grid-template-columns: repeat(3, 78px);
-                  gap: 4px;
-                  padding: 6px 8px 2px;
+                  grid-template-columns: repeat(3, 70px);
+                  gap: 3px;
+                  padding: 5px 6px 2px;
                 }
                 #reader-selection-menu .reader-selection-action {
-                  min-height: 58px;
+                  min-height: 52px;
                   border-radius: 10px;
                   display: flex;
                   flex-direction: column;
                   align-items: center;
                   justify-content: center;
-                  gap: 5px;
-                  padding: 7px 4px;
+                  gap: 4px;
+                  padding: 6px 4px;
                   line-height: 1;
                   white-space: nowrap;
                 }
                 #reader-selection-menu .reader-selection-icon {
                   display: grid;
                   place-items: center;
-                  width: 24px;
-                  height: 24px;
+                  width: 22px;
+                  height: 22px;
                   border-radius: 999px;
                   background: color-mix(in srgb, var(--reader-fg) 9%, transparent);
                   color: color-mix(in srgb, var(--reader-fg) 86%, transparent);
                 }
                 #reader-selection-menu .reader-selection-icon svg {
-                  width: 18px;
-                  height: 18px;
+                  width: 16px;
+                  height: 16px;
                   display: block;
                   fill: currentColor;
                 }
@@ -1186,18 +1187,90 @@ object ReaderHtmlDocumentBuilder {
                   function positionMenu(left, top, anchorRect) {
                     menu.style.visibility = 'hidden';
                     menu.style.display = 'flex';
+                    var margin = 8;
+                    var gap = 14;
+                    var viewportWidth = Math.max(0, window.innerWidth || 0);
+                    var viewportHeight = Math.max(0, window.innerHeight || 0);
+                    menu.style.maxHeight = Math.max(0, viewportHeight - margin * 2) + 'px';
                     var menuWidth = menu.offsetWidth || 300;
                     var menuHeight = menu.offsetHeight || 230;
-                    var margin = 8;
-                    var nextLeft = left;
-                    var nextTop = top;
-                    if (anchorRect) {
-                      nextLeft = anchorRect.left + (anchorRect.width / 2) - (menuWidth / 2);
-                      nextTop = anchorRect.top - menuHeight - 14;
-                      if (nextTop < margin) nextTop = anchorRect.bottom + 14;
+
+                    function clampMenuStart(preferred, size, viewportSize) {
+                      if (viewportSize <= 0 || size <= 0) return 0;
+                      if (viewportSize <= size) return 0;
+                      var maxStart = viewportSize - size;
+                      var minStart = Math.min(margin, maxStart);
+                      var maxClampedStart = Math.max(minStart, viewportSize - size - margin);
+                      return Math.max(minStart, Math.min(maxClampedStart, preferred));
                     }
-                    nextLeft = Math.max(margin, Math.min(window.innerWidth - menuWidth - margin, nextLeft));
-                    nextTop = Math.max(margin, Math.min(window.innerHeight - menuHeight - margin, nextTop));
+                    function selectionMenuCandidate(x, y) {
+                      return {
+                        left: clampMenuStart(x, menuWidth, viewportWidth),
+                        top: clampMenuStart(y, menuHeight, viewportHeight)
+                      };
+                    }
+                    function overlapAreaWithSelection(candidate, rect) {
+                      var overlapWidth = Math.min(candidate.left + menuWidth, rect.right) - Math.max(candidate.left, rect.left);
+                      var overlapHeight = Math.min(candidate.top + menuHeight, rect.bottom) - Math.max(candidate.top, rect.top);
+                      return Math.max(0, overlapWidth) * Math.max(0, overlapHeight);
+                    }
+                    function distanceFromSelection(candidate, rect) {
+                      var dx = Math.max(rect.left - (candidate.left + menuWidth), candidate.left - rect.right, 0);
+                      var dy = Math.max(rect.top - (candidate.top + menuHeight), candidate.top - rect.bottom, 0);
+                      return dx * dx + dy * dy;
+                    }
+                    var rect = anchorRect ? {
+                      left: Math.max(0, Math.min(viewportWidth, Math.min(anchorRect.left, anchorRect.right))),
+                      top: Math.max(0, Math.min(viewportHeight, Math.min(anchorRect.top, anchorRect.bottom))),
+                      right: Math.max(0, Math.min(viewportWidth, Math.max(anchorRect.left, anchorRect.right))),
+                      bottom: Math.max(0, Math.min(viewportHeight, Math.max(anchorRect.top, anchorRect.bottom)))
+                    } : {
+                      left: Math.max(0, Math.min(viewportWidth, left)),
+                      top: Math.max(0, Math.min(viewportHeight, top)),
+                      right: Math.max(0, Math.min(viewportWidth, left)),
+                      bottom: Math.max(0, Math.min(viewportHeight, top))
+                    };
+                    var centerX = (rect.left + rect.right) / 2;
+                    var centerY = (rect.top + rect.bottom) / 2;
+                    var above = selectionMenuCandidate(centerX - menuWidth / 2, rect.top - gap - menuHeight);
+                    var below = selectionMenuCandidate(centerX - menuWidth / 2, rect.bottom + gap);
+                    var right = selectionMenuCandidate(rect.right + gap, centerY - menuHeight / 2);
+                    var leftSide = selectionMenuCandidate(rect.left - gap - menuWidth, centerY - menuHeight / 2);
+                    var nextLeft = above.left;
+                    var nextTop = above.top;
+                    if (above.top + menuHeight <= rect.top - gap && above.top >= margin) {
+                      nextLeft = above.left;
+                      nextTop = above.top;
+                    } else if (below.top >= rect.bottom + gap && below.top + menuHeight <= viewportHeight - margin) {
+                      nextLeft = below.left;
+                      nextTop = below.top;
+                    } else {
+                      var leftSpace = rect.left - gap - margin;
+                      var rightSpace = viewportWidth - rect.right - gap - margin;
+                      var firstSide = rightSpace >= leftSpace ? right : leftSide;
+                      var secondSide = rightSpace >= leftSpace ? leftSide : right;
+                      var firstFits = firstSide === right
+                        ? firstSide.left >= rect.right + gap
+                        : firstSide.left + menuWidth <= rect.left - gap;
+                      var secondFits = secondSide === right
+                        ? secondSide.left >= rect.right + gap
+                        : secondSide.left + menuWidth <= rect.left - gap;
+                      if (firstFits && firstSide.top >= margin && firstSide.top + menuHeight <= viewportHeight - margin) {
+                        nextLeft = firstSide.left;
+                        nextTop = firstSide.top;
+                      } else if (secondFits && secondSide.top >= margin && secondSide.top + menuHeight <= viewportHeight - margin) {
+                        nextLeft = secondSide.left;
+                        nextTop = secondSide.top;
+                      } else {
+                        var fallback = [above, below, firstSide, secondSide].sort(function (a, b) {
+                          var overlapDelta = overlapAreaWithSelection(a, rect) - overlapAreaWithSelection(b, rect);
+                          if (overlapDelta !== 0) return overlapDelta;
+                          return distanceFromSelection(a, rect) - distanceFromSelection(b, rect);
+                        })[0];
+                        nextLeft = fallback.left;
+                        nextTop = fallback.top;
+                      }
+                    }
                     menu.style.left = nextLeft + 'px';
                     menu.style.top = nextTop + 'px';
                     menu.style.visibility = 'visible';
@@ -2459,7 +2532,11 @@ object ReaderHtmlDocumentBuilder {
                     }
                   });
                   document.addEventListener('pointercancel', function () {
-                    if (!activeSelectionHandle) selectionPointerDown = false;
+                    if (!activeSelectionHandle) {
+                      selectionPointerDown = false;
+                      scheduleMenuFromSelection();
+                      scheduleVisiblePageReport();
+                    }
                   });
                   document.addEventListener('mouseup', function (event) {
                     if (menu.contains(event.target)) return;
@@ -2468,6 +2545,19 @@ object ReaderHtmlDocumentBuilder {
                     scheduleMenuFromSelection();
                     scheduleVisiblePageReport();
                   });
+                  document.addEventListener('touchend', function (event) {
+                    if (menu.contains(event.target)) return;
+                    if (activeSelectionHandle) return;
+                    selectionPointerDown = false;
+                    scheduleMenuFromSelection();
+                    scheduleVisiblePageReport();
+                  }, { passive: true });
+                  document.addEventListener('touchcancel', function () {
+                    if (activeSelectionHandle) return;
+                    selectionPointerDown = false;
+                    scheduleMenuFromSelection();
+                    scheduleVisiblePageReport();
+                  }, { passive: true });
                   document.addEventListener('keyup', function () {
                     scheduleMenuFromSelection();
                   });

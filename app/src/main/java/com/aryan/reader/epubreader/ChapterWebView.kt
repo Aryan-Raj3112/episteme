@@ -38,6 +38,8 @@ import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +48,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -69,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -83,6 +87,10 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
 import com.aryan.reader.R
 import com.aryan.reader.getReaderTextureDataUri
+import com.aryan.reader.shared.ui.SharedSelectionMenuRect
+import com.aryan.reader.shared.ui.SharedSelectionMenuSize
+import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
+import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -1026,6 +1034,8 @@ fun ChapterWebView(
 
         // Custom Selection Menu Popup
         customMenuState?.let { state ->
+            val configuration = LocalConfiguration.current
+            val selectionMenuMaxHeight = (configuration.screenHeightDp.dp - 32.dp).coerceAtLeast(160.dp)
             val popupPositionProvider =
                 remember(state.selectionBounds, density, state.isExistingHighlight) {
                     object : PopupPositionProvider {
@@ -1035,30 +1045,23 @@ fun ChapterWebView(
                             layoutDirection: LayoutDirection,
                             popupContentSize: IntSize
                         ): IntOffset {
-                            val topMargin = with(density) { 16.dp.toPx() }.toInt()
-                            val bottomMargin = with(density) {
+                            val marginPx = with(density) { 16.dp.toPx() }
+                            val gapPx = with(density) {
                                 if (state.isExistingHighlight) 16.dp.toPx() else 60.dp.toPx()
-                            }.toInt()
-
-                            var x = state.selectionBounds.centerX() - popupContentSize.width / 2
-
-                            var y = state.selectionBounds.top - popupContentSize.height - topMargin
-                            if (y < with(density) { 24.dp.toPx() }.toInt()) {
-                                y = state.selectionBounds.bottom + bottomMargin
                             }
-                            if (x < 0) x = 0
-                            if (x + popupContentSize.width > windowSize.width) {
-                                x = windowSize.width - popupContentSize.width
-                            }
-                            if (y + popupContentSize.height > windowSize.height) {
-                                y = windowSize.height - popupContentSize.height
-                            }
-                            if (y < 0) y = 0
-
-                            return IntOffset(
-                                x.coerceIn(0, windowSize.width - popupContentSize.width),
-                                y.coerceIn(0, windowSize.height - popupContentSize.height)
+                            val placement = sharedSelectionMenuPlacement(
+                                viewport = SharedSelectionMenuViewport(windowSize.width, windowSize.height),
+                                popup = SharedSelectionMenuSize(popupContentSize.width, popupContentSize.height),
+                                selection = SharedSelectionMenuRect(
+                                    left = state.selectionBounds.left.toFloat(),
+                                    top = state.selectionBounds.top.toFloat(),
+                                    right = state.selectionBounds.right.toFloat(),
+                                    bottom = state.selectionBounds.bottom.toFloat()
+                                ),
+                                marginPx = marginPx,
+                                gapPx = gapPx
                             )
+                            return IntOffset(placement.x, placement.y)
                         }
                     }
                 }
@@ -1075,11 +1078,14 @@ fun ChapterWebView(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Column(
-                        modifier = Modifier.width(IntrinsicSize.Max)
+                        modifier = Modifier
+                            .width(IntrinsicSize.Max)
+                            .heightIn(max = selectionMenuMaxHeight)
+                            .verticalScroll(rememberScrollState())
                     ) {
                         Row(
                             modifier = Modifier
-                                .padding(vertical = 12.dp, horizontal = 12.dp)
+                                .padding(vertical = 8.dp, horizontal = 10.dp)
                                 .fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
@@ -1087,8 +1093,8 @@ fun ChapterWebView(
                             activeHighlightPalette.forEachIndexed { index, colorEnum ->
                                 Box(
                                     modifier = Modifier
-                                        .padding(horizontal = 6.dp)
-                                        .size(32.dp)
+                                        .padding(horizontal = 4.dp)
+                                        .size(28.dp)
                                         .background(colorEnum.color, CircleShape)
                                         .pointerInput(colorEnum) {
                                             detectTapGestures(onTap = {
@@ -1115,7 +1121,7 @@ fun ChapterWebView(
 
                             Spacer(modifier = Modifier.width(8.dp))
                             SpectrumButton(
-                                onClick = { showPaletteManager = true }, size = 32.dp
+                                onClick = { showPaletteManager = true }, size = 28.dp
                             )
                         }
 
@@ -1123,7 +1129,7 @@ fun ChapterWebView(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {

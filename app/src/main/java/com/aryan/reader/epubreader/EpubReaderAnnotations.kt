@@ -495,7 +495,7 @@ fun PaginatedTextSelectionMenu(
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        Column(modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 200.dp)) {
+        Column(modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 180.dp)) {
             if (onHighlight != null) {
                 HighlightColorRow(
                     activeHighlightPalette = activeHighlightPalette,
@@ -531,7 +531,7 @@ fun PaginatedTextSelectionMenu(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -539,23 +539,23 @@ fun PaginatedTextSelectionMenu(
                             val tint = if (action.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                             Column(
                                 modifier = Modifier
-                                    .width(64.dp)
+                                    .width(56.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { action.onClick() }
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = 6.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 if (action.imageVector != null) {
-                                    Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                    Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(22.dp))
                                 } else if (action.iconRes != null) {
-                                    Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                    Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(22.dp))
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(text = action.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
                             }
                         }
                         repeat(3 - rowActions.size) {
-                            Spacer(modifier = Modifier.width(64.dp))
+                            Spacer(modifier = Modifier.width(56.dp))
                         }
                     }
                 }
@@ -582,7 +582,7 @@ fun HighlightColorRow(
 ) {
     Row(
         modifier = modifier
-            .padding(vertical = 12.dp, horizontal = 12.dp)
+            .padding(vertical = 8.dp, horizontal = 10.dp)
             .fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
@@ -591,8 +591,8 @@ fun HighlightColorRow(
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .padding(horizontal = 6.dp)
-                    .size(32.dp)
+                    .padding(horizontal = 4.dp)
+                    .size(28.dp)
                     .clip(CircleShape) // 1. Clip shape for ripple
                     .background(colorEnum.color) // 2. Apply background
                     .clickable {
@@ -610,17 +610,17 @@ fun HighlightColorRow(
                         imageVector = Icons.Default.Check,
                         contentDescription = stringResource(R.string.content_desc_selected),
                         tint = if (colorEnum == HighlightColor.WHITE || colorEnum == HighlightColor.YELLOW) Color.Black else Color.White,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
         }
 
         if (onOpenPaletteManager != null) {
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             SpectrumButton(
                 onClick = onOpenPaletteManager,
-                size = 32.dp
+                size = 28.dp
             )
         }
     }
@@ -650,7 +650,7 @@ fun PaginatedTextSelectionMenu(
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        Column(modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 200.dp)) {
+        Column(modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 180.dp)) {
             // 1. Colors Row
             if (onHighlight != null) {
                 HighlightColorRow(
@@ -731,7 +731,7 @@ fun PaginatedTextSelectionMenu(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -739,22 +739,22 @@ fun PaginatedTextSelectionMenu(
                             val tint = if (action.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                             Column(
                                 modifier = Modifier
-                                    .width(64.dp)
+                                    .width(56.dp)
                                     .clickable { action.onClick() }
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = 6.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 if (action.imageVector != null) {
-                                    Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                    Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(22.dp))
                                 } else if (action.iconRes != null) {
-                                    Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                    Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(22.dp))
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(text = action.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
                             }
                         }
                         repeat(3 - rowActions.size) {
-                            Spacer(modifier = Modifier.width(64.dp))
+                            Spacer(modifier = Modifier.width(56.dp))
                         }
                     }
                 }

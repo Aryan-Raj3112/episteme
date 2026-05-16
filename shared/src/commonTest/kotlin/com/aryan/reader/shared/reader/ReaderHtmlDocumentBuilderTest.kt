@@ -332,11 +332,14 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertTrue(html.contains("function scheduleMenuFromSelection()"))
         assertTrue(html.contains("selectionAnchorRect(selection)"))
+        assertTrue(html.contains("selectionMenuCandidate"))
+        assertTrue(html.contains("overlapAreaWithSelection"))
         assertTrue(html.contains("if (selectionPointerDown || activeSelectionHandle) return;"))
         assertTrue(html.contains("rangeBoundaryRect(range.startContainer"))
         assertTrue(html.contains("document.addEventListener('selectionchange'"))
         assertTrue(html.contains("document.addEventListener('pointerdown'"))
         assertTrue(html.contains("document.addEventListener('mouseup'"))
+        assertTrue(html.contains("document.addEventListener('touchend'"))
         assertTrue(html.contains("document.addEventListener('contextmenu'"))
     }
 

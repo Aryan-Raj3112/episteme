@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -236,6 +237,9 @@ internal fun PdfSelectionMenuPopup(
     onNote: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val selectionMenuMaxHeight = (configuration.screenHeightDp.dp - 32.dp).coerceAtLeast(160.dp)
+    val menuScrollState = rememberScrollState()
 
     Popup(
         popupPositionProvider = popupPositionProvider,
@@ -251,9 +255,15 @@ internal fun PdfSelectionMenuPopup(
             shadowElevation = 8.dp,
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.widthIn(max = 300.dp)
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .heightIn(max = selectionMenuMaxHeight)
         ) {
-            Column(modifier = if (menuState.isComment) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max)) {
+            Column(
+                modifier = (if (menuState.isComment) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max))
+                    .heightIn(max = selectionMenuMaxHeight)
+                    .verticalScroll(menuScrollState)
+            ) {
                 if (!menuState.note.isNullOrBlank()) {
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -330,7 +340,7 @@ internal fun PdfSelectionMenuPopup(
                     }
                 } else {
                     Row(
-                        modifier = Modifier.padding(vertical = 12.dp, horizontal = 12.dp)
+                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp)
                             .fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
@@ -338,7 +348,7 @@ internal fun PdfSelectionMenuPopup(
                         PdfHighlightColor.entries.forEach { colorEnum ->
                             val displayColor = customHighlightColors[colorEnum] ?: colorEnum.color
                             Box(
-                                modifier = Modifier.padding(horizontal = 6.dp).size(32.dp)
+                                modifier = Modifier.padding(horizontal = 4.dp).size(28.dp)
                                     .background(displayColor, CircleShape).clip(CircleShape)
                                     .clickable {
                                         Timber.tag("PdfHighlightDebug")
@@ -352,8 +362,8 @@ internal fun PdfSelectionMenuPopup(
                             )
                             Box(
                                 modifier = Modifier
-                                    .padding(horizontal = 6.dp)
-                                    .size(32.dp)
+                                    .padding(horizontal = 4.dp)
+                                    .size(28.dp)
                                     .clip(CircleShape)
                                     .background(Brush.sweepGradient(rainbowColors))
                                     .clickable { onPaletteClick() },
@@ -392,7 +402,7 @@ internal fun PdfSelectionMenuPopup(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    .padding(horizontal = 6.dp, vertical = 3.dp),
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -400,22 +410,22 @@ internal fun PdfSelectionMenuPopup(
                                     val tint = if (action.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                                     Column(
                                         modifier = Modifier
-                                            .width(64.dp)
+                                            .width(56.dp)
                                             .clickable { action.onClick() }
-                                            .padding(vertical = 8.dp),
+                                            .padding(vertical = 6.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
                                         if (action.imageVector != null) {
-                                            Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                            Icon(imageVector = action.imageVector, contentDescription = action.label, tint = tint, modifier = Modifier.size(22.dp))
                                         } else if (action.iconRes != null) {
-                                            Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(24.dp))
+                                            Icon(painter = painterResource(id = action.iconRes), contentDescription = action.label, tint = tint, modifier = Modifier.size(22.dp))
                                         }
-                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(text = action.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
                                     }
                                 }
                                 repeat(3 - rowActions.size) {
-                                    Spacer(modifier = Modifier.width(64.dp))
+                                    Spacer(modifier = Modifier.width(56.dp))
                                 }
                             }
                         }

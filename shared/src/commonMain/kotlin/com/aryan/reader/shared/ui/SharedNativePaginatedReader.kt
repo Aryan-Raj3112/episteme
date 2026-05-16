@@ -350,9 +350,10 @@ fun SharedNativePaginatedReader(
                 )
             }
             if (!selectionGestureActive && !selectionHandleDragging) {
+                val highlightPalette = renderPlan.highlightPalette.sanitized().colors
                 SharedNativeSelectionMenu(
                     selection = selection,
-                    highlightPalette = renderPlan.highlightPalette.sanitized().colors,
+                    highlightPalette = highlightPalette,
                     enabledSelectionActions = enabledSelectionActions,
                     background = renderPlan.background,
                     foreground = renderPlan.foreground,
@@ -375,7 +376,9 @@ fun SharedNativePaginatedReader(
                             sharedNativeSelectionMenuOffset(
                                 selection = selection,
                                 readerCoordinates = readerCoordinates,
-                                density = density
+                                density = density,
+                                highlightPaletteSize = highlightPalette.size,
+                                actionCount = enabledSelectionActions.size + 2
                             )
                         }
                 )
@@ -620,21 +623,21 @@ private fun SharedNativeSelectionMenu(
         Column(
             modifier = Modifier
                 .width(IntrinsicSize.Max)
-                .widthIn(max = 300.dp)
+                .widthIn(max = 280.dp)
                 .padding(bottom = 6.dp)
         ) {
             if (highlightPalette.isNotEmpty()) {
                 Row(
                     modifier = Modifier
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     highlightPalette.forEach { color ->
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
+                                .size(24.dp)
                                 .clip(CircleShape)
                                 .background(color.color)
                                 .border(
@@ -650,8 +653,8 @@ private fun SharedNativeSelectionMenu(
             }
             Column(
                 modifier = Modifier
-                    .padding(start = 8.dp, top = 6.dp, end = 8.dp, bottom = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                    .padding(start = 6.dp, top = 5.dp, end = 6.dp, bottom = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 actions.chunked(3).forEach { rowActions ->
                     Row(
@@ -688,17 +691,17 @@ private fun SharedNativeSelectionIconButton(
 ) {
     Column(
         modifier = Modifier
-            .width(78.dp)
-            .height(58.dp)
+            .width(70.dp)
+            .height(52.dp)
             .clip(RoundedCornerShape(10.dp))
             .clickable { action.onClick() }
-            .padding(horizontal = 4.dp, vertical = 7.dp),
+            .padding(horizontal = 4.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically)
     ) {
         Box(
             modifier = Modifier
-                .size(24.dp)
+                .size(22.dp)
                 .clip(CircleShape)
                 .background(iconBackground),
             contentAlignment = Alignment.Center
@@ -707,7 +710,7 @@ private fun SharedNativeSelectionIconButton(
                 imageVector = action.icon,
                 contentDescription = action.label,
                 tint = iconColor,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(16.dp)
             )
         }
         Text(
@@ -1878,27 +1881,53 @@ private data class SharedNativeSelectionEndpoint(
 private fun sharedNativeSelectionMenuOffset(
     selection: SharedNativeReaderTextSelection,
     readerCoordinates: LayoutCoordinates?,
-    density: Density
+    density: Density,
+    highlightPaletteSize: Int,
+    actionCount: Int
 ): IntOffset {
     val coordinates = readerCoordinates?.takeIf { it.isAttached } ?: return IntOffset(16, 16)
     if (selection.rect == Rect.Zero) return IntOffset(16, 16)
-    val centerX = (selection.rect.left + selection.rect.right) / 2f
-    val topLocal = coordinates.windowToLocal(Offset(centerX, selection.rect.top))
-    val bottomLocal = coordinates.windowToLocal(Offset(centerX, selection.rect.bottom))
+    val leftTopLocal = coordinates.windowToLocal(Offset(selection.rect.left, selection.rect.top))
+    val rightBottomLocal = coordinates.windowToLocal(Offset(selection.rect.right, selection.rect.bottom))
     val paddingPx = with(density) { 16.dp.toPx() }
-    val estimatedWidthPx = with(density) { 300.dp.toPx() }
-    val estimatedHeightPx = with(density) { 154.dp.toPx() }
-    val maxX = (coordinates.size.width - estimatedWidthPx - paddingPx).coerceAtLeast(paddingPx)
-    val x = (topLocal.x - estimatedWidthPx / 2f).coerceIn(paddingPx, maxX)
-    val yAbove = topLocal.y - estimatedHeightPx - paddingPx
-    val y = if (yAbove >= paddingPx) {
-        yAbove
-    } else {
-        (bottomLocal.y + paddingPx).coerceAtMost(
-            (coordinates.size.height - estimatedHeightPx - paddingPx).coerceAtLeast(paddingPx)
-        )
+    val estimatedWidthPx = with(density) { 280.dp.toPx() }
+    val estimatedHeightPx = sharedNativeSelectionMenuEstimatedHeightPx(
+        density = density,
+        highlightPaletteSize = highlightPaletteSize,
+        actionCount = actionCount
+    )
+    val selectionRect = SharedSelectionMenuRect(
+        left = leftTopLocal.x,
+        top = leftTopLocal.y,
+        right = rightBottomLocal.x,
+        bottom = rightBottomLocal.y
+    )
+    val placement = sharedSelectionMenuPlacement(
+        viewport = SharedSelectionMenuViewport(coordinates.size.width, coordinates.size.height),
+        popup = SharedSelectionMenuSize(
+            width = estimatedWidthPx.roundToInt(),
+            height = estimatedHeightPx.roundToInt()
+        ),
+        selection = selectionRect,
+        marginPx = paddingPx,
+        gapPx = paddingPx
+    )
+    return IntOffset(placement.x, placement.y)
+}
+
+private fun sharedNativeSelectionMenuEstimatedHeightPx(
+    density: Density,
+    highlightPaletteSize: Int,
+    actionCount: Int
+): Float {
+    val actionRows = ((actionCount.coerceAtLeast(1) + 2) / 3).coerceAtLeast(1)
+    return with(density) {
+        val paletteHeight = if (highlightPaletteSize > 0) 41.dp.toPx() else 0f
+        val actionsHeight = 7.dp.toPx() +
+            (actionRows * 52).dp.toPx() +
+            ((actionRows - 1).coerceAtLeast(0) * 3).dp.toPx()
+        paletteHeight + actionsHeight
     }
-    return IntOffset(x.roundToInt(), y.roundToInt())
 }
 
 private fun sharedNativeSelectionHandleOffset(

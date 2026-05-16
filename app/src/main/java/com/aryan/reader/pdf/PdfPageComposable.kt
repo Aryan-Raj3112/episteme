@@ -131,6 +131,10 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
+import com.aryan.reader.shared.ui.SharedSelectionMenuRect
+import com.aryan.reader.shared.ui.SharedSelectionMenuSize
+import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
+import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -2139,7 +2143,7 @@ internal fun PdfPageComposable(
 
                         val dragEventChannel = Channel<Offset>(Channel.CONFLATED)
 
-                        coroutineScope.launch(Dispatchers.IO) {
+                        val dragWorker = coroutineScope.launch(Dispatchers.IO) {
                             var pageForDrag: ReaderPage? = null
                             var textPageForDrag: ReaderTextPage? = null
 
@@ -2473,106 +2477,107 @@ internal fun PdfPageComposable(
                         } finally {
                             dragEventChannel.close()
                         }
+                        dragWorker.invokeOnCompletion {
+                            coroutineScope.launch {
+                                if (selectionMethodUsed == PdfSelectionMethod.PDFIUM) {
+                                    if (selectionCharRange.value != null && selectedWordScreenRects.isNotEmpty()) {
+                                        val currentRange = selectionCharRange.value!!
+                                        var pageForMenu: ReaderPage? = null
+                                        var textPageForMenu: ReaderTextPage? = null
+                                        try {
+                                            val text = withContext(Dispatchers.IO) {
+                                                pageForMenu = pdfDocumentItem.openPage(pdfPageIndex)
+                                                textPageForMenu = pageForMenu?.openTextPage()
+                                                textPageForMenu?.textPageGetText(
+                                                    currentRange.first,
+                                                    currentRange.second - currentRange.first
+                                                )
+                                            }
+                                            if (!text.isNullOrBlank()) {
+                                                val combinedRect = Rect(selectedWordScreenRects.first())
+                                                selectedWordScreenRects.forEach { combinedRect.union(it) }
 
-                        if (selectionMethodUsed == PdfSelectionMethod.PDFIUM) {
-                            if (selectionCharRange.value != null && selectedWordScreenRects.isNotEmpty()) {
-                                val currentRange = selectionCharRange.value!!
-                                coroutineScope.launch {
-                                    var pageForMenu: ReaderPage? = null
-                                    var textPageForMenu: ReaderTextPage? = null
-                                    try {
-                                        val text = withContext(Dispatchers.IO) {
-                                            pageForMenu = pdfDocumentItem.openPage(pdfPageIndex)
-                                            textPageForMenu = pageForMenu?.openTextPage()
-                                            textPageForMenu?.textPageGetText(
-                                                currentRange.first,
-                                                currentRange.second - currentRange.first
+                                                customMenuState = CustomPdfMenuState(
+                                                    selectedText = text,
+                                                    anchorRect = combinedRect,
+                                                    charRange = currentRange
+                                                )
+                                                Timber.d(
+                                                    "Menu shown after drag. Anchor: ${customMenuState?.anchorRect}"
+                                                )
+                                            } else {
+                                                customMenuState = null
+                                            }
+                                        } catch (e: Exception) {
+                                            Timber.e(
+                                                e, "Error fetching text for menu after drag"
                                             )
+                                            customMenuState = null
+                                        } finally {
+                                            withContext(NonCancellable) {
+                                                withContext(Dispatchers.IO) {
+                                                    try {
+                                                        textPageForMenu?.close()
+                                                    } catch (_: Exception) {
+                                                    }
+                                                    try {
+                                                        pageForMenu?.close()
+                                                    } catch (_: Exception) {
+                                                    }
+                                                }
+                                            }
                                         }
-                                        if (!text.isNullOrBlank()) {
-                                            val combinedRect = Rect(selectedWordScreenRects.first())
-                                            selectedWordScreenRects.forEach { combinedRect.union(it) }
+                                    } else {
+                                        customMenuState = null
+                                    }
+                                } else {
+                                    if (ocrSelectionSymbolIndices != null && selectedWordScreenRects.isNotEmpty()) {
+                                        val indices = ocrSelectionSymbolIndices!!
+                                        val selectedSymbolInfos = allOcrSymbolsForSelection.subList(
+                                            indices.first, indices.second
+                                        )
+                                        if (selectedSymbolInfos.isNotEmpty()) {
+                                            val selectedText = buildString {
+                                                selectedSymbolInfos.forEachIndexed { index, info ->
+                                                    append(info.symbol.text)
+
+                                                    if (index < selectedSymbolInfos.size - 1) {
+                                                        val nextInfo = selectedSymbolInfos[index + 1]
+
+                                                        if (info.parentLine !== nextInfo.parentLine) {
+                                                            append('\n')
+                                                        } else if (info.parentElement !== nextInfo.parentElement) {
+                                                            append(' ')
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            val firstRect = selectedSymbolInfos.first().symbol.boundingBox!!
+                                            val combinedRect = Rect(firstRect)
+                                            selectedSymbolInfos.forEach { info -> info.symbol.boundingBox?.let { combinedRect.union(it) } }
 
                                             customMenuState = CustomPdfMenuState(
-                                                selectedText = text,
+                                                selectedText = selectedText,
                                                 anchorRect = combinedRect,
-                                                charRange = currentRange
+                                                charRange = Pair(indices.first, indices.second)
                                             )
                                             Timber.d(
-                                                "Menu shown after drag. Anchor: ${customMenuState?.anchorRect}"
+                                                "Menu shown after OCR drag. Anchor: ${customMenuState?.anchorRect}"
                                             )
                                         } else {
                                             customMenuState = null
                                         }
-                                    } catch (e: Exception) {
-                                        Timber.e(
-                                            e, "Error fetching text for menu after drag"
-                                        )
+                                    } else {
                                         customMenuState = null
-                                    } finally {
-                                        withContext(NonCancellable) {
-                                            withContext(Dispatchers.IO) {
-                                                try {
-                                                    textPageForMenu?.close()
-                                                } catch (_: Exception) {
-                                                }
-                                                try {
-                                                    pageForMenu?.close()
-                                                } catch (_: Exception) {
-                                                }
-                                            }
-                                        }
                                     }
                                 }
-                            } else {
-                                customMenuState = null
-                            }
-                        } else {
-                            if (ocrSelectionSymbolIndices != null && selectedWordScreenRects.isNotEmpty()) {
-                                val indices = ocrSelectionSymbolIndices!!
-                                val selectedSymbolInfos = allOcrSymbolsForSelection.subList(
-                                    indices.first, indices.second
+                                activeDraggingHandle = null
+                                showMagnifier = false
+                                Timber.d(
+                                    "PointerInput: Drag on handle completed/cancelled. Menu state: $customMenuState"
                                 )
-                                if (selectedSymbolInfos.isNotEmpty()) {
-                                    val selectedText = buildString {
-                                        selectedSymbolInfos.forEachIndexed { index, info ->
-                                            append(info.symbol.text)
-
-                                            if (index < selectedSymbolInfos.size - 1) {
-                                                val nextInfo = selectedSymbolInfos[index + 1]
-
-                                                if (info.parentLine !== nextInfo.parentLine) {
-                                                    append('\n')
-                                                } else if (info.parentElement !== nextInfo.parentElement) {
-                                                    append(' ')
-                                                }
-                                            }
-                                        }
-                                    }
-                                    val firstRect = selectedSymbolInfos.first().symbol.boundingBox!!
-                                    val combinedRect = Rect(firstRect)
-                                    selectedSymbolInfos.forEach { info -> info.symbol.boundingBox?.let { combinedRect.union(it) } }
-
-                                    customMenuState = CustomPdfMenuState(
-                                        selectedText = selectedText,
-                                        anchorRect = combinedRect,
-                                        charRange = Pair(indices.first, indices.second)
-                                    )
-                                    Timber.d(
-                                        "Menu shown after OCR drag. Anchor: ${customMenuState?.anchorRect}"
-                                    )
-                                } else {
-                                    customMenuState = null
-                                }
-                            } else {
-                                customMenuState = null
                             }
                         }
-                        activeDraggingHandle = null
-                        showMagnifier = false
-                        Timber.d(
-                            "PointerInput: Drag on handle completed/cancelled. Menu state: $customMenuState"
-                        )
                     } else {
                         val longPressTimeout = viewConfiguration.longPressTimeoutMillis
                         try {
@@ -5632,22 +5637,20 @@ private fun PdfPageRenderer(
                             val topLeftWindow = coords.localToWindow(topLeftLocal)
                             val bottomRightWindow = coords.localToWindow(bottomRightLocal)
 
-                            val windowCenterX = (topLeftWindow.x + bottomRightWindow.x) / 2
                             val gapPx = with(density) { 16.dp.toPx() }
-
-                            var yInWindow = (topLeftWindow.y - popupContentSize.height - gapPx).toInt()
-
-                            if (yInWindow < 0) {
-                                yInWindow = (bottomRightWindow.y + gapPx).toInt()
-                                if (yInWindow + popupContentSize.height > windowSize.height) {
-                                    yInWindow = windowSize.height - popupContentSize.height - gapPx.toInt()
-                                }
-                            }
-
-                            val xInWindow = (windowCenterX - popupContentSize.width / 2).toInt()
-                                .coerceIn(0, windowSize.width - popupContentSize.width)
-
-                            return IntOffset(xInWindow, yInWindow)
+                            val placement = sharedSelectionMenuPlacement(
+                                viewport = SharedSelectionMenuViewport(windowSize.width, windowSize.height),
+                                popup = SharedSelectionMenuSize(popupContentSize.width, popupContentSize.height),
+                                selection = SharedSelectionMenuRect(
+                                    left = topLeftWindow.x,
+                                    top = topLeftWindow.y,
+                                    right = bottomRightWindow.x,
+                                    bottom = bottomRightWindow.y
+                                ),
+                                marginPx = gapPx,
+                                gapPx = gapPx
+                            )
+                            return IntOffset(placement.x, placement.y)
                         }
                     }
                 }

@@ -323,6 +323,10 @@ import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.SharedNativeReaderLinkClick
 import com.aryan.reader.shared.ui.SharedNativeReaderSelectionAction
 import com.aryan.reader.shared.ui.SharedNativePaginatedReader
+import com.aryan.reader.shared.ui.SharedSelectionMenuRect
+import com.aryan.reader.shared.ui.SharedSelectionMenuSize
+import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
+import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import com.aryan.reader.shared.ui.ReaderWorkspaceShell
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
@@ -10149,26 +10153,29 @@ private fun PdfSelectionMenu(
     }
     val estimatedHeight = PdfSelectionMenuPaletteHeightPx +
         (((actions.size + 2) / 3).coerceAtLeast(1) * PdfSelectionMenuActionRowHeightPx)
-    val left = (anchor.x - (PdfSelectionMenuWidthPx / 2f)).coerceIn(
-        PdfSelectionMenuMarginPx,
-        (canvasSize.width.toFloat() - PdfSelectionMenuWidthPx).coerceAtLeast(PdfSelectionMenuMarginPx)
-    )
-    val selectionTop = selectionBounds?.top ?: anchor.y
-    val selectionBottom = selectionBounds?.bottom ?: anchor.y
-    val preferredTop = selectionTop - estimatedHeight - PdfSelectionMenuAnchorGapPx
-    val fallbackTop = selectionBottom + PdfSelectionMenuAnchorGapPx
-    val hasRoomAbove = preferredTop >= PdfSelectionMenuMarginPx
-    val pageHeight = canvasSize.height.toFloat()
-    val hasRoomBelow = fallbackTop + estimatedHeight <= pageHeight - PdfSelectionMenuMarginPx
-    val rawTop = when {
-        hasRoomAbove -> preferredTop
-        hasRoomBelow -> fallbackTop
-        selectionTop > pageHeight - selectionBottom -> preferredTop
-        else -> fallbackTop
-    }
-    val top = rawTop.coerceIn(
-        PdfSelectionMenuMarginPx,
-        (canvasSize.height.toFloat() - estimatedHeight).coerceAtLeast(PdfSelectionMenuMarginPx)
+    val placement = sharedSelectionMenuPlacement(
+        viewport = SharedSelectionMenuViewport(canvasSize.width, canvasSize.height),
+        popup = SharedSelectionMenuSize(
+            width = PdfSelectionMenuWidthPx.roundToInt(),
+            height = estimatedHeight.roundToInt()
+        ),
+        selection = if (selectionBounds != null) {
+            SharedSelectionMenuRect(
+                left = selectionBounds.left,
+                top = selectionBounds.top,
+                right = selectionBounds.right,
+                bottom = selectionBounds.bottom
+            )
+        } else {
+            SharedSelectionMenuRect(
+                left = anchor.x,
+                top = anchor.y,
+                right = anchor.x,
+                bottom = anchor.y
+            )
+        },
+        marginPx = PdfSelectionMenuMarginPx,
+        gapPx = PdfSelectionMenuAnchorGapPx
     )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
         Surface(
@@ -10178,27 +10185,27 @@ private fun PdfSelectionMenu(
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.offset {
-                IntOffset(left.roundToInt(), top.roundToInt())
+                IntOffset(placement.x, placement.y)
             }
         ) {
             Column(
                 modifier = Modifier
-                    .widthIn(min = 200.dp, max = 240.dp)
+                    .widthIn(min = 180.dp, max = 220.dp)
                     .padding(bottom = 6.dp)
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     paletteColors.forEach { colorArgb ->
                         Surface(
                             modifier = Modifier
-                                .padding(horizontal = 6.dp)
-                                .size(32.dp)
+                                .padding(horizontal = 4.dp)
+                                .size(28.dp)
                                 .clickable { onHighlight(colorArgb) },
                             color = Color(colorArgb),
                             shape = RoundedCornerShape(16.dp),
@@ -10208,8 +10215,8 @@ private fun PdfSelectionMenu(
                     }
                     Box(
                         modifier = Modifier
-                            .padding(horizontal = 6.dp)
-                            .size(32.dp)
+                            .padding(horizontal = 4.dp)
+                            .size(28.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.sweepGradient(
@@ -10233,7 +10240,7 @@ private fun PdfSelectionMenu(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -10245,10 +10252,10 @@ private fun PdfSelectionMenu(
                             }
                             Column(
                                 modifier = Modifier
-                                    .width(64.dp)
+                                    .width(58.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { action.onClick() }
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = 6.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
@@ -10256,7 +10263,7 @@ private fun PdfSelectionMenu(
                                     imageVector = action.icon,
                                     contentDescription = action.label,
                                     tint = tint,
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                                 Text(
                                     action.label,
@@ -10268,7 +10275,7 @@ private fun PdfSelectionMenu(
                             }
                         }
                         repeat(3 - rowActions.size) {
-                            Spacer(modifier = Modifier.width(64.dp))
+                            Spacer(modifier = Modifier.width(58.dp))
                         }
                     }
                 }
@@ -10584,9 +10591,9 @@ private const val DesktopPdfRenderScaleTolerance = 0.01f
 private const val DesktopPdfPaginationRenderCacheRadius = 2
 private val DesktopPdfSelectionInlineWhitespaceRegex = Regex("[ \\t\\x0B\\f\\r]+")
 private val DesktopPdfSelectionBlankLinesRegex = Regex("\\n{3,}")
-private const val PdfSelectionMenuWidthPx = 240f
-private const val PdfSelectionMenuPaletteHeightPx = 62f
-private const val PdfSelectionMenuActionRowHeightPx = 76f
+private const val PdfSelectionMenuWidthPx = 220f
+private const val PdfSelectionMenuPaletteHeightPx = 54f
+private const val PdfSelectionMenuActionRowHeightPx = 66f
 private const val PdfSelectionMenuAnchorGapPx = 16f
 private const val PdfSelectionMenuMarginPx = 6f
 private const val DesktopPdfSelectionHandleTouchWidthPx = 44f
