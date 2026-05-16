@@ -1,5 +1,11 @@
 // epub_reader.js
 (function () {
+    var READER_VERTICAL_JITTER_TAG = "EpubVerticalJitter";
+    function logVerticalJitter(message) {
+        console.log(READER_VERTICAL_JITTER_TAG + ": " + message);
+    }
+    window.logReaderVerticalJitter = window.logReaderVerticalJitter || logVerticalJitter;
+
     function applyMobileOptimizationsAndSelection() {
         var viewport = document.querySelector("meta[name=viewport]");
 
@@ -870,6 +876,30 @@
         if (isNaN(newHorizontalMargin) || newHorizontalMargin < 0.0 || newHorizontalMargin > 3.0) newHorizontalMargin = 1.0;
         if (isNaN(newVerticalMargin) || newVerticalMargin < 0.0 || newVerticalMargin > 3.0) newVerticalMargin = 1.0;
 
+        var styleSignature = [
+            newFontSize,
+            newLineHeight,
+            fontFamily || "",
+            textAlign || "",
+            newGap,
+            newImageSize,
+            newHorizontalMargin,
+            newVerticalMargin,
+        ].join("|");
+
+        if (window.__readerStyleSignature === styleSignature && dynamicStyleElement.innerHTML.trim().length > 0) {
+            logVerticalJitter(
+                "jsStyleSkip unchanged scrollY=" +
+                    Math.round(window.scrollY || window.pageYOffset || 0) +
+                    " signature=" +
+                    styleSignature,
+            );
+            return false;
+        }
+
+        var scrollYBeforeStyle = Math.round(window.scrollY || window.pageYOffset || 0);
+        var scrollHeightBeforeStyle = Math.round(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight));
+        window.__readerStyleSignature = styleSignature;
         rememberReaderImageAnchors();
 
         var fontCss = "";
@@ -964,6 +994,16 @@
         dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, imageCss, horizontalMarginCss].join("\n");
         applyReaderImageAnchors();
         setTimeout(applyReaderImageAnchors, 80);
+        logVerticalJitter(
+            "jsStyleApply scrollY=" +
+                scrollYBeforeStyle +
+                " scrollHeight=" +
+                scrollHeightBeforeStyle +
+                "->" +
+                Math.round(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)) +
+                " signature=" +
+                styleSignature,
+        );
 
         setTimeout(
             function () {
@@ -992,17 +1032,104 @@
         } else if (window.reportScrollState) {
             setTimeout(window.reportScrollState, 60);
         }
+        return true;
     };
 
     window.TOC_FRAGMENTS = window.TOC_FRAGMENTS || [];
 
     window.setTocFragments = function (jsonArray) {
+        var signature = JSON.stringify(jsonArray || []);
+        if (window.__readerTocFragmentsSignature === signature) {
+            logVerticalJitter("tocSkip unchanged count=" + ((jsonArray && jsonArray.length) || 0));
+            return false;
+        }
+        window.__readerTocFragmentsSignature = signature;
         console.log("FRAG_NAV_DEBUG: window.setTocFragments called with " + jsonArray.length + " items.");
+        logVerticalJitter("tocApply count=" + jsonArray.length);
         window.TOC_FRAGMENTS = jsonArray;
         // Immediate audit and report
         window.auditTocFragments();
         window.reportScrollState();
+        return true;
     };
+
+    var lastVerticalJitterScrollLogAt = 0;
+    var jitterProbeLastScrollY = null;
+    var jitterProbeLastScrollHeight = null;
+    var jitterProbeLastTime = 0;
+    var jitterProbeTrend = 0;
+    var jitterProbeLastAnomalyAt = 0;
+    var jitterProbeTouchActive = false;
+    var jitterProbeLastTouchY = null;
+    var jitterProbeExpectedScrollDirection = 0;
+
+    function updateVerticalJitterScrollProbe(scrollY, scrollHeight, clientHeight) {
+        var now = Date.now();
+        if (jitterProbeLastScrollY === null) {
+            jitterProbeLastScrollY = scrollY;
+            jitterProbeLastScrollHeight = scrollHeight;
+            jitterProbeLastTime = now;
+            return;
+        }
+
+        var deltaY = scrollY - jitterProbeLastScrollY;
+        var deltaHeight = scrollHeight - jitterProbeLastScrollHeight;
+        var elapsedMs = now - jitterProbeLastTime;
+        var direction = deltaY > 0 ? 1 : deltaY < 0 ? -1 : 0;
+        var wasOppositeToTouch =
+            jitterProbeTouchActive &&
+            jitterProbeExpectedScrollDirection !== 0 &&
+            direction !== 0 &&
+            direction !== jitterProbeExpectedScrollDirection;
+        var wasOppositeToTrend =
+            !jitterProbeTouchActive &&
+            jitterProbeTrend !== 0 &&
+            direction !== 0 &&
+            direction !== jitterProbeTrend;
+        var isSmallReverse = Math.abs(deltaY) >= 2 && Math.abs(deltaY) <= 96;
+        var canLogAnomaly = now - jitterProbeLastAnomalyAt >= 120;
+
+        if (deltaHeight !== 0 && canLogAnomaly) {
+            logVerticalJitter(
+                "scrollHeightChange y=" +
+                    jitterProbeLastScrollY +
+                    "->" +
+                    scrollY +
+                    " height=" +
+                    jitterProbeLastScrollHeight +
+                    "->" +
+                    scrollHeight +
+                    " touch=" +
+                    jitterProbeTouchActive,
+            );
+            jitterProbeLastAnomalyAt = now;
+        } else if ((wasOppositeToTouch || wasOppositeToTrend) && isSmallReverse && deltaHeight === 0 && canLogAnomaly) {
+            logVerticalJitter(
+                "scrollReverseSmall y=" +
+                    jitterProbeLastScrollY +
+                    "->" +
+                    scrollY +
+                    " dy=" +
+                    deltaY +
+                    " elapsedMs=" +
+                    elapsedMs +
+                    " expected=" +
+                    jitterProbeExpectedScrollDirection +
+                    " trend=" +
+                    jitterProbeTrend +
+                    " clientHeight=" +
+                    clientHeight,
+            );
+            jitterProbeLastAnomalyAt = now;
+        }
+
+        if (direction !== 0) {
+            jitterProbeTrend = direction;
+        }
+        jitterProbeLastScrollY = scrollY;
+        jitterProbeLastScrollHeight = scrollHeight;
+        jitterProbeLastTime = now;
+    }
 
     window.reportScrollState = function () {
         if (typeof PageInfoReporter !== "undefined" && PageInfoReporter.updateScrollState) {
@@ -1047,6 +1174,21 @@
             }
 
             PageInfoReporter.updateScrollState(scrollY, scrollHeight, clientHeight, activeFragment);
+            updateVerticalJitterScrollProbe(scrollY, scrollHeight, clientHeight);
+            var now = Date.now();
+            if (now - lastVerticalJitterScrollLogAt >= 1000) {
+                logVerticalJitter(
+                    "scrollReport y=" +
+                        scrollY +
+                        " scrollHeight=" +
+                        scrollHeight +
+                        " clientHeight=" +
+                        clientHeight +
+                        " activeFragment=" +
+                        (activeFragment || ""),
+                );
+                lastVerticalJitterScrollLogAt = now;
+            }
         }
 
         window.reportTopChunk();
@@ -1085,6 +1227,53 @@
                     .join(", "),
         );
     };
+
+    window.addEventListener(
+        "touchstart",
+        function (event) {
+            var touch = event.touches && event.touches[0];
+            jitterProbeTouchActive = true;
+            jitterProbeLastTouchY = touch ? touch.clientY : null;
+            jitterProbeExpectedScrollDirection = 0;
+        },
+        { passive: true },
+    );
+
+    window.addEventListener(
+        "touchmove",
+        function (event) {
+            var touch = event.touches && event.touches[0];
+            if (!touch || jitterProbeLastTouchY === null) return;
+            var fingerDeltaY = touch.clientY - jitterProbeLastTouchY;
+            if (Math.abs(fingerDeltaY) >= 1) {
+                jitterProbeExpectedScrollDirection = fingerDeltaY < 0 ? 1 : -1;
+            }
+            jitterProbeLastTouchY = touch.clientY;
+        },
+        { passive: true },
+    );
+
+    window.addEventListener(
+        "touchend",
+        function () {
+            jitterProbeLastTouchY = null;
+            setTimeout(function () {
+                jitterProbeTouchActive = false;
+                jitterProbeExpectedScrollDirection = 0;
+            }, 250);
+        },
+        { passive: true },
+    );
+
+    window.addEventListener(
+        "touchcancel",
+        function () {
+            jitterProbeTouchActive = false;
+            jitterProbeLastTouchY = null;
+            jitterProbeExpectedScrollDirection = 0;
+        },
+        { passive: true },
+    );
 
     let scrollThrottleTimeout = null;
      let lastScrollTime = 0;
@@ -2364,6 +2553,11 @@
 (function () {
     // --- VIRTUALIZATION LOGIC ---
     if (window.virtualization) return;
+    const logVerticalJitter =
+        window.logReaderVerticalJitter ||
+        function (message) {
+            console.log("EpubVerticalJitter: " + message);
+        };
 
     let currentBottomChunkIndex = 0;
     let totalChunks = 0;
@@ -2378,6 +2572,16 @@
 
         init: function (initialChunkIndex, total) {
             console.log(`Virtualization: Init with ${total} chunks. Anchor: ${initialChunkIndex}`);
+            logVerticalJitter(
+                "virtInit total=" +
+                    total +
+                    " anchor=" +
+                    initialChunkIndex +
+                    " scrollY=" +
+                    Math.round(window.scrollY || window.pageYOffset || 0) +
+                    " scrollHeight=" +
+                    Math.round(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)),
+            );
             this.totalChunks = total;
             this.chunksData = new Array(total).fill(null);
             this.chunkHeights = new Array(total).fill(0);
@@ -2413,6 +2617,7 @@
 
                         if (entry.isIntersecting) {
                             if (!this.chunksData[idx]) {
+                                logVerticalJitter("virtRequestChunk idx=" + idx);
                                 if (window.ContentBridge && window.ContentBridge.requestChunk) {
                                     window.ContentBridge.requestChunk(idx);
                                 }
@@ -2428,6 +2633,18 @@
                                 if (div.getBoundingClientRect().top < 0) {
                                     scrollAdjust += (newHeight - oldHeight);
                                 }
+                                logVerticalJitter(
+                                    "virtRestore idx=" +
+                                        idx +
+                                        " oldHeight=" +
+                                        Math.round(oldHeight) +
+                                        " newHeight=" +
+                                        Math.round(newHeight) +
+                                        " top=" +
+                                        Math.round(div.getBoundingClientRect().top) +
+                                        " pendingAdjust=" +
+                                        Math.round(scrollAdjust),
+                                );
                                 if (window.CURRENT_HIGHLIGHTS) {
                                     window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);
                                 }
@@ -2442,12 +2659,29 @@
                                 div.style.height = oldHeight + "px";
                                 div.innerHTML = "";
                                 domChanged = true;
+                                logVerticalJitter(
+                                    "virtUnload idx=" +
+                                        idx +
+                                        " placeholderHeight=" +
+                                        Math.round(oldHeight) +
+                                        " top=" +
+                                        Math.round(div.getBoundingClientRect().top),
+                                );
                             }
                         }
                     });
 
                     if (scrollAdjust !== 0) {
+                        let before = Math.round(window.scrollY || window.pageYOffset || 0);
                         window.scrollBy(0, scrollAdjust);
+                        logVerticalJitter(
+                            "virtScrollAdjust dy=" +
+                                Math.round(scrollAdjust) +
+                                " scrollY=" +
+                                before +
+                                "->" +
+                                Math.round(window.scrollY || window.pageYOffset || 0),
+                        );
                     }
 
                     if (domChanged && window.reportScrollState) {
@@ -2464,6 +2698,14 @@
 
         appendChunk: function (index, htmlContent) {
             console.log(`Virtualization: Receiving chunk ${index} from Kotlin`);
+            logVerticalJitter(
+                "virtAppend idx=" +
+                    index +
+                    " existingData=" +
+                    Boolean(Array.isArray(this.chunksData) && this.chunksData[index]) +
+                    " scrollY=" +
+                    Math.round(window.scrollY || window.pageYOffset || 0),
+            );
 
             if (Array.isArray(this.chunksData)) {
                 this.chunksData[index] = htmlContent;
@@ -2482,7 +2724,18 @@
                 }
 
                 if (div.getBoundingClientRect().bottom < 0) {
+                    let before = Math.round(window.scrollY || window.pageYOffset || 0);
                     window.scrollBy(0, newHeight - oldHeight);
+                    logVerticalJitter(
+                        "virtAppendScrollAdjust idx=" +
+                            index +
+                            " dy=" +
+                            Math.round(newHeight - oldHeight) +
+                            " scrollY=" +
+                            before +
+                            "->" +
+                            Math.round(window.scrollY || window.pageYOffset || 0),
+                    );
                 }
 
                 if (window.reportScrollState) {

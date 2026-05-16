@@ -252,6 +252,7 @@ private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
 private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
 
 private const val TAG_LINK_NAV = "LINK_NAV"
+private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 
@@ -3574,6 +3575,9 @@ fun EpubReaderHost(
                                         """.trimIndent()
 
                                         val chapterToRender = chapters[targetChapterIndex]
+                                        fun isCurrentRenderedChapter(): Boolean =
+                                            targetChapterIndex == currentChapterIndex
+
                                         val chapterKeyForWebView =
                                             remember(
                                                 chapterToRender.htmlFilePath,
@@ -3629,8 +3633,8 @@ fun EpubReaderHost(
                                             }
                                         }
 
-                                        val currentChapterTocFragments = remember(epubBook.tableOfContents, currentChapterIndex) {
-                                            val chapterPath = chapters.getOrNull(currentChapterIndex)?.absPath
+                                        val currentChapterTocFragments = remember(epubBook.tableOfContents, targetChapterIndex) {
+                                            val chapterPath = chapters.getOrNull(targetChapterIndex)?.absPath
                                             epubBook.tableOfContents
                                                 .filter { it.absolutePath == chapterPath && it.fragmentId != null }
                                                 .mapNotNull { it.fragmentId }
@@ -3683,42 +3687,48 @@ fun EpubReaderHost(
                                                 }
                                             },
                                             onChapterInitiallyScrolled = {
-                                                val wasCfiScroll = cfiToLoad != null
-                                                Timber.tag("NavDiag").d("onChapterInitiallyScrolled for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
-                                                logTtsChapterDiag("Chapter initially scrolled. targetChapter=$targetChapterIndex wasCfiScroll=$wasCfiScroll")
-                                                initialScrollTargetForChapter = null
-                                                cfiToLoad = null
-                                                fragmentToLoad = null
-                                                Timber.d("Initial scroll consumed for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
-                                                isWebViewReady = true
-
-                                                if (wasCfiScroll) {
-                                                    scope.launch {
-                                                        delay(1000L)
-                                                        isChapterReadyForBookmarkCheck = true
-                                                        Timber.d("Auto-save enabled after CFI scroll delay.")
-                                                    }
+                                                if (!isCurrentRenderedChapter()) {
+                                                    Timber.tag(TAG_VERTICAL_JITTER).d(
+                                                        "ignored stale initiallyScrolled rendered=$targetChapterIndex current=$currentChapterIndex chapter='${chapterToRender.title}'"
+                                                    )
                                                 } else {
-                                                    isChapterReadyForBookmarkCheck = true
-                                                    Timber.d("Auto-save enabled immediately.")
-                                                }
+                                                    val wasCfiScroll = cfiToLoad != null
+                                                    Timber.tag("NavDiag").d("onChapterInitiallyScrolled for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
+                                                    logTtsChapterDiag("Chapter initially scrolled. targetChapter=$targetChapterIndex wasCfiScroll=$wasCfiScroll")
+                                                    initialScrollTargetForChapter = null
+                                                    cfiToLoad = null
+                                                    fragmentToLoad = null
+                                                    Timber.d("Initial scroll consumed for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
+                                                    isWebViewReady = true
 
-                                                if (ttsShouldStartOnChapterLoad && !hasRequestedExtractionForThisChapter) {
-                                                    Timber.d("Auto-starting TTS for new chapter ($targetChapterIndex).")
-                                                    logTtsChapterDiag("Auto-starting TTS extraction for chapter load")
-                                                    hasRequestedExtractionForThisChapter = true
-                                                    scope.launch {
-                                                        delay(200)
-                                                        webViewRefForTts?.evaluateJavascript(
-                                                            "javascript:TtsBridgeHelper.extractAndRelayText();",
-                                                            null
-                                                        )
+                                                    if (wasCfiScroll) {
+                                                        scope.launch {
+                                                            delay(1000L)
+                                                            isChapterReadyForBookmarkCheck = true
+                                                            Timber.d("Auto-save enabled after CFI scroll delay.")
+                                                        }
+                                                    } else {
+                                                        isChapterReadyForBookmarkCheck = true
+                                                        Timber.d("Auto-save enabled immediately.")
                                                     }
-                                                }
 
-                                                if (isAutoScrollModeActive && isAutoScrollPlaying) {
-                                                    Timber.d("Continuing Auto-Scroll for new chapter with delay.")
-                                                    triggerAutoScrollTempPause(1000L)
+                                                    if (ttsShouldStartOnChapterLoad && !hasRequestedExtractionForThisChapter) {
+                                                        Timber.d("Auto-starting TTS for new chapter ($targetChapterIndex).")
+                                                        logTtsChapterDiag("Auto-starting TTS extraction for chapter load")
+                                                        hasRequestedExtractionForThisChapter = true
+                                                        scope.launch {
+                                                            delay(200)
+                                                            webViewRefForTts?.evaluateJavascript(
+                                                                "javascript:TtsBridgeHelper.extractAndRelayText();",
+                                                                null
+                                                            )
+                                                        }
+                                                    }
+
+                                                    if (isAutoScrollModeActive && isAutoScrollPlaying) {
+                                                        Timber.d("Continuing Auto-Scroll for new chapter with delay.")
+                                                        triggerAutoScrollTempPause(1000L)
+                                                    }
                                                 }
                                             },
                                             onTap = {
@@ -3886,22 +3896,28 @@ fun EpubReaderHost(
                                             },
                                             tocFragments = currentChapterTocFragments,
                                             onScrollStateUpdate = { scrollY, scrollHeight, clientHeight, fragId ->
-                                                currentScrollYPosition = scrollY
-                                                currentScrollHeightValue = scrollHeight
-                                                currentClientHeightValue = clientHeight
+                                                if (!isCurrentRenderedChapter()) {
+                                                    Timber.tag(TAG_VERTICAL_JITTER).d(
+                                                        "ignored stale scrollState rendered=$targetChapterIndex current=$currentChapterIndex y=$scrollY height=$scrollHeight chapter='${chapterToRender.title}'"
+                                                    )
+                                                } else {
+                                                    currentScrollYPosition = scrollY
+                                                    currentScrollHeightValue = scrollHeight
+                                                    currentClientHeightValue = clientHeight
 
-                                                if (activeFragmentId != fragId) {
-                                                    Timber.tag("FRAG_NAV_DEBUG").d("State updated to: $fragId")
-                                                    activeFragmentId = fragId
-                                                }
+                                                    if (activeFragmentId != fragId) {
+                                                        Timber.tag("FRAG_NAV_DEBUG").d("State updated to: $fragId")
+                                                        activeFragmentId = fragId
+                                                    }
 
-                                                if (volumeScrollEnabled && !searchState.isSearchActive) {
-                                                    volumeScrollFocusDebounceJob.value?.cancel()
-                                                    volumeScrollFocusDebounceJob.value = scope.launch {
-                                                        delay(300L)
-                                                        if (isActive) {
-                                                            containerFocusRequester.requestFocus()
-                                                            Timber.d("Refocusing container after scroll to re-enable volume keys.")
+                                                    if (volumeScrollEnabled && !searchState.isSearchActive) {
+                                                        volumeScrollFocusDebounceJob.value?.cancel()
+                                                        volumeScrollFocusDebounceJob.value = scope.launch {
+                                                            delay(300L)
+                                                            if (isActive) {
+                                                                containerFocusRequester.requestFocus()
+                                                                Timber.d("Refocusing container after scroll to re-enable volume keys.")
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -4059,7 +4075,13 @@ fun EpubReaderHost(
                                                 }
                                             },
                                             onWebViewInstanceCreated = { webView ->
-                                                webViewRefForTts = webView
+                                                if (isCurrentRenderedChapter()) {
+                                                    webViewRefForTts = webView
+                                                } else {
+                                                    Timber.tag(TAG_VERTICAL_JITTER).d(
+                                                        "ignored stale webViewRef rendered=$targetChapterIndex current=$currentChapterIndex chapter='${chapterToRender.title}'"
+                                                    )
+                                                }
                                                 webView.evaluateJavascript(
                                                     "javascript:window.setViewportPadding(${topPaddingPx}, 0);",
                                                     null
@@ -4386,25 +4408,37 @@ fun EpubReaderHost(
                                                 )
                                             },
                                             onTopChunkUpdated = { chunkIndex ->
-                                                topVisibleChunkIndex = chunkIndex
+                                                if (isCurrentRenderedChapter()) {
+                                                    topVisibleChunkIndex = chunkIndex
+                                                } else {
+                                                    Timber.tag(TAG_VERTICAL_JITTER).d(
+                                                        "ignored stale topChunk rendered=$targetChapterIndex current=$currentChapterIndex chunk=$chunkIndex chapter='${chapterToRender.title}'"
+                                                    )
+                                                }
                                             },
                                             initialHtmlContent = initialHtml,
                                             baseUrl = baseUrl,
                                             totalChunks = chapterChunks.size,
                                             initialChunkIndex = loadUpToChunkIndex,
                                             onChunkRequested = { index ->
-                                                val chunkContent = chapterChunks.getOrNull(index)
-                                                if (chunkContent != null) {
-                                                    loadedChunkCount =
-                                                        max(loadedChunkCount, index + 1)
-                                                    val escapedContent =
-                                                        escapeJsString(chunkContent)
-                                                    val jsCommand =
-                                                        "javascript:window.virtualization.appendChunk($index, '$escapedContent');"
-                                                    webViewRefForTts?.evaluateJavascript(
-                                                        jsCommand,
-                                                        null
+                                                if (!isCurrentRenderedChapter()) {
+                                                    Timber.tag(TAG_VERTICAL_JITTER).d(
+                                                        "ignored stale chunkRequest rendered=$targetChapterIndex current=$currentChapterIndex chunk=$index chapter='${chapterToRender.title}'"
                                                     )
+                                                } else {
+                                                    val chunkContent = chapterChunks.getOrNull(index)
+                                                    if (chunkContent != null) {
+                                                        loadedChunkCount =
+                                                            max(loadedChunkCount, index + 1)
+                                                        val escapedContent =
+                                                            escapeJsString(chunkContent)
+                                                        val jsCommand =
+                                                            "javascript:window.virtualization.appendChunk($index, '$escapedContent');"
+                                                        webViewRefForTts?.evaluateJavascript(
+                                                            jsCommand,
+                                                            null
+                                                        )
+                                                    }
                                                 }
                                             },
                                         )

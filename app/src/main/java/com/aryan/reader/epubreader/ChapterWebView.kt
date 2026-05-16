@@ -99,6 +99,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 private const val TAG_LINK_NAV = "LINK_NAV"
+private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
 private val READER_WEB_VIEW_JS_INTERFACES = arrayOf(
     "PageInfoReporter",
     "ProgressReporter",
@@ -112,6 +113,68 @@ private val READER_WEB_VIEW_JS_INTERFACES = arrayOf(
     "FootnoteBridge",
     "LinkNavBridge"
 )
+
+private class WebViewRuntimeApplierState {
+    var fontCss: String? = null
+    var styleSignature: String? = null
+    var tocFragmentsJson: String? = null
+    var highlightsJson: String? = null
+    private var unchangedUpdateCount = 0
+    private var pendingUpdateCount = 0
+    private var lastUnchangedUpdateLogAt = 0L
+    private var lastPendingUpdateLogAt = 0L
+
+    fun logApplied(
+        chapterTitle: String,
+        fontCssChanged: Boolean,
+        styleChanged: Boolean,
+        tocFragmentsChanged: Boolean,
+        highlightsChanged: Boolean
+    ) {
+        if (unchangedUpdateCount > 0) {
+            Timber.tag(TAG_VERTICAL_JITTER).d(
+                "androidUpdate resumeAfterUnchanged count=$unchangedUpdateCount chapter='$chapterTitle'"
+            )
+            unchangedUpdateCount = 0
+        }
+        if (pendingUpdateCount > 0) {
+            Timber.tag(TAG_VERTICAL_JITTER).d(
+                "androidUpdate resumeAfterPending count=$pendingUpdateCount chapter='$chapterTitle'"
+            )
+            pendingUpdateCount = 0
+        }
+        lastUnchangedUpdateLogAt = System.currentTimeMillis()
+        lastPendingUpdateLogAt = lastUnchangedUpdateLogAt
+        Timber.tag(TAG_VERTICAL_JITTER).d(
+            "androidUpdate applied chapter='$chapterTitle' fontCss=$fontCssChanged " +
+                "style=$styleChanged toc=$tocFragmentsChanged highlights=$highlightsChanged"
+        )
+    }
+
+    fun logUnchanged(chapterTitle: String) {
+        unchangedUpdateCount++
+        val now = System.currentTimeMillis()
+        if (now - lastUnchangedUpdateLogAt >= 1000L) {
+            Timber.tag(TAG_VERTICAL_JITTER).d(
+                "androidUpdate unchanged count=$unchangedUpdateCount chapter='$chapterTitle'"
+            )
+            unchangedUpdateCount = 0
+            lastUnchangedUpdateLogAt = now
+        }
+    }
+
+    fun logPending(chapterTitle: String) {
+        pendingUpdateCount++
+        val now = System.currentTimeMillis()
+        if (now - lastPendingUpdateLogAt >= 1000L) {
+            Timber.tag(TAG_VERTICAL_JITTER).d(
+                "androidUpdate pendingPageLoad count=$pendingUpdateCount chapter='$chapterTitle'"
+            )
+            pendingUpdateCount = 0
+            lastPendingUpdateLogAt = now
+        }
+    }
+}
 
 private fun WebView.releaseReaderResources() {
     try {
@@ -523,6 +586,9 @@ fun ChapterWebView(
             currentFontFamily,
             currentTextAlign
         ) {
+            val runtimeApplierState = remember { WebViewRuntimeApplierState() }
+            var isReaderRuntimeReady by remember { mutableStateOf(false) }
+
             AndroidView(
                 factory = { ctx ->
                 Timber.d(
@@ -556,6 +622,7 @@ fun ChapterWebView(
                     }).apply {
                     localWebViewRef = this
                     onWebViewInstanceCreated(this)
+                    val debugWebViewId = System.identityHashCode(this).toString(16)
                     addJavascriptInterface(
                         PageInfoBridge { scrollY, scrollHeight, clientHeight, activeFragmentId ->
                             this.post { onScrollStateUpdate(scrollY, scrollHeight, clientHeight, activeFragmentId) }
@@ -669,6 +736,11 @@ fun ChapterWebView(
                                     message.startsWith("FRAG_NAV_DEBUG") -> {
                                         Timber.tag("FRAG_NAV_DEBUG")
                                             .d("JS -> ${message.substringAfter("FRAG_NAV_DEBUG: ")}")
+                                    }
+
+                                    message.startsWith("$TAG_VERTICAL_JITTER:") -> {
+                                        Timber.tag(TAG_VERTICAL_JITTER)
+                                            .d("webView=$debugWebViewId chapter='$chapterTitle' JS -> ${message.substringAfter("$TAG_VERTICAL_JITTER: ")}")
                                     }
 
                                     else -> {
@@ -818,11 +890,11 @@ fun ChapterWebView(
                             )
 
                             view?.evaluateJavascript(
-                                "javascript:window.HighlightBridgeHelper.restoreHighlights('${
+                                "javascript:window.CURRENT_HIGHLIGHTS = '${
                                     escapeJsString(
                                         highlightsJson
                                     )
-                                }');", null
+                                }'; window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);", null
                             )
 
                             val fontCss = getFontCssInjection().replace("\n", " ")
@@ -844,6 +916,20 @@ fun ChapterWebView(
                             } else {
                                 currentFontFamily.fontFamilyName
                             }
+
+                            runtimeApplierState.fontCss = combinedCss
+                            runtimeApplierState.styleSignature = listOf(
+                                currentFontSize,
+                                currentLineHeight,
+                                fontNameForJs,
+                                currentTextAlign.cssValue,
+                                currentParagraphGap,
+                                currentImageSize,
+                                currentHorizontalMargin,
+                                currentVerticalMargin
+                            ).joinToString(separator = "|")
+                            runtimeApplierState.tocFragmentsJson = fragmentsJson
+                            runtimeApplierState.highlightsJson = highlightsJson
 
                             view?.evaluateJavascript(
                                 "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
@@ -956,6 +1042,9 @@ fun ChapterWebView(
                                 "javascript:if(window.getSelection) window.getSelection().removeAllRanges();",
                                 null
                             )
+                            isReaderRuntimeReady = true
+                            Timber.tag(TAG_VERTICAL_JITTER)
+                                .d("androidPageFinished runtimeReady webView=$debugWebViewId chapter='$chapterTitle'")
                         }
                     }
                     settings.apply {
@@ -983,6 +1072,7 @@ fun ChapterWebView(
             },
             modifier = Modifier.fillMaxSize(),
             onRelease = { releasedWebView ->
+                isReaderRuntimeReady = false
                 if (localWebViewRef === releasedWebView) {
                     localWebViewRef = null
                 }
@@ -992,42 +1082,84 @@ fun ChapterWebView(
                 releasedWebView.releaseReaderResources()
             },
             update = { webView ->
-                Timber.d("WebView update. Setting Font: ${currentFontFamily.fontFamilyName}")
                 localWebViewRef = webView
                 onWebViewInstanceCreated(webView)
-                val fontCss = getFontCssInjection().replace("\n", " ")
-                val customFontCss = if (customFontPath != null) {
-                    "@font-face { font-family: 'CustomFont'; src: url('file://$customFontPath'); }"
-                } else ""
-                val combinedCss = "$fontCss $customFontCss"
-                val injectFontJs =
-                    "var style = document.getElementById('injectedFonts'); if(!style) { style = document.createElement('style'); style.id='injectedFonts'; document.head.appendChild(style); } style.innerHTML = \"$combinedCss\";"
-                webView.evaluateJavascript("javascript:$injectFontJs", null)
-                val fontNameForJs = if (customFontPath != null) {
-                    "CustomFont"
-                } else if (currentFontFamily == ReaderFont.ORIGINAL) {
-                    ""
+                if (!isReaderRuntimeReady) {
+                    runtimeApplierState.logPending(chapterTitle)
                 } else {
-                    currentFontFamily.fontFamilyName
+                    val fontCss = getFontCssInjection().replace("\n", " ")
+                    val customFontCss = if (customFontPath != null) {
+                        "@font-face { font-family: 'CustomFont'; src: url('file://$customFontPath'); }"
+                    } else ""
+                    val combinedCss = "$fontCss $customFontCss"
+                    val fontNameForJs = if (customFontPath != null) {
+                        "CustomFont"
+                    } else if (currentFontFamily == ReaderFont.ORIGINAL) {
+                        ""
+                    } else {
+                        currentFontFamily.fontFamilyName
+                    }
+                    val fragmentsJson = org.json.JSONArray(tocFragments).toString()
+                    val styleSignature = listOf(
+                        currentFontSize,
+                        currentLineHeight,
+                        fontNameForJs,
+                        currentTextAlign.cssValue,
+                        currentParagraphGap,
+                        currentImageSize,
+                        currentHorizontalMargin,
+                        currentVerticalMargin
+                    ).joinToString(separator = "|")
+                    val fontCssChanged = runtimeApplierState.fontCss != combinedCss
+                    val styleChanged = runtimeApplierState.styleSignature != styleSignature
+                    val tocFragmentsChanged = runtimeApplierState.tocFragmentsJson != fragmentsJson
+                    val highlightsChanged = runtimeApplierState.highlightsJson != highlightsJson
+
+                    if (fontCssChanged || styleChanged || tocFragmentsChanged || highlightsChanged) {
+                        runtimeApplierState.logApplied(
+                            chapterTitle = chapterTitle,
+                            fontCssChanged = fontCssChanged,
+                            styleChanged = styleChanged,
+                            tocFragmentsChanged = tocFragmentsChanged,
+                            highlightsChanged = highlightsChanged
+                        )
+                    } else {
+                        runtimeApplierState.logUnchanged(chapterTitle)
+                    }
+
+                    if (fontCssChanged) {
+                        runtimeApplierState.fontCss = combinedCss
+                        val injectFontJs =
+                            "var style = document.getElementById('injectedFonts'); if(!style) { style = document.createElement('style'); style.id='injectedFonts'; document.head.appendChild(style); } style.innerHTML = \"$combinedCss\";"
+                        webView.evaluateJavascript("javascript:$injectFontJs", null)
+                    }
+
+                    if (tocFragmentsChanged) {
+                        runtimeApplierState.tocFragmentsJson = fragmentsJson
+                        Timber.tag("FRAG_NAV_DEBUG").d("Injecting TOC_FRAGMENTS via setter: $fragmentsJson")
+                        webView.evaluateJavascript(
+                            "javascript:window.setTocFragments($fragmentsJson);",
+                            null
+                        )
+                    }
+
+                    if (styleChanged) {
+                        runtimeApplierState.styleSignature = styleSignature
+                        webView.evaluateJavascript(
+                            "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
+                            null
+                        )
+                    }
+
+                    if (highlightsChanged) {
+                        runtimeApplierState.highlightsJson = highlightsJson
+                        val escapedHighlights = escapeJsString(highlightsJson)
+                        webView.evaluateJavascript(
+                            "javascript:window.CURRENT_HIGHLIGHTS = '${escapedHighlights}'; window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);",
+                            null
+                        )
+                    }
                 }
-                val fragmentsJson = org.json.JSONArray(tocFragments).toString()
-                Timber.tag("FRAG_NAV_DEBUG").d("Injecting TOC_FRAGMENTS via setter: $fragmentsJson")
-
-                webView.evaluateJavascript(
-                    "javascript:window.setTocFragments($fragmentsJson);",
-                    null
-                )
-
-                webView.evaluateJavascript(
-                    "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
-                    null
-                )
-
-                val escapedHighlights = escapeJsString(highlightsJson)
-                webView.evaluateJavascript(
-                    "javascript:window.CURRENT_HIGHLIGHTS = '${escapedHighlights}'; window.HighlightBridgeHelper.restoreHighlights(window.CURRENT_HIGHLIGHTS);",
-                    null
-                )
             }
             )
         }
