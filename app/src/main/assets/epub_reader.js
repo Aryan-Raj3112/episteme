@@ -207,6 +207,131 @@
         };
 
         window.setTextSelectionEnabled(true);
+        installReaderSelectionBridge();
+    }
+
+    function installReaderSelectionBridge() {
+        if (window.__readerSelectionBridgeInstalled) {
+            return;
+        }
+        window.__readerSelectionBridgeInstalled = true;
+
+        var pointerActive = false;
+        var lastPayloadJson = "";
+
+        function buildSelectionPayload() {
+            var selection = window.getSelection && window.getSelection();
+            if (!selection || selection.rangeCount === 0) {
+                return null;
+            }
+
+            var selectedText = selection.toString().trim();
+            if (!selectedText) {
+                return null;
+            }
+
+            var range = selection.getRangeAt(0);
+            var viewportLeft = 0;
+            var viewportTop = 0;
+            var viewportRight = window.innerWidth || document.documentElement.clientWidth || 0;
+            var viewportBottom = window.innerHeight || document.documentElement.clientHeight || 0;
+            var rects = Array.prototype.slice.call(range.getClientRects ? range.getClientRects() : []);
+            rects = rects.filter(function (rect) {
+                if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+                return rect.right >= viewportLeft &&
+                    rect.left <= viewportRight &&
+                    rect.bottom >= viewportTop &&
+                    rect.top <= viewportBottom;
+            });
+
+            var rect = null;
+            if (rects.length > 0) {
+                var firstRect = rects[0];
+                rect = rects.reduce(function (acc, item) {
+                    return {
+                        left: Math.min(acc.left, item.left),
+                        top: Math.min(acc.top, item.top),
+                        right: Math.max(acc.right, item.right),
+                        bottom: Math.max(acc.bottom, item.bottom)
+                    };
+                }, {
+                    left: firstRect.left,
+                    top: firstRect.top,
+                    right: firstRect.right,
+                    bottom: firstRect.bottom
+                });
+                rect.width = rect.right - rect.left;
+                rect.height = rect.bottom - rect.top;
+            } else {
+                rect = range.getBoundingClientRect ? range.getBoundingClientRect() : null;
+                if (!rect || rect.width <= 0 || rect.height <= 0) {
+                    return null;
+                }
+            }
+
+            return {
+                text: selectedText,
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height
+            };
+        }
+
+        function reportSelectionToBridge() {
+            if (pointerActive) {
+                return;
+            }
+            if (!window.ReaderSelectionBridge || !window.ReaderSelectionBridge.onSelectionChanged) {
+                return;
+            }
+
+            var payload = buildSelectionPayload();
+            if (!payload) {
+                lastPayloadJson = "";
+                return;
+            }
+
+            var payloadJson = JSON.stringify(payload);
+            if (payloadJson === lastPayloadJson) {
+                return;
+            }
+            lastPayloadJson = payloadJson;
+            window.ReaderSelectionBridge.onSelectionChanged(payloadJson);
+        }
+
+        function scheduleSelectionReport(delay) {
+            setTimeout(reportSelectionToBridge, delay == null ? 160 : delay);
+        }
+
+        function markPointerActive() {
+            pointerActive = true;
+        }
+
+        function markPointerReleased() {
+            pointerActive = false;
+            scheduleSelectionReport(80);
+            scheduleSelectionReport(220);
+            scheduleSelectionReport(520);
+        }
+
+        document.addEventListener("selectionchange", function () {
+            if (!pointerActive) {
+                scheduleSelectionReport(160);
+            }
+        });
+        document.addEventListener("pointerdown", markPointerActive, true);
+        document.addEventListener("pointerup", markPointerReleased, true);
+        document.addEventListener("pointercancel", markPointerReleased, true);
+        document.addEventListener("touchstart", markPointerActive, true);
+        document.addEventListener("touchend", markPointerReleased, true);
+        document.addEventListener("touchcancel", markPointerReleased, true);
+        document.addEventListener("mousedown", markPointerActive, true);
+        document.addEventListener("mouseup", markPointerReleased, true);
+        document.addEventListener("keyup", function () { scheduleSelectionReport(80); });
+        window.addEventListener("scroll", function () { scheduleSelectionReport(80); }, false);
     }
 
     window.VIEWPORT_PADDING_TOP = 0;

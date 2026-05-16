@@ -160,4 +160,36 @@ class PdfReaderSettingsAndSharedModelsTest {
         assertTrue(width >= 1)
         assertTrue(height >= 1)
     }
+
+    @Test
+    fun `pdf toolbar reset defaults match first-run toolbar defaults`() {
+        assertEquals(
+            setOf(PdfReaderTool.SCREEN_ORIENTATION.name, PdfReaderTool.HIGHLIGHT_ALL.name),
+            defaultPdfHiddenTools()
+        )
+        assertEquals(PdfReaderTool.entries.toList(), defaultPdfToolOrder())
+        assertEquals(
+            PdfReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet(),
+            defaultPdfBottomTools()
+        )
+
+        val defaultItems = buildPdfToolbarItems(
+            hiddenTools = defaultPdfHiddenTools(),
+            toolOrder = defaultPdfToolOrder(),
+            bottomTools = defaultPdfBottomTools()
+        )
+
+        assertEquals(
+            PdfToolbarSection.HIDDEN,
+            defaultItems.single { it.tool == PdfReaderTool.SCREEN_ORIENTATION }.section
+        )
+        assertEquals(
+            PdfToolbarSection.HIDDEN,
+            defaultItems.single { it.tool == PdfReaderTool.HIGHLIGHT_ALL }.section
+        )
+        assertEquals(
+            PdfToolbarSection.BOTTOM,
+            defaultItems.single { it.tool == PdfReaderTool.SLIDER }.section
+        )
+    }
 }

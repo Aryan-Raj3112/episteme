@@ -303,7 +303,7 @@ private fun loadHiddenTools(context: Context): Set<String> {
     val savedHiddenTools = prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
     val defaultsVersion = prefs.getInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
     if (defaultsVersion < HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = savedHiddenTools + ReaderTool.SCREEN_ORIENTATION.name
+        val migratedHiddenTools = savedHiddenTools + defaultReaderHiddenTools()
         prefs.edit {
             putStringSet(HIDDEN_TOOLS_KEY, migratedHiddenTools)
             putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
@@ -325,7 +325,7 @@ private fun loadToolOrder(context: Context): List<ReaderTool> {
         ?.filter { it.isNotBlank() }
         ?.mapNotNull { name -> ReaderTool.entries.firstOrNull { it.name == name } }
         .orEmpty()
-    return (savedTools + ReaderTool.entries.filterNot { it in savedTools }).distinct()
+    return (savedTools + defaultReaderToolOrder().filterNot { it in savedTools }).distinct()
 }
 
 private fun saveBottomTools(context: Context, bottomTools: Set<String>) {
@@ -337,8 +337,8 @@ private fun loadBottomTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
     return prefs.getStringSet(
         BOTTOM_TOOLS_KEY,
-        ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
-    ) ?: ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
+        defaultReaderBottomTools()
+    ) ?: defaultReaderBottomTools()
 }
 
 private fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {

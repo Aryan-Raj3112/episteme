@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ScreenRotation
@@ -45,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -108,6 +111,51 @@ fun sanitizePdfPlaceholders(list: List<PdfFlatToolItem>): List<PdfFlatToolItem> 
     return result
 }
 
+private val pdfReorderableToolbarTools = setOf(
+    PdfReaderTool.DICTIONARY, PdfReaderTool.THEME, PdfReaderTool.LOCK_PANNING,
+    PdfReaderTool.SLIDER, PdfReaderTool.TOC, PdfReaderTool.SEARCH,
+    PdfReaderTool.HIGHLIGHT_ALL, PdfReaderTool.AI_FEATURES,
+    PdfReaderTool.EDIT_MODE, PdfReaderTool.TTS_CONTROLS,
+    PdfReaderTool.SCREEN_ORIENTATION
+)
+
+internal fun buildPdfToolbarItems(
+    hiddenTools: Set<String>,
+    toolOrder: List<PdfReaderTool>,
+    bottomTools: Set<String>
+): List<PdfFlatToolItem> {
+    val toolbarTools = toolOrder.filter { it in pdfReorderableToolbarTools }
+    val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+    val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+    val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
+    val moreTools = toolOrder.filter { it !in pdfReorderableToolbarTools }
+
+    val list = mutableListOf<PdfFlatToolItem>()
+
+    PdfToolbarSection.entries.forEach { section ->
+        val tools = when (section) {
+            PdfToolbarSection.TOP -> topTools
+            PdfToolbarSection.BOTTOM -> bottomToolsList
+            PdfToolbarSection.HIDDEN -> hiddenToolsList
+        }
+        list.add(PdfFlatToolItem("header_${section.name}", PdfFlatItemType.SECTION_HEADER, section = section, title = section.title))
+        if (tools.isEmpty()) {
+            list.add(PdfFlatToolItem("empty_${section.name}", PdfFlatItemType.EMPTY_PLACEHOLDER, section = section))
+        } else {
+            tools.forEach { tool ->
+                list.add(PdfFlatToolItem("tool_${tool.name}", PdfFlatItemType.TOOL, tool = tool, section = section))
+            }
+        }
+    }
+
+    list.add(PdfFlatToolItem("more_header", PdfFlatItemType.MORE_HEADER, title = "More menu"))
+    moreTools.forEach { tool ->
+        list.add(PdfFlatToolItem("more_${tool.name}", PdfFlatItemType.MORE_TOOL, tool = tool))
+    }
+
+    return list
+}
+
 class PdfDragDropState(
     val lazyListState: LazyListState,
     val onMove: (String, String) -> Unit
@@ -142,54 +190,20 @@ fun PdfCustomizeToolsSheet(
     onPlacementUpdate: (Set<String>) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val reorderableToolbarTools = setOf(
-        PdfReaderTool.DICTIONARY, PdfReaderTool.THEME, PdfReaderTool.LOCK_PANNING,
-        PdfReaderTool.SLIDER, PdfReaderTool.TOC, PdfReaderTool.SEARCH,
-        PdfReaderTool.HIGHLIGHT_ALL, PdfReaderTool.AI_FEATURES,
-        PdfReaderTool.EDIT_MODE, PdfReaderTool.TTS_CONTROLS,
-        PdfReaderTool.SCREEN_ORIENTATION
-    )
-
     var localHiddenTools by remember { mutableStateOf(hiddenTools) }
     var flatItems by remember {
         mutableStateOf<List<PdfFlatToolItem>>(
-            run {
-                val toolbarTools = toolOrder.filter { it in reorderableToolbarTools }
-                val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
-                val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
-                val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
-                val moreTools = toolOrder.filter { it !in reorderableToolbarTools }
-
-                val list = mutableListOf<PdfFlatToolItem>()
-
-                PdfToolbarSection.entries.forEach { section ->
-                    val tools = when(section) {
-                        PdfToolbarSection.TOP -> topTools
-                        PdfToolbarSection.BOTTOM -> bottomToolsList
-                        PdfToolbarSection.HIDDEN -> hiddenToolsList
-                    }
-                    list.add(PdfFlatToolItem("header_${section.name}", PdfFlatItemType.SECTION_HEADER, section = section, title = section.title))
-                    if (tools.isEmpty()) {
-                        list.add(PdfFlatToolItem("empty_${section.name}", PdfFlatItemType.EMPTY_PLACEHOLDER, section = section))
-                    } else {
-                        tools.forEach { tool ->
-                            list.add(PdfFlatToolItem("tool_${tool.name}", PdfFlatItemType.TOOL, tool = tool, section = section))
-                        }
-                    }
-                }
-
-                list.add(PdfFlatToolItem("more_header", PdfFlatItemType.MORE_HEADER, title = "More menu"))
-                moreTools.forEach { tool ->
-                    list.add(PdfFlatToolItem("more_${tool.name}", PdfFlatItemType.MORE_TOOL, tool = tool))
-                }
-                list
-            }
+            buildPdfToolbarItems(
+                hiddenTools = hiddenTools,
+                toolOrder = toolOrder,
+                bottomTools = bottomTools
+            )
         )
     }
 
     val commitDragDrop = {
         val newHidden = localHiddenTools.filter { toolName ->
-            toolOrder.find { it.name == toolName } !in reorderableToolbarTools
+            toolOrder.find { it.name == toolName } !in pdfReorderableToolbarTools
         }.toMutableSet()
 
         val newBottom = mutableSetOf<String>()
@@ -247,6 +261,22 @@ fun PdfCustomizeToolsSheet(
         }
     }
 
+    val resetToDefault = {
+        val defaultHiddenTools = defaultPdfHiddenTools()
+        val defaultToolOrder = defaultPdfToolOrder()
+        val defaultBottomTools = defaultPdfBottomTools()
+
+        localHiddenTools = defaultHiddenTools
+        flatItems = buildPdfToolbarItems(
+            hiddenTools = defaultHiddenTools,
+            toolOrder = defaultToolOrder,
+            bottomTools = defaultBottomTools
+        )
+        onUpdate(defaultHiddenTools)
+        onPlacementUpdate(defaultBottomTools)
+        onOrderUpdate(defaultToolOrder)
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -269,6 +299,11 @@ fun PdfCustomizeToolsSheet(
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
+                    TextButton(onClick = resetToDefault) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.action_reset))
+                    }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
                     }
@@ -396,8 +431,9 @@ private fun PdfToolbarDragRow(
                 contentDescription = "Drag to reorder",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
-                    .size(48.dp)
-                    .padding(12.dp)
+                    .size(32.dp)
+                    .padding(6.dp)
+                    .clip(CircleShape)
                     .pointerInput(tool) {
                         detectDragGestures(
                             onDragStart = { onDragStart() },

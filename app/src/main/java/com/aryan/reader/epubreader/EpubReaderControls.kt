@@ -266,6 +266,51 @@ private val epubToolbarTools = setOf(
     ReaderTool.SCREEN_ORIENTATION
 )
 
+internal fun defaultReaderHiddenTools(): Set<String> = setOf(ReaderTool.SCREEN_ORIENTATION.name)
+
+internal fun defaultReaderToolOrder(): List<ReaderTool> = ReaderTool.entries.toList()
+
+internal fun defaultReaderBottomTools(): Set<String> {
+    return ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
+}
+
+internal fun buildReaderToolbarItems(
+    hiddenTools: Set<String>,
+    toolOrder: List<ReaderTool>,
+    bottomTools: Set<String>
+): List<FlatToolItem> {
+    val toolbarTools = toolOrder.filter { it in epubToolbarTools }
+    val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+    val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
+    val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
+    val moreTools = toolOrder.filter { it !in epubToolbarTools }
+
+    val list = mutableListOf<FlatToolItem>()
+
+    ToolbarSection.entries.forEach { section ->
+        val tools = when (section) {
+            ToolbarSection.TOP -> topTools
+            ToolbarSection.BOTTOM -> bottomToolsList
+            ToolbarSection.HIDDEN -> hiddenToolsList
+        }
+        list.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, title = section.title))
+        if (tools.isEmpty()) {
+            list.add(FlatToolItem("empty_${section.name}", FlatItemType.EMPTY_PLACEHOLDER, section = section))
+        } else {
+            tools.forEach { tool ->
+                list.add(FlatToolItem("tool_${tool.name}", FlatItemType.TOOL, tool = tool, section = section))
+            }
+        }
+    }
+
+    list.add(FlatToolItem("more_header", FlatItemType.MORE_HEADER, title = "More menu"))
+    moreTools.forEach { tool ->
+        list.add(FlatToolItem("more_${tool.name}", FlatItemType.MORE_TOOL, tool = tool))
+    }
+
+    return list
+}
+
 @Composable
 fun EpubReaderTopBar(
     isVisible: Boolean,
@@ -1717,37 +1762,11 @@ fun CustomizeToolsSheet(
 
     var flatItems by remember {
         mutableStateOf(
-            run {
-                val toolbarTools = toolOrder.filter { it in epubToolbarTools }
-                val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
-                val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
-                val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
-                val moreTools = toolOrder.filter { it !in epubToolbarTools }
-
-                val list = mutableListOf<FlatToolItem>()
-
-                ToolbarSection.entries.forEach { section ->
-                    val tools = when(section) {
-                        ToolbarSection.TOP -> topTools
-                        ToolbarSection.BOTTOM -> bottomToolsList
-                        ToolbarSection.HIDDEN -> hiddenToolsList
-                    }
-                    list.add(FlatToolItem("header_${section.name}", FlatItemType.SECTION_HEADER, section = section, title = section.title))
-                    if (tools.isEmpty()) {
-                        list.add(FlatToolItem("empty_${section.name}", FlatItemType.EMPTY_PLACEHOLDER, section = section))
-                    } else {
-                        tools.forEach { tool ->
-                            list.add(FlatToolItem("tool_${tool.name}", FlatItemType.TOOL, tool = tool, section = section))
-                        }
-                    }
-                }
-
-                list.add(FlatToolItem("more_header", FlatItemType.MORE_HEADER, title = "More menu"))
-                moreTools.forEach { tool ->
-                    list.add(FlatToolItem("more_${tool.name}", FlatItemType.MORE_TOOL, tool = tool))
-                }
-                list
-            }
+            buildReaderToolbarItems(
+                hiddenTools = hiddenTools,
+                toolOrder = toolOrder,
+                bottomTools = bottomTools
+            )
         )
     }
 
@@ -1812,6 +1831,22 @@ fun CustomizeToolsSheet(
         }
     }
 
+    val resetToDefault = {
+        val defaultHiddenTools = defaultReaderHiddenTools()
+        val defaultToolOrder = defaultReaderToolOrder()
+        val defaultBottomTools = defaultReaderBottomTools()
+
+        localHiddenTools = defaultHiddenTools
+        flatItems = buildReaderToolbarItems(
+            hiddenTools = defaultHiddenTools,
+            toolOrder = defaultToolOrder,
+            bottomTools = defaultBottomTools
+        )
+        onUpdate(defaultHiddenTools)
+        onPlacementUpdate(defaultBottomTools)
+        onOrderUpdate(defaultToolOrder)
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -1828,12 +1863,17 @@ fun CustomizeToolsSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Customize Toolbar",
+                        text = stringResource(R.string.title_customize_toolbar),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
+                    TextButton(onClick = resetToDefault) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.action_reset))
+                    }
                     IconButton(onClick = onDismiss) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_close))
                     }

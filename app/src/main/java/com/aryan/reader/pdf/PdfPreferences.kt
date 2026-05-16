@@ -78,6 +78,19 @@ enum class PdfReaderTool(val title: String, val category: String) {
     PRINT("Print", "Overflow Menu")
 }
 
+internal fun defaultPdfHiddenTools(): Set<String> {
+    return setOf(
+        PdfReaderTool.SCREEN_ORIENTATION.name,
+        PdfReaderTool.HIGHLIGHT_ALL.name
+    )
+}
+
+internal fun defaultPdfToolOrder(): List<PdfReaderTool> = PdfReaderTool.entries.toList()
+
+internal fun defaultPdfBottomTools(): Set<String> {
+    return PdfReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
+}
+
 val PdfBuiltInThemes = listOf(
     ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
     ReaderTheme("reverse", "Reverse", Color.Black, Color.White, true),
@@ -99,10 +112,7 @@ internal fun loadPdfHiddenTools(context: Context): Set<String> {
     val savedHiddenTools = prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
     val defaultsVersion = prefs.getInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
     if (defaultsVersion < PDF_HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = savedHiddenTools + setOf(
-            PdfReaderTool.SCREEN_ORIENTATION.name,
-            PdfReaderTool.HIGHLIGHT_ALL.name
-        )
+        val migratedHiddenTools = savedHiddenTools + defaultPdfHiddenTools()
         prefs.edit {
             putStringSet(PDF_HIDDEN_TOOLS_KEY, migratedHiddenTools)
             putInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, PDF_HIDDEN_TOOLS_DEFAULTS_VERSION)
@@ -127,7 +137,7 @@ internal fun loadPdfToolOrder(context: Context): List<PdfReaderTool> {
         ?.filter { it.isNotBlank() }
         ?.mapNotNull { name -> PdfReaderTool.entries.firstOrNull { it.name == name } }
         .orEmpty()
-    return (savedTools + PdfReaderTool.entries.filterNot { it in savedTools }).distinct()
+    return (savedTools + defaultPdfToolOrder().filterNot { it in savedTools }).distinct()
 }
 
 internal fun savePdfToolOrder(context: Context, toolOrder: List<PdfReaderTool>) {
@@ -137,7 +147,7 @@ internal fun savePdfToolOrder(context: Context, toolOrder: List<PdfReaderTool>) 
 
 internal fun loadPdfBottomTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    val defaultBottomTools = PdfReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
+    val defaultBottomTools = defaultPdfBottomTools()
     return prefs.getStringSet(PDF_BOTTOM_TOOLS_KEY, defaultBottomTools) ?: defaultBottomTools
 }
 

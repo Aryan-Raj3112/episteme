@@ -33,6 +33,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.widget.PopupMenu
+import android.webkit.JavascriptInterface
 import org.json.JSONObject
 
 enum class DragOperation { NONE, PULLING_DOWN_FROM_TOP, PULLING_UP_FROM_BOTTOM }
@@ -65,6 +66,11 @@ class InteractiveWebView(
     private var scrollStopRunnable: Runnable? = null
     private var selectionMenuRunnable: Runnable? = null
     private var activeSelectionActionMode: ActionMode? = null
+    private var selectionMenuShownForActiveMode = false
+
+    init {
+        addJavascriptInterface(ReaderSelectionBridge(), "ReaderSelectionBridge")
+    }
 
     private fun clearPendingSelectionWork() {
         scrollStopRunnable?.let { scrollStopHandler.removeCallbacks(it) }
@@ -73,9 +79,11 @@ class InteractiveWebView(
         selectionMenuRunnable = null
     }
 
-    private fun startLocalSelectionActionMode(): ActionMode {
+    private fun startLocalSelectionActionMode(scheduleMenu: Boolean = true): ActionMode {
         activeSelectionActionMode?.let { existingMode ->
-            scheduleCustomSelectionMenuFromCurrentSelection(existingMode)
+            if (scheduleMenu) {
+                scheduleCustomSelectionMenuFromCurrentSelection(existingMode)
+            }
             return existingMode
         }
 
@@ -84,10 +92,14 @@ class InteractiveWebView(
             if (activeSelectionActionMode === localMode) {
                 activeSelectionActionMode = null
             }
+            selectionMenuShownForActiveMode = false
             onHideCustomSelectionMenu()
         }
+        selectionMenuShownForActiveMode = false
         activeSelectionActionMode = localMode
-        scheduleCustomSelectionMenuFromCurrentSelection(localMode)
+        if (scheduleMenu) {
+            scheduleCustomSelectionMenuFromCurrentSelection(localMode)
+        }
         return localMode
     }
 
@@ -210,6 +222,9 @@ class InteractiveWebView(
         evaluateJavascript(jsToGetSelectionDetails) { jsonResult ->
             fun retryOrFinish(message: String) {
                 Timber.d(message)
+                if (selectionMenuShownForActiveMode) {
+                    return
+                }
                 if (activeSelectionActionMode === mode && remainingRetries > 0) {
                     scheduleCustomSelectionMenuFromCurrentSelection(
                         mode = mode,
@@ -276,11 +291,15 @@ class InteractiveWebView(
 
                 Timber.d("CustomSelection: Selected text: '$selectedText', JS Rect: {L:$jsLeft, T:$jsTop, R:$jsRight, B:$jsBottom}, Screen Rect: $selectionRectScreen")
 
+                selectionMenuShownForActiveMode = true
                 onShowCustomSelectionMenu(selectedText, selectionRectScreen) {
                     mode.finish()
                 }
             } catch (e: Exception) {
                 Timber.e(e, "CustomSelection: Error parsing selection details from JS: '$jsonResult', raw: '$jsonResult'")
+                if (selectionMenuShownForActiveMode) {
+                    return@evaluateJavascript
+                }
                 if (remainingRetries > 0) {
                     scheduleCustomSelectionMenuFromCurrentSelection(
                         mode = mode,
@@ -291,6 +310,60 @@ class InteractiveWebView(
                     mode.finish()
                 }
             }
+        }
+    }
+
+    private fun showCustomSelectionMenuFromSelectionDetailsJson(
+        mode: ActionMode,
+        rawJson: String
+    ) {
+        if (activeSelectionActionMode !== mode) return
+        selectionMenuRunnable?.let { scrollStopHandler.removeCallbacks(it) }
+        selectionMenuRunnable = null
+
+        try {
+            val selectionDetails = JSONObject(rawJson)
+            val selectedText = selectionDetails.getString("text")
+            if (selectedText.isBlank()) {
+                return
+            }
+
+            val jsLeft = selectionDetails.getDouble("left")
+            val jsTop = selectionDetails.getDouble("top")
+            val jsRight = selectionDetails.getDouble("right")
+            val jsBottom = selectionDetails.getDouble("bottom")
+            val jsWidth = selectionDetails.getDouble("width")
+            val jsHeight = selectionDetails.getDouble("height")
+
+            if (jsWidth <= 0.0 || jsHeight <= 0.0) {
+                return
+            }
+
+            val density = context.resources.displayMetrics.density
+            val webViewLocation = IntArray(2)
+            getLocationOnScreen(webViewLocation)
+            val webViewX = webViewLocation[0]
+            val webViewY = webViewLocation[1]
+
+            val selectionRectScreen = Rect(
+                (webViewX + jsLeft * density).toInt(),
+                (webViewY + jsTop * density).toInt(),
+                (webViewX + jsRight * density).toInt(),
+                (webViewY + jsBottom * density).toInt()
+            )
+
+            if (selectionRectScreen.isEmpty || selectionRectScreen.width() <= 0 || selectionRectScreen.height() <= 0) {
+                Timber.d("CustomSelection: Bridge supplied invalid rect: $selectionRectScreen. JS LTRB: $jsLeft, $jsTop, $jsRight, $jsBottom")
+                return
+            }
+
+            Timber.d("CustomSelection: Bridge selected text '$selectedText', Screen Rect: $selectionRectScreen")
+            selectionMenuShownForActiveMode = true
+            onShowCustomSelectionMenu(selectedText, selectionRectScreen) {
+                mode.finish()
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "CustomSelection: Error parsing bridge selection details: '$rawJson'")
         }
     }
 
@@ -404,12 +477,14 @@ class InteractiveWebView(
 
     // MIUI can crash inside FloatingToolbar when WindowInsets are null, so WebView
     // selections use the app's Compose popup without starting the platform toolbar.
+    override fun startActionMode(originalCallback: ActionMode.Callback): ActionMode? {
+        Timber.d("CustomSelection: handling primary action mode locally.")
+        return startLocalSelectionActionMode()
+    }
+
     override fun startActionMode(originalCallback: ActionMode.Callback, type: Int): ActionMode? {
-        if (type == ActionMode.TYPE_FLOATING) {
-            Timber.d("CustomSelection: handling floating action mode locally.")
-            return startLocalSelectionActionMode()
-        }
-        return super.startActionMode(originalCallback, type)
+        Timber.d("CustomSelection: handling action mode locally. Type: $type")
+        return startLocalSelectionActionMode()
     }
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
@@ -489,5 +564,15 @@ class InteractiveWebView(
         override fun getCustomView(): View? = customView
 
         override fun getMenuInflater(): MenuInflater = menuInflater
+    }
+
+    private inner class ReaderSelectionBridge {
+        @JavascriptInterface
+        fun onSelectionChanged(selectionJson: String) {
+            post {
+                val mode = startLocalSelectionActionMode(scheduleMenu = false)
+                showCustomSelectionMenuFromSelectionDetailsJson(mode, selectionJson)
+            }
+        }
     }
 }

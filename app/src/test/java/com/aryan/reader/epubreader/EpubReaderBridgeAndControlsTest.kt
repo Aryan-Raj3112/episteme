@@ -198,4 +198,29 @@ class EpubReaderBridgeAndControlsTest {
         assertTrue(ReaderTool.entries.any { it.category == "Overflow Menu" })
         assertEquals("Top Bar", ReaderTool.SCREEN_ORIENTATION.category)
     }
+
+    @Test
+    fun `reader toolbar reset defaults match first-run toolbar defaults`() {
+        assertEquals(setOf(ReaderTool.SCREEN_ORIENTATION.name), defaultReaderHiddenTools())
+        assertEquals(ReaderTool.entries.toList(), defaultReaderToolOrder())
+        assertEquals(
+            ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet(),
+            defaultReaderBottomTools()
+        )
+
+        val defaultItems = buildReaderToolbarItems(
+            hiddenTools = defaultReaderHiddenTools(),
+            toolOrder = defaultReaderToolOrder(),
+            bottomTools = defaultReaderBottomTools()
+        )
+
+        assertEquals(
+            ToolbarSection.HIDDEN,
+            defaultItems.single { it.tool == ReaderTool.SCREEN_ORIENTATION }.section
+        )
+        assertEquals(
+            ToolbarSection.BOTTOM,
+            defaultItems.single { it.tool == ReaderTool.SLIDER }.section
+        )
+    }
 }
