@@ -711,6 +711,7 @@
     <string name="language_turkish">Türkçe (Turque)</string>
     <string name="language_french">Français</string>
     <string name="language_russian">Русский (Russe)</string>
+    <string name="language_spanish">Español (Espagnol)</string>
     <string name="app_theme_contrast">Contraste</string>
     <string name="app_theme_text_brightness">Luminosité du texte</string>
     <string name="app_theme_preset_ocean">Océan</string>

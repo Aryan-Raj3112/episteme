@@ -2,22 +2,54 @@
 <resources>
     <plurals name="book_count">
         <item quantity="one">%1$d libro</item>
-        <item quantity="many">%1$d libros</item>
         <item quantity="other">%1$d libros</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="one">libro</item>
-        <item quantity="many">libros</item>
         <item quantity="other">libros</item>
     </plurals>
     <plurals name="shelf_count">
-        <item quantity="one">%1$d estantería</item>
-        <item quantity="many">%1$d estanterías</item>
-        <item quantity="other">%1$d estanterías</item>
+        <item quantity="one">%1$d estante</item>
+        <item quantity="other">%1$d estantes</item>
     </plurals>
     <plurals name="search_results_count">
         <item quantity="one">%1$d resultado encontrado</item>
-        <item quantity="many">%1$d resultados encontrados</item>
         <item quantity="other">%1$d resultados encontrados</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="one">%1$d coincidencia encontrada</item>
+        <item quantity="other">%1$d coincidencias encontradas</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">Eliminar archivo permanentemente</item>
+        <item quantity="other">Eliminar archivos permanentemente</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">¿Quieres eliminar permanentemente %1$d archivo seleccionado de tu dispositivo? Esta acción no se puede deshacer.</item>
+        <item quantity="other">¿Quieres eliminar permanentemente %1$d archivos seleccionados de tu dispositivo? Esta acción no se puede deshacer.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">¿Quieres quitar %1$d archivo seleccionado de la lista de archivos recientes? Volverá a aparecer si lo abres de nuevo desde la biblioteca.</item>
+        <item quantity="other">¿Quieres quitar %1$d archivos seleccionados de la lista de archivos recientes? Volverán a aparecer si los abres de nuevo desde la biblioteca.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">¿Seguro que quieres quitar %1$d libro del estante \'%2$s\'? El libro seguirá en tu biblioteca y aparecerá en Sin estante.</item>
+        <item quantity="other">¿Seguro que quieres quitar %1$d libros del estante \'%2$s\'? Los libros seguirán en tu biblioteca y aparecerán en Sin estante.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d libro quitado de la biblioteca.</item>
+        <item quantity="other">%1$d libros quitados de la biblioteca.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="one">%1$d carpeta</item>
+        <item quantity="other">%1$d carpetas</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="one">%1$d etiqueta</item>
+        <item quantity="other">%1$d etiquetas</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d fragmento)</item>
+        <item quantity="other">(%1$d fragmentos)</item>
     </plurals>
 </resources>

@@ -2186,36 +2186,27 @@ fun LanguageSelectionDialog(onDismiss: () -> Unit) {
     val currentLocales = AppCompatDelegate.getApplicationLocales()
     val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.language ?: "en" else "en"
 
-    val languages = listOf(
-        "en" to R.string.language_english_default,
-        "ar" to R.string.language_arabic,
-        "de" to R.string.language_german,
-        "tr" to R.string.language_turkish,
-        "fr" to R.string.language_french,
-        "ru" to R.string.language_russian
-    )
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.options_language)) },
         text = {
             Column {
-                languages.forEach { (tag, nameRes) ->
+                supportedAppLanguageOptions.forEach { language ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
                                 AppCompatDelegate.setApplicationLocales(
-                                    LocaleListCompat.forLanguageTags(tag)
+                                    LocaleListCompat.forLanguageTags(language.tag)
                                 )
                                 onDismiss()
                             }
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(selected = currentTag == tag, onClick = null)
+                        RadioButton(selected = currentTag == language.tag, onClick = null)
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text(stringResource(nameRes))
+                        Text(stringResource(language.labelRes))
                     }
                 }
             }

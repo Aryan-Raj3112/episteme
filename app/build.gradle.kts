@@ -1,6 +1,7 @@
 @file:Suppress("UnstableApiUsage")
 
 import java.util.Properties
+import javax.xml.parsers.DocumentBuilderFactory
 
 plugins {
     alias(libs.plugins.android.application)
@@ -18,6 +19,27 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
+fun configuredAppLocaleTags(): Set<String> {
+    val localesConfig = file("src/main/res/xml/locales_config.xml")
+    val androidNamespace = "http://schemas.android.com/apk/res/android"
+    val document = DocumentBuilderFactory.newInstance()
+        .apply { isNamespaceAware = true }
+        .newDocumentBuilder()
+        .parse(localesConfig)
+    val localeNodes = document.getElementsByTagName("locale")
+
+    return buildSet {
+        for (index in 0 until localeNodes.length) {
+            val name = localeNodes.item(index)
+                .attributes
+                ?.getNamedItemNS(androidNamespace, "name")
+                ?.nodeValue
+                ?.takeIf { it.isNotBlank() }
+            if (name != null) add(name)
+        }
+    }
+}
+
 kotlin {
     jvmToolchain(21)
 }
@@ -33,7 +55,7 @@ android {
         versionCode = 51
         versionName = "1.0.47"
 
-        resourceConfigurations += setOf("en", "ar", "de", "tr", "fr", "ru")
+        resourceConfigurations += configuredAppLocaleTags()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {

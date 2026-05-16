@@ -2,6 +2,21 @@ package com.aryan.reader
 
 import androidx.annotation.StringRes
 
+data class AppLanguageOption(
+    val tag: String,
+    @StringRes val labelRes: Int
+)
+
+val supportedAppLanguageOptions = listOf(
+    AppLanguageOption("en", R.string.language_english_default),
+    AppLanguageOption("ar", R.string.language_arabic),
+    AppLanguageOption("de", R.string.language_german),
+    AppLanguageOption("tr", R.string.language_turkish),
+    AppLanguageOption("fr", R.string.language_french),
+    AppLanguageOption("ru", R.string.language_russian),
+    AppLanguageOption("es", R.string.language_spanish)
+)
+
 val AddBooksSource.labelRes: Int
     @StringRes get() = when (this) {
         AddBooksSource.UNSHELVED -> R.string.add_books_source_unshelved
