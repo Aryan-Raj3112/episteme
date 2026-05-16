@@ -765,6 +765,7 @@
 
     <!-- EpubReaderDrawer.kt -->
     <string name="tab_chapters">Chapters</string>
+    <string name="tab_tabs">Tabs</string>
     <string name="tab_bookmarks">Bookmarks</string>
     <string name="tab_highlights">Highlights</string>
     <string name="tab_pages">Pages</string>

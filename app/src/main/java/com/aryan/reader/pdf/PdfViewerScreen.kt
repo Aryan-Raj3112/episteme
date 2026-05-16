@@ -3678,6 +3678,9 @@ fun PdfViewerScreen(
                     userHighlights = visibleUserHighlights,
                     currentPage = currentPage,
                     totalPages = totalDisplayPages,
+                    isTabsEnabled = isPdfTabStripVisible,
+                    openTabs = openTabs,
+                    activeTabBookId = activeTabBookId,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
                         coroutineScope.launch {
@@ -3692,6 +3695,29 @@ fun PdfViewerScreen(
                             } else {
                                 verticalReaderState.scrollToPage(targetPage)
                             }
+                        }
+                    },
+                    onTabSelected = { tabBookId ->
+                        coroutineScope.launch {
+                            currentBookId?.let { tabStateMap[it] = currentPage }
+                            saveAllData(true).join()
+                            viewModel.switchTab(tabBookId)
+                        }
+                    },
+                    onTabClosed = { tabBookId ->
+                        coroutineScope.launch {
+                            val isSelected = tabBookId == activeTabBookId
+                            if (isSelected) saveAllData(true).join()
+                            viewModel.closeTab(tabBookId)
+                            if (isSelected && openTabs.size == 1) {
+                                onNavigateBack()
+                            }
+                        }
+                    },
+                    onNewTabClick = {
+                        coroutineScope.launch {
+                            drawerState.close()
+                            showNewTabSheet = true
                         }
                     },
                     onRenameBookmark = { bookmarkToRename, newTitle ->

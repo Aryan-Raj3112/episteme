@@ -29,6 +29,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
@@ -40,6 +43,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
@@ -58,6 +62,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.stringResource
@@ -76,6 +81,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
+import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
 
 private const val MAX_FIXED_RECURSION = 128
@@ -83,6 +89,32 @@ private const val MAX_FIXED_RECURSION = 128
 internal data class PdfBookmark(val pageIndex: Int, val title: String, val totalPages: Int)
 
 internal data class TocEntry(val title: String, val pageIndex: Int, val nestLevel: Int)
+
+private enum class PdfDrawerSection {
+    TABS,
+    CHAPTERS,
+    BOOKMARKS,
+    HIGHLIGHTS,
+    PAGES
+}
+
+private val PdfDrawerSection.titleResId: Int
+    get() = when (this) {
+        PdfDrawerSection.TABS -> R.string.tab_tabs
+        PdfDrawerSection.CHAPTERS -> R.string.tab_chapters
+        PdfDrawerSection.BOOKMARKS -> R.string.tab_bookmarks
+        PdfDrawerSection.HIGHLIGHTS -> R.string.tab_highlights
+        PdfDrawerSection.PAGES -> R.string.tab_pages
+    }
+
+private val PdfDrawerSection.testTag: String?
+    get() = when (this) {
+        PdfDrawerSection.TABS -> "TabsTab"
+        PdfDrawerSection.BOOKMARKS -> "BookmarksTab"
+        PdfDrawerSection.HIGHLIGHTS -> "HighlightsTab"
+        PdfDrawerSection.PAGES -> "PagesTab"
+        PdfDrawerSection.CHAPTERS -> null
+    }
 
 /**
  * Patches the library bug where siblings are truncated due to depth-state leakage.
@@ -278,6 +310,225 @@ internal fun PdfTocTreeItem(
     }
 }
 
+@Composable
+private fun PdfTabsDrawerPage(
+    openTabs: List<RecentFileItem>,
+    activeTabBookId: String?,
+    currentPage: Int,
+    totalPages: Int,
+    onTabSelected: (String) -> Unit,
+    onTabClosed: (String) -> Unit,
+    onNewTabClick: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.active_tabs),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            ) {
+                Text(
+                    text = openTabs.size.toString(),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+            IconButton(
+                onClick = onNewTabClick,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = stringResource(R.string.content_desc_new_tab)
+                )
+            }
+        }
+
+        HorizontalDivider()
+
+        if (openTabs.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(R.string.msg_no_other_pdfs_found),
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(vertical = 8.dp)
+            ) {
+                items(openTabs, key = { it.bookId }) { tab ->
+                    PdfDrawerTabItem(
+                        tab = tab,
+                        isSelected = tab.bookId == activeTabBookId,
+                        currentPage = currentPage,
+                        totalPages = totalPages,
+                        onTabSelected = onTabSelected,
+                        onTabClosed = onTabClosed
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfDrawerTabItem(
+    tab: RecentFileItem,
+    isSelected: Boolean,
+    currentPage: Int,
+    totalPages: Int,
+    onTabSelected: (String) -> Unit,
+    onTabClosed: (String) -> Unit
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val containerColor by animateColorAsState(
+        targetValue = if (isSelected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        label = "PdfDrawerTabContainer"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (isSelected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+        } else {
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+        },
+        label = "PdfDrawerTabBorder"
+    )
+    val contentColor = if (isSelected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val progressPercent = remember(isSelected, currentPage, totalPages, tab.progressPercentage) {
+        when {
+            isSelected && totalPages > 0 -> (((currentPage + 1).toFloat() / totalPages.toFloat()) * 100f)
+                .coerceIn(0f, 100f)
+                .toInt()
+            else -> tab.progressPercentage
+                ?.coerceIn(0f, 100f)
+                ?.toInt()
+        }
+    }
+    val pageLabel = when {
+        isSelected && totalPages > 0 -> stringResource(R.string.page_of_pages, currentPage + 1, totalPages)
+        tab.lastPage != null -> stringResource(R.string.pdf_page_short, tab.lastPage + 1)
+        else -> null
+    }
+    val progressLabel = progressPercent
+        ?.takeIf { it > 0 }
+        ?.let { stringResource(R.string.progress_complete, it) }
+    val supportingText = remember(pageLabel, progressLabel, tab.author) {
+        listOfNotNull(pageLabel, progressLabel, tab.author)
+            .distinct()
+            .joinToString(" - ")
+    }
+
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(shape)
+            .background(containerColor)
+            .border(1.dp, borderColor, shape)
+            .clickable { onTabSelected(tab.bookId) }
+            .testTag("PdfDrawerTab_${tab.bookId}")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 68.dp)
+                .padding(start = 12.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (isSelected) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Description,
+                    contentDescription = null,
+                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tab.customName ?: tab.title ?: tab.displayName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = contentColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (supportingText.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = supportingText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = contentColor.copy(alpha = 0.72f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = { onTabClosed(tab.bookId) },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = stringResource(R.string.close_tab),
+                    tint = contentColor.copy(alpha = 0.8f)
+                )
+            }
+        }
+
+        progressPercent
+            ?.takeIf { it > 0 }
+            ?.let { percent ->
+                LinearProgressIndicator(
+                    progress = { percent / 100f },
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                    trackColor = Color.Transparent
+                )
+            }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PdfNavigationDrawerContent(
@@ -288,58 +539,81 @@ internal fun PdfNavigationDrawerContent(
     userHighlights: List<PdfUserHighlight>,
     currentPage: Int,
     totalPages: Int,
+    isTabsEnabled: Boolean = false,
+    openTabs: List<RecentFileItem> = emptyList(),
+    activeTabBookId: String? = null,
     customHighlightColors: Map<PdfHighlightColor, Color>,
     onPageSelected: (Int) -> Unit,
+    onTabSelected: (String) -> Unit = {},
+    onTabClosed: (String) -> Unit = {},
+    onNewTabClick: () -> Unit = {},
     onRenameBookmark: (PdfBookmark, String) -> Unit,
     onDeleteBookmark: (PdfBookmark) -> Unit,
     onDeleteHighlight: (PdfUserHighlight) -> Unit,
     onNoteRequested: (String?) -> Unit,
     onCloseDrawer: () -> Unit
 ) {
-    val drawerPagerState = rememberPagerState(pageCount = { 4 })
+    val showTabsPane = isTabsEnabled && openTabs.isNotEmpty()
+    val drawerSections = remember(showTabsPane) {
+        buildList {
+            if (showTabsPane) add(PdfDrawerSection.TABS)
+            add(PdfDrawerSection.CHAPTERS)
+            add(PdfDrawerSection.BOOKMARKS)
+            add(PdfDrawerSection.HIGHLIGHTS)
+            add(PdfDrawerSection.PAGES)
+        }
+    }
+    val drawerPagerState = rememberPagerState(pageCount = { drawerSections.size })
     val drawerScope = rememberCoroutineScope()
 
+    LaunchedEffect(drawerSections.size) {
+        if (drawerPagerState.currentPage >= drawerSections.size) {
+            drawerPagerState.scrollToPage(drawerSections.lastIndex.coerceAtLeast(0))
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
+        val selectedDrawerTabIndex = drawerPagerState.currentPage.coerceIn(0, drawerSections.lastIndex)
         ScrollableTabRow(
-            selectedTabIndex = drawerPagerState.currentPage,
+            selectedTabIndex = selectedDrawerTabIndex,
             edgePadding = 8.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Tab(selected = drawerPagerState.currentPage == 0, onClick = {
-                drawerScope.launch { drawerPagerState.animateScrollToPage(0) }
-            }, text = { Text(stringResource(R.string.tab_chapters)) })
-            Tab(
-                selected = drawerPagerState.currentPage == 1,
-                onClick = {
-                    drawerScope.launch { drawerPagerState.animateScrollToPage(1) }
-                },
-                text = { Text(stringResource(R.string.tab_bookmarks)) },
-                modifier = Modifier.testTag("BookmarksTab")
-            )
-            Tab(
-                selected = drawerPagerState.currentPage == 2,
-                onClick = {
-                    drawerScope.launch { drawerPagerState.animateScrollToPage(2) }
-                },
-                text = { Text(stringResource(R.string.tab_highlights)) },
-                modifier = Modifier.testTag("HighlightsTab")
-            )
-            Tab(
-                selected = drawerPagerState.currentPage == 3,
-                onClick = {
-                    drawerScope.launch { drawerPagerState.animateScrollToPage(3) }
-                },
-                text = { Text(stringResource(R.string.tab_pages)) },
-                modifier = Modifier.testTag("PagesTab")
-            )
+            drawerSections.forEachIndexed { index, section ->
+                Tab(
+                    selected = selectedDrawerTabIndex == index,
+                    onClick = {
+                        drawerScope.launch { drawerPagerState.animateScrollToPage(index) }
+                    },
+                    text = { Text(stringResource(section.titleResId)) },
+                    modifier = section.testTag?.let { Modifier.testTag(it) } ?: Modifier
+                )
+            }
         }
 
         HorizontalPager(
             state = drawerPagerState,
             modifier = Modifier.fillMaxWidth().weight(1f)
         ) { page ->
-            when (page) {
-                0 -> { // Chapters Page
+            when (drawerSections[page]) {
+                PdfDrawerSection.TABS -> PdfTabsDrawerPage(
+                    openTabs = openTabs,
+                    activeTabBookId = activeTabBookId,
+                    currentPage = currentPage,
+                    totalPages = totalPages,
+                    onTabSelected = { bookId ->
+                        if (bookId == activeTabBookId) {
+                            onCloseDrawer()
+                        } else {
+                            onCloseDrawer()
+                            onTabSelected(bookId)
+                        }
+                    },
+                    onTabClosed = onTabClosed,
+                    onNewTabClick = onNewTabClick
+                )
+
+                PdfDrawerSection.CHAPTERS -> { // Chapters Page
                     if (flatTableOfContents.isEmpty()) {
                         Box(
                             modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -500,7 +774,7 @@ internal fun PdfNavigationDrawerContent(
                     }
                 }
 
-                1 -> { // Bookmarks Page
+                PdfDrawerSection.BOOKMARKS -> { // Bookmarks Page
                     if (bookmarks.isEmpty()) {
                         Box(
                             modifier = Modifier
@@ -642,7 +916,7 @@ internal fun PdfNavigationDrawerContent(
                         }
                     }
                 }
-                2 -> { // Highlights Page
+                PdfDrawerSection.HIGHLIGHTS -> { // Highlights Page
                     if (userHighlights.isEmpty()) {
                         Box(
                             modifier = Modifier
@@ -801,7 +1075,7 @@ internal fun PdfNavigationDrawerContent(
                         }
                     }
                 }
-                3 -> { // Pages Page
+                PdfDrawerSection.PAGES -> { // Pages Page
                     val listState = rememberLazyListState()
                     val pageRows = remember(totalPages) { (0 until totalPages).chunked(3) }
 
