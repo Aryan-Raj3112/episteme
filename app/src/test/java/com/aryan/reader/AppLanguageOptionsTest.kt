@@ -11,14 +11,21 @@ class AppLanguageOptionsTest {
     fun `supported app languages include Spanish`() {
         assertEquals(
             listOf("en", "ar", "de", "tr", "fr", "ru", "es"),
-            supportedAppLanguageOptions.map { it.tag }
+            supportedAppLanguageOptions.mapNotNull { it.tag }
         )
         assertEquals(R.string.language_spanish, supportedAppLanguageOptions.last().labelRes)
     }
 
     @Test
+    fun `app language selection defaults to system before explicit overrides`() {
+        assertEquals(null, appLanguageSelectionOptions.first().tag)
+        assertEquals(R.string.language_system_default, appLanguageSelectionOptions.first().labelRes)
+        assertEquals(supportedAppLanguageOptions, appLanguageSelectionOptions.drop(1))
+    }
+
+    @Test
     fun `supported app language tags are unique`() {
-        val tags = supportedAppLanguageOptions.map { it.tag }
+        val tags = supportedAppLanguageOptions.mapNotNull { it.tag }
 
         assertEquals(tags.distinct(), tags)
     }

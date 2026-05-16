@@ -732,6 +732,8 @@
     <string name="options_export_logs_last_lines">Protokolle exportieren (Letzte %1$d Zeilen)</string>
     <string name="dialog_strict_file_filter_title">Strengen Dateifilter aktivieren</string>
     <string name="dialog_strict_file_filter_desc">Wenn Sie diese Option aktivieren, werden einige unterstützte Dateiformate wie AZW3, CB7 und FB2 je nach Dateimanager möglicherweise nicht angezeigt.\n\nSind sie sicher, dass Sie diesen Filter aktivieren möchten?</string>
+    <string name="language_system_default">Systemstandard</string>
+    <string name="language_english">Englisch</string>
     <string name="language_english_default">Englisch (Standard)</string>
     <string name="language_arabic">العربية (Arabisch)</string>
     <string name="language_german">Deutsch (Deutsch)</string>

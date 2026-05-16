@@ -2184,21 +2184,22 @@ fun CreateAppThemeDialog(
 @Composable
 fun LanguageSelectionDialog(onDismiss: () -> Unit) {
     val currentLocales = AppCompatDelegate.getApplicationLocales()
-    val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.language ?: "en" else "en"
+    val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.toLanguageTag() else null
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.options_language)) },
         text = {
             Column {
-                supportedAppLanguageOptions.forEach { language ->
+                appLanguageSelectionOptions.forEach { language ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                AppCompatDelegate.setApplicationLocales(
-                                    LocaleListCompat.forLanguageTags(language.tag)
-                                )
+                                val locales = language.tag?.let { tag ->
+                                    LocaleListCompat.forLanguageTags(tag)
+                                } ?: LocaleListCompat.getEmptyLocaleList()
+                                AppCompatDelegate.setApplicationLocales(locales)
                                 onDismiss()
                             }
                             .padding(vertical = 12.dp),

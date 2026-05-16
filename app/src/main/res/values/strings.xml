@@ -1109,6 +1109,8 @@
     <string name="dialog_strict_file_filter_desc">If you enable this, some supported file types like AZW3, CB7, and FB2 might not show up depending on your file manager.\n\nAre you sure you want to enable this filter?</string>
 
     <!-- App language picker. Language names are shown in their own language followed by an English hint. -->
+    <string name="language_system_default">System default</string>
+    <string name="language_english">English</string>
     <string name="language_english_default">English (Default)</string>
     <string name="language_arabic">العربية (Arabic)</string>
     <string name="language_german">Deutsch (German)</string>

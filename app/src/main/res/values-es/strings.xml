@@ -739,6 +739,8 @@
     <string name="options_export_logs_last_lines">Exportar registros (últimas %1$d líneas)</string>
     <string name="dialog_strict_file_filter_title">Activar filtro estricto de archivos</string>
     <string name="dialog_strict_file_filter_desc">Si activas esto, algunos tipos de archivo compatibles como AZW3, CB7 y FB2 podrían no aparecer según tu administrador de archivos.\n\n¿Seguro que quieres activar este filtro?</string>
+    <string name="language_system_default">Predeterminado del sistema</string>
+    <string name="language_english">English (inglés)</string>
     <string name="language_english_default">English (inglés; predeterminado)</string>
     <string name="language_arabic">العربية (árabe)</string>
     <string name="language_german">Deutsch (alemán)</string>

@@ -705,6 +705,8 @@
     <string name="options_language">Langue</string>
     <string name="options_export_logs_last_lines">Exporter les logs (dernières %1$d lignes)</string>
     <string name="dialog_strict_file_filter_desc">Si vous activez cette option, certains formats supportés comme AZW3, CB7 et FB2 pourraient ne pas apparaitre, selon votre gestionnaire de fichiers.\n\nÊtes-vous sûr de vouloir activer ce filtre ?</string>
+    <string name="language_system_default">Langue du système</string>
+    <string name="language_english">English (Anglais)</string>
     <string name="language_english_default">English (Anglais ; par défaut)</string>
     <string name="language_arabic">العربية (Arabe)</string>
     <string name="language_german">Deutsch (Allemand)</string>

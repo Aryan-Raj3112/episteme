@@ -707,6 +707,8 @@
     <string name="options_export_logs_last_lines">Günlükleri Dışarı Aktar (Son %1$d satır)</string>
     <string name="dialog_strict_file_filter_title">Katı Dosya Filtresini Aç</string>
     <string name="dialog_strict_file_filter_desc">Bunu etkinleştirirseniz, dosya yöneticinize bağlı olarak AZW3, CB7 ve FB2 gibi bazı desteklenen dosya türleri görünmeyebilir.\n\nBu filtreyi etkinleştirmek istediğinizden emin misiniz?</string>
+    <string name="language_system_default">Sistem varsayılanı</string>
+    <string name="language_english">İngilizce</string>
     <string name="language_english_default">İngilizce (Varsayılan)</string>
     <string name="language_arabic">العربية (Arapça)</string>
     <string name="language_german">Deutsch (Almanca)</string>
