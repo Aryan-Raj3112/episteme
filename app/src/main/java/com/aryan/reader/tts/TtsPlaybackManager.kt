@@ -130,15 +130,22 @@ class TtsPlaybackManager(
         val ttsMode: String = TtsMode.CLOUD.name
     )
 
-    private val _ttsState = MutableStateFlow(TtsState())
+    private val initialSpeakerId = loadTtsSpeaker(appContext)
+    private val initialTtsMode = loadTtsMode(appContext)
+    private val _ttsState = MutableStateFlow(
+        TtsState(
+            speakerId = initialSpeakerId,
+            ttsMode = initialTtsMode.name
+        )
+    )
 
     private var textChunks: List<TtsChunk> = emptyList()
     private val audioFiles = java.util.concurrent.ConcurrentHashMap<Int, File>()
-    private var currentSpeakerId = DEFAULT_SPEAKER_ID
+    private var currentSpeakerId = initialSpeakerId
     private var bookTitle: String? = null
     private var chapterTitle: String? = null
     private var coverImageUri: String? = null
-    private var currentTtsMode = TtsMode.CLOUD
+    private var currentTtsMode = initialTtsMode
     private var chapterIndex: Int? = null
     private var totalChapters: Int? = null
 
@@ -157,6 +164,12 @@ class TtsPlaybackManager(
 
     fun setMediaSession(session: MediaSession) {
         this.mediaSession = session
+        session.setCustomLayout(
+            listOf(
+                createStateButton(_ttsState.value),
+                createStopCommandButton()
+            )
+        )
     }
 
     override fun onConnect(
@@ -422,8 +435,10 @@ class TtsPlaybackManager(
 
         onPlaybackSessionPreparing(bookTitle, chapterTitle)
 
+        val effectiveSpeakerId = normalizeTtsSpeakerId(speakerId)
+
         textChunks = chunks
-        currentSpeakerId = speakerId
+        currentSpeakerId = effectiveSpeakerId
         currentTtsMode = ttsMode
         this.bookTitle = bookTitle
         this.chapterTitle = chapterTitle
@@ -443,7 +458,7 @@ class TtsPlaybackManager(
             currentChunkIndex = -1,
             totalChunks = chunks.size,
             bookProgressPercent = calculateBookProgressPercent(-1),
-            speakerId = speakerId,
+            speakerId = effectiveSpeakerId,
             playbackSource = playbackSource,
             ttsMode = ttsMode.name,
             currentText = if (continueSession) _ttsState.value.currentText else null
@@ -480,10 +495,12 @@ class TtsPlaybackManager(
     }
 
     private fun handleChangeSpeaker(newSpeakerId: String) {
-        if (currentSpeakerId == newSpeakerId) return
-        currentSpeakerId = newSpeakerId
-        _ttsState.value = _ttsState.value.copy(speakerId = newSpeakerId)
-        Timber.d("Speaker changed to $newSpeakerId (pending next start)")
+        val safeSpeakerId = normalizeTtsSpeakerId(newSpeakerId)
+        if (currentSpeakerId == safeSpeakerId) return
+        currentSpeakerId = safeSpeakerId
+        saveTtsSpeaker(appContext, safeSpeakerId)
+        _ttsState.value = _ttsState.value.copy(speakerId = safeSpeakerId)
+        Timber.d("Speaker changed to $safeSpeakerId (pending next start)")
     }
 
     private fun currentChunkIndexFromPlayer(): Int {
@@ -681,7 +698,11 @@ class TtsPlaybackManager(
         preparationJob?.cancel()
         wordTrackingJob?.cancel()
         if (clearState) {
-            val finalState = TtsState(sessionEndedByStop = userInitiated)
+            val finalState = TtsState(
+                sessionEndedByStop = userInitiated,
+                speakerId = currentSpeakerId,
+                ttsMode = currentTtsMode.name
+            )
             _ttsState.value = finalState
             mediaSession?.let { session ->
                 val layout = listOf(

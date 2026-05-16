@@ -30,8 +30,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.edit
-import androidx.core.net.toUri
-import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
@@ -53,19 +51,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-
-private const val SETTINGS_PREFS_NAME = "epub_reader_settings"
-private const val TTS_SPEAKER_KEY = "tts_speaker"
-
-private fun saveSpeaker(context: Context, speakerId: String) {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit { putString(TTS_SPEAKER_KEY, speakerId) }
-}
-
-private fun loadSpeaker(context: Context): String {
-    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    return prefs.getString(TTS_SPEAKER_KEY, DEFAULT_SPEAKER_ID) ?: DEFAULT_SPEAKER_ID
-}
 
 @OptIn(UnstableApi::class)
 fun loadTtsMode(context: Context): TtsPlaybackManager.TtsMode {
@@ -101,7 +86,7 @@ class TtsController(context: Context) : Player.Listener {
     private var pollingJob: Job? = null
 
     init {
-        val initialSpeakerId = loadSpeaker(this.context)
+        val initialSpeakerId = loadTtsSpeaker(this.context)
         _ttsState.value = _ttsState.value.copy(speakerId = initialSpeakerId)
     }
 
@@ -236,11 +221,12 @@ class TtsController(context: Context) : Player.Listener {
     @Suppress("unused")
     fun changeSpeaker(speakerId: String) {
         Timber.d("UI sending CHANGE_SPEAKER command.")
-        saveSpeaker(context, speakerId)
-        _ttsState.value = _ttsState.value.copy(speakerId = speakerId)
+        val safeSpeakerId = normalizeTtsSpeakerId(speakerId)
+        saveTtsSpeaker(context, safeSpeakerId)
+        _ttsState.value = _ttsState.value.copy(speakerId = safeSpeakerId)
 
         val args = Bundle().apply {
-            putString(KEY_SPEAKER_ID, speakerId)
+            putString(KEY_SPEAKER_ID, safeSpeakerId)
         }
         mediaController?.sendCustomCommand(CHANGE_SPEAKER_COMMAND, args)
     }

@@ -25,6 +25,7 @@ import androidx.annotation.OptIn
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.core.content.edit
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,8 @@ const val googleCloudWorkerTtsUrl = BuildConfig.TTS_WORKER_URL
 
 const val TTS_CHUNK_MAX_LENGTH = 250
 const val DEFAULT_SPEAKER_ID = "Aoede"
+internal const val TTS_SETTINGS_PREFS_NAME = "epub_reader_settings"
+internal const val TTS_SPEAKER_KEY = "tts_speaker"
 
 data class GeminiVoice(val id: String, val name: String, val description: String)
 
@@ -77,6 +80,21 @@ val GEMINI_TTS_SPEAKERS = listOf(
     GeminiVoice("Sadaltager", "Sadaltager", "Lively, Lower pitch"),
     GeminiVoice("Sulafat", "Sulafat", "Warn, Middle pitch"),
 )
+
+internal fun normalizeTtsSpeakerId(speakerId: String?): String {
+    val cleanSpeakerId = speakerId?.takeIf { it.isNotBlank() } ?: return DEFAULT_SPEAKER_ID
+    return cleanSpeakerId.takeIf { id -> GEMINI_TTS_SPEAKERS.any { it.id == id } } ?: DEFAULT_SPEAKER_ID
+}
+
+internal fun saveTtsSpeaker(context: Context, speakerId: String) {
+    val prefs = context.getSharedPreferences(TTS_SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(TTS_SPEAKER_KEY, normalizeTtsSpeakerId(speakerId)) }
+}
+
+internal fun loadTtsSpeaker(context: Context): String {
+    val prefs = context.getSharedPreferences(TTS_SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return normalizeTtsSpeakerId(prefs.getString(TTS_SPEAKER_KEY, DEFAULT_SPEAKER_ID))
+}
 
 data class TtsChapterCacheInfo(
     val chapterTitle: String,

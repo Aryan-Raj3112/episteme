@@ -6,6 +6,7 @@ import android.graphics.Rect
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
+import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrBlock
 import com.aryan.reader.pdf.ocr.OcrElement
@@ -13,6 +14,7 @@ import com.aryan.reader.pdf.ocr.OcrLine
 import com.aryan.reader.pdf.ocr.OcrResult
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -105,6 +107,62 @@ class PdfReaderCoreLogicTest {
         val filename = getSuggestedFilename(originalName = null, isAnnotated = false)
 
         assertTrue(filename, filename.matches(Regex("Document_\\d{4}\\.pdf")))
+    }
+
+    @Test
+    fun `pdf export choice is hidden when loaded sidecars have no annotations`() {
+        assertFalse(
+            shouldShowPdfAnnotationExportChoice(
+                sidecarsReady = true,
+                annotations = mapOf(0 to emptyList()),
+                textBoxes = emptyList(),
+                highlights = emptyList()
+            )
+        )
+    }
+
+    @Test
+    fun `pdf export choice is shown when exportable annotations exist`() {
+        val inkAnnotation = PdfAnnotation(
+            type = AnnotationType.INK,
+            inkType = InkType.PEN,
+            pageIndex = 0,
+            points = listOf(PdfPoint(0.1f, 0.2f)),
+            color = Color.Black,
+            strokeWidth = 0.01f
+        )
+        val textBox = PdfTextBox(
+            id = "box",
+            pageIndex = 0,
+            relativeBounds = androidx.compose.ui.geometry.Rect(0.1f, 0.1f, 0.4f, 0.2f),
+            text = "note",
+            color = Color.Black,
+            backgroundColor = Color.Transparent,
+            fontSize = 16f
+        )
+        val highlight = PdfUserHighlight(
+            pageIndex = 0,
+            bounds = listOf(RectF(0.1f, 0.1f, 0.4f, 0.2f)),
+            color = PdfHighlightColor.YELLOW,
+            text = "selected",
+            range = 0 to 8
+        )
+
+        assertTrue(shouldShowPdfAnnotationExportChoice(true, mapOf(0 to listOf(inkAnnotation)), emptyList(), emptyList()))
+        assertTrue(shouldShowPdfAnnotationExportChoice(true, emptyMap(), listOf(textBox), emptyList()))
+        assertTrue(shouldShowPdfAnnotationExportChoice(true, emptyMap(), emptyList(), listOf(highlight)))
+    }
+
+    @Test
+    fun `pdf export choice remains available until sidecars are loaded`() {
+        assertTrue(
+            shouldShowPdfAnnotationExportChoice(
+                sidecarsReady = false,
+                annotations = emptyMap(),
+                textBoxes = emptyList(),
+                highlights = emptyList()
+            )
+        )
     }
 
     @Test

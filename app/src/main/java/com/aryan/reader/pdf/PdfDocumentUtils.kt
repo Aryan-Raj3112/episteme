@@ -13,6 +13,8 @@ import android.print.PrintDocumentInfo
 import android.provider.OpenableColumns
 import android.util.LruCache
 import androidx.core.graphics.createBitmap
+import com.aryan.reader.pdf.data.PdfAnnotation
+import com.aryan.reader.pdf.data.PdfTextBox
 import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -133,6 +135,25 @@ internal fun getSuggestedFilename(originalName: String?, isAnnotated: Boolean): 
     val shortId = generateShortId()
 
     return "${safeBase}${suffix}_${shortId}.pdf"
+}
+
+internal fun hasExportablePdfAnnotations(
+    annotations: Map<Int, List<PdfAnnotation>>,
+    textBoxes: List<PdfTextBox>,
+    highlights: List<PdfUserHighlight>
+): Boolean {
+    return annotations.any { (_, pageAnnotations) -> pageAnnotations.isNotEmpty() } ||
+        textBoxes.isNotEmpty() ||
+        highlights.isNotEmpty()
+}
+
+internal fun shouldShowPdfAnnotationExportChoice(
+    sidecarsReady: Boolean,
+    annotations: Map<Int, List<PdfAnnotation>>,
+    textBoxes: List<PdfTextBox>,
+    highlights: List<PdfUserHighlight>
+): Boolean {
+    return !sidecarsReady || hasExportablePdfAnnotations(annotations, textBoxes, highlights)
 }
 
 internal fun getFastFileId(context: Context, uri: Uri): String {

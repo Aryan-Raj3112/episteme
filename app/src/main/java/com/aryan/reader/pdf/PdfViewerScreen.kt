@@ -2256,6 +2256,91 @@ fun PdfViewerScreen(
     var showShareDialog by remember { mutableStateOf(false) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var isShareLoading by remember { mutableStateOf(false) }
+    val shouldShowAnnotationExportChoice = shouldShowPdfAnnotationExportChoice(
+        sidecarsReady = sidecarsReadyForCurrentBook,
+        annotations = visibleAllAnnotations,
+        textBoxes = visibleTextBoxes,
+        highlights = visibleUserHighlights
+    )
+
+    val launchOriginalSaveCopy: () -> Unit = {
+        pendingSaveMode = SaveMode.ORIGINAL
+        val suggestedName = getSuggestedFilename(
+            originalFileName, isAnnotated = false
+        )
+        saveLauncher.launch(suggestedName)
+    }
+
+    val launchAnnotatedSaveCopy: () -> Unit = {
+        pendingSaveMode = SaveMode.ANNOTATED
+        val suggestedName = getSuggestedFilename(
+            originalFileName, isAnnotated = true
+        )
+        saveLauncher.launch(suggestedName)
+    }
+
+    val shareOriginalPdf: () -> Unit = {
+        isShareLoading = true
+        val filename = getSuggestedFilename(
+            originalFileName, isAnnotated = false
+        )
+        coroutineScope.launch {
+            try {
+                viewModel.sharePdf(
+                    activityContext = context,
+                    sourceUri = pdfUri,
+                    annotations = emptyMap(),
+                    includeAnnotations = false,
+                    filename = filename
+                )
+            } finally {
+                isShareLoading = false
+            }
+        }
+    }
+
+    val shareAnnotatedPdf: () -> Unit = {
+        isShareLoading = true
+        Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${visibleUserHighlights.size}")
+        val filename = getSuggestedFilename(
+            originalFileName, isAnnotated = true
+        )
+        coroutineScope.launch {
+            try {
+                val currentRichTextLayouts = richTextController?.pageLayouts
+
+                viewModel.sharePdf(
+                    activityContext = context,
+                    sourceUri = effectivePdfUri,
+                    annotations = visibleAllAnnotations,
+                    richTextPageLayouts = currentRichTextLayouts,
+                    textBoxes = visibleTextBoxes,
+                    highlights = visibleUserHighlights,
+                    includeAnnotations = true,
+                    filename = filename,
+                    bookId = currentBookId
+                )
+            } finally {
+                isShareLoading = false
+            }
+        }
+    }
+
+    val requestSaveCopy: () -> Unit = {
+        if (shouldShowAnnotationExportChoice) {
+            showSaveDialog = true
+        } else {
+            launchOriginalSaveCopy()
+        }
+    }
+
+    val requestShare: () -> Unit = {
+        if (shouldShowAnnotationExportChoice) {
+            showShareDialog = true
+        } else {
+            shareOriginalPdf()
+        }
+    }
 
     var ocrUsedForCurrentPageTts by remember { mutableStateOf(false) }
 
@@ -5358,8 +5443,8 @@ fun PdfViewerScreen(
                             }
                         }
                     },
-                    onShare = { showShareDialog = true },
-                    onSaveCopy = { showSaveDialog = true },
+                    onShare = requestShare,
+                    onSaveCopy = requestSaveCopy,
                     onPrint = onPrintDocument,
                     onTabClick = { tabBookId ->
                         coroutineScope.launch {
@@ -7030,11 +7115,7 @@ fun PdfViewerScreen(
                     TextButton(
                         onClick = {
                             showSaveDialog = false
-                            pendingSaveMode = SaveMode.ANNOTATED
-                            val suggestedName = getSuggestedFilename(
-                                originalFileName, isAnnotated = true
-                            )
-                            saveLauncher.launch(suggestedName)
+                            launchAnnotatedSaveCopy()
                         }) { Text(stringResource(R.string.action_with_annotations)) }
 
                 }
@@ -7044,11 +7125,7 @@ fun PdfViewerScreen(
                     TextButton(
                         onClick = {
                             showSaveDialog = false
-                            pendingSaveMode = SaveMode.ORIGINAL
-                            val suggestedName = getSuggestedFilename(
-                                originalFileName, isAnnotated = false
-                            )
-                            saveLauncher.launch(suggestedName)
+                            launchOriginalSaveCopy()
                         }) { Text(stringResource(R.string.action_original)) }
 
                     Spacer(Modifier.width(8.dp))
@@ -7072,27 +7149,7 @@ fun PdfViewerScreen(
                     TextButton(
                         onClick = {
                             showShareDialog = false
-                            isShareLoading = true
-                            Timber.tag("PdfExportDebug").i("SHARE TRIGGERED: userHighlights count: ${visibleUserHighlights.size}")
-                            val filename = getSuggestedFilename(
-                                originalFileName, isAnnotated = true
-                            )
-                            coroutineScope.launch {
-                                val currentRichTextLayouts = richTextController?.pageLayouts
-
-                                viewModel.sharePdf(
-                                    activityContext = context,
-                                    sourceUri = effectivePdfUri,
-                                    annotations = visibleAllAnnotations,
-                                    richTextPageLayouts = currentRichTextLayouts,
-                                    textBoxes = visibleTextBoxes,
-                                    highlights = visibleUserHighlights,
-                                    includeAnnotations = true,
-                                    filename = filename,
-                                    bookId = currentBookId
-                                )
-                                isShareLoading = false
-                            }
+                            shareAnnotatedPdf()
                         }) { Text(stringResource(R.string.action_with_annotations)) }
 
                 }
@@ -7102,20 +7159,7 @@ fun PdfViewerScreen(
                     TextButton(
                         onClick = {
                             showShareDialog = false
-                            isShareLoading = true
-                            val filename = getSuggestedFilename(
-                                originalFileName, isAnnotated = false
-                            )
-                            coroutineScope.launch {
-                                viewModel.sharePdf(
-                                    activityContext = context,
-                                    sourceUri = pdfUri,
-                                    annotations = emptyMap(),
-                                    includeAnnotations = false,
-                                    filename = filename
-                                )
-                                isShareLoading = false
-                            }
+                            shareOriginalPdf()
                         }) { Text(stringResource(R.string.action_original)) }
                     Spacer(Modifier.width(8.dp))
                     TextButton(onClick = { showShareDialog = false }) {
