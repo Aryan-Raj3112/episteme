@@ -8,12 +8,12 @@ import org.junit.Test
 class AppLanguageOptionsTest {
 
     @Test
-    fun `supported app languages include Spanish`() {
+    fun `supported app languages expose configured locale order`() {
         assertEquals(
-            listOf("en", "ar", "de", "tr", "fr", "ru", "es"),
+            listOf("en", "ar", "de", "tr", "fr", "ru", "es", "hi"),
             supportedAppLanguageOptions.mapNotNull { it.tag }
         )
-        assertEquals(R.string.language_spanish, supportedAppLanguageOptions.last().labelRes)
+        assertEquals(R.string.language_hindi, supportedAppLanguageOptions.last().labelRes)
     }
 
     @Test

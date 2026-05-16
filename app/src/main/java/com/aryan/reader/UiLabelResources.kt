@@ -16,7 +16,8 @@ val supportedAppLanguageOptions = listOf(
     AppLanguageOption("tr", R.string.language_turkish),
     AppLanguageOption("fr", R.string.language_french),
     AppLanguageOption("ru", R.string.language_russian),
-    AppLanguageOption("es", R.string.language_spanish)
+    AppLanguageOption("es", R.string.language_spanish),
+    AppLanguageOption("hi", R.string.language_hindi)
 )
 
 val appLanguageSelectionOptions = listOf(systemAppLanguageOption) + supportedAppLanguageOptions

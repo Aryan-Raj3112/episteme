@@ -1118,6 +1118,7 @@
     <string name="language_french">Français (French)</string>
     <string name="language_russian">Русский (Russian)</string>
     <string name="language_spanish">Español (Spanish)</string>
+    <string name="language_hindi">हिन्दी (Hindi)</string>
 
     <!-- App-wide theme controls in HomeScreen.kt. -->
     <string name="app_theme_title">App Theme</string>

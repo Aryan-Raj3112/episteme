@@ -1,3 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <plurals name="book_count">
+        <item quantity="one">%1$d किताब</item>
+        <item quantity="other">%1$d किताबें</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="one">किताब</item>
+        <item quantity="other">किताबें</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d शेल्फ़</item>
+        <item quantity="other">%1$d शेल्फ़</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d परिणाम मिला</item>
+        <item quantity="other">%1$d परिणाम मिले</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="one">%1$d मिलान मिला</item>
+        <item quantity="other">%1$d मिलान मिले</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">फ़ाइल स्थायी रूप से हटाएं</item>
+        <item quantity="other">फ़ाइलें स्थायी रूप से हटाएं</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">क्या आप अपने डिवाइस से %1$d चयनित फ़ाइल स्थायी रूप से हटाना चाहते हैं? यह कार्रवाई वापस नहीं की जा सकती।</item>
+        <item quantity="other">क्या आप अपने डिवाइस से %1$d चयनित फ़ाइलें स्थायी रूप से हटाना चाहते हैं? यह कार्रवाई वापस नहीं की जा सकती।</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">क्या आप हालिया फ़ाइलों की सूची से %1$d चयनित फ़ाइल हटाना चाहते हैं? लाइब्रेरी से फिर खोलने पर यह फिर दिखाई देगी।</item>
+        <item quantity="other">क्या आप हालिया फ़ाइलों की सूची से %1$d चयनित फ़ाइलें हटाना चाहते हैं? लाइब्रेरी से फिर खोलने पर ये फिर दिखाई देंगी।</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">क्या आप वाकई \'%2$s\' शेल्फ़ से %1$d किताब हटाना चाहते हैं? किताब आपकी लाइब्रेरी में रहेगी और बिना शेल्फ़ में दिखाई देगी।</item>
+        <item quantity="other">क्या आप वाकई \'%2$s\' शेल्फ़ से %1$d किताबें हटाना चाहते हैं? किताबें आपकी लाइब्रेरी में रहेंगी और बिना शेल्फ़ में दिखाई देंगी।</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d किताब लाइब्रेरी से हटाई गई।</item>
+        <item quantity="other">%1$d किताबें लाइब्रेरी से हटाई गईं।</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="one">%1$d फ़ोल्डर</item>
+        <item quantity="other">%1$d फ़ोल्डर</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="one">%1$d टैग</item>
+        <item quantity="other">%1$d टैग</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d खंड)</item>
+        <item quantity="other">(%1$d खंड)</item>
+    </plurals>
 </resources>
