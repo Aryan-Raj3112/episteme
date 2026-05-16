@@ -253,6 +253,15 @@ private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
 
 private const val TAG_LINK_NAV = "LINK_NAV"
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
+private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
+
+private fun epubHighlightDiagSnippet(text: String, maxLength: Int = 80): String {
+    return text
+        .replace('\n', ' ')
+        .replace('\r', ' ')
+        .replace('\t', ' ')
+        .take(maxLength)
+}
 
 private fun View.bottomRoundedCornerRadiusPx(): Int {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0
@@ -4571,14 +4580,32 @@ fun EpubReaderHost(
                                     highlight.chapterIndex in (currentChapter - 1)..(currentChapter + 1)
                                 },
                                 onHighlightCreated = { cfi, text, colorId ->
+                                    val chapterIndex = currentChapterInPaginatedMode ?: 0
+                                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                        "persist_request cfi=$cfi colorId=$colorId chapter=$chapterIndex " +
+                                            "existingCount=${userHighlights.size} textLen=${text.length} " +
+                                            "text='${epubHighlightDiagSnippet(text)}'"
+                                    )
                                     Timber.d("EpubReaderScreen: onHighlightCreated. CFI: $cfi")
                                     val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
                                     val finalCfi = processAndAddHighlight(
                                         newCfi = cfi,
                                         newText = text,
                                         newColor = color,
-                                        chapterIndex = currentChapterInPaginatedMode ?: 0,
+                                        chapterIndex = chapterIndex,
                                         currentList = userHighlights
+                                    )
+                                    val savedHighlight = userHighlights.find {
+                                        it.chapterIndex == chapterIndex && it.cfi == finalCfi
+                                    }
+                                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                        "persist_result finalCfi=$finalCfi chapter=$chapterIndex " +
+                                            "savedId=${savedHighlight?.id} totalCount=${userHighlights.size} " +
+                                            "matchingCfiCount=${userHighlights.count { it.chapterIndex == chapterIndex && it.cfi == finalCfi }} " +
+                                            "locatorStart=${savedHighlight?.locator?.startOffset} " +
+                                            "locatorEnd=${savedHighlight?.locator?.endOffset} " +
+                                            "locatorPage=${savedHighlight?.locator?.pageIndex} " +
+                                            "locatorCfi=${savedHighlight?.locator?.cfi}"
                                     )
                                     if (pendingNoteForNewHighlight) {
                                         pendingNoteForNewHighlight = false
@@ -4616,9 +4643,24 @@ fun EpubReaderHost(
                                     )?.let { recordEpubJump(it) }
                                 },
                                 onHighlightDeleted = { cfi ->
+                                    val beforeCount = userHighlights.size
                                     val toRemove = userHighlights.find { it.cfi == cfi }
                                     if (toRemove != null) {
+                                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                            "delete_request cfi=$cfi matchedId=${toRemove.id} " +
+                                                "matchedChapter=${toRemove.chapterIndex} beforeCount=$beforeCount " +
+                                                "locatorStart=${toRemove.locator.startOffset} " +
+                                                "locatorEnd=${toRemove.locator.endOffset}"
+                                        )
                                         userHighlights.remove(toRemove)
+                                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                            "delete_result cfi=$cfi removedId=${toRemove.id} " +
+                                                "afterCount=${userHighlights.size}"
+                                        )
+                                    } else {
+                                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).w(
+                                            "delete_request cfi=$cfi matchedId=null beforeCount=$beforeCount"
+                                        )
                                     }
                                 }
                             )

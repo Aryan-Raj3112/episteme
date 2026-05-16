@@ -54,6 +54,35 @@ class PaginatedHighlightMappingTest {
         assertNull(getHighlightOffsetsInBlock(block, highlight))
     }
 
+    @Test
+    fun `paginated page highlights are scoped to page chapter`() {
+        val chapterFourHighlight = highlight(
+            cfi = "/4/10:11|/4/12:79",
+            text = "Original chapter text",
+            chapterIndex = 4
+        )
+        val chapterFiveHighlight = highlight(
+            cfi = "/4/10:11|/4/12:79",
+            text = "Different chapter text",
+            chapterIndex = 5
+        )
+
+        assertEquals(
+            listOf(chapterFiveHighlight),
+            highlightsForPaginatedPage(
+                pageChapterIndex = 5,
+                userHighlights = listOf(chapterFourHighlight, chapterFiveHighlight)
+            )
+        )
+        assertEquals(
+            emptyList<UserHighlight>(),
+            highlightsForPaginatedPage(
+                pageChapterIndex = null,
+                userHighlights = listOf(chapterFourHighlight)
+            )
+        )
+    }
+
     private fun paragraph(
         text: String,
         cfi: String,
@@ -70,14 +99,15 @@ class PaginatedHighlightMappingTest {
 
     private fun highlight(
         cfi: String,
-        text: String
+        text: String,
+        chapterIndex: Int = 0
     ): UserHighlight {
         return UserHighlight(
             id = "highlight",
             cfi = cfi,
             text = text,
             color = HighlightColor.YELLOW,
-            chapterIndex = 0
+            chapterIndex = chapterIndex
         )
     }
 }

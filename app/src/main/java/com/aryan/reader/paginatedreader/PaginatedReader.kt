@@ -255,7 +255,16 @@ private fun headerFontScale(level: Int): Float = when (level) {
 
 private const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
+private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 private const val EXPLICIT_NAVIGATION_SHIFT_ANCHOR_WINDOW_MS = 10_000L
+
+private fun highlightDiagSnippet(text: String, maxLength: Int = 80): String {
+    return text
+        .replace('\n', ' ')
+        .replace('\r', ' ')
+        .replace('\t', ' ')
+        .take(maxLength)
+}
 
 private fun paginationLineHeightMultiplierForWebViewSetting(multiplier: Float): Float {
     return if (abs(multiplier - 1.0f) < 0.001f) WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER else multiplier
@@ -323,6 +332,14 @@ private fun isBlockSelectedOnPage(
     }
 
     return afterStart && beforeEnd
+}
+
+internal fun highlightsForPaginatedPage(
+    pageChapterIndex: Int?,
+    userHighlights: List<UserHighlight>
+): List<UserHighlight> {
+    if (pageChapterIndex == null) return emptyList()
+    return userHighlights.filter { it.chapterIndex == pageChapterIndex }
 }
 
 class ReactiveBlockMap(
@@ -1267,6 +1284,7 @@ fun PaginatedReaderScreen(
                 }
                 result
             },
+            onGetChapterIndex = { pageIndex -> paginator.findChapterIndexForPage(pageIndex) },
             onGetChapterPath = { pageIndex -> paginator.getChapterPathForPage(pageIndex) },
             onGetChapterInfo = { pageIndex ->
                 paginator.findChapterIndexForPage(pageIndex)?.let { chapterIndex ->
@@ -1523,8 +1541,12 @@ internal fun getHighlightOffsetsInBlock(
         .takeIf { it > blockStartAbs }
         ?: (blockStartAbs + block.content.text.length)
 
-    Timber.d(
-        "getHighlightOffsetsInBlock: Checking Block=${block.cfi} (AbsStart=$blockStartAbs) against Highlight=${highlight.cfi}"
+    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+        "map_check blockCfi=${block.cfi} blockPath=$blockPath " +
+            "blockAbs=$blockStartAbs..$blockEndAbs blockLen=${block.content.text.length} " +
+            "highlightId=${highlight.id} highlightChapter=${highlight.chapterIndex} " +
+            "highlightCfi=${highlight.cfi} startCfi=$startCfi endCfi=$endCfi " +
+            "highlightTextLen=${highlight.text.length} highlightText='${highlightDiagSnippet(highlight.text)}'"
     )
 
     val relevantPart = parts.find { cfiPart ->
@@ -1560,8 +1582,8 @@ internal fun getHighlightOffsetsInBlock(
     }
 
     if (relevantPart != null) {
-        Timber.d(
-            " -> Block ${block.cfi} matches specific part of multipart highlight: $relevantPart"
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "map_relevant_part blockCfi=${block.cfi} highlightId=${highlight.id} part=$relevantPart"
         )
     }
 
@@ -1574,16 +1596,38 @@ internal fun getHighlightOffsetsInBlock(
         isMultipartHighlight &&
         CfiUtils.isPathStrictlyBetween(block.cfi!!, startCfi, endCfi!!)
 
-    Timber.d(" -> relevantPart=$relevantPart, isIntermediateBlock=$isIntermediateBlock")
+    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+        "map_decision blockCfi=${block.cfi} highlightId=${highlight.id} " +
+            "relevantPart=$relevantPart isIntermediateBlock=$isIntermediateBlock"
+    )
 
     if (relevantPart == null) {
         if (!isIntermediateBlock) return null
-        if (highlightText.contains(blockText, ignoreCase = false)) return 0 until blockText.length
-        if (highlightText.contains(blockText, ignoreCase = true)) return 0 until blockText.length
+        if (highlightText.contains(blockText, ignoreCase = false)) {
+            val range = 0 until blockText.length
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "map_result reason=intermediate_exact blockCfi=${block.cfi} " +
+                    "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
+            )
+            return range
+        }
+        if (highlightText.contains(blockText, ignoreCase = true)) {
+            val range = 0 until blockText.length
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "map_result reason=intermediate_exact_ignore_case blockCfi=${block.cfi} " +
+                    "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
+            )
+            return range
+        }
         val normBlock = blockText.filter { !it.isWhitespace() }
         val normHighlight = highlightText.filter { !it.isWhitespace() }
         return if (normBlock.isNotBlank() && normHighlight.contains(normBlock, ignoreCase = true)) {
-            0 until blockText.length
+            val range = 0 until blockText.length
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "map_result reason=intermediate_normalized blockCfi=${block.cfi} " +
+                    "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
+            )
+            range
         } else {
             null
         }
@@ -1605,18 +1649,26 @@ internal fun getHighlightOffsetsInBlock(
         val startMatches = arePathsEquivalent(startCfi, block.cfi!!)
         val endMatches = if (endCfi != null) arePathsEquivalent(endCfi, block.cfi!!) else false
 
-        Timber.d(" -> Path Equivalence: StartMatches=$startMatches, EndMatches=$endMatches")
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "map_path_equivalence blockCfi=${block.cfi} highlightId=${highlight.id} " +
+                "startMatches=$startMatches endMatches=$endMatches"
+        )
 
         if (startMatches || endMatches) {
             val startAbs = CfiUtils.getOffsetOrNull(startCfi)
             val endAbs = endCfi?.let { CfiUtils.getOffsetOrNull(it) }
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "map_offset_inputs blockCfi=${block.cfi} highlightId=${highlight.id} " +
+                    "blockAbs=$blockStartAbs..$blockEndAbs cfiOffsets=$startAbs..$endAbs"
+            )
             if (startMatches && endMatches && startAbs != null && endAbs != null) {
                 val rangeStartAbs = minOf(startAbs, endAbs)
                 val rangeEndAbs = maxOf(startAbs, endAbs)
                 if (rangeEndAbs <= blockStartAbs || rangeStartAbs >= blockEndAbs) {
-                    Timber.d(
-                        " -> Skipping same-path split block outside highlight offsets. " +
-                            "highlight=$rangeStartAbs..$rangeEndAbs block=$blockStartAbs..$blockEndAbs"
+                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                        "map_skip reason=same_path_split_outside_offsets blockCfi=${block.cfi} " +
+                            "highlightId=${highlight.id} highlightAbs=$rangeStartAbs..$rangeEndAbs " +
+                            "blockAbs=$blockStartAbs..$blockEndAbs"
                     )
                     return null
                 }
@@ -1654,8 +1706,9 @@ internal fun getHighlightOffsetsInBlock(
                                 val targetRel = relOffset - safeStart
                                 val bestRel = matches.minByOrNull { abs(it - targetRel) }!!
                                 val newS = safeStart + bestRel
-                                Timber.d(
-                                    "Snapped start offset from rel $relOffset to $newS based on prefix '$prefix'"
+                                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                    "map_snap_start blockCfi=${block.cfi} highlightId=${highlight.id} " +
+                                        "fromRel=$relOffset toRel=$newS prefix='$prefix'"
                                 )
                                 s = newS
                                 snapped = true
@@ -1675,8 +1728,9 @@ internal fun getHighlightOffsetsInBlock(
                 val absOffset = endAbs ?: CfiUtils.getOffset(endCfi!!)
                 val relOffset = absOffset - blockStartAbs
 
-                Timber.d(
-                    " -> EndCFI Match. AbsOffset: $absOffset. RelOffset: $relOffset. Block Length: ${blockText.length}"
+                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                    "map_end_match blockCfi=${block.cfi} highlightId=${highlight.id} " +
+                        "absOffset=$absOffset relOffset=$relOffset blockLen=${blockText.length}"
                 )
 
                 e = if (relOffset > blockText.length) {
@@ -1690,19 +1744,38 @@ internal fun getHighlightOffsetsInBlock(
             e = e.coerceIn(0, blockText.length)
 
             if (s < e) {
-                Timber.d("Fallback to CFI offsets for block ${block.cfi}. Range: $s..$e")
-                return s until e
+                val range = s until e
+                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                    "map_result reason=cfi_offsets blockCfi=${block.cfi} " +
+                        "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
+                )
+                return range
             } else {
-                Timber.w(
-                    " -> Invalid Range detected (likely highlight is on other split part): $s..$e"
+                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).w(
+                    "map_skip reason=invalid_range blockCfi=${block.cfi} " +
+                        "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$s..$e"
                 )
                 return null
             }
         }
     }
 
-    if (highlightText.contains(blockText, ignoreCase = false)) return 0 until blockText.length
-    if (highlightText.contains(blockText, ignoreCase = true)) return 0 until blockText.length
+    if (highlightText.contains(blockText, ignoreCase = false)) {
+        val range = 0 until blockText.length
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "map_result reason=block_inside_highlight_text blockCfi=${block.cfi} " +
+                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
+        )
+        return range
+    }
+    if (highlightText.contains(blockText, ignoreCase = true)) {
+        val range = 0 until blockText.length
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "map_result reason=block_inside_highlight_text_ignore_case blockCfi=${block.cfi} " +
+                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
+        )
+        return range
+    }
 
     var startIndex = blockText.indexOf(highlightText, ignoreCase = false)
     if (startIndex == -1) {
@@ -1710,15 +1783,27 @@ internal fun getHighlightOffsetsInBlock(
     }
 
     if (startIndex >= 0) {
-        return startIndex until (startIndex + highlightText.length)
+        val range = startIndex until (startIndex + highlightText.length)
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "map_result reason=highlight_text_inside_block blockCfi=${block.cfi} " +
+                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$range"
+        )
+        return range
     }
 
     val match = findFuzzyMatch(blockText, highlightText)
-    if (match != null) return match
+    if (match != null) {
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "map_result reason=fuzzy_text blockCfi=${block.cfi} " +
+                "blockAbs=$blockStartAbs..$blockEndAbs highlightId=${highlight.id} range=$match"
+        )
+        return match
+    }
 
     if (relevantPart != null) {
-        Timber.d(
-            "Failed to match highlight text in block despite CFI match. " + "BlockCfi=${block.cfi}, HighlightCfi=${highlight.cfi}. "
+        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+            "map_skip reason=cfi_match_text_miss blockCfi=${block.cfi} " +
+                "highlightId=${highlight.id} highlightCfi=${highlight.cfi}"
         )
     }
 
@@ -1782,6 +1867,17 @@ private fun TextWithEmphasis(
                 val range = getHighlightOffsetsInBlock(block, highlight)
                 if (range != null) {
                     try {
+                        val blockStartAbs = getTextBlockCharOffset(block)
+                        val blockEndAbs = block.endCharOffsetInSource
+                            .takeIf { it > blockStartAbs }
+                            ?: (blockStartAbs + block.content.text.length)
+                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                            "draw_highlight page=$pageIndex blockCfi=${block.cfi} " +
+                                "blockIndex=${block.blockIndex} blockAbs=$blockStartAbs..$blockEndAbs " +
+                                "highlightId=${highlight.id} highlightChapter=${highlight.chapterIndex} " +
+                                "highlightCfi=${highlight.cfi} range=$range " +
+                                "blockText='${highlightDiagSnippet(block.content.text)}'"
+                        )
                         val path = layout.getPathForRange(range.first, range.last + 1)
                         paths.add(path to highlight.color.color.copy(alpha = 0.4f))
                         if (highlight.cfi == pressedHighlightCfi) {
@@ -2065,6 +2161,13 @@ private fun TextWithEmphasis(
             val range = getHighlightOffsetsInBlock(block, highlight) ?: continue
 
             if (charOffset in range) {
+                val blockStartAbs = getTextBlockCharOffset(block)
+                Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                    "tap_highlight page=$pageIndex blockCfi=${block.cfi} " +
+                        "blockIndex=${block.blockIndex} blockAbsStart=$blockStartAbs " +
+                        "charOffset=$charOffset absoluteCharOffset=${blockStartAbs + charOffset} " +
+                        "highlightId=${highlight.id} highlightCfi=${highlight.cfi} range=$range"
+                )
                 val path = layout.getPathForRange(range.first, range.last)
                 val bounds = path.getBounds()
                 return highlight to bounds
@@ -2223,6 +2326,7 @@ internal fun PaginatedReaderContent(
     horizontalPadding: Dp,
     verticalPadding: Dp,
     onGetPage: (Int) -> Page?,
+    onGetChapterIndex: (Int) -> Int?,
     onGetChapterPath: (Int) -> String?,
     onLinkClick: (currentChapterPath: String, href: String, onNavComplete: (Int) -> Unit) -> Unit,
     onInternalLinkNavigated: (Int) -> Unit,
@@ -2394,11 +2498,25 @@ internal fun PaginatedReaderContent(
 
                         var pageContent by remember { mutableStateOf<Page?>(null) }
                         var currentChapterPath by remember { mutableStateOf<String?>(null) }
+                        val pageChapterIndex = onGetChapterIndex(pageIndex)
+                        val pageUserHighlights = highlightsForPaginatedPage(
+                            pageChapterIndex = pageChapterIndex,
+                            userHighlights = userHighlights
+                        )
                         val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
                             pageContent?.applyReaderThemeForDisplay(
                                 isDarkTheme = isDarkTheme,
                                 themeBackgroundColor = effectiveBg,
                                 themeTextColor = effectiveText
+                            )
+                        }
+
+                        if (pageUserHighlights.size != userHighlights.size) {
+                            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                "page_scope page=$pageIndex pageChapter=$pageChapterIndex " +
+                                    "inputHighlightCount=${userHighlights.size} " +
+                                    "pageHighlightCount=${pageUserHighlights.size} " +
+                                    "inputHighlightChapters=${userHighlights.map { it.chapterIndex }.distinct()}"
                             )
                         }
 
@@ -2857,7 +2975,7 @@ internal fun PaginatedReaderContent(
                                                                 onLinkClick = onLinkClickCallback,
                                                                 onGeneralTap = onGeneralTapCallback,
                                                                 block = block,
-                                                                userHighlights = userHighlights,
+                                                                userHighlights = pageUserHighlights,
                                                                 activeSelection = activeSelection,
                                                                 onSelectionChange = { sel ->
                                                                     activeSelection = sel
@@ -2940,7 +3058,7 @@ internal fun PaginatedReaderContent(
                                                                 onLinkClick = onLinkClickCallback,
                                                                 onGeneralTap = onGeneralTapCallback,
                                                                 block = block,
-                                                                userHighlights = userHighlights,
+                                                                userHighlights = pageUserHighlights,
                                                                 activeSelection = activeSelection,
                                                                 onSelectionChange = { sel ->
                                                                     activeSelection = sel
@@ -3026,7 +3144,7 @@ internal fun PaginatedReaderContent(
                                                                 onLinkClick = onLinkClickCallback,
                                                                 onGeneralTap = onGeneralTapCallback,
                                                                 block = block,
-                                                                userHighlights = userHighlights,
+                                                                userHighlights = pageUserHighlights,
                                                                 activeSelection = activeSelection,
                                                                 onSelectionChange = { sel ->
                                                                     activeSelection = sel
@@ -3143,7 +3261,7 @@ internal fun PaginatedReaderContent(
                                                                     onLinkClick = onLinkClickCallback,
                                                                     onGeneralTap = onGeneralTapCallback,
                                                                     block = block,
-                                                                    userHighlights = userHighlights,
+                                                                    userHighlights = pageUserHighlights,
                                                                     activeSelection = activeSelection,
                                                                     onSelectionChange = { sel ->
                                                                         activeSelection = sel
@@ -3211,7 +3329,7 @@ internal fun PaginatedReaderContent(
                                                                             textMeasurer = textMeasurer,
                                                                             onLinkClickCallback = onLinkClickCallback,
                                                                             onGeneralTapCallback = onGeneralTapCallback,
-                                                                            userHighlights = userHighlights,
+                                                                            userHighlights = pageUserHighlights,
                                                                             activeSelection = activeSelection,
                                                                             onSelectionChange = { sel ->
                                                                                 activeSelection =
@@ -3264,7 +3382,7 @@ internal fun PaginatedReaderContent(
                                                                             textMeasurer = textMeasurer,
                                                                             onLinkClickCallback = onLinkClickCallback,
                                                                             onGeneralTapCallback = onGeneralTapCallback,
-                                                                            userHighlights = userHighlights,
+                                                                            userHighlights = pageUserHighlights,
                                                                             activeSelection = activeSelection,
                                                                             onSelectionChange = { sel ->
                                                                                 activeSelection =
@@ -3839,15 +3957,45 @@ internal fun PaginatedReaderContent(
                                     activeSelection = null
                                 },
                                 onHighlight = { color ->
+                                    val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
+                                    val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                     val finalCfi =
                                         "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
+                                    val absoluteCandidateCfi =
+                                        "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
+                                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                        "create_request source=highlight_menu color=${color.id} " +
+                                            "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                            "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
+                                            "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
+                                            "startBaseCfi=${sel.startBaseCfi} endBaseCfi=${sel.endBaseCfi} " +
+                                            "localOffsets=${sel.startOffset}..${sel.endOffset} " +
+                                            "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
+                                            "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
+                                            "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                    )
                                     onHighlightCreated(finalCfi, sel.text, color.id)
                                     activeSelection = null
                                 },
                                 onNote = {
                                     onNoteRequested(null)
+                                    val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
+                                    val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                     val finalCfi =
                                         "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
+                                    val absoluteCandidateCfi =
+                                        "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
+                                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                        "create_request source=note_menu color=${HighlightColor.YELLOW.id} " +
+                                            "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
+                                            "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
+                                            "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
+                                            "startBaseCfi=${sel.startBaseCfi} endBaseCfi=${sel.endBaseCfi} " +
+                                            "localOffsets=${sel.startOffset}..${sel.endOffset} " +
+                                            "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
+                                            "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
+                                            "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                    )
                                     onHighlightCreated(finalCfi, sel.text, HighlightColor.YELLOW.id)
                                     activeSelection = null
                                 },
