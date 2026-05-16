@@ -12,7 +12,7 @@ class AppLanguageOptionsTest {
     @Test
     fun `supported app languages expose configured locale order`() {
         assertEquals(
-            listOf("en", "ar", "de", "tr", "fr", "ru", "es", "hi", "zh-CN"),
+            listOf("en", "ar", "de", "tr", "fr", "ru", "es", "pt-BR", "it", "pl", "vi", "hi", "zh-CN"),
             supportedAppLanguageOptions.mapNotNull { it.tag }
         )
         assertEquals(R.string.language_chinese_simplified, supportedAppLanguageOptions.last().labelRes)
@@ -39,8 +39,17 @@ class AppLanguageOptionsTest {
     @Test
     fun `app language search normalizes accents`() {
         val turkish = supportedAppLanguageOptions.first { it.tag == "tr" }
+        val portugueseBrazilian = supportedAppLanguageOptions.first { it.tag == "pt-BR" }
+        val vietnamese = supportedAppLanguageOptions.first { it.tag == "vi" }
 
         assertTrue(turkish.matchesLanguageSearch(label = "Türkçe (Turkish)", query = "turkce"))
+        assertTrue(
+            portugueseBrazilian.matchesLanguageSearch(
+                label = "Português (Brasil)",
+                query = "portugues brasileiro"
+            )
+        )
+        assertTrue(vietnamese.matchesLanguageSearch(label = "Tiếng Việt", query = "tieng viet"))
     }
 
     @Test

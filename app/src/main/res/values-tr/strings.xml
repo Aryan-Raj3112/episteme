@@ -716,6 +716,10 @@
     <string name="language_french">Français (Fransızca)</string>
     <string name="language_russian">Русский (Rusça)</string>
     <string name="language_spanish">Español (İspanyolca)</string>
+    <string name="language_portuguese_brazilian">Português (Brasil) (Brezilya Portekizcesi)</string>
+    <string name="language_italian">Italiano (İtalyanca)</string>
+    <string name="language_polish">Polski (Lehçe)</string>
+    <string name="language_vietnamese">Tiếng Việt (Vietnamca)</string>
     <string name="language_hindi">हिन्दी (Hintçe)</string>
     <string name="language_chinese_simplified">简体中文 (Basitleştirilmiş Çince)</string>
     <string name="app_theme_title">Uygulama Teması</string>

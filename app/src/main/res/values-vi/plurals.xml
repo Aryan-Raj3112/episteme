@@ -7,6 +7,36 @@
         <item quantity="other">sách</item>
     </plurals>
     <plurals name="shelf_count">
-        <item quantity="other">%1$d ngăn</item>
+        <item quantity="other">%1$d kệ sách</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="other">Tìm thấy %1$d kết quả</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="other">Tìm thấy %1$d kết quả khớp</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="other">Xóa vĩnh viễn tệp</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="other">Bạn có muốn xóa vĩnh viễn %1$d tệp đã chọn khỏi thiết bị không? Không thể hoàn tác thao tác này.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="other">Bạn có muốn xóa %1$d tệp đã chọn khỏi danh sách tệp gần đây không? Tệp sẽ xuất hiện lại nếu bạn mở lại từ thư viện.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="other">Bạn có chắc muốn xóa %1$d sách khỏi kệ \"%2$s\" không? Sách vẫn nằm trong thư viện và xuất hiện trong Chưa xếp kệ.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="other">Đã xóa %1$d sách khỏi thư viện.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="other">%1$d thư mục</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="other">%1$d thẻ</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="other">(%1$d đoạn)</item>
     </plurals>
 </resources>

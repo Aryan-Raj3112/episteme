@@ -24,6 +24,28 @@ val supportedAppLanguageOptions = listOf(
     AppLanguageOption("fr", R.string.language_french, listOf("french", "francais", "français")),
     AppLanguageOption("ru", R.string.language_russian, listOf("russian", "russkiy", "русский")),
     AppLanguageOption("es", R.string.language_spanish, listOf("spanish", "espanol", "español")),
+    AppLanguageOption(
+        "pt-BR",
+        R.string.language_portuguese_brazilian,
+        listOf(
+            "portuguese",
+            "brazilian portuguese",
+            "portugues",
+            "português",
+            "portugues brasileiro",
+            "português brasileiro",
+            "brasil",
+            "brazil",
+            "pt-br"
+        )
+    ),
+    AppLanguageOption("it", R.string.language_italian, listOf("italian", "italiano", "italia", "italy")),
+    AppLanguageOption("pl", R.string.language_polish, listOf("polish", "polski", "polska")),
+    AppLanguageOption(
+        "vi",
+        R.string.language_vietnamese,
+        listOf("vietnamese", "vietnam", "tieng viet", "tiếng việt")
+    ),
     AppLanguageOption("hi", R.string.language_hindi, listOf("hindi", "devanagari", "हिंदी", "हिन्दी")),
     AppLanguageOption(
         tag = "zh-CN",

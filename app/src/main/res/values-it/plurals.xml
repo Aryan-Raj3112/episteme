@@ -1,3 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <plurals name="book_count">
+        <item quantity="one">%1$d libro</item>
+        <item quantity="other">%1$d libri</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="one">libro</item>
+        <item quantity="other">libri</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d scaffale</item>
+        <item quantity="other">%1$d scaffali</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d risultato trovato</item>
+        <item quantity="other">%1$d risultati trovati</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="one">%1$d corrispondenza trovata</item>
+        <item quantity="other">%1$d corrispondenze trovate</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">Elimina file definitivamente</item>
+        <item quantity="other">Elimina file definitivamente</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">Vuoi eliminare definitivamente %1$d file selezionato dal dispositivo? Questa azione non può essere annullata.</item>
+        <item quantity="other">Vuoi eliminare definitivamente %1$d file selezionati dal dispositivo? Questa azione non può essere annullata.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">Vuoi rimuovere %1$d file selezionato dall’elenco dei file recenti? Ricomparirà se lo apri di nuovo dalla libreria.</item>
+        <item quantity="other">Vuoi rimuovere %1$d file selezionati dall’elenco dei file recenti? Ricompariranno se li apri di nuovo dalla libreria.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">Vuoi davvero rimuovere %1$d libro dallo scaffale \"%2$s\"? Il libro resterà nella libreria e apparirà in Senza scaffale.</item>
+        <item quantity="other">Vuoi davvero rimuovere %1$d libri dallo scaffale \"%2$s\"? I libri resteranno nella libreria e appariranno in Senza scaffale.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d libro rimosso dalla libreria.</item>
+        <item quantity="other">%1$d libri rimossi dalla libreria.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="one">%1$d cartella</item>
+        <item quantity="other">%1$d cartelle</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="one">%1$d tag</item>
+        <item quantity="other">%1$d tag</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d segmento)</item>
+        <item quantity="other">(%1$d segmenti)</item>
+    </plurals>
 </resources>

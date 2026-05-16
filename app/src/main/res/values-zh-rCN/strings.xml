@@ -748,6 +748,10 @@
     <string name="language_french">Français（法语）</string>
     <string name="language_russian">Русский（俄语）</string>
     <string name="language_spanish">Español（西班牙语）</string>
+    <string name="language_portuguese_brazilian">Português (Brasil)（巴西葡萄牙语）</string>
+    <string name="language_italian">Italiano（意大利语）</string>
+    <string name="language_polish">Polski（波兰语）</string>
+    <string name="language_vietnamese">Tiếng Việt（越南语）</string>
     <string name="language_hindi">हिन्दी（印地语）</string>
     <string name="language_chinese_simplified">简体中文（简体中文）</string>
     <string name="app_theme_title">应用主题</string>

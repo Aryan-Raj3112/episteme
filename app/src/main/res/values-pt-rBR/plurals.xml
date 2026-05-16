@@ -2,47 +2,54 @@
 <resources>
     <plurals name="book_count">
         <item quantity="one">%1$d livro</item>
-        <item quantity="many">%1$d livros</item>
         <item quantity="other">%1$d livros</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="one">livro</item>
-        <item quantity="many">livros</item>
         <item quantity="other">livros</item>
     </plurals>
     <plurals name="shelf_count">
         <item quantity="one">%1$d estante</item>
-        <item quantity="many">%1$d estantes</item>
         <item quantity="other">%1$d estantes</item>
     </plurals>
     <plurals name="search_results_count">
         <item quantity="one">%1$d resultado encontrado</item>
-        <item quantity="many">%1$d resultados encontrados</item>
         <item quantity="other">%1$d resultados encontrados</item>
     </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="one">%1$d ocorrência encontrada</item>
+        <item quantity="other">%1$d ocorrências encontradas</item>
+    </plurals>
     <plurals name="dialog_delete_permanently">
-        <item quantity="one">Excluir Arquivo Permanentemente</item>
-        <item quantity="many">Excluir Arquivos Permanentemente</item>
-        <item quantity="other">Excluir Arquivos Permanentemente</item>
+        <item quantity="one">Excluir arquivo permanentemente</item>
+        <item quantity="other">Excluir arquivos permanentemente</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
         <item quantity="one">Deseja excluir permanentemente %1$d arquivo selecionado do seu dispositivo? Esta ação não pode ser desfeita.</item>
-        <item quantity="many">Deseja excluir permanentemente %1$d arquivos selecionados do seu dispositivo? Esta ação não pode ser desfeita.</item>
         <item quantity="other">Deseja excluir permanentemente %1$d arquivos selecionados do seu dispositivo? Esta ação não pode ser desfeita.</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
-        <item quantity="one">Deseja remover %1$d arquivo selecionado da lista de arquivos recentes? Ele reaparecerá se for aberto novamente pela biblioteca.</item>
-        <item quantity="many">Deseja remover %1$d arquivos selecionados da lista de arquivos recentes? Eles reaparecerão se forem abertos novamente pela biblioteca.</item>
-        <item quantity="other">Deseja remover %1$d arquivos selecionados da lista de arquivos recentes? Eles reaparecerão se forem abertos novamente pela biblioteca.</item>
+        <item quantity="one">Deseja remover %1$d arquivo selecionado da lista de arquivos recentes? Ele reaparecerá se você o abrir novamente pela biblioteca.</item>
+        <item quantity="other">Deseja remover %1$d arquivos selecionados da lista de arquivos recentes? Eles reaparecerão se você os abrir novamente pela biblioteca.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
-        <item quantity="one">Tem certeza de que deseja remover %1$d livro da estante \"%2$s\"? O livro permanecerá na sua biblioteca e aparecerá em Não Catalogados.</item>
-        <item quantity="many">Tem certeza de que deseja remover %1$d livros da estante \"%2$s\"? Os livros permanecerão na sua biblioteca e aparecerão em Não Catalogados.</item>
-        <item quantity="other">Tem certeza de que deseja remover %1$d livros da estante \"%2$s\"? Os livros permanecerão na sua biblioteca e aparecerão em Não Catalogados.</item>
+        <item quantity="one">Tem certeza de que deseja remover %1$d livro da estante \"%2$s\"? O livro permanecerá na sua biblioteca e aparecerá em Sem estante.</item>
+        <item quantity="other">Tem certeza de que deseja remover %1$d livros da estante \"%2$s\"? Os livros permanecerão na sua biblioteca e aparecerão em Sem estante.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="one">%1$d livro removido da biblioteca.</item>
-        <item quantity="many">%1$d livros removidos da biblioteca.</item>
         <item quantity="other">%1$d livros removidos da biblioteca.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="one">%1$d pasta</item>
+        <item quantity="other">%1$d pastas</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="one">%1$d tag</item>
+        <item quantity="other">%1$d tags</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d trecho)</item>
+        <item quantity="other">(%1$d trechos)</item>
     </plurals>
 </resources>

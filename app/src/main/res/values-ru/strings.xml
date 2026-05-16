@@ -716,6 +716,10 @@
     <string name="language_french">Французский</string>
     <string name="language_russian">Русский</string>
     <string name="language_spanish">Испанский</string>
+    <string name="language_portuguese_brazilian">Португальский (Бразилия)</string>
+    <string name="language_italian">Итальянский</string>
+    <string name="language_polish">Польский</string>
+    <string name="language_vietnamese">Вьетнамский</string>
     <string name="language_hindi">Хинди</string>
     <string name="language_chinese_simplified">Китайский упрощенный</string>
     <string name="app_theme_title">Тема приложения</string>

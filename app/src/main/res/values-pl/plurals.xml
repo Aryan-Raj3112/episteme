@@ -1,3 +1,81 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <plurals name="book_count">
+        <item quantity="one">%1$d książka</item>
+        <item quantity="few">%1$d książki</item>
+        <item quantity="many">%1$d książek</item>
+        <item quantity="other">%1$d książki</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="one">książka</item>
+        <item quantity="few">książki</item>
+        <item quantity="many">książek</item>
+        <item quantity="other">książki</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d półka</item>
+        <item quantity="few">%1$d półki</item>
+        <item quantity="many">%1$d półek</item>
+        <item quantity="other">%1$d półki</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="one">Znaleziono %1$d wynik</item>
+        <item quantity="few">Znaleziono %1$d wyniki</item>
+        <item quantity="many">Znaleziono %1$d wyników</item>
+        <item quantity="other">Znaleziono %1$d wyniku</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="one">Znaleziono %1$d dopasowanie</item>
+        <item quantity="few">Znaleziono %1$d dopasowania</item>
+        <item quantity="many">Znaleziono %1$d dopasowań</item>
+        <item quantity="other">Znaleziono %1$d dopasowania</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">Usuń plik trwale</item>
+        <item quantity="few">Usuń pliki trwale</item>
+        <item quantity="many">Usuń pliki trwale</item>
+        <item quantity="other">Usuń pliki trwale</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">Czy chcesz trwale usunąć %1$d wybrany plik z urządzenia? Tej operacji nie można cofnąć.</item>
+        <item quantity="few">Czy chcesz trwale usunąć %1$d wybrane pliki z urządzenia? Tej operacji nie można cofnąć.</item>
+        <item quantity="many">Czy chcesz trwale usunąć %1$d wybranych plików z urządzenia? Tej operacji nie można cofnąć.</item>
+        <item quantity="other">Czy chcesz trwale usunąć %1$d wybranego pliku z urządzenia? Tej operacji nie można cofnąć.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">Czy chcesz usunąć %1$d wybrany plik z listy ostatnich plików? Pojawi się ponownie, jeśli otworzysz go z biblioteki.</item>
+        <item quantity="few">Czy chcesz usunąć %1$d wybrane pliki z listy ostatnich plików? Pojawią się ponownie, jeśli otworzysz je z biblioteki.</item>
+        <item quantity="many">Czy chcesz usunąć %1$d wybranych plików z listy ostatnich plików? Pojawią się ponownie, jeśli otworzysz je z biblioteki.</item>
+        <item quantity="other">Czy chcesz usunąć %1$d wybranego pliku z listy ostatnich plików? Pojawi się ponownie, jeśli otworzysz go z biblioteki.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">Czy na pewno chcesz usunąć %1$d książkę z półki \"%2$s\"? Książka pozostanie w bibliotece i pojawi się w Bez półki.</item>
+        <item quantity="few">Czy na pewno chcesz usunąć %1$d książki z półki \"%2$s\"? Książki pozostaną w bibliotece i pojawią się w Bez półki.</item>
+        <item quantity="many">Czy na pewno chcesz usunąć %1$d książek z półki \"%2$s\"? Książki pozostaną w bibliotece i pojawią się w Bez półki.</item>
+        <item quantity="other">Czy na pewno chcesz usunąć %1$d książki z półki \"%2$s\"? Książki pozostaną w bibliotece i pojawią się w Bez półki.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d książka usunięta z biblioteki.</item>
+        <item quantity="few">%1$d książki usunięte z biblioteki.</item>
+        <item quantity="many">%1$d książek usunięto z biblioteki.</item>
+        <item quantity="other">%1$d książki usunięto z biblioteki.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="one">%1$d folder</item>
+        <item quantity="few">%1$d foldery</item>
+        <item quantity="many">%1$d folderów</item>
+        <item quantity="other">%1$d folderu</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="one">%1$d tag</item>
+        <item quantity="few">%1$d tagi</item>
+        <item quantity="many">%1$d tagów</item>
+        <item quantity="other">%1$d tagu</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d fragment)</item>
+        <item quantity="few">(%1$d fragmenty)</item>
+        <item quantity="many">(%1$d fragmentów)</item>
+        <item quantity="other">(%1$d fragmentu)</item>
+    </plurals>
 </resources>
