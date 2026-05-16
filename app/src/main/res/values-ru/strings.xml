@@ -717,6 +717,7 @@
     <string name="language_russian">Русский</string>
     <string name="language_spanish">Испанский</string>
     <string name="language_hindi">Хинди</string>
+    <string name="language_chinese_simplified">Китайский упрощенный</string>
     <string name="app_theme_title">Тема приложения</string>
     <string name="app_theme_appearance">Внешний вид</string>
     <string name="app_theme_contrast">Контрастность</string>

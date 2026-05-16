@@ -56,6 +56,7 @@ android {
         versionName = "1.0.47"
 
         resourceConfigurations += configuredAppLocaleTags()
+            .map { it.toAndroidResourceConfiguration() }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
@@ -171,6 +172,15 @@ android {
         named("testImplementation") {
             exclude(group = "org.slf4j", module = "slf4j-android")
         }
+    }
+}
+
+fun String.toAndroidResourceConfiguration(): String {
+    val languageTagParts = split("-")
+    return if (languageTagParts.size == 2 && languageTagParts[1].length == 2) {
+        "${languageTagParts[0]}-r${languageTagParts[1].uppercase()}"
+    } else {
+        this
     }
 }
 

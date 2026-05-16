@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -71,6 +72,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.outlined.AccountCircle
@@ -2185,29 +2187,74 @@ fun CreateAppThemeDialog(
 fun LanguageSelectionDialog(onDismiss: () -> Unit) {
     val currentLocales = AppCompatDelegate.getApplicationLocales()
     val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.toLanguageTag() else null
+    var languageSearchQuery by remember { mutableStateOf("") }
+    val languageRows = appLanguageSelectionOptions
+        .map { language -> language to stringResource(language.labelRes) }
+        .filter { (language, label) ->
+            language.matchesLanguageSearch(label = label, query = languageSearchQuery)
+        }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.options_language)) },
         text = {
             Column {
-                appLanguageSelectionOptions.forEach { language ->
-                    Row(
+                androidx.compose.material3.OutlinedTextField(
+                    value = languageSearchQuery,
+                    onValueChange = { languageSearchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.action_search)) },
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = null)
+                    },
+                    trailingIcon = {
+                        if (languageSearchQuery.isNotBlank()) {
+                            IconButton(onClick = { languageSearchQuery = "" }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.action_clear)
+                                )
+                            }
+                        }
+                    }
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                if (languageRows.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.search_no_results_simple),
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                val locales = language.tag?.let { tag ->
-                                    LocaleListCompat.forLanguageTags(tag)
-                                } ?: LocaleListCompat.getEmptyLocaleList()
-                                AppCompatDelegate.setApplicationLocales(locales)
-                                onDismiss()
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .heightIn(max = 360.dp)
                     ) {
-                        RadioButton(selected = currentTag == language.tag, onClick = null)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Text(stringResource(language.labelRes))
+                        items(
+                            items = languageRows,
+                            key = { (language, _) -> language.tag ?: "system" }
+                        ) { (language, label) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val locales = language.tag?.let { tag ->
+                                            LocaleListCompat.forLanguageTags(tag)
+                                        } ?: LocaleListCompat.getEmptyLocaleList()
+                                        AppCompatDelegate.setApplicationLocales(locales)
+                                        onDismiss()
+                                    }
+                                    .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(selected = currentTag == language.tag, onClick = null)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(label)
+                            }
+                        }
                     }
                 }
             }

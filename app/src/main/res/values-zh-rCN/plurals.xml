@@ -19,24 +19,24 @@
         <item quantity="other">永久删除文件</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
-        <item quantity="other">您确定要从设备中永久删除所选的 %1$d 个文件吗？此操作无法撤销。</item>
+        <item quantity="other">确定要从设备中永久删除选中的 %1$d 个文件吗？此操作无法撤销。</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
-        <item quantity="other">是否要从“最近使用的文件”列表中删除%1$d个选定文件？如果再次从书库中打开这些文件，这些文件将重新显示在“最近使用的文件”列表。</item>
+        <item quantity="other">要从最近文件列表中移除选中的 %1$d 个文件吗？如果再次从书库打开，它们会重新显示。</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
-        <item quantity="other">你确定要从%2$s书架中移除 %1$d 本书吗？这些从书架中移除的书将仍旧保留在你的设备里，并显示在未分类书库下。</item>
+        <item quantity="other">确定要从“%2$s”书架中移除 %1$d 本书吗？这些书仍会保留在你的书库中，并显示在未归架下。</item>
     </plurals>
     <plurals name="banner_books_removed_library">
-        <item quantity="other">%1$d本书已从书库中移除。</item>
+        <item quantity="other">已从书库移除 %1$d 本书。</item>
     </plurals>
     <plurals name="folder_count">
-        <item quantity="other">%1$d个文件</item>
+        <item quantity="other">%1$d 个文件夹</item>
     </plurals>
     <plurals name="tag_count">
-        <item quantity="other">%1$d个标签</item>
+        <item quantity="other">%1$d 个标签</item>
     </plurals>
     <plurals name="tts_cache_chunk_count_parenthetical">
-        <item quantity="other">%1$d个音频</item>
+        <item quantity="other">（%1$d 个片段）</item>
     </plurals>
 </resources>

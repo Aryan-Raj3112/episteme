@@ -646,4 +646,5 @@
     <string name="language_english">English (الإنجليزية)</string>
     <string name="language_spanish">Español (الإسبانية)</string>
     <string name="language_hindi">हिन्दी (الهندية)</string>
+    <string name="language_chinese_simplified">简体中文 (الصينية المبسطة)</string>
 </resources>

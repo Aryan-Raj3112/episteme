@@ -749,6 +749,7 @@
     <string name="language_russian">Русский (रूसी)</string>
     <string name="language_spanish">Español (स्पेनिश)</string>
     <string name="language_hindi">हिन्दी</string>
+    <string name="language_chinese_simplified">简体中文 (सरलीकृत चीनी)</string>
     <string name="app_theme_title">ऐप थीम</string>
     <string name="app_theme_appearance">रूप</string>
     <string name="app_theme_contrast">कॉन्ट्रास्ट</string>

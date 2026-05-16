@@ -1,26 +1,75 @@
 package com.aryan.reader
 
 import androidx.annotation.StringRes
+import java.text.Normalizer
+import java.util.Locale
 
 data class AppLanguageOption(
     val tag: String?,
-    @StringRes val labelRes: Int
+    @StringRes val labelRes: Int,
+    val searchAliases: List<String> = emptyList()
 )
 
-val systemAppLanguageOption = AppLanguageOption(null, R.string.language_system_default)
+val systemAppLanguageOption = AppLanguageOption(
+    tag = null,
+    labelRes = R.string.language_system_default,
+    searchAliases = listOf("system", "default", "device", "automatic")
+)
 
 val supportedAppLanguageOptions = listOf(
-    AppLanguageOption("en", R.string.language_english),
-    AppLanguageOption("ar", R.string.language_arabic),
-    AppLanguageOption("de", R.string.language_german),
-    AppLanguageOption("tr", R.string.language_turkish),
-    AppLanguageOption("fr", R.string.language_french),
-    AppLanguageOption("ru", R.string.language_russian),
-    AppLanguageOption("es", R.string.language_spanish),
-    AppLanguageOption("hi", R.string.language_hindi)
+    AppLanguageOption("en", R.string.language_english, listOf("english")),
+    AppLanguageOption("ar", R.string.language_arabic, listOf("arabic", "arabi")),
+    AppLanguageOption("de", R.string.language_german, listOf("german", "deutsch")),
+    AppLanguageOption("tr", R.string.language_turkish, listOf("turkish", "turkce", "turkçe")),
+    AppLanguageOption("fr", R.string.language_french, listOf("french", "francais", "français")),
+    AppLanguageOption("ru", R.string.language_russian, listOf("russian", "russkiy", "русский")),
+    AppLanguageOption("es", R.string.language_spanish, listOf("spanish", "espanol", "español")),
+    AppLanguageOption("hi", R.string.language_hindi, listOf("hindi", "devanagari", "हिंदी", "हिन्दी")),
+    AppLanguageOption(
+        tag = "zh-CN",
+        labelRes = R.string.language_chinese_simplified,
+        searchAliases = listOf(
+            "chinese",
+            "simplified chinese",
+            "mandarin",
+            "zhongwen",
+            "jian ti zhong wen",
+            "zh-hans",
+            "zh-cn",
+            "中文",
+            "简体中文",
+        )
+    )
 )
 
 val appLanguageSelectionOptions = listOf(systemAppLanguageOption) + supportedAppLanguageOptions
+
+fun AppLanguageOption.matchesLanguageSearch(label: String, query: String): Boolean {
+    val searchTokens = query.normalizedLanguageSearchTokens()
+    if (searchTokens.isEmpty()) return true
+
+    val searchableText = buildString {
+        append(label)
+        append(' ')
+        append(tag.orEmpty())
+        append(' ')
+        append(searchAliases.joinToString(" "))
+    }.normalizedLanguageSearchText()
+
+    return searchTokens.all { token -> token in searchableText }
+}
+
+private fun String.normalizedLanguageSearchTokens(): List<String> =
+    normalizedLanguageSearchText()
+        .split(' ')
+        .filter { it.isNotBlank() }
+
+private fun String.normalizedLanguageSearchText(): String =
+    Normalizer.normalize(this, Normalizer.Form.NFD)
+        .replace("\\p{Mn}+".toRegex(), "")
+        .lowercase(Locale.ROOT)
+        .replace("[^\\p{L}\\p{N}]+".toRegex(), " ")
+        .trim()
 
 val AddBooksSource.labelRes: Int
     @StringRes get() = when (this) {
