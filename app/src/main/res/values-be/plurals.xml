@@ -4,78 +4,78 @@
         <item quantity="one">%1$d кніга</item>
         <item quantity="few">%1$d кнігі</item>
         <item quantity="many">%1$d кніг</item>
-        <item quantity="other">%1$d кніг</item>
+        <item quantity="other">%1$d кнігі</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="one">кніга</item>
         <item quantity="few">кнігі</item>
         <item quantity="many">кніг</item>
-        <item quantity="other">кніг</item>
+        <item quantity="other">кнігі</item>
     </plurals>
     <plurals name="shelf_count">
         <item quantity="one">%1$d паліца</item>
         <item quantity="few">%1$d паліцы</item>
         <item quantity="many">%1$d паліц</item>
-        <item quantity="other">%1$d паліц</item>
+        <item quantity="other">%1$d паліцы</item>
     </plurals>
     <plurals name="search_results_count">
         <item quantity="one">Знойдзены %1$d вынік</item>
-        <item quantity="few">Знойдзена %1$d выніку</item>
-        <item quantity="many">Знойдзены %1$d вынікаў</item>
-        <item quantity="other">Знойдзены %1$d вынікаў</item>
+        <item quantity="few">Знойдзены %1$d вынікі</item>
+        <item quantity="many">Знойдзена %1$d вынікаў</item>
+        <item quantity="other">Знойдзена %1$d выніку</item>
     </plurals>
     <plurals name="search_matches_count">
         <item quantity="one">Знойдзена %1$d супадзенне</item>
-        <item quantity="few">Знойдзена %1$d супадзення</item>
+        <item quantity="few">Знойдзены %1$d супадзенні</item>
         <item quantity="many">Знойдзена %1$d супадзенняў</item>
-        <item quantity="other">Знойдзена %1$d супадзенняў</item>
+        <item quantity="other">Знойдзена %1$d супадзення</item>
     </plurals>
     <plurals name="dialog_delete_permanently">
-        <item quantity="one">Назаўсёды выдаліць файл</item>
-        <item quantity="few">Назаўсёды выдаліць файлы</item>
-        <item quantity="many">Назаўсёды выдаліць файлы</item>
-        <item quantity="other">Назаўсёды выдаліць файлы</item>
+        <item quantity="one">Выдаліць файл назаўсёды</item>
+        <item quantity="few">Выдаліць файлы назаўсёды</item>
+        <item quantity="many">Выдаліць файлы назаўсёды</item>
+        <item quantity="other">Выдаліць файлы назаўсёды</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
-        <item quantity="one">Вы сапраўды хочаце выдаліць %1$d выбраны файл з вашай прылады? Гэта дзеянне немагчыма адрабіць.</item>
-        <item quantity="few">Вы сапраўды хочаце выдаліць %1$d выбраных файла з вашай прылады? Гэта дзеянне немагчыма адрабіць.</item>
-        <item quantity="many">Вы сапраўды хочаце выдаліць %1$d выбраных файлаў з вашай прылады? Гэта дзеянне немагчыма адрабіць.</item>
-        <item quantity="other">Вы сапраўды хочаце выдаліць %1$d выбраных файлаў з вашай прылады? Гэта дзеянне немагчыма адрабіць.</item>
+        <item quantity="one">Вы хочаце назаўсёды выдаліць %1$d выбраны файл з прылады? Гэта дзеянне нельга адрабіць.</item>
+        <item quantity="few">Вы хочаце назаўсёды выдаліць %1$d выбраныя файлы з прылады? Гэта дзеянне нельга адрабіць.</item>
+        <item quantity="many">Вы хочаце назаўсёды выдаліць %1$d выбраных файлаў з прылады? Гэта дзеянне нельга адрабіць.</item>
+        <item quantity="other">Вы хочаце назаўсёды выдаліць %1$d выбранага файла з прылады? Гэта дзеянне нельга адрабіць.</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
-        <item quantity="one">Вы сапраўды хочаце прыбраць %1$d выбраны файл са спісу нядаўніх? Ён з\'явіцца зноў, калі вы адкрыеце яго праз бібліятэку.</item>
-        <item quantity="few">Вы сапраўды хочаце прыбраць %1$d выбраных файла са спісу нядаўніх? Яны з\'явіцца зноў, калі вы адкрыеце іх праз бібліятэку.</item>
-        <item quantity="many">Вы сапраўды хочаце прыбраць %1$d выбраных файлаў са спісу нядаўніх? Яны з\'явіцца зноў, калі вы адкрыеце іх праз бібліятэку.</item>
-        <item quantity="other">Вы сапраўды хочаце прыбраць %1$d выбраных файлаў са спісу нядаўніх? Яны з\'явіцца зноў, калі вы адкрыеце іх праз бібліятэку.</item>
+        <item quantity="one">Вы хочаце прыбраць %1$d выбраны файл са спіса нядаўніх файлаў? Ён з’явіцца зноў, калі вы адкрыеце яго з бібліятэкі.</item>
+        <item quantity="few">Вы хочаце прыбраць %1$d выбраныя файлы са спіса нядаўніх файлаў? Яны з’явяцца зноў, калі вы адкрыеце іх з бібліятэкі.</item>
+        <item quantity="many">Вы хочаце прыбраць %1$d выбраных файлаў са спіса нядаўніх файлаў? Яны з’явяцца зноў, калі вы адкрыеце іх з бібліятэкі.</item>
+        <item quantity="other">Вы хочаце прыбраць %1$d выбранага файла са спіса нядаўніх файлаў? Ён з’явіцца зноў, калі вы адкрыеце яго з бібліятэкі.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
-        <item quantity="one">Вы ўпэўненыя, што хочаце прыбраць %1$d кнігу з паліцы «%2$s»? Кнігі застануцца ў вашай бібліятэцы і з\'явяцца ў раздзеле «Без паліцы».</item>
-        <item quantity="few">Вы ўпэўненыя, што хочаце прыбраць %1$d кнігі з паліцы «%2$s»? Кнігі застануцца ў вашай бібліятэцы і з\'явяцца ў раздзеле «Без паліцы».</item>
-        <item quantity="many">Вы ўпэўненыя, што хочаце прыбраць %1$d кніг з паліцы «%2$s»? Кнігі застануцца ў вашай бібліятэцы і з\'явяцца ў раздзеле «Без паліцы».</item>
-        <item quantity="other">Вы ўпэўненыя, што хочаце прыбраць %1$d кніг з паліцы «%2$s»? Кнігі застануцца ў вашай бібліятэцы і з\'явяцца ў раздзеле «Без паліцы».</item>
+        <item quantity="one">Вы сапраўды хочаце прыбраць %1$d кнігу з паліцы \"%2$s\"? Кніга застанецца ў бібліятэцы і з’явіцца ў Без паліцы.</item>
+        <item quantity="few">Вы сапраўды хочаце прыбраць %1$d кнігі з паліцы \"%2$s\"? Кнігі застануцца ў бібліятэцы і з’явяцца ў Без паліцы.</item>
+        <item quantity="many">Вы сапраўды хочаце прыбраць %1$d кніг з паліцы \"%2$s\"? Кнігі застануцца ў бібліятэцы і з’явяцца ў Без паліцы.</item>
+        <item quantity="other">Вы сапраўды хочаце прыбраць %1$d кнігі з паліцы \"%2$s\"? Кнігі застануцца ў бібліятэцы і з’явяцца ў Без паліцы.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="one">%1$d кніга прыбрана з бібліятэкі.</item>
         <item quantity="few">%1$d кнігі прыбраны з бібліятэкі.</item>
         <item quantity="many">%1$d кніг прыбрана з бібліятэкі.</item>
-        <item quantity="other">%1$d кніг прыбрана з бібліятэкі.</item>
+        <item quantity="other">%1$d кнігі прыбрана з бібліятэкі.</item>
     </plurals>
     <plurals name="folder_count">
         <item quantity="one">%1$d папка</item>
         <item quantity="few">%1$d папкі</item>
         <item quantity="many">%1$d папак</item>
-        <item quantity="other">%1$d папак</item>
+        <item quantity="other">%1$d папкі</item>
     </plurals>
     <plurals name="tag_count">
-        <item quantity="one">%1$d цэтлік</item>
-        <item quantity="few">%1$d цэтліка</item>
-        <item quantity="many">%1$d цэтлікаў</item>
-        <item quantity="other">%1$d цэтлікаў</item>
+        <item quantity="one">%1$d тэг</item>
+        <item quantity="few">%1$d тэгі</item>
+        <item quantity="many">%1$d тэгаў</item>
+        <item quantity="other">%1$d тэга</item>
     </plurals>
     <plurals name="tts_cache_chunk_count_parenthetical">
-        <item quantity="one">(%1$d частка)</item>
-        <item quantity="few">(%1$d часткі)</item>
-        <item quantity="many">(%1$d частак)</item>
-        <item quantity="other">(%1$d частак)</item>
+        <item quantity="one">(%1$d фрагмент)</item>
+        <item quantity="few">(%1$d фрагменты)</item>
+        <item quantity="many">(%1$d фрагментаў)</item>
+        <item quantity="other">(%1$d фрагмента)</item>
     </plurals>
 </resources>

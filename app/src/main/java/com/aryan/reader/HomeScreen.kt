@@ -2185,6 +2185,7 @@ fun CreateAppThemeDialog(
 
 @Composable
 fun LanguageSelectionDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
     val currentLocales = AppCompatDelegate.getApplicationLocales()
     val currentTag = if (!currentLocales.isEmpty) currentLocales.get(0)?.toLanguageTag() else null
     var languageSearchQuery by remember { mutableStateOf("") }
@@ -2246,6 +2247,7 @@ fun LanguageSelectionDialog(onDismiss: () -> Unit) {
                                         } ?: LocaleListCompat.getEmptyLocaleList()
                                         AppCompatDelegate.setApplicationLocales(locales)
                                         onDismiss()
+                                        context.findActivity()?.recreate()
                                     }
                                     .padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically

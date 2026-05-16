@@ -1,7 +1,9 @@
 @file:Suppress("UnstableApiUsage")
 
 import java.util.Properties
+import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
+import org.xml.sax.InputSource
 
 plugins {
     alias(libs.plugins.android.application)
@@ -20,12 +22,15 @@ if (localPropertiesFile.exists()) {
 }
 
 fun configuredAppLocaleTags(): Set<String> {
-    val localesConfig = file("src/main/res/xml/locales_config.xml")
+    val localesConfigXml = providers
+        .fileContents(layout.projectDirectory.file("src/main/res/xml/locales_config.xml"))
+        .asText
+        .get()
     val androidNamespace = "http://schemas.android.com/apk/res/android"
     val document = DocumentBuilderFactory.newInstance()
         .apply { isNamespaceAware = true }
         .newDocumentBuilder()
-        .parse(localesConfig)
+        .parse(InputSource(StringReader(localesConfigXml)))
     val localeNodes = document.getElementsByTagName("locale")
 
     return buildSet {

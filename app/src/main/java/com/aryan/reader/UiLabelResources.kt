@@ -23,6 +23,7 @@ val supportedAppLanguageOptions = listOf(
     AppLanguageOption("tr", R.string.language_turkish, listOf("turkish", "turkce", "turkçe")),
     AppLanguageOption("fr", R.string.language_french, listOf("french", "francais", "français")),
     AppLanguageOption("ru", R.string.language_russian, listOf("russian", "russkiy", "русский")),
+    AppLanguageOption("be", R.string.language_belarusian, listOf("belarusian", "belarus", "belaruskaya")),
     AppLanguageOption("es", R.string.language_spanish, listOf("spanish", "espanol", "español")),
     AppLanguageOption(
         "pt-BR",
