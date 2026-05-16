@@ -522,6 +522,7 @@ private fun AndroidFormatSettings.toSharedFontFamilyName(): String {
 private fun AndroidReaderTextAlign.toSharedReaderTextAlign(): SharedReaderTextAlign {
     return when (this) {
         AndroidReaderTextAlign.JUSTIFY -> SharedReaderTextAlign.JUSTIFY
+        AndroidReaderTextAlign.RIGHT -> SharedReaderTextAlign.RIGHT
         AndroidReaderTextAlign.DEFAULT,
         AndroidReaderTextAlign.LEFT -> SharedReaderTextAlign.START
     }
@@ -539,6 +540,7 @@ private fun ReaderSettings.toAndroidReaderFont(): AndroidReaderFont {
 private fun SharedReaderTextAlign.toAndroidTextAlign(): AndroidReaderTextAlign {
     return when (this) {
         SharedReaderTextAlign.JUSTIFY -> AndroidReaderTextAlign.JUSTIFY
+        SharedReaderTextAlign.RIGHT -> AndroidReaderTextAlign.RIGHT
         SharedReaderTextAlign.CENTER,
         SharedReaderTextAlign.START -> AndroidReaderTextAlign.LEFT
     }

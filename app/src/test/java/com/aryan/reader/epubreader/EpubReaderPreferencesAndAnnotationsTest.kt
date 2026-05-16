@@ -57,7 +57,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
             verticalMargin = 0.4f,
             fontFamily = ReaderFont.LORA,
             customFontPath = null,
-            textAlign = ReaderTextAlign.JUSTIFY
+            textAlign = ReaderTextAlign.RIGHT
         )
         saveLocalReaderSettings(
             context = context,
@@ -78,7 +78,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
 
         assertEquals(1.4f, global.fontSize, 0.0001f)
         assertEquals(ReaderFont.LORA, global.font)
-        assertEquals(ReaderTextAlign.JUSTIFY, global.textAlign)
+        assertEquals(ReaderTextAlign.RIGHT, global.textAlign)
         assertNull(global.customPath)
         assertEquals(0.9f, local.fontSize, 0.0001f)
         assertEquals(1.1f, local.lineHeight, 0.0001f)

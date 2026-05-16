@@ -212,6 +212,7 @@ object ReaderHtmlDocumentBuilder {
         val appearance = settings.toDocumentAppearanceCss(textureDataUri)
         val align = when (settings.textAlign) {
             SharedReaderTextAlign.START -> "left"
+            SharedReaderTextAlign.RIGHT -> "right"
             SharedReaderTextAlign.JUSTIFY -> "justify"
             SharedReaderTextAlign.CENTER -> "center"
         }

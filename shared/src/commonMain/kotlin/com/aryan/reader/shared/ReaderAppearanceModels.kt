@@ -21,6 +21,7 @@ enum class ReaderFont(val id: String, val displayName: String, val fontFamilyNam
 enum class ReaderTextAlign(val id: String, val cssValue: String, val displayName: String) {
     DEFAULT("default", "", "Default"),
     LEFT("left", "left", "Left"),
+    RIGHT("right", "right", "Right"),
     JUSTIFY("justify", "justify", "Justify")
 }
 
@@ -176,6 +177,7 @@ fun ReaderTextAlign.toSharedReaderTextAlign(): SharedReaderTextAlign {
     return when (this) {
         ReaderTextAlign.DEFAULT,
         ReaderTextAlign.LEFT -> SharedReaderTextAlign.START
+        ReaderTextAlign.RIGHT -> SharedReaderTextAlign.RIGHT
         ReaderTextAlign.JUSTIFY -> SharedReaderTextAlign.JUSTIFY
     }
 }

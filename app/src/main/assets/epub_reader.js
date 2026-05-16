@@ -766,6 +766,8 @@
         var alignSelector = "body, p, li, div, h1, h2, h3, h4, h5, h6";
         if (textAlign === "left") {
             alignCss = alignSelector + " { text-align: left !important; }";
+        } else if (textAlign === "right") {
+            alignCss = alignSelector + " { text-align: right !important; }";
         } else if (textAlign === "justify") {
             alignCss = alignSelector + " { text-align: justify !important; -webkit-hyphens: auto !important; hyphens: auto !important; }";
         }

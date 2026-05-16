@@ -164,6 +164,7 @@ enum class ReaderFont(val id: String, val displayName: String, val fontFamilyNam
 enum class ReaderTextAlign(val id: String, val cssValue: String, val iconResId: Int, val displayName: String) {
     DEFAULT("default", "", R.drawable.format_align_left, "Default"),
     LEFT("left", "left", R.drawable.format_align_left, "Left"),
+    RIGHT("right", "right", R.drawable.format_align_right, "Right"),
     JUSTIFY("justify", "justify", R.drawable.format_align_justify, "Justify")
 }
 

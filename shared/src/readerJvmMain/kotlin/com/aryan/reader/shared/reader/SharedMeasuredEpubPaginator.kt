@@ -719,6 +719,7 @@ class SharedMeasuredEpubPaginator(
     private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
         return when (this) {
             SharedReaderTextAlign.START -> TextAlign.Start
+            SharedReaderTextAlign.RIGHT -> TextAlign.Right
             SharedReaderTextAlign.JUSTIFY -> TextAlign.Justify
             SharedReaderTextAlign.CENTER -> TextAlign.Center
         }

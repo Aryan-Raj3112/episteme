@@ -939,6 +939,7 @@ fun PaginatedReaderScreen(
             when (debouncedTextAlign) {
                 ReaderTextAlign.JUSTIFY -> TextAlign.Justify
                 ReaderTextAlign.LEFT -> TextAlign.Left
+                ReaderTextAlign.RIGHT -> TextAlign.Right
                 ReaderTextAlign.DEFAULT -> null
             }
         }

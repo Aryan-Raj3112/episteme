@@ -1496,6 +1496,13 @@ fun SharedReaderFormatControls(
                         label = { Text("Left") }
                     )
                     FilterChip(
+                        selected = settings.textAlign == SharedReaderTextAlign.RIGHT,
+                        onClick = {
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.RIGHT)))
+                        },
+                        label = { Text("Right") }
+                    )
+                    FilterChip(
                         selected = settings.textAlign == SharedReaderTextAlign.JUSTIFY,
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY)))

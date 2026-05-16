@@ -287,7 +287,7 @@ class ReaderActionReducerTest {
                     verticalMargin = 2.0f,
                     font = ReaderFont.ROBOTO_MONO,
                     customPath = null,
-                    textAlign = ReaderTextAlign.JUSTIFY
+                    textAlign = ReaderTextAlign.RIGHT
                 )
             ),
             engine
@@ -301,7 +301,7 @@ class ReaderActionReducerTest {
         assertEquals(0.8f, updated.reader.settings.paragraphSpacing, 0.0001f)
         assertEquals(1.3f, updated.reader.settings.imageScale, 0.0001f)
         assertEquals("Mono", updated.reader.settings.fontFamily)
-        assertEquals(SharedReaderTextAlign.JUSTIFY, updated.reader.settings.textAlign)
+        assertEquals(SharedReaderTextAlign.RIGHT, updated.reader.settings.textAlign)
         assertTrue(updated.reader.settings.darkMode)
         assertEquals(ReaderReadingMode.VERTICAL, updated.reader.settings.readingMode)
         assertEquals(812, updated.reader.settings.pageWidth)

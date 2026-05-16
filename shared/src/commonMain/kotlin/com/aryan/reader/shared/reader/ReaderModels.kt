@@ -45,6 +45,7 @@ enum class ReaderPageSpreadMode {
 
 enum class SharedReaderTextAlign {
     START,
+    RIGHT,
     JUSTIFY,
     CENTER
 }
