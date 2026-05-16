@@ -746,6 +746,8 @@
     <string name="language_italian">Italiano (Italienisch)</string>
     <string name="language_polish">Polski (Polnisch)</string>
     <string name="language_vietnamese">Tiếng Việt (Vietnamesisch)</string>
+    <string name="language_japanese">日本語 (Japanisch)</string>
+    <string name="language_korean">한국어 (Koreanisch)</string>
     <string name="language_hindi">हिन्दी (Hindi)</string>
     <string name="language_chinese_simplified">简体中文 (Vereinfachtes Chinesisch)</string>
     <string name="app_theme_title">App-Thema</string>
@@ -843,4 +845,7 @@
     <string name="dialog_out_of_credits_desc">Sie haben nicht genügend Credits. Holen Sie sich Episteme Pro für 10 kostenlose Zusammenfassungen pro Tag oder laden Sie weitere Credits auf, um Zusammenfassungen, Cloud-TTS und Wiederholungen zu nutzen.</string>
     <string name="action_get_pro_or_add_credits">Pro erhalten / Credits hinzufügen</string>
     <string name="dialog_unlock_page_summarization">Seiten-Zusammenfassungen freischalten</string>
+    <string name="language_dutch">Nederlands (Niederländisch)</string>
+    <string name="language_ukrainian">Українська (Ukrainisch)</string>
+    <string name="language_indonesian">Bahasa Indonesia (Indonesisch)</string>
 </resources>

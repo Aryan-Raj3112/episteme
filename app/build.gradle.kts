@@ -181,6 +181,8 @@ android {
 }
 
 fun String.toAndroidResourceConfiguration(): String {
+    if (this == "id") return "in"
+
     val languageTagParts = split("-")
     return if (languageTagParts.size == 2 && languageTagParts[1].length == 2) {
         "${languageTagParts[0]}-r${languageTagParts[1].uppercase()}"

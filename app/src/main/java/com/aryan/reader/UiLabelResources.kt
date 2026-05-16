@@ -20,9 +20,11 @@ val supportedAppLanguageOptions = listOf(
     AppLanguageOption("en", R.string.language_english, listOf("english")),
     AppLanguageOption("ar", R.string.language_arabic, listOf("arabic", "arabi")),
     AppLanguageOption("de", R.string.language_german, listOf("german", "deutsch")),
+    AppLanguageOption("nl", R.string.language_dutch, listOf("dutch", "nederlands", "holland", "netherlands")),
     AppLanguageOption("tr", R.string.language_turkish, listOf("turkish", "turkce", "turkçe")),
     AppLanguageOption("fr", R.string.language_french, listOf("french", "francais", "français")),
     AppLanguageOption("ru", R.string.language_russian, listOf("russian", "russkiy", "русский")),
+    AppLanguageOption("uk", R.string.language_ukrainian, listOf("ukrainian", "ukrayinska", "українська", "ukraine")),
     AppLanguageOption("be", R.string.language_belarusian, listOf("belarusian", "belarus", "belaruskaya")),
     AppLanguageOption("es", R.string.language_spanish, listOf("spanish", "espanol", "español")),
     AppLanguageOption(
@@ -42,11 +44,14 @@ val supportedAppLanguageOptions = listOf(
     ),
     AppLanguageOption("it", R.string.language_italian, listOf("italian", "italiano", "italia", "italy")),
     AppLanguageOption("pl", R.string.language_polish, listOf("polish", "polski", "polska")),
+    AppLanguageOption("id", R.string.language_indonesian, listOf("indonesian", "bahasa indonesia", "bahasa", "indonesia")),
     AppLanguageOption(
         "vi",
         R.string.language_vietnamese,
         listOf("vietnamese", "vietnam", "tieng viet", "tiếng việt")
     ),
+    AppLanguageOption("ja", R.string.language_japanese, listOf("japanese", "nihongo", "日本語")),
+    AppLanguageOption("ko", R.string.language_korean, listOf("korean", "hangul", "hangugeo", "한국어", "한글")),
     AppLanguageOption("hi", R.string.language_hindi, listOf("hindi", "devanagari", "हिंदी", "हिन्दी")),
     AppLanguageOption(
         tag = "zh-CN",

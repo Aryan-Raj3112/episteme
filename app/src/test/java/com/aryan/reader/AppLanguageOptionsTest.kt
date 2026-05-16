@@ -12,7 +12,10 @@ class AppLanguageOptionsTest {
     @Test
     fun `supported app languages expose configured locale order`() {
         assertEquals(
-            listOf("en", "ar", "de", "tr", "fr", "ru", "be", "es", "pt-BR", "it", "pl", "vi", "hi", "zh-CN"),
+            listOf(
+                "en", "ar", "de", "nl", "tr", "fr", "ru", "uk", "be", "es", "pt-BR", "it", "pl",
+                "id", "vi", "ja", "ko", "hi", "zh-CN"
+            ),
             supportedAppLanguageOptions.mapNotNull { it.tag }
         )
         assertEquals(R.string.language_chinese_simplified, supportedAppLanguageOptions.last().labelRes)
@@ -39,11 +42,18 @@ class AppLanguageOptionsTest {
     @Test
     fun `app language search normalizes accents`() {
         val turkish = supportedAppLanguageOptions.first { it.tag == "tr" }
+        val dutch = supportedAppLanguageOptions.first { it.tag == "nl" }
+        val ukrainian = supportedAppLanguageOptions.first { it.tag == "uk" }
         val belarusian = supportedAppLanguageOptions.first { it.tag == "be" }
         val portugueseBrazilian = supportedAppLanguageOptions.first { it.tag == "pt-BR" }
+        val indonesian = supportedAppLanguageOptions.first { it.tag == "id" }
         val vietnamese = supportedAppLanguageOptions.first { it.tag == "vi" }
+        val japanese = supportedAppLanguageOptions.first { it.tag == "ja" }
+        val korean = supportedAppLanguageOptions.first { it.tag == "ko" }
 
         assertTrue(turkish.matchesLanguageSearch(label = "Türkçe (Turkish)", query = "turkce"))
+        assertTrue(dutch.matchesLanguageSearch(label = "Nederlands", query = "dutch"))
+        assertTrue(ukrainian.matchesLanguageSearch(label = "Українська", query = "ukrayinska"))
         assertTrue(belarusian.matchesLanguageSearch(label = "Беларуская", query = "belarusian"))
         assertTrue(
             portugueseBrazilian.matchesLanguageSearch(
@@ -51,7 +61,10 @@ class AppLanguageOptionsTest {
                 query = "portugues brasileiro"
             )
         )
+        assertTrue(indonesian.matchesLanguageSearch(label = "Bahasa Indonesia", query = "bahasa"))
         assertTrue(vietnamese.matchesLanguageSearch(label = "Tiếng Việt", query = "tieng viet"))
+        assertTrue(japanese.matchesLanguageSearch(label = "日本語", query = "nihongo"))
+        assertTrue(korean.matchesLanguageSearch(label = "한국어", query = "hangul"))
     }
 
     @Test

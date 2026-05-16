@@ -721,6 +721,8 @@
     <string name="language_italian">Italiano (İtalyanca)</string>
     <string name="language_polish">Polski (Lehçe)</string>
     <string name="language_vietnamese">Tiếng Việt (Vietnamca)</string>
+    <string name="language_japanese">日本語 (Japonca)</string>
+    <string name="language_korean">한국어 (Korece)</string>
     <string name="language_hindi">हिन्दी (Hintçe)</string>
     <string name="language_chinese_simplified">简体中文 (Basitleştirilmiş Çince)</string>
     <string name="app_theme_title">Uygulama Teması</string>
@@ -804,4 +806,7 @@
     <string name="ai_recap_desc">Hikâyenin şu anki yere kadar olanın özetini alın.</string>
     <string name="ai_generate_story_recap">Hikayâye Özeti Üret</string>
     <string name="ai_story_recap">Hikâye Özeti</string>
+    <string name="language_dutch">Nederlands (Felemenkçe)</string>
+    <string name="language_ukrainian">Українська (Ukraynaca)</string>
+    <string name="language_indonesian">Bahasa Indonesia (Endonezce)</string>
 </resources>

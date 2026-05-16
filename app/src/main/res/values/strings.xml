@@ -1123,6 +1123,8 @@
     <string name="language_italian">Italiano (Italian)</string>
     <string name="language_polish">Polski (Polish)</string>
     <string name="language_vietnamese">Tiếng Việt (Vietnamese)</string>
+    <string name="language_japanese">日本語 (Japanese)</string>
+    <string name="language_korean">한국어 (Korean)</string>
     <string name="language_hindi">हिन्दी (Hindi)</string>
     <string name="language_chinese_simplified">简体中文 (Chinese, Simplified)</string>
 
@@ -1556,4 +1558,7 @@
     <string name="tts_replacements_plain_text">Plain text</string>
     <!-- Lowercase because it is joined into a comma-separated option summary. -->
     <string name="tts_replacements_case_sensitive">case-sensitive</string>
+    <string name="language_dutch">Nederlands (Dutch)</string>
+    <string name="language_ukrainian">Українська (Ukrainian)</string>
+    <string name="language_indonesian">Bahasa Indonesia (Indonesian)</string>
 </resources>

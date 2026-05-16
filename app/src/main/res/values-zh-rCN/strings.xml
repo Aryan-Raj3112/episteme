@@ -753,6 +753,8 @@
     <string name="language_italian">Italiano（意大利语）</string>
     <string name="language_polish">Polski（波兰语）</string>
     <string name="language_vietnamese">Tiếng Việt（越南语）</string>
+    <string name="language_japanese">日本語（日语）</string>
+    <string name="language_korean">한국어（韩语）</string>
     <string name="language_hindi">हिन्दी（印地语）</string>
     <string name="language_chinese_simplified">简体中文（简体中文）</string>
     <string name="app_theme_title">应用主题</string>
@@ -1081,4 +1083,7 @@
     <string name="tts_replacements_silence">静音</string>
     <string name="tts_replacements_plain_text">纯文本</string>
     <string name="tts_replacements_case_sensitive">区分大小写</string>
+    <string name="language_dutch">Nederlands（荷兰语）</string>
+    <string name="language_ukrainian">Українська（乌克兰语）</string>
+    <string name="language_indonesian">Bahasa Indonesia（印度尼西亚语）</string>
 </resources>

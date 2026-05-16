@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="book_count">
+        <item quantity="other">책 %1$d권</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="other">책</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="other">책장 %1$d개</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="other">결과 %1$d개 발견</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="other">일치 항목 %1$d개 발견</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="other">파일 영구 삭제</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="other">선택한 파일 %1$d개를 기기에서 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="other">선택한 파일 %1$d개를 최근 파일 목록에서 제거하시겠습니까? 라이브러리에서 다시 열면 다시 표시됩니다.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="other">책 %1$d권을 “%2$s” 책장에서 제거하시겠습니까? 책은 라이브러리에 남아 미분류로 표시됩니다.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="other">책 %1$d권을 라이브러리에서 제거했습니다.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="other">폴더 %1$d개</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="other">태그 %1$d개</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="other">(%1$d개 청크)</item>
+    </plurals>
+</resources>

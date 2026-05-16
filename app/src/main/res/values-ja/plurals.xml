@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="book_count">
+        <item quantity="other">%1$d冊の本</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="other">本</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="other">%1$d個の本棚</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="other">%1$d件の結果が見つかりました</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="other">%1$d件の一致が見つかりました</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="other">ファイルを完全に削除</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="other">選択した%1$d個のファイルをデバイスから完全に削除しますか？この操作は元に戻せません。</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="other">選択した%1$d個のファイルを最近使ったファイルから削除しますか？ライブラリからもう一度開くと再表示されます。</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="other">%1$d冊の本を本棚「%2$s」から削除しますか？本はライブラリに残り、本棚未設定に表示されます。</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="other">%1$d冊の本をライブラリから削除しました。</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="other">%1$d個のフォルダー</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="other">%1$d個のタグ</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="other">(%1$dチャンク)</item>
+    </plurals>
+</resources>

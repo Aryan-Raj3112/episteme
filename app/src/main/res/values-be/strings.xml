@@ -753,6 +753,8 @@
     <string name="language_italian">Italiano (італьянская)</string>
     <string name="language_polish">Polski (польская)</string>
     <string name="language_vietnamese">Tiếng Việt (в’етнамская)</string>
+    <string name="language_japanese">日本語 (японская)</string>
+    <string name="language_korean">한국어 (карэйская)</string>
     <string name="language_hindi">हिन्दी (хіндзі)</string>
     <string name="language_chinese_simplified">简体中文 (кітайская, спрошчаная)</string>
     <string name="app_theme_title">Тэма праграмы</string>
@@ -1081,4 +1083,7 @@
     <string name="tts_replacements_silence">цішыня</string>
     <string name="tts_replacements_plain_text">Звычайны тэкст</string>
     <string name="tts_replacements_case_sensitive">з улікам рэгістра</string>
+    <string name="language_dutch">Nederlands (нідэрландская)</string>
+    <string name="language_ukrainian">Українська (украінская)</string>
+    <string name="language_indonesian">Bahasa Indonesia (інданезійская)</string>
 </resources>

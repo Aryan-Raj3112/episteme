@@ -721,6 +721,8 @@
     <string name="language_italian">Итальянский</string>
     <string name="language_polish">Польский</string>
     <string name="language_vietnamese">Вьетнамский</string>
+    <string name="language_japanese">Японский</string>
+    <string name="language_korean">Корейский</string>
     <string name="language_hindi">Хинди</string>
     <string name="language_chinese_simplified">Китайский упрощенный</string>
     <string name="app_theme_title">Тема приложения</string>
@@ -910,4 +912,7 @@
     <string name="options_screen_capture_protection">Защита от записи экрана</string>
     <string name="banner_screen_capture_protection_on">Защита от записи экрана включена</string>
     <string name="banner_screen_capture_protection_off">Защита от записи экрана выключена</string>
+    <string name="language_dutch">Нидерландский</string>
+    <string name="language_ukrainian">Украинский</string>
+    <string name="language_indonesian">Индонезийский</string>
 </resources>

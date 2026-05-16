@@ -650,6 +650,11 @@
     <string name="language_italian">Italiano (الإيطالية)</string>
     <string name="language_polish">Polski (البولندية)</string>
     <string name="language_vietnamese">Tiếng Việt (الفيتنامية)</string>
+    <string name="language_japanese">日本語 (اليابانية)</string>
+    <string name="language_korean">한국어 (الكورية)</string>
     <string name="language_hindi">हिन्दी (الهندية)</string>
     <string name="language_chinese_simplified">简体中文 (الصينية المبسطة)</string>
+    <string name="language_dutch">Nederlands (الهولندية)</string>
+    <string name="language_ukrainian">Українська (الأوكرانية)</string>
+    <string name="language_indonesian">Bahasa Indonesia (الإندونيسية)</string>
 </resources>

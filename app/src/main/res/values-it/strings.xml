@@ -753,6 +753,8 @@
     <string name="language_italian">Italiano</string>
     <string name="language_polish">Polski (polacco)</string>
     <string name="language_vietnamese">Tiếng Việt (vietnamita)</string>
+    <string name="language_japanese">日本語 (giapponese)</string>
+    <string name="language_korean">한국어 (coreano)</string>
     <string name="language_hindi">हिन्दी (hindi)</string>
     <string name="language_chinese_simplified">简体中文 (cinese semplificato)</string>
     <string name="app_theme_title">Tema app</string>
@@ -1081,4 +1083,7 @@
     <string name="tts_replacements_silence">silenzio</string>
     <string name="tts_replacements_plain_text">Testo semplice</string>
     <string name="tts_replacements_case_sensitive">sensibile a maiuscole/minuscole</string>
+    <string name="language_dutch">Nederlands (olandese)</string>
+    <string name="language_ukrainian">Українська (ucraino)</string>
+    <string name="language_indonesian">Bahasa Indonesia (indonesiano)</string>
 </resources>

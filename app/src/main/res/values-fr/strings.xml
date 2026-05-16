@@ -719,6 +719,8 @@
     <string name="language_italian">Italiano (Italien)</string>
     <string name="language_polish">Polski (Polonais)</string>
     <string name="language_vietnamese">Tiếng Việt (Vietnamien)</string>
+    <string name="language_japanese">日本語 (Japonais)</string>
+    <string name="language_korean">한국어 (Coréen)</string>
     <string name="language_hindi">हिन्दी (Hindi)</string>
     <string name="language_chinese_simplified">简体中文 (Chinois simplifié)</string>
     <string name="app_theme_contrast">Contraste</string>
@@ -735,4 +737,7 @@
     <string name="content_desc_profile_picture">Photo de profile</string>
     <string name="content_desc_profile">Profile</string>
     <string name="content_desc_filter">Filtre</string>
+    <string name="language_dutch">Nederlands (Néerlandais)</string>
+    <string name="language_ukrainian">Українська (Ukrainien)</string>
+    <string name="language_indonesian">Bahasa Indonesia (Indonésien)</string>
 </resources>

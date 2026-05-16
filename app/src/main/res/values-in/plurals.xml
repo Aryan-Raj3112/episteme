@@ -25,7 +25,7 @@
         <item quantity="other">Apakah Anda ingin menghapus %1$d file yang dipilih dari daftar file terbaru? File tersebut akan muncul kembali jika Anda membukanya lagi dari perpustakaan.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
-        <item quantity="other">Apakah Anda yakin ingin mengeluarkan %1$d buku dari rak \'%2$s\'? Buku-buku tersebut akan tetap berada di perpustakaan Anda dan muncul di bawah bagian Belum Tersimpan.</item>
+        <item quantity="other">Apakah Anda yakin ingin mengeluarkan %1$d buku dari rak \'%2$s\'? Buku-buku tersebut akan tetap berada di perpustakaan Anda dan muncul di bawah Tanpa rak.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="other">%1$d buku dikeluarkan dari perpustakaan.</item>

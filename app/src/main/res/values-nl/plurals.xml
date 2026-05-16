@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="book_count">
+        <item quantity="one">%1$d boek</item>
+        <item quantity="other">%1$d boeken</item>
+    </plurals>
+    <plurals name="book_word">
+        <item quantity="one">boek</item>
+        <item quantity="other">boeken</item>
+    </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d plank</item>
+        <item quantity="other">%1$d planken</item>
+    </plurals>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d resultaat gevonden</item>
+        <item quantity="other">%1$d resultaten gevonden</item>
+    </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="one">%1$d overeenkomst gevonden</item>
+        <item quantity="other">%1$d overeenkomsten gevonden</item>
+    </plurals>
+    <plurals name="dialog_delete_permanently">
+        <item quantity="one">Bestand permanent verwijderen</item>
+        <item quantity="other">Bestanden permanent verwijderen</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">Wilt u het geselecteerde %1$d-bestand permanent van uw apparaat verwijderen? Deze actie kan niet ongedaan worden gemaakt.</item>
+        <item quantity="other">Wilt u %1$d geselecteerde bestanden permanent van uw apparaat verwijderen? Deze actie kan niet ongedaan worden gemaakt.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">Wilt u het geselecteerde %1$d-bestand verwijderen uit de lijst met recente bestanden? Het verschijnt opnieuw als u het opnieuw vanuit de bibliotheek opent.</item>
+        <item quantity="other">Wilt u %1$d geselecteerde bestanden verwijderen uit de lijst met recente bestanden? Het verschijnt opnieuw als u het opnieuw vanuit de bibliotheek opent.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">Weet u zeker dat u %1$d boek uit de plank \'%2$s\' wilt verwijderen? Het boek blijft in uw bibliotheek en verschijnt onder Niet op een plank.</item>
+        <item quantity="other">Weet u zeker dat u %1$d boeken uit de plank \'%2$s\' wilt verwijderen? De boeken blijven in uw bibliotheek en verschijnen onder Niet op een plank.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d boek verwijderd uit bibliotheek.</item>
+        <item quantity="other">%1$d boeken verwijderd uit bibliotheek.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="one">%1$d map</item>
+        <item quantity="other">%1$d mappen</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="one">%1$d tag</item>
+        <item quantity="other">%1$d tags</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d segment)</item>
+        <item quantity="other">(%1$d segmenten)</item>
+    </plurals>
+</resources>
