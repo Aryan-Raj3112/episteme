@@ -29,8 +29,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -85,6 +92,10 @@ fun ReaderWorkspaceShell(
     isBookmarked: Boolean = false,
     onToggleBookmark: (() -> Unit)? = null,
     onSearchAction: (() -> Unit)? = null,
+    fileActions: ReaderWorkspaceFileActionState? = null,
+    onShareAction: (() -> Unit)? = null,
+    onSaveCopyAction: (() -> Unit)? = null,
+    onPrintAction: (() -> Unit)? = null,
     topSearchBar: (@Composable () -> Unit)? = null,
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
@@ -101,8 +112,10 @@ fun ReaderWorkspaceShell(
     var modalAnchorBounds by remember { mutableStateOf<SharedReaderModalAnchorBounds?>(null) }
     var fullscreenBannerVisible by remember { mutableStateOf(false) }
     var chromeVisible by remember(model.kind) { mutableStateOf(false) }
+    var chromeHoverSources by remember(model.kind) { mutableStateOf(emptySet<ReaderChromeHoverSource>()) }
     var chromeRevealTick by remember(model.kind) { mutableStateOf(0L) }
     var lastChromeRevealAt by remember(model.kind) { mutableStateOf(0L) }
+    val chromeHovered = chromeHoverSources.isNotEmpty()
 
     fun revealChrome(eventTimeMillis: Long = 0L) {
         val shouldRefreshDelay = !chromeVisible ||
@@ -112,6 +125,20 @@ fun ReaderWorkspaceShell(
         if (shouldRefreshDelay) {
             lastChromeRevealAt = eventTimeMillis
             chromeRevealTick += 1
+        }
+    }
+
+    fun updateChromeHovered(source: ReaderChromeHoverSource, hovered: Boolean) {
+        val nextSources = if (hovered) {
+            chromeHoverSources + source
+        } else {
+            chromeHoverSources - source
+        }
+        if (nextSources != chromeHoverSources) {
+            chromeHoverSources = nextSources
+        }
+        if (hovered) {
+            revealChrome()
         }
     }
 
@@ -155,7 +182,22 @@ fun ReaderWorkspaceShell(
                 rightPanelOpen = false
             }
         }
-        LaunchedEffect(chromeRevealTick, chromeLockedVisible) {
+        LaunchedEffect(showTopChrome, showBottomChrome, topSearchBar != null) {
+            var nextSources = chromeHoverSources
+            if (topSearchBar == null) {
+                nextSources = nextSources - ReaderChromeHoverSource.TopSearch
+            }
+            if (!showTopChrome) {
+                nextSources = nextSources - ReaderChromeHoverSource.TopBar - ReaderChromeHoverSource.FileActionsMenu
+            }
+            if (!showBottomChrome) {
+                nextSources = nextSources - ReaderChromeHoverSource.BottomBar
+            }
+            if (nextSources != chromeHoverSources) {
+                chromeHoverSources = nextSources
+            }
+        }
+        LaunchedEffect(chromeRevealTick, chromeLockedVisible, chromeHovered) {
             if (chromeLockedVisible) {
                 chromeVisible = true
                 return@LaunchedEffect
@@ -165,8 +207,13 @@ fun ReaderWorkspaceShell(
                 return@LaunchedEffect
             }
             chromeVisible = true
+            if (chromeHovered) {
+                return@LaunchedEffect
+            }
             delay(ReaderChromeAutoHideDelayMillis)
-            chromeVisible = false
+            if (!chromeHovered) {
+                chromeVisible = false
+            }
         }
 
         CompositionLocalProvider(LocalSharedReaderModalAnchorBounds provides modalAnchorBounds) {
@@ -245,11 +292,16 @@ fun ReaderWorkspaceShell(
                                     rightPanelOpen = rightPanelOpen,
                                     isBookmarked = isBookmarked,
                                     isFullscreen = isFullscreen,
+                                    fileActions = fileActions,
                                     onReturnToLibrary = onReturnToLibrary,
                                     onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
                                     onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
                                     onToggleBookmark = onToggleBookmark,
                                     onSearchAction = onSearchAction,
+                                    onShareAction = onShareAction,
+                                    onSaveCopyAction = onSaveCopyAction,
+                                    onPrintAction = onPrintAction,
+                                    onChromeHoverChange = ::updateChromeHovered,
                                     onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                     bottomBar = {}
                                 )
@@ -280,11 +332,16 @@ fun ReaderWorkspaceShell(
                                     rightPanelOpen = rightPanelOpen,
                                     isBookmarked = isBookmarked,
                                     isFullscreen = isFullscreen,
+                                    fileActions = fileActions,
                                     onReturnToLibrary = onReturnToLibrary,
                                     onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
                                     onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
                                     onToggleBookmark = onToggleBookmark,
                                     onSearchAction = onSearchAction,
+                                    onShareAction = onShareAction,
+                                    onSaveCopyAction = onSaveCopyAction,
+                                    onPrintAction = onPrintAction,
+                                    onChromeHoverChange = ::updateChromeHovered,
                                     onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                     bottomBar = {
                                         key(isFullscreen) {
@@ -315,11 +372,16 @@ fun ReaderWorkspaceShell(
                         rightPanelOpen = rightPanelOpen,
                         isBookmarked = isBookmarked,
                         isFullscreen = isFullscreen,
+                        fileActions = fileActions,
                         onReturnToLibrary = onReturnToLibrary,
                         onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
                         onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
                         onToggleBookmark = onToggleBookmark,
                         onSearchAction = onSearchAction,
+                        onShareAction = onShareAction,
+                        onSaveCopyAction = onSaveCopyAction,
+                        onPrintAction = onPrintAction,
+                        onChromeHoverChange = ::updateChromeHovered,
                         onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                         bottomBar = {
                             key(isFullscreen) {
@@ -347,6 +409,13 @@ private const val ReaderChromeAutoHideDelayMillis = 2_050L
 private const val ReaderChromeRevealThrottleMillis = 120L
 private const val ReaderChromeZIndex = 10_000f
 
+private enum class ReaderChromeHoverSource {
+    TopSearch,
+    TopBar,
+    BottomBar,
+    FileActionsMenu
+}
+
 private fun Modifier.readerChromeRevealPointerInput(
     onReveal: (Long) -> Unit
 ): Modifier {
@@ -366,6 +435,37 @@ private fun Modifier.readerChromeRevealPointerInput(
                     PointerEventType.Scroll -> {
                         event.changes.firstOrNull()?.position?.let { lastMovePosition = it }
                         onReveal(event.changes.maxOfOrNull { it.uptimeMillis } ?: 0L)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun Modifier.readerChromeHoverPointerInput(
+    source: ReaderChromeHoverSource,
+    onHoveredChange: (ReaderChromeHoverSource, Boolean) -> Unit
+): Modifier {
+    return pointerInput(source, onHoveredChange) {
+        awaitPointerEventScope {
+            var hovered = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                when (event.type) {
+                    PointerEventType.Enter,
+                    PointerEventType.Move,
+                    PointerEventType.Press,
+                    PointerEventType.Scroll -> {
+                        if (!hovered) {
+                            hovered = true
+                            onHoveredChange(source, true)
+                        }
+                    }
+                    PointerEventType.Exit -> {
+                        if (hovered) {
+                            hovered = false
+                            onHoveredChange(source, false)
+                        }
                     }
                 }
             }
@@ -464,11 +564,16 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     rightPanelOpen: Boolean,
     isBookmarked: Boolean,
     isFullscreen: Boolean,
+    fileActions: ReaderWorkspaceFileActionState?,
     onReturnToLibrary: (() -> Unit)?,
     onToggleLeftPanel: () -> Unit,
     onToggleRightPanel: () -> Unit,
     onToggleBookmark: (() -> Unit)?,
     onSearchAction: (() -> Unit)?,
+    onShareAction: (() -> Unit)?,
+    onSaveCopyAction: (() -> Unit)?,
+    onPrintAction: (() -> Unit)?,
+    onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
     onToggleFullscreen: (() -> Unit)?,
     bottomBar: @Composable () -> Unit
 ) {
@@ -479,6 +584,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
                 .padding(horizontal = 14.dp, vertical = 10.dp)
                 .widthIn(max = 820.dp)
                 .fillMaxWidth()
+                .readerChromeHoverPointerInput(ReaderChromeHoverSource.TopSearch, onChromeHoverChange)
                 .zIndex(ReaderChromeZIndex)
         ) {
             topSearchBar.invoke()
@@ -493,6 +599,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
                 .padding(horizontal = 14.dp, vertical = 10.dp)
                 .widthIn(max = 820.dp)
                 .fillMaxWidth()
+                .readerChromeHoverPointerInput(ReaderChromeHoverSource.TopBar, onChromeHoverChange)
                 .zIndex(ReaderChromeZIndex)
         ) {
             ReaderWorkspaceTopChrome(
@@ -507,11 +614,16 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
                 rightPanelOpen = rightPanelOpen,
                 isBookmarked = isBookmarked,
                 isFullscreen = isFullscreen,
+                fileActions = fileActions,
                 onReturnToLibrary = onReturnToLibrary,
                 onToggleLeftPanel = onToggleLeftPanel,
                 onToggleRightPanel = onToggleRightPanel,
                 onToggleBookmark = onToggleBookmark,
                 onSearchAction = onSearchAction,
+                onShareAction = onShareAction,
+                onSaveCopyAction = onSaveCopyAction,
+                onPrintAction = onPrintAction,
+                onChromeHoverChange = onChromeHoverChange,
                 onToggleFullscreen = onToggleFullscreen
             )
         }
@@ -525,6 +637,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .widthIn(max = 980.dp)
             .fillMaxWidth()
+            .readerChromeHoverPointerInput(ReaderChromeHoverSource.BottomBar, onChromeHoverChange)
             .zIndex(ReaderChromeZIndex)
     ) {
         bottomBar()
@@ -573,13 +686,29 @@ private fun ReaderWorkspaceTopChrome(
     rightPanelOpen: Boolean,
     isBookmarked: Boolean,
     isFullscreen: Boolean,
+    fileActions: ReaderWorkspaceFileActionState?,
     onReturnToLibrary: (() -> Unit)?,
     onToggleLeftPanel: () -> Unit,
     onToggleRightPanel: () -> Unit,
     onToggleBookmark: (() -> Unit)?,
     onSearchAction: (() -> Unit)?,
+    onShareAction: (() -> Unit)?,
+    onSaveCopyAction: (() -> Unit)?,
+    onPrintAction: (() -> Unit)?,
+    onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
     onToggleFullscreen: (() -> Unit)?
 ) {
+    var fileActionsExpanded by remember { mutableStateOf(false) }
+    DisposableEffect(fileActionsExpanded) {
+        if (fileActionsExpanded) {
+            onChromeHoverChange(ReaderChromeHoverSource.FileActionsMenu, true)
+        }
+        onDispose {
+            if (fileActionsExpanded) {
+                onChromeHoverChange(ReaderChromeHoverSource.FileActionsMenu, false)
+            }
+        }
+    }
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(SharedUiTokens.chromeRadius),
@@ -619,6 +748,51 @@ private fun ReaderWorkspaceTopChrome(
                         if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                         contentDescription = if (isBookmarked) "Remove bookmark" else "Add bookmark"
                     )
+                }
+            }
+            if (
+                ReaderWorkspaceTopAction.FILE_ACTIONS in topActions &&
+                fileActions?.hasAnyAction == true
+            ) {
+                Box {
+                    IconButton(onClick = { fileActionsExpanded = true }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "PDF file actions")
+                    }
+                    DropdownMenu(
+                        expanded = fileActionsExpanded,
+                        onDismissRequest = { fileActionsExpanded = false }
+                    ) {
+                        if (fileActions.canShare && onShareAction != null) {
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                onClick = {
+                                    fileActionsExpanded = false
+                                    onShareAction()
+                                },
+                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                            )
+                        }
+                        if (fileActions.canSaveCopy && onSaveCopyAction != null) {
+                            DropdownMenuItem(
+                                text = { Text("Save") },
+                                onClick = {
+                                    fileActionsExpanded = false
+                                    onSaveCopyAction()
+                                },
+                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) }
+                            )
+                        }
+                        if (fileActions.canPrint && onPrintAction != null) {
+                            DropdownMenuItem(
+                                text = { Text("Print") },
+                                onClick = {
+                                    fileActionsExpanded = false
+                                    onPrintAction()
+                                },
+                                leadingIcon = { Icon(Icons.Default.Print, contentDescription = null) }
+                            )
+                        }
+                    }
                 }
             }
             if (ReaderWorkspaceTopAction.FULL_SCREEN in topActions && onToggleFullscreen != null) {

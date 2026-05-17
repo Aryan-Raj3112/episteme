@@ -27,9 +27,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -80,6 +82,7 @@ import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.SaveMode
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SummarizationResult
@@ -118,6 +121,7 @@ import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.ui.ReaderWorkspaceFileActionState
 import com.aryan.reader.shared.ui.ReaderWorkspaceShell
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
@@ -140,6 +144,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.event.KeyEvent as AwtKeyEvent
+import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -251,6 +256,9 @@ internal fun PdfReaderScreen(
     val density = LocalDensity.current
     val pdfScope = rememberCoroutineScope()
     var isFullscreen by remember(documentHandleId) { mutableStateOf(false) }
+    var showPdfSaveDialog by remember(documentHandleId) { mutableStateOf(false) }
+    var isPdfFileActionLoading by remember(documentHandleId) { mutableStateOf(false) }
+    var pdfFileActionNotice by remember(documentHandleId) { mutableStateOf<DesktopPdfFileActionNotice?>(null) }
     val currentPdfFullscreen by rememberUpdatedState(isFullscreen)
     val currentOnPdfFullscreenChange by rememberUpdatedState(onFullscreenChange)
     DisposableEffect(documentHandleId) {
@@ -806,6 +814,102 @@ internal fun PdfReaderScreen(
             ?: textStyleConfig
     }
     val activePdfTtsChunk = pdfExtrasState.cloudTts.progress.currentChunk
+    val localPdfFile = remember(document.path, document.formatLabel) {
+        File(document.path).takeIf { document.formatLabel == "PDF" && it.isFile }
+    }
+    val pdfFileActions = remember(localPdfFile) {
+        ReaderWorkspaceFileActionState(
+            canSaveCopy = localPdfFile != null,
+            canPrint = localPdfFile != null
+        )
+    }
+    val sidecarsReadyForExport = arePdfAnnotationsLoaded && isRichTextLoaded
+    val annotationsForExportChoice = remember(annotations, activeTextDraft) {
+        val draftAnnotation = activeTextDraft
+            ?.toAnnotation()
+            ?.takeIf { it.text.isNotBlank() }
+        if (draftAnnotation == null) annotations else annotations + draftAnnotation
+    }
+    val shouldShowAnnotationExportChoice = shouldShowDesktopPdfAnnotationExportChoice(
+        sidecarsReady = sidecarsReadyForExport,
+        annotations = annotationsForExportChoice,
+        richTextPageLayouts = richTextController.pageLayouts
+    )
+
+    fun runPdfFileAction(
+        successTitle: String,
+        action: suspend () -> String
+    ) {
+        if (isPdfFileActionLoading) return
+        pdfScope.launch {
+            isPdfFileActionLoading = true
+            try {
+                val message = action()
+                pdfFileActionNotice = DesktopPdfFileActionNotice(
+                    title = successTitle,
+                    message = message
+                )
+            } catch (error: Throwable) {
+                pdfFileActionNotice = DesktopPdfFileActionNotice(
+                    title = "PDF action failed",
+                    message = error.message ?: "The PDF action could not be completed.",
+                    isError = true
+                )
+            } finally {
+                isPdfFileActionLoading = false
+            }
+        }
+    }
+
+    suspend fun preparePdfAnnotationExport() {
+        commitActiveTextDraft()
+        if (isRichTextMode) {
+            isRichTextMode = false
+        }
+        richTextController.saveImmediate()
+    }
+
+    fun savePdfCopy(mode: SaveMode) {
+        val target = chooseSavePdfFile(
+            desktopSuggestedPdfFilename(
+                originalName = localPdfFile?.name ?: document.title,
+                isAnnotated = mode == SaveMode.ANNOTATED
+            )
+        ) ?: return
+        runPdfFileAction(successTitle = "PDF saved") {
+            if (mode == SaveMode.ANNOTATED) {
+                preparePdfAnnotationExport()
+            }
+            val annotationSnapshot = pdfState.annotations
+            val richTextSnapshot = richTextController.pageLayouts
+            withContext(Dispatchers.IO) {
+                saveDesktopPdfCopy(
+                    document = document,
+                    target = target,
+                    mode = mode,
+                    annotations = annotationSnapshot,
+                    richTextPageLayouts = richTextSnapshot
+                )
+            }
+            "Saved to ${target.absolutePath}"
+        }
+    }
+
+    val requestSaveCopy: () -> Unit = {
+        if (shouldShowAnnotationExportChoice) {
+            showPdfSaveDialog = true
+        } else {
+            savePdfCopy(SaveMode.ORIGINAL)
+        }
+    }
+    val requestPrint: () -> Unit = {
+        runPdfFileAction(successTitle = "Print") {
+            withContext(Dispatchers.IO) {
+                printDesktopPdfDocument(document)
+            }
+            "The print dialog has finished."
+        }
+    }
 
     LaunchedEffect(selectedTool) {
         activeStroke = emptyList()
@@ -1933,7 +2037,7 @@ internal fun PdfReaderScreen(
             selectedTool != PdfInkTool.NONE ||
             isTextSelectionMode,
         richTextEditing = isRichTextMode,
-        loading = isRendering || isSearchIndexing,
+        loading = isRendering || isSearchIndexing || isPdfFileActionLoading,
         errorMessage = renderError,
         extrasState = pdfExtrasState,
         aiAvailable = featurePolicy.aiAndCloud && aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
@@ -2036,6 +2140,9 @@ internal fun PdfReaderScreen(
         isBookmarked = bookmarks.any { it.pageIndex == pageIndex },
         onToggleBookmark = { toggleBookmark(pageIndex) },
         onSearchAction = { dispatchPdf(SharedPdfReaderAction.SearchOpened) },
+        fileActions = pdfFileActions,
+        onSaveCopyAction = requestSaveCopy,
+        onPrintAction = requestPrint,
         topSearchBar = if (isPdfSearchActive) {
             {
                 DesktopPdfSearchTopBar(
@@ -3142,5 +3249,78 @@ internal fun PdfReaderScreen(
                 )
             }
         }
+        if (isPdfFileActionLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.12f))
+                    .zIndex(20_000f),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+        }
     }
+
+    if (showPdfSaveDialog) {
+        DesktopPdfExportChoiceDialog(
+            title = "Save to device",
+            message = "Choose which PDF to save.",
+            onOriginal = {
+                showPdfSaveDialog = false
+                savePdfCopy(SaveMode.ORIGINAL)
+            },
+            onAnnotated = {
+                showPdfSaveDialog = false
+                savePdfCopy(SaveMode.ANNOTATED)
+            },
+            onDismiss = { showPdfSaveDialog = false }
+        )
+    }
+
+    pdfFileActionNotice?.let { notice ->
+        AlertDialog(
+            onDismissRequest = { pdfFileActionNotice = null },
+            title = { Text(notice.title) },
+            text = {
+                Text(
+                    text = notice.message,
+                    color = if (notice.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { pdfFileActionNotice = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun DesktopPdfExportChoiceDialog(
+    title: String,
+    message: String,
+    onOriginal: () -> Unit,
+    onAnnotated: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = onAnnotated) {
+                Text("With annotations")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onOriginal) {
+                Text("Original")
+            }
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

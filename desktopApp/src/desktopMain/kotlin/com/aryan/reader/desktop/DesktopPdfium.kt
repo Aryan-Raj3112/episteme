@@ -9,20 +9,29 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsStreamReference
+import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.PdfiumAnnotationSubtype
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotationThreads
 import com.aryan.reader.shared.pdf.SharedPdfIndexedPage
+import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
+import com.sun.jna.Callback
 import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
+import com.sun.jna.NativeLong
 import com.sun.jna.Pointer
+import com.sun.jna.Structure
+import com.sun.jna.ptr.PointerByReference
 import java.awt.image.BufferedImage
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteOrder
 import kotlin.math.roundToInt
 
@@ -142,11 +151,24 @@ data class DesktopPdfTextPageData(
     val chars: List<DesktopPdfTextChar> = emptyList()
 )
 
+internal class DesktopPdfPasswordException(fileName: String) : IllegalStateException(
+    "A password is required or the supplied password is incorrect for $fileName."
+)
+
+internal fun Throwable.isDesktopPdfPasswordException(): Boolean {
+    return this is DesktopPdfPasswordException || cause?.isDesktopPdfPasswordException() == true
+}
+
 object DesktopPdfium {
     private const val FPDF_ANNOT = 0x01
     private const val FPDF_LCD_TEXT = 0x02
     private const val FPDF_RENDER_NO_SMOOTHTEXT = 0x1000
     private const val FPDF_BITMAP_BGRA = 4
+    private const val FPDF_ANNOT_COLOR = 0
+    private const val FPDF_ANNOT_HIGHLIGHT = 9
+    private const val FPDF_ANNOT_INK = 15
+    private const val FPDF_ANNOT_FLAG_PRINT = 1 shl 2
+    private const val FPDF_NO_INCREMENTAL = 1L shl 1
 
     private val textUrlRegex = Regex("""\b(?:https?://|www\.)[^\s<>"']+""", RegexOption.IGNORE_CASE)
     private val pdfiumDll: File by lazy(::resolvePdfiumDll)
@@ -180,7 +202,7 @@ object DesktopPdfium {
             val pathDocument = api.FPDF_LoadDocument(file.absolutePath, password)
             if (pathDocument != null) {
                 logPdfiumOpen("path_load_success path=\"${file.absolutePath}\"")
-                return DesktopOpenPdfDocument(pointer = pathDocument)
+                return DesktopOpenPdfDocument(pointer = pathDocument, password = password)
             }
 
             api.FPDF_GetLastError().also { errorCode ->
@@ -203,13 +225,16 @@ object DesktopPdfium {
             val memoryDocument = api.FPDF_LoadMemDocument(memory, bytes.size, password)
             if (memoryDocument != null) {
                 logPdfiumOpen("memory_load_success bytes=${bytes.size} path=\"${file.absolutePath}\"")
-                return DesktopOpenPdfDocument(pointer = memoryDocument, backingMemory = memory)
+                return DesktopOpenPdfDocument(pointer = memoryDocument, backingMemory = memory, password = password)
             }
             val memoryError = api.FPDF_GetLastError()
             logPdfiumOpen(
                 "memory_load_failed code=$memoryError message=\"${pdfiumLoadErrorMessage(memoryError)}\" " +
                     "bytes=${bytes.size} path=\"${file.absolutePath}\""
             )
+            if (memoryError == 4 || pathError == 4) {
+                throw DesktopPdfPasswordException(file.name)
+            }
             val pathMessage = pathError?.let { "path load: ${pdfiumLoadErrorMessage(it)}" }
                 ?: "path load skipped for non-ASCII path"
             error(
@@ -220,6 +245,9 @@ object DesktopPdfium {
 
         logPdfiumOpen("memory_load_skipped reason=empty_or_unreadable path=\"${file.absolutePath}\"")
         val pathMessage = pathError?.let(::pdfiumLoadErrorMessage) ?: "path load skipped for non-ASCII path"
+        if (pathError == 4) {
+            throw DesktopPdfPasswordException(file.name)
+        }
         error("Pdfium could not open ${file.name}. $pathMessage")
     }
 
@@ -231,7 +259,7 @@ object DesktopPdfium {
         val document = loadedDocument.pointer
         val handleId = nextDocumentHandleId()
         closeDocument(file.absolutePath)
-        openDocuments[handleId] = loadedDocument.copy(path = file.absolutePath)
+        openDocuments[handleId] = loadedDocument.copy(path = file.absolutePath, password = password)
 
         try {
             val pageCount = api.FPDF_GetPageCount(document)
@@ -380,6 +408,55 @@ object DesktopPdfium {
             extractDocumentMetadata(loadedDocument.pointer)
         } finally {
             api.FPDF_CloseDocument(loadedDocument.pointer)
+        }
+    }
+
+    @Synchronized
+    fun exportAnnotatedPdf(
+        document: DesktopPdfDocument,
+        destination: File,
+        annotations: List<SharedPdfAnnotation>,
+        richTextPageLayouts: List<SharedPdfRichPageLayout> = emptyList()
+    ) {
+        initLibrary()
+        require(document.formatLabel == "PDF") { "Only PDF files can be exported with PDF annotations." }
+        val source = File(document.path)
+        require(source.isFile) { "The original PDF is not available as a local file." }
+        val activeDocument = openDocuments[document.handleId]
+            ?: error("PDF document is not open.")
+        val exportDocument = loadDocument(source, activeDocument.password)
+        val rasterOverlays = buildDesktopPdfRasterOverlays(
+            annotations = annotations,
+            richTextPageLayouts = richTextPageLayouts,
+            pageSizes = document.pageSizes
+        )
+        val rasterResources = mutableListOf<DesktopPdfRasterResource>()
+        try {
+            val nativeDocument = exportDocument.pointer
+            val pageCount = api.FPDF_GetPageCount(nativeDocument)
+            var insertedAny = false
+            annotations.forEach { annotation ->
+                insertedAny = when (annotation.kind) {
+                    PdfAnnotationKind.INK -> insertInkAnnotation(nativeDocument, pageCount, annotation)
+                    PdfAnnotationKind.HIGHLIGHT -> insertHighlightAnnotation(nativeDocument, pageCount, annotation)
+                    PdfAnnotationKind.TEXT -> false
+                } || insertedAny
+            }
+            rasterOverlays.forEach { overlay ->
+                insertedAny = insertRasterOverlay(nativeDocument, pageCount, overlay, rasterResources) || insertedAny
+            }
+
+            if (!insertedAny) {
+                destination.parentFile?.mkdirs()
+                source.copyTo(destination, overwrite = true)
+                return
+            }
+            savePdfDocument(nativeDocument, destination)
+        } finally {
+            rasterResources.forEach { resource ->
+                runCatching { api.FPDFBitmap_Destroy(resource.bitmap) }
+            }
+            api.FPDF_CloseDocument(exportDocument.pointer)
         }
     }
 
@@ -1134,6 +1211,250 @@ object DesktopPdfium {
             .trim()
     }
 
+    private fun insertInkAnnotation(
+        document: Pointer,
+        pageCount: Int,
+        annotation: SharedPdfAnnotation
+    ): Boolean {
+        if (annotation.pageIndex !in 0 until pageCount ||
+            annotation.points.size < 2 ||
+            annotation.tool == PdfInkTool.ERASER ||
+            annotation.tool == PdfInkTool.TEXT
+        ) return false
+
+        return runCatching {
+            loadPage(document, annotation.pageIndex).usePointer { page ->
+                val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
+                val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
+                val nativePoints = FsPointF().toArray(annotation.points.size) as Array<FsPointF>
+                var minX = pageWidth
+                var maxX = 0f
+                var minY = pageHeight
+                var maxY = 0f
+                annotation.points.forEachIndexed { index, point ->
+                    val x = point.x.coerceIn(0f, 1f) * pageWidth
+                    val y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight
+                    nativePoints[index].x = x
+                    nativePoints[index].y = y
+                    nativePoints[index].write()
+                    minX = minOf(minX, x)
+                    maxX = maxOf(maxX, x)
+                    minY = minOf(minY, y)
+                    maxY = maxOf(maxY, y)
+                }
+                val strokeWidth = (annotation.strokeWidth * pageWidth).coerceAtLeast(0.25f)
+                val annot = api.FPDFPage_CreateAnnot(page, FPDF_ANNOT_INK) ?: return@usePointer false
+                try {
+                    api.FPDFAnnot_SetRect(annot, pdfRect(minX, maxY, maxX, minY, strokeWidth * 1.5f))
+                    val color = annotation.colorArgb.toPdfiumRgba().let { rgba ->
+                        if (annotation.tool == PdfInkTool.HIGHLIGHTER || annotation.tool == PdfInkTool.HIGHLIGHTER_ROUND) {
+                            rgba.withDefaultAlpha(102)
+                        } else {
+                            rgba
+                        }
+                    }
+                    api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
+                    api.FPDFAnnot_SetBorder(annot, 0f, 0f, strokeWidth)
+                    runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
+                    setPdfiumAnnotationString(annot, "Contents", "Ink")
+                    val added = api.FPDFAnnot_AddInkStroke(
+                        annot,
+                        nativePoints.first(),
+                        NativeLong(annotation.points.size.toLong())
+                    ) >= 0
+                    runCatching { api.FPDFPage_GenerateContent(page) }
+                    added
+                } finally {
+                    api.FPDFPage_CloseAnnot(annot)
+                }
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun insertHighlightAnnotation(
+        document: Pointer,
+        pageCount: Int,
+        annotation: SharedPdfAnnotation
+    ): Boolean {
+        if (annotation.pageIndex !in 0 until pageCount) return false
+        val bounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
+        if (bounds.isEmpty()) return false
+
+        return runCatching {
+            loadPage(document, annotation.pageIndex).usePointer { page ->
+                val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
+                val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
+                val quads = bounds.mapNotNull { bound ->
+                    val left = minOf(bound.left, bound.right).coerceIn(0f, 1f) * pageWidth
+                    val right = maxOf(bound.left, bound.right).coerceIn(0f, 1f) * pageWidth
+                    val top = (1f - minOf(bound.top, bound.bottom).coerceIn(0f, 1f)) * pageHeight
+                    val bottom = (1f - maxOf(bound.top, bound.bottom).coerceIn(0f, 1f)) * pageHeight
+                    if (right <= left || top <= bottom) {
+                        null
+                    } else {
+                        FsQuadPointsF(left, top, right, top, left, bottom, right, bottom)
+                    }
+                }
+                if (quads.isEmpty()) return@usePointer false
+
+                val annot = api.FPDFPage_CreateAnnot(page, FPDF_ANNOT_HIGHLIGHT) ?: return@usePointer false
+                try {
+                    var unionLeft = quads.first().x1
+                    var unionRight = quads.first().x2
+                    var unionTop = quads.first().y1
+                    var unionBottom = quads.first().y3
+                    var appendedAll = true
+                    quads.forEach { quad ->
+                        unionLeft = minOf(unionLeft, quad.x1, quad.x3)
+                        unionRight = maxOf(unionRight, quad.x2, quad.x4)
+                        unionTop = maxOf(unionTop, quad.y1, quad.y2)
+                        unionBottom = minOf(unionBottom, quad.y3, quad.y4)
+                        quad.write()
+                        appendedAll = api.FPDFAnnot_AppendAttachmentPoints(annot, quad) != 0 && appendedAll
+                    }
+                    api.FPDFAnnot_SetRect(annot, pdfRect(unionLeft, unionTop, unionRight, unionBottom, 1f))
+                    val color = annotation.colorArgb.toPdfiumRgba().withDefaultAlpha(102)
+                    api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
+                    runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
+                    val contents = annotation.note?.takeIf { it.isNotBlank() } ?: annotation.text
+                    if (contents.isNotBlank()) {
+                        setPdfiumAnnotationString(annot, "Contents", contents)
+                    }
+                    runCatching { api.FPDFPage_GenerateContent(page) }
+                    appendedAll
+                } finally {
+                    api.FPDFPage_CloseAnnot(annot)
+                }
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun insertRasterOverlay(
+        document: Pointer,
+        pageCount: Int,
+        overlay: DesktopPdfRasterOverlay,
+        resources: MutableList<DesktopPdfRasterResource>
+    ): Boolean {
+        if (overlay.pageIndex !in 0 until pageCount ||
+            overlay.width <= 0 ||
+            overlay.height <= 0 ||
+            overlay.pixels.isEmpty()
+        ) return false
+
+        return runCatching {
+            loadPage(document, overlay.pageIndex).usePointer { page ->
+                val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
+                val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
+                val left = overlay.left.coerceIn(0f, 1f) * pageWidth
+                val top = (1f - overlay.top.coerceIn(0f, 1f)) * pageHeight
+                val right = overlay.right.coerceIn(0f, 1f) * pageWidth
+                val bottom = (1f - overlay.bottom.coerceIn(0f, 1f)) * pageHeight
+                val rect = pdfRect(left, top, right, bottom, 0f)
+                val rectWidth = rect.right - rect.left
+                val rectHeight = rect.top - rect.bottom
+                if (rectWidth <= 0.5f || rectHeight <= 0.5f) return@usePointer false
+
+                val pixelMemory = Memory(overlay.pixels.size * 4L)
+                pixelMemory.write(0, overlay.pixels, 0, overlay.pixels.size)
+                val bitmap = api.FPDFBitmap_CreateEx(
+                    overlay.width,
+                    overlay.height,
+                    FPDF_BITMAP_BGRA,
+                    pixelMemory,
+                    overlay.width * 4
+                ) ?: return@usePointer false
+                val imageObject = api.FPDFPageObj_NewImageObj(document) ?: run {
+                    api.FPDFBitmap_Destroy(bitmap)
+                    return@usePointer false
+                }
+                val pages = PointerByReference(page)
+                val assigned = api.FPDFImageObj_SetBitmap(pages, 1, imageObject, bitmap) != 0
+                val positioned = assigned && positionRasterImageObject(
+                    imageObject = imageObject,
+                    width = rectWidth.toDouble(),
+                    height = rectHeight.toDouble(),
+                    left = rect.left.toDouble(),
+                    bottom = rect.bottom.toDouble()
+                )
+                if (!positioned) {
+                    api.FPDFBitmap_Destroy(bitmap)
+                    return@usePointer false
+                }
+                api.FPDFPage_InsertObject(page, imageObject)
+                resources += DesktopPdfRasterResource(bitmap = bitmap, memory = pixelMemory)
+                api.FPDFPage_GenerateContent(page) != 0
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun positionRasterImageObject(
+        imageObject: Pointer,
+        width: Double,
+        height: Double,
+        left: Double,
+        bottom: Double
+    ): Boolean {
+        return runCatching {
+            api.FPDFImageObj_SetMatrix(imageObject, width, 0.0, 0.0, height, left, bottom) != 0
+        }.getOrElse {
+            runCatching {
+                api.FPDFPageObj_Transform(imageObject, width, 0.0, 0.0, height, left, bottom)
+                true
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun savePdfDocument(document: Pointer, destination: File) {
+        destination.parentFile?.mkdirs()
+        FileOutputStream(destination).use { output ->
+            val callback = FpdfWriteBlockCallback { _, data, size ->
+                if (data == null) {
+                    0
+                } else {
+                    runCatching {
+                        val byteCount = size.toLong().coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                        output.write(data.getByteArray(0, byteCount))
+                        1
+                    }.getOrDefault(0)
+                }
+            }
+            val writer = FpdfFileWrite().apply {
+                version = 1
+                writeBlock = callback
+                write()
+            }
+            val saved = api.FPDF_SaveAsCopy(document, writer, NativeLong(FPDF_NO_INCREMENTAL))
+            if (saved == 0) {
+                error("PDFium failed to write annotated PDF.")
+            }
+        }
+    }
+
+    private fun setPdfiumAnnotationString(annotation: Pointer, key: String, value: String) {
+        val bytes = (value + "\u0000").toByteArray(Charsets.UTF_16LE)
+        val memory = Memory(bytes.size.toLong())
+        memory.write(0, bytes, 0, bytes.size)
+        api.FPDFAnnot_SetStringValue(annotation, key, memory)
+    }
+
+    private fun pdfRect(left: Float, top: Float, right: Float, bottom: Float, padding: Float): FsRectF {
+        return FsRectF(
+            left = minOf(left, right) - padding,
+            top = maxOf(top, bottom) + padding,
+            right = maxOf(left, right) + padding,
+            bottom = minOf(top, bottom) - padding
+        ).also { it.write() }
+    }
+
+    private fun Int.toPdfiumRgba(): PdfiumRgba {
+        return PdfiumRgba(
+            r = (this ushr 16) and 0xFF,
+            g = (this ushr 8) and 0xFF,
+            b = this and 0xFF,
+            a = (this ushr 24) and 0xFF
+        )
+    }
+
     private fun loadPage(document: Pointer, pageIndex: Int): PointerResource {
         val page = api.FPDF_LoadPage(document, pageIndex)
             ?: error("Pdfium could not open page ${pageIndex + 1}.")
@@ -1271,8 +1592,96 @@ object DesktopPdfium {
     private data class DesktopOpenPdfDocument(
         val pointer: Pointer,
         val backingMemory: Memory? = null,
-        val path: String = ""
+        val path: String = "",
+        val password: String? = null
     )
+
+    private data class DesktopPdfRasterResource(
+        val bitmap: Pointer,
+        @Suppress("unused") val memory: Memory
+    )
+
+    private data class PdfiumRgba(
+        val r: Int,
+        val g: Int,
+        val b: Int,
+        val a: Int
+    ) {
+        fun withDefaultAlpha(defaultAlpha: Int): PdfiumRgba {
+            return if (a == 255) copy(a = defaultAlpha.coerceIn(0, 255)) else this
+        }
+    }
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    open class FsRectF() : Structure() {
+        @JvmField var left: Float = 0f
+        @JvmField var top: Float = 0f
+        @JvmField var right: Float = 0f
+        @JvmField var bottom: Float = 0f
+
+        constructor(left: Float, top: Float, right: Float, bottom: Float) : this() {
+            this.left = left
+            this.top = top
+            this.right = right
+            this.bottom = bottom
+        }
+
+        override fun getFieldOrder(): List<String> = listOf("left", "top", "right", "bottom")
+    }
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    open class FsPointF() : Structure() {
+        @JvmField var x: Float = 0f
+        @JvmField var y: Float = 0f
+
+        override fun getFieldOrder(): List<String> = listOf("x", "y")
+    }
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    open class FsQuadPointsF() : Structure() {
+        @JvmField var x1: Float = 0f
+        @JvmField var y1: Float = 0f
+        @JvmField var x2: Float = 0f
+        @JvmField var y2: Float = 0f
+        @JvmField var x3: Float = 0f
+        @JvmField var y3: Float = 0f
+        @JvmField var x4: Float = 0f
+        @JvmField var y4: Float = 0f
+
+        constructor(
+            x1: Float,
+            y1: Float,
+            x2: Float,
+            y2: Float,
+            x3: Float,
+            y3: Float,
+            x4: Float,
+            y4: Float
+        ) : this() {
+            this.x1 = x1
+            this.y1 = y1
+            this.x2 = x2
+            this.y2 = y2
+            this.x3 = x3
+            this.y3 = y3
+            this.x4 = x4
+            this.y4 = y4
+        }
+
+        override fun getFieldOrder(): List<String> = listOf("x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4")
+    }
+
+    fun interface FpdfWriteBlockCallback : Callback {
+        fun invoke(fileWrite: Pointer?, data: Pointer?, size: NativeLong): Int
+    }
+
+    @Suppress("MemberVisibilityCanBePrivate")
+    open class FpdfFileWrite : Structure() {
+        @JvmField var version: Int = 1
+        @JvmField var writeBlock: FpdfWriteBlockCallback? = null
+
+        override fun getFieldOrder(): List<String> = listOf("version", "writeBlock")
+    }
 
     private class PointerResource(
         private val pointer: Pointer,
@@ -1403,10 +1812,41 @@ object DesktopPdfium {
         fun FPDF_GetPageHeightF(page: Pointer): Float
         fun FPDFPage_GetAnnotCount(page: Pointer): Int
         fun FPDFPage_GetAnnot(page: Pointer, index: Int): Pointer?
+        fun FPDFPage_CreateAnnot(page: Pointer, subtype: Int): Pointer?
         fun FPDFPage_CloseAnnot(annotation: Pointer)
         fun FPDFAnnot_GetSubtype(annotation: Pointer): Int
         fun FPDFAnnot_GetRect(annotation: Pointer, rect: Pointer): Int
         fun FPDFAnnot_GetStringValue(annotation: Pointer, key: String, buffer: Pointer?, buflen: Int): Int
+        fun FPDFAnnot_SetRect(annotation: Pointer, rect: FsRectF): Int
+        fun FPDFAnnot_SetColor(annotation: Pointer, type: Int, r: Int, g: Int, b: Int, a: Int): Int
+        fun FPDFAnnot_SetBorder(annotation: Pointer, horizontalRadius: Float, verticalRadius: Float, borderWidth: Float): Int
+        fun FPDFAnnot_SetStringValue(annotation: Pointer, key: String, value: Pointer): Int
+        fun FPDFAnnot_AddInkStroke(annotation: Pointer, points: FsPointF, pointCount: NativeLong): Int
+        fun FPDFAnnot_AppendAttachmentPoints(annotation: Pointer, quadPoints: FsQuadPointsF): Int
+        fun FPDFAnnot_SetFlags(annotation: Pointer, flags: Int): Int
+        fun FPDFPage_InsertObject(page: Pointer, pageObject: Pointer)
+        fun FPDFPageObj_NewImageObj(document: Pointer): Pointer?
+        fun FPDFImageObj_SetMatrix(
+            imageObject: Pointer,
+            a: Double,
+            b: Double,
+            c: Double,
+            d: Double,
+            e: Double,
+            f: Double
+        ): Int
+        fun FPDFPageObj_Transform(
+            pageObject: Pointer,
+            a: Double,
+            b: Double,
+            c: Double,
+            d: Double,
+            e: Double,
+            f: Double
+        )
+        fun FPDFImageObj_SetBitmap(pages: PointerByReference, pageCount: Int, imageObject: Pointer, bitmap: Pointer): Int
+        fun FPDFPage_GenerateContent(page: Pointer): Int
+        fun FPDF_SaveAsCopy(document: Pointer, writer: FpdfFileWrite, flags: NativeLong): Int
         fun FPDFBitmap_CreateEx(width: Int, height: Int, format: Int, firstScan: Pointer, stride: Int): Pointer?
         fun FPDFBitmap_FillRect(bitmap: Pointer, left: Int, top: Int, width: Int, height: Int, color: Int)
         fun FPDFBitmap_Destroy(bitmap: Pointer)

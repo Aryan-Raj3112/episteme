@@ -316,6 +316,7 @@ internal fun EpistemeDesktopApp(
     }
     var activePdfDocument by remember { mutableStateOf<DesktopPdfDocument?>(null) }
     var openingReader by remember { mutableStateOf<DesktopReaderOpening?>(null) }
+    var pdfPasswordRequest by remember { mutableStateOf<DesktopPdfPasswordRequest?>(null) }
     var nextReaderOpenRequestId by remember { mutableStateOf(0L) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
     var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
@@ -1566,6 +1567,7 @@ internal fun EpistemeDesktopApp(
             activePdfDocument != null
         val detachedPdfDocument = activePdfDocument
         openingReader = null
+        pdfPasswordRequest = null
         activePdfDocument = null
         selectedTab = tab
         if (!wasPdfReaderVisible) {
@@ -1601,6 +1603,7 @@ internal fun EpistemeDesktopApp(
         openingReader = null
         when (result) {
             is DesktopReaderOpenResult.Failure -> {
+                pdfPasswordRequest = null
                 activePdfDocument?.close()
                 activePdfDocument = null
                 activeReaderBookId = null
@@ -1608,7 +1611,21 @@ internal fun EpistemeDesktopApp(
                 updateState(state.withBanner(result.message, isError = true))
             }
 
+            is DesktopReaderOpenResult.PasswordRequired -> {
+                activePdfDocument?.close()
+                activePdfDocument = null
+                activeReaderBookId = null
+                openingReader = result.opening
+                selectedTab = SharedAppTab.READER
+                pdfPasswordRequest = DesktopPdfPasswordRequest(
+                    opening = result.opening,
+                    book = result.book,
+                    attemptedPassword = result.attemptedPassword
+                )
+            }
+
             is DesktopReaderOpenResult.Pdf -> {
+                pdfPasswordRequest = null
                 activePdfDocument?.takeIf { it.handleId != result.document.handleId }?.close()
                 activePdfDocument = result.document
                 activeReaderBookId = result.book.id
@@ -1620,6 +1637,7 @@ internal fun EpistemeDesktopApp(
             }
 
             is DesktopReaderOpenResult.Text -> {
+                pdfPasswordRequest = null
                 activePdfDocument?.close()
                 activePdfDocument = null
                 readerSession = result.session
@@ -1630,9 +1648,14 @@ internal fun EpistemeDesktopApp(
         }
     }
 
-    fun openReader(book: BookItem) {
+    fun openReader(
+        book: BookItem,
+        password: String? = null,
+        force: Boolean = false,
+        returnTabOverride: SharedAppTab? = null
+    ) {
         val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
-        if (openingReader?.bookId == book.id) return
+        if (!force && openingReader?.bookId == book.id) return
         if (shouldRequestDesktopWebViewRuntime(desktopReaderSurface)) {
             webViewRuntimeRequested = true
         }
@@ -1688,10 +1711,14 @@ internal fun EpistemeDesktopApp(
             bookId = book.id,
             title = book.cardTitleForMessage(),
             formatLabel = SharedFileCapabilities.displayNameFor(book.type),
-            returnTab = selectedTab.takeUnless { it == SharedAppTab.READER } ?: SharedAppTab.LIBRARY
+            returnTab = returnTabOverride
+                ?: selectedTab.takeUnless { it == SharedAppTab.READER }
+                ?: SharedAppTab.LIBRARY,
+            password = password
         )
         val readerDefaultSettings = state.readerDefaultSettings
         openingReader = opening
+        pdfPasswordRequest = null
         selectedTab = SharedAppTab.READER
 
         scope.launch {
@@ -1711,7 +1738,11 @@ internal fun EpistemeDesktopApp(
                             } else {
                                 val readerFile = File(path)
                                 when (book.type) {
-                                    FileType.PDF -> DesktopPdfium.load(readerFile, loadEmbeddedAnnotations = false)
+                                    FileType.PDF -> DesktopPdfium.load(
+                                        readerFile,
+                                        password = opening.password,
+                                        loadEmbeddedAnnotations = false
+                                    )
                                     FileType.PPTX -> DesktopPdfium.loadPptx(readerFile)
                                     else -> DesktopPdfium.loadComic(readerFile, book.type)
                                 }
@@ -1749,12 +1780,23 @@ internal fun EpistemeDesktopApp(
                         else -> error("${SharedFileCapabilities.displayNameFor(book.type)} reader support comes later.")
                     }
                 }.getOrElse { error ->
-                    DesktopReaderOpenResult.Failure(
-                        opening = opening,
-                        book = book,
-                        message = "Could not open ${SharedFileCapabilities.displayNameFor(book.type)}: " +
-                            (error.message ?: "unknown error")
-                    )
+                    if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER &&
+                        book.type == FileType.PDF &&
+                        error.isDesktopPdfPasswordException()
+                    ) {
+                        DesktopReaderOpenResult.PasswordRequired(
+                            opening = opening,
+                            book = book,
+                            attemptedPassword = !opening.password.isNullOrEmpty()
+                        )
+                    } else {
+                        DesktopReaderOpenResult.Failure(
+                            opening = opening,
+                            book = book,
+                            message = "Could not open ${SharedFileCapabilities.displayNameFor(book.type)}: " +
+                                (error.message ?: "unknown error")
+                        )
+                    }
                 }
             }
             applyReaderOpenResult(result)
@@ -2563,6 +2605,26 @@ internal fun EpistemeDesktopApp(
                 onDismiss = { showReaderAiHub = false },
                 credits = state.credits,
                 showCredits = !desktopBuildProfile.byokAiAvailable
+            )
+        }
+
+        pdfPasswordRequest?.let { request ->
+            DesktopPdfPasswordDialog(
+                title = request.book.displayName,
+                isError = request.attemptedPassword,
+                onDismiss = {
+                    pdfPasswordRequest = null
+                    exitReaderTo(request.opening.returnTab)
+                },
+                onConfirm = { enteredPassword ->
+                    pdfPasswordRequest = null
+                    openReader(
+                        book = request.book,
+                        password = enteredPassword,
+                        force = true,
+                        returnTabOverride = request.opening.returnTab
+                    )
+                }
             )
         }
 

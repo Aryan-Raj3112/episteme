@@ -34,6 +34,7 @@ enum class ReaderWorkspaceTopAction {
     CONTENTS,
     SEARCH,
     BOOKMARK,
+    FILE_ACTIONS,
     FULL_SCREEN,
     APPEARANCE,
     READ_ALOUD,
@@ -53,6 +54,15 @@ data class ReaderWorkspaceChromeModel(
     val forceVisible: Boolean,
     val forceVisibleReasons: Set<String> = emptySet()
 )
+
+data class ReaderWorkspaceFileActionState(
+    val canShare: Boolean = false,
+    val canSaveCopy: Boolean = false,
+    val canPrint: Boolean = false
+) {
+    val hasAnyAction: Boolean
+        get() = canShare || canSaveCopy || canPrint
+}
 
 data class ReaderWorkspacePanelDefaults(
     val leftOpen: Boolean = false,
@@ -188,6 +198,7 @@ fun pdfReaderWorkspaceModel(
         add(ReaderWorkspaceTopAction.CONTENTS)
         add(ReaderWorkspaceTopAction.SEARCH)
         add(ReaderWorkspaceTopAction.BOOKMARK)
+        add(ReaderWorkspaceTopAction.FILE_ACTIONS)
         add(ReaderWorkspaceTopAction.FULL_SCREEN)
         add(ReaderWorkspaceTopAction.APPEARANCE)
         if (cloudTtsAvailable) add(ReaderWorkspaceTopAction.READ_ALOUD)
