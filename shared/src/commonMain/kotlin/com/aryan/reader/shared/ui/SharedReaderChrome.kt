@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -140,6 +141,7 @@ import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.readerTextureDisplayName
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.reader.PaginatedReaderState
+import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
@@ -154,6 +156,7 @@ import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.appearanceSignature
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
+import com.aryan.reader.shared.reader.readerImageReferences
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -213,6 +216,8 @@ fun SharedReaderScreen(
     onCloudTtsStop: () -> Unit = {},
     onCloudTtsClearCache: () -> Unit = {},
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit = {},
+    onDownloadReaderImage: ((ReaderImageReference) -> Unit)? = null,
+    readerImagePreviewContent: (@Composable (ReaderImageReference, Modifier) -> Unit)? = null,
     readerTextureDataUri: (String) -> String? = { null },
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
@@ -376,6 +381,8 @@ fun SharedReaderScreen(
                 onGoToChapter = { dispatch(ReaderAction.JumpToChapter(it)) },
                 onGoToLocator = { dispatch(ReaderAction.JumpToLocator(it)) },
                 onGoToBookmark = { dispatch(ReaderAction.JumpToLocator(it.locator)) },
+                onDownloadImage = onDownloadReaderImage,
+                imagePreviewContent = readerImagePreviewContent,
                 onGoToHighlight = {
                     sidebarNavigationHighlightId = it.id
                     selectedHighlightId = null
@@ -3018,6 +3025,8 @@ private fun SharedReaderSidebar(
     onGoToChapter: (Int) -> Unit,
     onGoToLocator: (ReaderLocator) -> Unit,
     onGoToBookmark: (ReaderBookmark) -> Unit,
+    onDownloadImage: ((ReaderImageReference) -> Unit)?,
+    imagePreviewContent: (@Composable (ReaderImageReference, Modifier) -> Unit)?,
     onGoToHighlight: (UserHighlight) -> Unit,
     onEditHighlight: (UserHighlight) -> Unit,
     highlightPalette: ReaderHighlightPalette,
@@ -3027,6 +3036,7 @@ private fun SharedReaderSidebar(
     val tabs = remember(sections) {
         listOf(
             ReaderWorkspaceLeftSection.CONTENTS,
+            ReaderWorkspaceLeftSection.IMAGES,
             ReaderWorkspaceLeftSection.NOTES,
             ReaderWorkspaceLeftSection.BOOKMARKS
         ).filter { it in sections }
@@ -3081,6 +3091,12 @@ private fun SharedReaderSidebar(
                 ReaderWorkspaceLeftSection.BOOKMARKS -> SharedReaderBookmarksTab(
                     session = session,
                     onGoToBookmark = onGoToBookmark
+                )
+                ReaderWorkspaceLeftSection.IMAGES -> SharedReaderImagesTab(
+                    session = session,
+                    onGoToImage = onGoToLocator,
+                    onDownloadImage = onDownloadImage,
+                    imagePreviewContent = imagePreviewContent
                 )
                 else -> SharedReaderEmptyNavigation("No navigation items")
             }
@@ -3374,6 +3390,100 @@ private fun SharedReaderBookmarksTab(
 }
 
 @Composable
+private fun SharedReaderImagesTab(
+    session: ReaderSessionState,
+    onGoToImage: (ReaderLocator) -> Unit,
+    onDownloadImage: ((ReaderImageReference) -> Unit)?,
+    imagePreviewContent: (@Composable (ReaderImageReference, Modifier) -> Unit)?
+) {
+    val images = remember(session.reader.book, session.reader.pages) {
+        session.reader.book.readerImageReferences(session.reader.pages)
+    }
+    if (images.isEmpty()) {
+        SharedReaderEmptyNavigation("No images found")
+    } else {
+        val listState = rememberLazyListState()
+        Box(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .sharedAcceleratedLazyWheelScroll(listState)
+                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(images, key = { it.id }) { image ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onGoToImage(image.locator) }
+                                .padding(start = 10.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (imagePreviewContent != null) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(4.dp),
+                                    modifier = Modifier.size(width = 48.dp, height = 56.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(3.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        imagePreviewContent(image, Modifier.fillMaxSize())
+                                    }
+                                }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    image.displayTitle,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    listOfNotNull(
+                                        image.chapterTitle,
+                                        image.dimensionLabel,
+                                        image.sourceName()
+                                    ).joinToString(" - "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (onDownloadImage != null) {
+                                IconButton(
+                                    onClick = { onDownloadImage(image) }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Download image"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            SharedReaderVerticalScrollbar(
+                listState = listState,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
+    }
+}
+
+@Composable
 private fun SharedReaderAnnotationsTab(
     session: ReaderSessionState,
     onGoToHighlight: (UserHighlight) -> Unit,
@@ -3555,6 +3665,7 @@ private fun SharedReaderEmptyNavigation(message: String) {
 private fun ReaderWorkspaceLeftSection.readerNavigationTabLabel(): String {
     return when (this) {
         ReaderWorkspaceLeftSection.CONTENTS -> "TOC"
+        ReaderWorkspaceLeftSection.IMAGES -> "Images"
         ReaderWorkspaceLeftSection.NOTES -> "Annotations"
         ReaderWorkspaceLeftSection.BOOKMARKS -> "Bookmarks"
         ReaderWorkspaceLeftSection.PAGES -> "Pages"

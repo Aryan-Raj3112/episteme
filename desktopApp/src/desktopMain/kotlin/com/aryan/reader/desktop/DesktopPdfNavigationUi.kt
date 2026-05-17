@@ -11,6 +11,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -21,6 +23,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,16 +33,27 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +63,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfTocEntry
+import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfBookmark
+import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
+import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
+import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -172,6 +196,430 @@ internal fun desktopVisiblePdfTocEntries(
         }
     }
     return result
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun DesktopPdfNavigationSidebar(
+    document: DesktopPdfDocument,
+    pageIndex: Int,
+    sortedAnnotations: List<SharedPdfAnnotation>,
+    sortedEmbeddedAnnotations: List<SharedPdfEmbeddedAnnotation>,
+    bookmarks: List<SharedPdfBookmark>,
+    selectedAnnotationId: String?,
+    selectedEmbeddedAnnotationId: String?,
+    onPageSelected: (Int) -> Unit,
+    onAnnotationOpened: (SharedPdfAnnotation) -> Unit,
+    onAnnotationSelected: (SharedPdfAnnotation) -> Unit,
+    onAnnotationDeleted: (SharedPdfAnnotation) -> Unit,
+    onEmbeddedAnnotationOpened: (SharedPdfEmbeddedAnnotation) -> Unit,
+    onEmbeddedAnnotationSelected: (SharedPdfEmbeddedAnnotation) -> Unit
+) {
+    val documentHandleId = document.handleId
+    val tabs = listOf("TOC", "Annotations", "Bookmarks", "Pages")
+    var selectedTabIndex by remember(documentHandleId) { mutableStateOf(0) }
+    val navigationScope = rememberCoroutineScope()
+    val pdfTocParentIndices = remember(document.toc) { desktopPdfTocParentIndices(document.toc) }
+    var expandedPdfTocEntryIndices by remember(documentHandleId, document.toc) {
+        mutableStateOf(pdfTocParentIndices)
+    }
+
+    Surface(
+        modifier = Modifier
+            .width(300.dp)
+            .fillMaxHeight(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(8.dp),
+        tonalElevation = 2.dp
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            ScrollableTabRow(
+                selectedTabIndex = selectedTabIndex,
+                edgePadding = 0.dp
+            ) {
+                tabs.forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTabIndex == index,
+                        onClick = { selectedTabIndex = index },
+                        text = {
+                            Text(
+                                title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    )
+                }
+            }
+
+            when (selectedTabIndex) {
+                0 -> {
+                    if (document.toc.isEmpty()) {
+                        DesktopPdfNavigationEmpty("No table of contents")
+                    } else {
+                        val tocListState = rememberLazyListState()
+                        val visibleTocItems by remember(document.toc, expandedPdfTocEntryIndices) {
+                            derivedStateOf { desktopVisiblePdfTocEntries(document.toc, expandedPdfTocEntryIndices) }
+                        }
+                        val currentOriginalIndex = remember(document.toc, pageIndex) {
+                            document.toc.indexOfLast { it.pageIndex <= pageIndex }
+                                .takeIf { it >= 0 }
+                                ?: document.toc.indexOfFirst { it.pageIndex == pageIndex }.takeIf { it >= 0 }
+                        }
+                        fun locateCurrentTocEntry() {
+                            val originalIndex = currentOriginalIndex ?: return
+                            navigationScope.launch {
+                                expandedPdfTocEntryIndices = expandedPdfTocEntryIndices +
+                                    desktopPdfTocAncestorIndices(document.toc, originalIndex)
+                                repeat(4) {
+                                    val visibleIndex = visibleTocItems.indexOfFirst { it.first == originalIndex }
+                                    if (visibleIndex >= 0) {
+                                        tocListState.animateScrollToItem(visibleIndex)
+                                        return@launch
+                                    }
+                                    delay(30)
+                                }
+                            }
+                        }
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                TextButton(onClick = { expandedPdfTocEntryIndices = pdfTocParentIndices }) {
+                                    Text("Expand all")
+                                }
+                                TextButton(onClick = { expandedPdfTocEntryIndices = emptySet() }) {
+                                    Text("Collapse all")
+                                }
+                                TextButton(onClick = ::locateCurrentTocEntry, enabled = currentOriginalIndex != null) {
+                                    Text("Locate")
+                                }
+                            }
+                            HorizontalDivider()
+                            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                                LazyColumn(
+                                    state = tocListState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .sharedAcceleratedLazyWheelScroll(tocListState)
+                                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(
+                                        visibleTocItems,
+                                        key = { (index, entry) -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }
+                                    ) { (originalIndex, entry) ->
+                                        val nextItem = document.toc.getOrNull(originalIndex + 1)
+                                        val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
+                                        val isExpanded = originalIndex in expandedPdfTocEntryIndices
+                                        DesktopPdfTocTreeItem(
+                                            entry = entry,
+                                            selected = originalIndex == currentOriginalIndex,
+                                            hasChildren = hasChildren,
+                                            isExpanded = isExpanded,
+                                            onToggleExpand = {
+                                                expandedPdfTocEntryIndices = if (isExpanded) {
+                                                    expandedPdfTocEntryIndices - originalIndex
+                                                } else {
+                                                    expandedPdfTocEntryIndices + originalIndex
+                                                }
+                                            },
+                                            onClick = { onPageSelected(entry.pageIndex) }
+                                        )
+                                    }
+                                }
+                                SharedReaderVerticalScrollbar(
+                                    listState = tocListState,
+                                    modifier = Modifier.align(Alignment.CenterEnd)
+                                )
+                            }
+                        }
+                    }
+                }
+                1 -> {
+                    if (sortedAnnotations.isEmpty() && sortedEmbeddedAnnotations.isEmpty()) {
+                        DesktopPdfNavigationEmpty("No annotations yet")
+                    } else {
+                        val annotationsListState = rememberLazyListState()
+                        var annotationMenuExpandedFor by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
+                        var embeddedAnnotationMenuExpandedFor by remember { mutableStateOf<SharedPdfEmbeddedAnnotation?>(null) }
+                        var deleteAnnotationConfirmFor by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                state = annotationsListState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .sharedAcceleratedLazyWheelScroll(annotationsListState)
+                                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(sortedAnnotations, key = { "nav_annotation_${it.id}" }) { annotation ->
+                                    Surface(
+                                        color = if (annotation.id == selectedAnnotationId) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clickable { onAnnotationOpened(annotation) }
+                                                    .padding(8.dp),
+                                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                                            ) {
+                                                Text(
+                                                    annotation.desktopLabel(),
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    "Page ${annotation.pageIndex + 1}",
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                                annotation.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                                    Text(
+                                                        note,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                            Box {
+                                                IconButton(onClick = { annotationMenuExpandedFor = annotation }) {
+                                                    Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                                }
+                                                DropdownMenu(
+                                                    expanded = annotationMenuExpandedFor == annotation,
+                                                    onDismissRequest = { annotationMenuExpandedFor = null }
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                if (annotation.note.isNullOrBlank() &&
+                                                                    annotation.kind != PdfAnnotationKind.TEXT
+                                                                ) {
+                                                                    "Add note"
+                                                                } else {
+                                                                    "Edit"
+                                                                }
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            annotationMenuExpandedFor = null
+                                                            onAnnotationSelected(annotation)
+                                                        }
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text("Delete") },
+                                                        onClick = {
+                                                            annotationMenuExpandedFor = null
+                                                            deleteAnnotationConfirmFor = annotation
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                items(sortedEmbeddedAnnotations, key = { "nav_embedded_${it.id}" }) { annotation ->
+                                    Surface(
+                                        color = if (annotation.id == selectedEmbeddedAnnotationId) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clickable { onEmbeddedAnnotationOpened(annotation) }
+                                                    .padding(8.dp),
+                                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                                            ) {
+                                                Text(
+                                                    annotation.author.ifBlank { "PDF comment" },
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    "Page ${annotation.pageIndex + 1}",
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    style = MaterialTheme.typography.bodySmall
+                                                )
+                                                annotation.contents.takeIf { it.isNotBlank() }?.let { contents ->
+                                                    Text(
+                                                        contents,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                            Box {
+                                                IconButton(onClick = { embeddedAnnotationMenuExpandedFor = annotation }) {
+                                                    Icon(Icons.Default.MoreVert, contentDescription = "Comment options")
+                                                }
+                                                DropdownMenu(
+                                                    expanded = embeddedAnnotationMenuExpandedFor == annotation,
+                                                    onDismissRequest = { embeddedAnnotationMenuExpandedFor = null }
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = { Text("Open comment") },
+                                                        onClick = {
+                                                            embeddedAnnotationMenuExpandedFor = null
+                                                            onEmbeddedAnnotationSelected(annotation)
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            SharedReaderVerticalScrollbar(
+                                listState = annotationsListState,
+                                modifier = Modifier.align(Alignment.CenterEnd)
+                            )
+                        }
+                        deleteAnnotationConfirmFor?.let { annotation ->
+                            AlertDialog(
+                                onDismissRequest = { deleteAnnotationConfirmFor = null },
+                                title = { Text("Delete annotation?") },
+                                text = { Text("This removes the annotation from this PDF.") },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            deleteAnnotationConfirmFor = null
+                                            onAnnotationDeleted(annotation)
+                                        }
+                                    ) {
+                                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { deleteAnnotationConfirmFor = null }) {
+                                        Text("Cancel")
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                2 -> {
+                    if (bookmarks.isEmpty()) {
+                        DesktopPdfNavigationEmpty("No bookmarks yet")
+                    } else {
+                        val bookmarksListState = rememberLazyListState()
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                state = bookmarksListState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .sharedAcceleratedLazyWheelScroll(bookmarksListState)
+                                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(bookmarks, key = { "nav_bookmark_${it.pageIndex}" }) { bookmark ->
+                                    Surface(
+                                        color = if (bookmark.pageIndex == pageIndex) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { onPageSelected(bookmark.pageIndex) }
+                                    ) {
+                                        Text(
+                                            bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
+                                            modifier = Modifier.padding(8.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            SharedReaderVerticalScrollbar(
+                                listState = bookmarksListState,
+                                modifier = Modifier.align(Alignment.CenterEnd)
+                            )
+                        }
+                    }
+                }
+                3 -> {
+                    val pageRows = remember(document.pageCount) { (0 until document.pageCount).chunked(3) }
+                    val pagesListState = rememberLazyListState()
+                    val currentRowIndex = pageIndex / 3
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    navigationScope.launch {
+                                        pagesListState.animateScrollToItem(
+                                            currentRowIndex.coerceIn(0, pageRows.lastIndex.coerceAtLeast(0))
+                                        )
+                                    }
+                                }
+                            ) {
+                                Text("Locate")
+                            }
+                        }
+                        HorizontalDivider()
+                        Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                            LazyColumn(
+                                state = pagesListState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .sharedAcceleratedLazyWheelScroll(pagesListState)
+                                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(pageRows, key = { row -> row.firstOrNull() ?: 0 }) { row ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        row.forEach { page ->
+                                            DesktopPdfThumbnailTile(
+                                                document = document,
+                                                pageIndex = page,
+                                                selected = page == pageIndex,
+                                                onClick = { onPageSelected(page) },
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
+                                        repeat(3 - row.size) {
+                                            Spacer(Modifier.weight(1f))
+                                        }
+                                    }
+                                }
+                            }
+                            SharedReaderVerticalScrollbar(
+                                listState = pagesListState,
+                                modifier = Modifier.align(Alignment.CenterEnd)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

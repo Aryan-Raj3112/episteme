@@ -16,6 +16,7 @@ enum class ReaderWorkspaceKind {
 
 enum class ReaderWorkspaceLeftSection(val title: String) {
     CONTENTS("Contents"),
+    IMAGES("Images"),
     SEARCH("Search"),
     BOOKMARKS("Bookmarks"),
     NOTES("Annotations"),
@@ -80,6 +81,7 @@ fun epubReaderWorkspaceModel(
     val preferences = toolbarPreferences.sanitized()
     val leftSections = listOf(
         ReaderWorkspaceLeftSection.CONTENTS,
+        ReaderWorkspaceLeftSection.IMAGES,
         ReaderWorkspaceLeftSection.NOTES,
         ReaderWorkspaceLeftSection.BOOKMARKS
     )

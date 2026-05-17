@@ -774,8 +774,20 @@ object ReaderHtmlDocumentBuilder {
                     if (activeStart === undefined || activeStart === null) {
                       activeStart = numberAttribute(document.body, 'data-reader-active-start-offset', null);
                     }
-                    var chapter = readerHostForLocator(chapterIndex, activeStart, locator.endOffset);
+                    var requestedPageIndex = parseInt(locator.pageIndex, 10);
+                    var chapter = Number.isFinite(requestedPageIndex)
+                      ? document.querySelector('[data-reader-page-index="' + selectorValue(requestedPageIndex) + '"]')
+                      : null;
+                    if (!chapter) chapter = readerHostForLocator(chapterIndex, activeStart, locator.endOffset);
                     if (!chapter) return;
+                    var exactCfi = locator.cfi
+                      ? chapter.querySelector('[data-reader-cfi="' + selectorValue(locator.cfi) + '"]')
+                      : null;
+                    if (exactCfi) {
+                      var cfiRect = exactCfi.getBoundingClientRect();
+                      window.scrollTo({ top: Math.max(0, cfiRect.top + window.scrollY - 24), left: 0, behavior: 'auto' });
+                      return;
+                    }
                     var exact = activeStart === null
                       ? null
                       : chapter.querySelector('[data-reader-start-offset="' + selectorValue(activeStart) + '"]');
@@ -2767,7 +2779,7 @@ object ReaderHtmlDocumentBuilder {
                 val tag = if (isOrdered) "ol" else "ul"
                 "<$tag${styleAttribute()}>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
             }
-            is SemanticImage -> "<figure${styleAttribute()}><img src=\"${path.escapeHtml()}\" alt=\"${altText.orEmpty().escapeHtml()}\"${imageSizeAttribute()}></figure>"
+            is SemanticImage -> "<figure${imageAnchorAttributes()}${styleAttribute()}><img src=\"${path.escapeHtml()}\" alt=\"${altText.orEmpty().escapeHtml()}\"${imageSizeAttribute()}></figure>"
             is SemanticMath -> svgContent ?: "<pre${styleAttribute()}>${altText.orEmpty().highlightAndEscape(searchQuery, searchOptions)}</pre>"
             is SemanticSpacer -> if (isExplicitLineBreak) "<br>" else "<div${styleAttribute("height:1em")}></div>"
             is SemanticTable -> rows.joinToString("", "<table${styleAttribute()}><tbody>", "</tbody></table>") { row ->
@@ -2843,6 +2855,18 @@ object ReaderHtmlDocumentBuilder {
         val end = (start + text.length).coerceAtLeast(start)
         return buildString {
             append(" data-reader-text-start=\"$start\" data-reader-text-end=\"$end\"")
+            elementId?.takeIf { it.isNotBlank() }?.let {
+                append(" id=\"${it.escapeHtml()}\" data-reader-element-id=\"${it.escapeHtml()}\"")
+            }
+            cfi?.takeIf { it.isNotBlank() }?.let {
+                append(" data-reader-cfi=\"${it.escapeHtml()}\"")
+            }
+        }
+    }
+
+    private fun SemanticImage.imageAnchorAttributes(): String {
+        return buildString {
+            append(" data-reader-block-index=\"$blockIndex\"")
             elementId?.takeIf { it.isNotBlank() }?.let {
                 append(" id=\"${it.escapeHtml()}\" data-reader-element-id=\"${it.escapeHtml()}\"")
             }

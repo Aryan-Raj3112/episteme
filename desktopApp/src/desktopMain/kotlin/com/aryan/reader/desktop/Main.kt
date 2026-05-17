@@ -63,6 +63,7 @@ import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -97,6 +98,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.Component
 import java.io.File
+import java.net.URI
+import java.util.Base64
 import java.util.UUID
 import kotlin.math.max
 
@@ -316,6 +319,18 @@ internal fun EpistemeDesktopApp(
         val projected = projectState(next)
         state = projected
         persistSnapshot(projected)
+    }
+
+    fun downloadReaderImage(image: ReaderImageReference) {
+        val target = chooseSaveImageFile(image.suggestedDownloadFileName()) ?: return
+        runCatching {
+            target.parentFile?.mkdirs()
+            target.writeBytes(image.desktopImageBytes())
+        }.onSuccess {
+            updateState(state.withBanner("Saved ${target.name}."))
+        }.onFailure { error ->
+            updateState(state.withBanner(error.message ?: "Could not save image.", isError = true))
+        }
     }
 
     fun clearDesktopBookCache() {
@@ -1945,6 +1960,7 @@ internal fun EpistemeDesktopApp(
                                     onCloudTtsStop = ::stopReaderCloudTts,
                                     onCloudTtsClearCache = ::clearReaderCloudTtsCache,
                                     onAutoScrollChange = ::updateReaderAutoScroll,
+                                    onDownloadReaderImage = ::downloadReaderImage,
                                     readerTextureDataUri = DesktopReaderTextures::dataUriFor,
                                     readerCustomTextureIds = readerCustomTextureIds,
                                     onImportReaderTexture = ::importDesktopReaderTexture,
@@ -2122,4 +2138,27 @@ internal fun EpistemeDesktopApp(
             )
         }
     }
+}
+
+private fun ReaderImageReference.desktopImageBytes(): ByteArray {
+    val trimmedSource = source.trim()
+    if (trimmedSource.startsWith("data:", ignoreCase = true)) {
+        val commaIndex = trimmedSource.indexOf(',')
+        require(commaIndex > 0 && trimmedSource.substring(0, commaIndex).contains(";base64", ignoreCase = true)) {
+            "This image data could not be decoded."
+        }
+        return Base64.getMimeDecoder().decode(trimmedSource.substring(commaIndex + 1))
+    }
+
+    val file = runCatching {
+        if (trimmedSource.startsWith("file:", ignoreCase = true)) {
+            File(URI(trimmedSource))
+        } else {
+            File(trimmedSource)
+        }
+    }.getOrElse {
+        File(trimmedSource)
+    }
+    require(file.isFile) { "Could not find the source image file." }
+    return file.readBytes()
 }

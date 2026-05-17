@@ -478,7 +478,7 @@ class ReaderHtmlDocumentBuilderTest {
                     plainText = "Before image after image.",
                     semanticBlocks = listOf(
                         SemanticParagraph("Before image", emptyList(), CssStyle(), null, null, startCharOffsetInSource = 0),
-                        SemanticImage("data:image/png;base64,abc", "Cover", null, null, CssStyle(), null, null),
+                        SemanticImage("data:image/png;base64,abc", "Cover", null, null, CssStyle(), "cover-image", "/4/2"),
                         SemanticParagraph("after image", emptyList(), CssStyle(), null, null, startCharOffsetInSource = 13)
                     )
                 )
@@ -492,6 +492,8 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("""<img src="data:image/png;base64,abc" alt="Cover""""))
+        assertTrue(html.contains("""data-reader-cfi="/4/2""""))
+        assertTrue(html.contains("""data-reader-block-index="0""""))
     }
 
     @Test

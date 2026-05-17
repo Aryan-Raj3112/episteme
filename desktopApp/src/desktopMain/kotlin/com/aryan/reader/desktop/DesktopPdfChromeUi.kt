@@ -139,6 +139,97 @@ internal fun DesktopPdfFullscreenBottomChrome(
 }
 
 @Composable
+internal fun DesktopPdfBottomChrome(
+    pageIndex: Int,
+    pageCount: Int,
+    progressPercent: Float,
+    canGoPrevious: Boolean,
+    canGoNext: Boolean,
+    showJumpHistory: Boolean,
+    jumpBackPage: Int?,
+    jumpForwardPage: Int?,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onPageScrub: (Float) -> Unit,
+    onPageScrubFinished: () -> Unit,
+    onJumpBack: () -> Unit,
+    onJumpForward: () -> Unit,
+    onClearJumpHistory: () -> Unit
+) {
+    val chromeBackground = MaterialTheme.colorScheme.surface
+    val chromeContent = MaterialTheme.colorScheme.onSurface
+    val sliderActive = MaterialTheme.colorScheme.primary
+    val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(6.dp),
+        color = chromeBackground,
+        contentColor = chromeContent,
+        tonalElevation = 0.dp,
+        shadowElevation = 1.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            DesktopPdfJumpHistoryControls(
+                visible = showJumpHistory,
+                backPage = jumpBackPage,
+                forwardPage = jumpForwardPage,
+                onBack = onJumpBack,
+                onForward = onJumpForward,
+                onClear = onClearJumpHistory
+            )
+            if (showJumpHistory && (jumpBackPage != null || jumpForwardPage != null)) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onPrevious, enabled = canGoPrevious) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateBefore,
+                        contentDescription = "Previous page",
+                        tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+                    )
+                }
+                Text(
+                    "Page ${pageIndex + 1} of $pageCount",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = chromeContent.copy(alpha = 0.72f)
+                )
+                if (pageCount > 1) {
+                    ReaderMinimalSlider(
+                        value = pageIndex.toFloat(),
+                        onValueChange = onPageScrub,
+                        onValueChangeFinished = onPageScrubFinished,
+                        valueRange = 0f..(pageCount - 1).toFloat(),
+                        activeColor = sliderActive,
+                        inactiveColor = sliderInactive,
+                        thumbColor = sliderActive,
+                        modifier = Modifier.weight(1f)
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                Text(
+                    "${progressPercent.toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = chromeContent.copy(alpha = 0.72f)
+                )
+                IconButton(onClick = onNext, enabled = canGoNext) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateNext,
+                        contentDescription = "Next page",
+                        tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun DesktopPdfZoomPercentageIndicator(
     percentage: Int,
     onResetZoomClick: () -> Unit

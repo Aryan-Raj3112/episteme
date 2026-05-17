@@ -23,6 +23,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
+import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderAction
 import com.aryan.reader.shared.ReaderAiByokSettings
@@ -36,6 +38,7 @@ import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -82,6 +85,7 @@ internal fun DesktopReaderScreen(
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
+    onDownloadReaderImage: (ReaderImageReference) -> Unit,
     readerTextureDataUri: (String) -> String?,
     readerCustomTextureIds: List<String>,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
@@ -351,6 +355,13 @@ internal fun DesktopReaderScreen(
         onCloudTtsStop = onCloudTtsStop,
         onCloudTtsClearCache = onCloudTtsClearCache,
         onAutoScrollChange = onAutoScrollChange,
+        onDownloadReaderImage = onDownloadReaderImage,
+        readerImagePreviewContent = { image, previewModifier ->
+            DesktopEpubNativeImage(
+                image = image.toDesktopPreviewSemanticImage(),
+                modifier = previewModifier.clip(RoundedCornerShape(3.dp))
+            )
+        },
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
         onImportReaderTexture = onImportReaderTexture
@@ -449,6 +460,19 @@ internal fun DesktopReaderScreen(
             }
         }
     }
+}
+
+private fun ReaderImageReference.toDesktopPreviewSemanticImage(): SemanticImage {
+    return SemanticImage(
+        path = source,
+        altText = altText,
+        intrinsicWidth = intrinsicWidth,
+        intrinsicHeight = intrinsicHeight,
+        style = CssStyle(),
+        elementId = null,
+        cfi = cfi,
+        blockIndex = blockIndex
+    )
 }
 
 private fun ReaderSessionState.reduceDesktopReaderKeyNavigation(

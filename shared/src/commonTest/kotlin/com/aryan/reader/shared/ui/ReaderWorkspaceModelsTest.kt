@@ -37,6 +37,7 @@ class ReaderWorkspaceModelsTest {
         assertEquals(
             listOf(
                 ReaderWorkspaceLeftSection.CONTENTS,
+                ReaderWorkspaceLeftSection.IMAGES,
                 ReaderWorkspaceLeftSection.NOTES,
                 ReaderWorkspaceLeftSection.BOOKMARKS
             ),

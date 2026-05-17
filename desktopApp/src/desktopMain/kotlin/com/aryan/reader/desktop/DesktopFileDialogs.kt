@@ -67,6 +67,16 @@ internal fun chooseReaderTextureFile(): File? {
     return File(directory, file)
 }
 
+internal fun chooseSaveImageFile(defaultFileName: String): File? {
+    val dialog = FileDialog(null as Frame?, "Save image", FileDialog.SAVE).apply {
+        file = defaultFileName
+        isVisible = true
+    }
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(directory, file)
+}
+
 internal fun chooseFolder(): File? {
     val chooser = JFileChooser().apply {
         dialogTitle = "Import folder"
