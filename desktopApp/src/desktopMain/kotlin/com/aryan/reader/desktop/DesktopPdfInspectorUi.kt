@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderAiByokSettings
-import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderExternalLookupAction
@@ -90,7 +89,6 @@ internal fun DesktopPdfInspectorPanel(
     cloudTtsFeatureAvailable: Boolean,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     pageText: () -> String,
-    recapText: () -> String,
     onDisplayModeSelected: (PdfDisplayMode) -> Unit,
     onPageScrub: (Float) -> Unit,
     onPageScrubFinished: () -> Unit,
@@ -109,7 +107,6 @@ internal fun DesktopPdfInspectorPanel(
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onTextStyleChange: (SharedPdfTextStyleConfig) -> Unit,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
-    onAiAction: (ReaderAiFeature, String) -> Unit,
     onOpenAiHub: (() -> Unit)? = null,
     onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
     onCloudTtsPauseResume: () -> Unit,
@@ -167,7 +164,6 @@ internal fun DesktopPdfInspectorPanel(
                 cloudTtsFeatureAvailable = cloudTtsFeatureAvailable,
                 ttsReplacementPreferences = ttsReplacementPreferences,
                 pageText = pageText,
-                recapText = recapText,
                 selectedTab = selectedPdfInspectorTab,
                 listState = pdfInspectorListState,
                 onDisplayModeSelected = onDisplayModeSelected,
@@ -188,7 +184,6 @@ internal fun DesktopPdfInspectorPanel(
                 onHighlighterPaletteChange = onHighlighterPaletteChange,
                 onTextStyleChange = onTextStyleChange,
                 onExternalLookup = onExternalLookup,
-                onAiAction = onAiAction,
                 onOpenAiHub = onOpenAiHub,
                 onCloudTtsStart = onCloudTtsStart,
                 onCloudTtsPauseResume = onCloudTtsPauseResume,
@@ -260,7 +255,6 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     cloudTtsFeatureAvailable: Boolean,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     pageText: () -> String,
-    recapText: () -> String,
     selectedTab: DesktopPdfInspectorTab,
     listState: LazyListState,
     onDisplayModeSelected: (PdfDisplayMode) -> Unit,
@@ -281,7 +275,6 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onTextStyleChange: (SharedPdfTextStyleConfig) -> Unit,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
-    onAiAction: (ReaderAiFeature, String) -> Unit,
     onOpenAiHub: (() -> Unit)?,
     onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
     onCloudTtsPauseResume: () -> Unit,
@@ -466,13 +459,11 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                     item {
                         DesktopPdfExtrasPanel(
                             pageText = pageText(),
-                            recapText = recapText(),
                             extrasState = pdfExtrasState,
                             aiByokSettings = aiByokSettings,
                             externalLookupAvailable = externalLookupAvailable,
                             cloudTtsFeatureAvailable = cloudTtsFeatureAvailable,
                             onExternalLookup = onExternalLookup,
-                            onAiAction = onAiAction,
                             onOpenAiHub = onOpenAiHub,
                             onCloudTtsStart = onCloudTtsStart,
                             onCloudTtsPauseResume = onCloudTtsPauseResume,

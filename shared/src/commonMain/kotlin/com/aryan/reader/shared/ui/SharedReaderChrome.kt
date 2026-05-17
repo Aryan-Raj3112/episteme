@@ -1009,9 +1009,14 @@ private fun SharedReaderAiResultSheet(
     ) {
         val errorMessage = result.errorMessage
         when {
-            result.isLoading -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            result.isLoading && result.text.isBlank() -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
             errorMessage != null -> Text(errorMessage, color = MaterialTheme.colorScheme.error)
-            else -> SharedMarkdownText(result.text)
+            else -> {
+                if (result.isLoading) {
+                    Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                SharedMarkdownText(result.text)
+            }
         }
     }
 }
@@ -1157,14 +1162,6 @@ private fun SharedReaderQuickActions(
                         onClick = { onAiAction(ReaderAiFeature.DEFINE, ReaderContextExtractor.currentPageText(session).take(1200)) }
                     ) {
                         Icon(Icons.Default.Psychology, contentDescription = "Define page")
-                    }
-                    TextButton(
-                        enabled = aiByokSettings.areReaderAiFeaturesAvailable &&
-                            ReaderContextExtractor.currentChapterText(session).isNotBlank() &&
-                            !extrasState.aiResult.isLoading,
-                        onClick = { onAiAction(ReaderAiFeature.SUMMARIZE, ReaderContextExtractor.currentChapterText(session)) }
-                    ) {
-                        Text("Summary")
                     }
                 }
 
@@ -1951,8 +1948,6 @@ private fun SharedReaderExtrasControls(
 ) {
     val settings = aiByokSettings.sanitized()
     val currentPageText = ReaderContextExtractor.currentPageText(session)
-    val currentChapterText = ReaderContextExtractor.currentChapterText(session)
-    val recapText = ReaderContextExtractor.textBeforeCurrentLocation(session)
 
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         SharedReaderPanelSection("Auto Scroll") {
@@ -2051,18 +2046,6 @@ private fun SharedReaderExtrasControls(
                         onClick = { onAiAction(ReaderAiFeature.DEFINE, currentPageText.take(1200)) }
                     ) {
                         Text("Define page")
-                    }
-                    TextButton(
-                        enabled = currentChapterText.isNotBlank() && !extrasState.aiResult.isLoading,
-                        onClick = { onAiAction(ReaderAiFeature.SUMMARIZE, currentChapterText) }
-                    ) {
-                        Text("Summarize chapter")
-                    }
-                    TextButton(
-                        enabled = recapText.isNotBlank() && !extrasState.aiResult.isLoading,
-                        onClick = { onAiAction(ReaderAiFeature.RECAP, recapText) }
-                    ) {
-                        Text("Recap")
                     }
                 }
             }

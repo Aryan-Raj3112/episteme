@@ -238,6 +238,8 @@ internal fun PdfReaderScreen(
     }
     var pdfTtsJob by remember(documentHandleId) { mutableStateOf<Job?>(null) }
     var showPdfAiHub by remember(documentHandleId) { mutableStateOf(false) }
+    var pdfAiResultRequestId by remember(documentHandleId) { mutableStateOf(0L) }
+    var dismissedPdfAiResultRequestId by remember(documentHandleId) { mutableStateOf<Long?>(null) }
     var pdfHubSummaryResult by remember(documentHandleId) { mutableStateOf<SummarizationResult?>(null) }
     var isPdfHubSummaryLoading by remember(documentHandleId) { mutableStateOf(false) }
     var showPdfCloudTtsSettings by remember(documentHandleId) { mutableStateOf(false) }
@@ -1116,14 +1118,6 @@ internal fun PdfReaderScreen(
         }
     }
 
-    fun pdfTextBeforeCurrentPage(maxChars: Int = 24_000): String {
-        val indexedText = document.indexedSearchPages()
-            .filter { it.pageIndex <= pageIndex }
-            .joinToString("\n\n") { "Page ${it.pageIndex + 1}\n${it.text}" }
-            .trim()
-        return indexedText.ifBlank { currentPdfPageText(maxChars) }.takeLast(maxChars)
-    }
-
     fun updatePdfAutoScroll(autoScroll: ReaderAutoScrollState) {
         pdfExtrasState = pdfExtrasState.copy(autoScroll = autoScroll.sanitized())
     }
@@ -1172,13 +1166,45 @@ internal fun PdfReaderScreen(
         isPdfHubSummaryLoading = true
         pdfHubSummaryResult = null
         pdfScope.launch {
-            val result = aiAdapter.summarize(pageText)
-            result.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+            var streamedSummary = ""
+            var streamedCost: Double? = null
+            var streamedFreeRemaining: Int? = null
+            fun updateStreamingSummary(error: String? = null) {
+                pdfHubSummaryResult = SummarizationResult(
+                    summary = streamedSummary.takeIf { it.isNotBlank() },
+                    error = error,
+                    cost = streamedCost,
+                    freeRemaining = streamedFreeRemaining
+                )
+            }
+            val result = aiAdapter.summarizeStreaming(
+                text = pageText,
+                onUsageReceived = { cost, freeRemaining ->
+                    cost?.let { streamedCost = it }
+                    freeRemaining?.let { streamedFreeRemaining = it }
+                    updateStreamingSummary()
+                },
+                onUpdate = { chunk ->
+                    streamedSummary += chunk
+                    updateStreamingSummary()
+                }
+            )
+            val finalSummary = result.summary?.takeIf { it.isNotBlank() } ?: streamedSummary.takeIf { it.isNotBlank() }
+            finalSummary?.let { summary ->
                 summaryCacheStore.saveSummary(bookKey, pageIndex, pageTitle, summary)
             }
-            pdfHubSummaryResult = result
+            pdfHubSummaryResult = result.copy(summary = finalSummary)
             isPdfHubSummaryLoading = false
             onPaidFeatureError(result.error)
+        }
+    }
+
+    fun isPdfAiResultVisible(requestId: Long): Boolean =
+        pdfAiResultRequestId == requestId && dismissedPdfAiResultRequestId != requestId
+
+    fun updatePdfAiResult(requestId: Long, aiResult: ReaderAiResultState) {
+        if (isPdfAiResultVisible(requestId)) {
+            pdfExtrasState = pdfExtrasState.copy(aiResult = aiResult)
         }
     }
 
@@ -1187,34 +1213,90 @@ internal fun PdfReaderScreen(
         if (normalizedText.isBlank()) return
         if (!aiByokSettings.sanitized().areReaderAiFeaturesAvailable) return
         if (onReaderAiEntitlementRequired(feature, normalizedText)) return
-        pdfExtrasState = pdfExtrasState.copy(
-            aiResult = ReaderAiResultState(
+        pdfAiResultRequestId += 1
+        val aiResultRequestId = pdfAiResultRequestId
+        dismissedPdfAiResultRequestId = null
+        updatePdfAiResult(
+            aiResultRequestId,
+            ReaderAiResultState(
                 title = feature.displayName,
                 isLoading = true
             )
         )
         pdfScope.launch {
             val result = when (feature) {
-                ReaderAiFeature.DEFINE -> aiAdapter.define(normalizedText.take(2400), currentPdfPageText()).let { it.definition to it.error }
+                ReaderAiFeature.DEFINE -> {
+                    var streamedDefinition = ""
+                    val definition = aiAdapter.defineStreaming(
+                        text = normalizedText.take(2400),
+                        context = currentPdfPageText(),
+                        onUpdate = { chunk ->
+                            streamedDefinition += chunk
+                            updatePdfAiResult(
+                                aiResultRequestId,
+                                ReaderAiResultState(
+                                    title = feature.displayName,
+                                    text = streamedDefinition,
+                                    isLoading = true
+                                )
+                            )
+                        }
+                    )
+                    (definition.definition?.takeIf { it.isNotBlank() } ?: streamedDefinition) to definition.error
+                }
                 ReaderAiFeature.SUMMARIZE -> {
-                    val summary = aiAdapter.summarize(normalizedText)
-                    summary.summary?.takeIf { it.isNotBlank() }?.let { generated ->
+                    var streamedSummary = ""
+                    var streamedCost: Double? = null
+                    var streamedFreeRemaining: Int? = null
+                    fun updateStreamingSummary() {
+                        val partial = SummarizationResult(
+                            summary = streamedSummary.takeIf { it.isNotBlank() },
+                            cost = streamedCost,
+                            freeRemaining = streamedFreeRemaining
+                        )
+                        pdfHubSummaryResult = partial
+                        updatePdfAiResult(
+                            aiResultRequestId,
+                            ReaderAiResultState(
+                                title = feature.displayName,
+                                text = streamedSummary,
+                                isLoading = true
+                            )
+                        )
+                    }
+                    val summary = aiAdapter.summarizeStreaming(
+                        text = normalizedText,
+                        onUsageReceived = { cost, freeRemaining ->
+                            cost?.let { streamedCost = it }
+                            freeRemaining?.let { streamedFreeRemaining = it }
+                            updateStreamingSummary()
+                        },
+                        onUpdate = { chunk ->
+                            streamedSummary += chunk
+                            updateStreamingSummary()
+                        }
+                    )
+                    val finalSummary = summary.summary?.takeIf { it.isNotBlank() } ?: streamedSummary.takeIf { it.isNotBlank() }
+                    finalSummary?.let { generated ->
                         summaryCacheStore.saveSummary(pdfHubBookKey(), pageIndex, "Page ${pageIndex + 1}", generated)
                     }
-                    pdfHubSummaryResult = summary
-                    summary.summary to summary.error
+                    pdfHubSummaryResult = summary.copy(summary = finalSummary)
+                    finalSummary to summary.error
                 }
                 ReaderAiFeature.RECAP -> aiAdapter.recap(normalizedText).let { it.recap to it.error }
             }
-            pdfExtrasState = pdfExtrasState.copy(
-                aiResult = ReaderAiResultState(
+            updatePdfAiResult(
+                aiResultRequestId,
+                ReaderAiResultState(
                     title = feature.displayName,
                     text = result.first.orEmpty(),
                     errorMessage = result.second,
                     isLoading = false
                 )
             )
-            onPaidFeatureError(result.second)
+            if (isPdfAiResultVisible(aiResultRequestId)) {
+                onPaidFeatureError(result.second)
+            }
         }
     }
 
@@ -2015,7 +2097,6 @@ internal fun PdfReaderScreen(
                 cloudTtsFeatureAvailable = featurePolicy.aiAndCloud,
                 ttsReplacementPreferences = ttsReplacementPreferences,
                 pageText = { currentPdfPageText() },
-                recapText = { pdfTextBeforeCurrentPage() },
                 onDisplayModeSelected = { mode ->
                     commitActiveTextDraft()
                     dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(mode))
@@ -2062,7 +2143,6 @@ internal fun PdfReaderScreen(
                 onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
                 onTextStyleChange = ::updateTextStyleConfig,
                 onExternalLookup = ::openPdfExternalLookup,
-                onAiAction = ::runPdfAiAction,
                 onOpenAiHub = { showPdfAiHub = true },
                 onCloudTtsStart = ::startPdfCloudTts,
                 onCloudTtsPauseResume = ::pauseResumePdfCloudTts,
@@ -3055,7 +3135,10 @@ internal fun PdfReaderScreen(
             pdfExtrasState.aiResult.hasContent -> {
                 DesktopReaderAiResultSheet(
                     result = pdfExtrasState.aiResult,
-                    onDismiss = { pdfExtrasState = pdfExtrasState.copy(aiResult = ReaderAiResultState()) }
+                    onDismiss = {
+                        dismissedPdfAiResultRequestId = pdfAiResultRequestId
+                        pdfExtrasState = pdfExtrasState.copy(aiResult = ReaderAiResultState())
+                    }
                 )
             }
         }

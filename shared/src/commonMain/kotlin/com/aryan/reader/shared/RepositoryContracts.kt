@@ -49,7 +49,30 @@ interface SyncAdapter {
 interface AiAdapter {
     val isAvailable: Boolean
     suspend fun define(text: String, context: String? = null): AiDefinitionResult
+    suspend fun defineStreaming(
+        text: String,
+        context: String? = null,
+        onUpdate: (String) -> Unit
+    ): AiDefinitionResult {
+        val result = define(text, context)
+        result.definition?.takeIf { it.isNotBlank() }?.let(onUpdate)
+        return result
+    }
+
     suspend fun summarize(text: String): SummarizationResult
+    suspend fun summarizeStreaming(
+        text: String,
+        onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit = { _, _ -> },
+        onUpdate: (String) -> Unit
+    ): SummarizationResult {
+        val result = summarize(text)
+        if (result.cost != null || result.freeRemaining != null) {
+            onUsageReceived(result.cost, result.freeRemaining)
+        }
+        result.summary?.takeIf { it.isNotBlank() }?.let(onUpdate)
+        return result
+    }
+
     suspend fun recap(textBeforeCurrentLocation: String): RecapResult
 }
 

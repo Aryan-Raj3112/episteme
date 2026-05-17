@@ -13,6 +13,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -49,6 +50,29 @@ internal class DesktopPaidAiAdapter(
         return AiDefinitionResult(definition = result.getOrNull()?.text, error = result.exceptionOrNull()?.message)
     }
 
+    override suspend fun defineStreaming(
+        text: String,
+        context: String?,
+        onUpdate: (String) -> Unit
+    ): AiDefinitionResult {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return AiDefinitionResult(error = "There is no text to define.")
+        val multiWord = wordCount(trimmed) > 1
+        if (multiWord && !currentSignedIn()) {
+            return AiDefinitionResult(error = "Sign in with Google to use multi-word smart dictionary.")
+        }
+        if (multiWord && !currentIsProUser()) {
+            return AiDefinitionResult(error = "Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app.")
+        }
+        val result = callWorker(
+            path = "/define",
+            body = buildJsonObject { put("text", JsonPrimitive(trimmed.take(2400))) }.toString(),
+            authRequired = multiWord,
+            onChunk = onUpdate
+        )
+        return AiDefinitionResult(definition = result.getOrNull()?.text, error = result.exceptionOrNull()?.message)
+    }
+
     override suspend fun summarize(text: String): SummarizationResult {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return SummarizationResult(error = "There is no text to summarize.")
@@ -61,6 +85,34 @@ internal class DesktopPaidAiAdapter(
                 put("data", JsonPrimitive(trimmed))
             }.toString(),
             authRequired = true
+        )
+        val response = result.getOrNull()
+        return SummarizationResult(
+            summary = response?.text,
+            error = result.exceptionOrNull()?.message,
+            cost = response?.cost,
+            freeRemaining = response?.freeRemaining
+        )
+    }
+
+    override suspend fun summarizeStreaming(
+        text: String,
+        onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit,
+        onUpdate: (String) -> Unit
+    ): SummarizationResult {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return SummarizationResult(error = "There is no text to summarize.")
+        val gate = paidGenerationGate(freeProSummaryAllowed = true)
+        if (gate != null) return SummarizationResult(error = gate)
+        val result = callWorker(
+            path = "/summarize",
+            body = buildJsonObject {
+                put("content_type", JsonPrimitive("text"))
+                put("data", JsonPrimitive(trimmed))
+            }.toString(),
+            authRequired = true,
+            onChunk = onUpdate,
+            onUsageReceived = onUsageReceived
         )
         val response = result.getOrNull()
         return SummarizationResult(
@@ -118,7 +170,9 @@ internal class DesktopPaidAiAdapter(
     private suspend fun callWorker(
         path: String,
         body: String,
-        authRequired: Boolean
+        authRequired: Boolean,
+        onChunk: (String) -> Unit = {},
+        onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit = { _, _ -> }
     ): Result<DesktopPaidAiResponse> = withContext(Dispatchers.IO) {
         if (!isAvailable) return@withContext Result.failure(IllegalStateException("AI features are unavailable."))
         val token = currentAuthToken()
@@ -139,7 +193,14 @@ internal class DesktopPaidAiAdapter(
             }
             try {
                 connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
+                val responseCode = connection.responseCode
+                val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+                if (responseCode in 200..299) {
+                    val parsed = readWorkerStream(stream, onChunk, onUsageReceived)
+                    if (parsed.text.isBlank()) throw IllegalStateException("The AI service returned an empty response.")
+                    onUsageCompleted()
+                    return@runCatching parsed
+                }
                 val responseText = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
                 if (connection.responseCode == 402 || responseText.contains("INSUFFICIENT_CREDITS")) {
                     throw IllegalStateException("Out of credits. Pro and credits can only be purchased from the Android app.")
@@ -153,10 +214,7 @@ internal class DesktopPaidAiAdapter(
                 if (connection.responseCode !in 200..299) {
                     throw IllegalStateException(workerErrorMessage(responseText) ?: "AI request failed: HTTP ${connection.responseCode}")
                 }
-                val parsed = parseWorkerStream(responseText)
-                if (parsed.text.isBlank()) throw IllegalStateException("The AI service returned an empty response.")
-                onUsageCompleted()
-                parsed
+                error("Unreachable AI response state.")
             } finally {
                 connection.disconnect()
             }
@@ -172,23 +230,50 @@ private data class DesktopPaidAiResponse(
 
 private val DesktopPaidAiJson = Json { ignoreUnknownKeys = true }
 
-private fun parseWorkerStream(responseText: String): DesktopPaidAiResponse {
+private fun readWorkerStream(
+    stream: InputStream?,
+    onChunk: (String) -> Unit,
+    onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit
+): DesktopPaidAiResponse {
     val output = StringBuilder()
     var cost: Double? = null
     var freeRemaining: Int? = null
-    responseText.lineSequence().forEach { line ->
-        val trimmed = line.trim()
-        if (trimmed.isBlank()) return@forEach
-        val parsed = runCatching { DesktopPaidAiJson.parseToJsonElement(trimmed).jsonObject }.getOrNull()
-        parsed?.get("cost_deducted")?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { cost = it }
-        parsed?.get("free_summaries_remaining")?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { freeRemaining = it }
-        parsed?.get("chunk")?.jsonPrimitive?.contentOrNull?.let(output::append)
-        parsed?.get("error")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { error ->
-            throw IllegalStateException(workerErrorMessage(error) ?: error)
+    stream?.bufferedReader(Charsets.UTF_8)?.useLines { lines ->
+        lines.forEach { line ->
+            val parsed = parseWorkerStreamLine(line) ?: return@forEach
+            parsed.cost?.let { cost = it }
+            parsed.freeRemaining?.let { freeRemaining = it }
+            if (parsed.cost != null || parsed.freeRemaining != null) {
+                onUsageReceived(parsed.cost, parsed.freeRemaining)
+            }
+            parsed.chunk?.let { chunk ->
+                output.append(chunk)
+                onChunk(chunk)
+            }
         }
     }
     return DesktopPaidAiResponse(text = output.toString().trim(), cost = cost, freeRemaining = freeRemaining)
 }
+
+private fun parseWorkerStreamLine(line: String): DesktopPaidAiStreamLine? {
+    val trimmed = line.trim()
+    if (trimmed.isBlank()) return null
+    val parsed = runCatching { DesktopPaidAiJson.parseToJsonElement(trimmed).jsonObject }.getOrNull() ?: return null
+    parsed.get("error")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { error ->
+        throw IllegalStateException(workerErrorMessage(error) ?: error)
+    }
+    return DesktopPaidAiStreamLine(
+        chunk = parsed.get("chunk")?.jsonPrimitive?.contentOrNull,
+        cost = parsed.get("cost_deducted")?.jsonPrimitive?.contentOrNull?.toDoubleOrNull(),
+        freeRemaining = parsed.get("free_summaries_remaining")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+    )
+}
+
+private data class DesktopPaidAiStreamLine(
+    val chunk: String? = null,
+    val cost: Double? = null,
+    val freeRemaining: Int? = null
+)
 
 private fun workerErrorMessage(errorBody: String): String? {
     return when {

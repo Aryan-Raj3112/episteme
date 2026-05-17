@@ -326,6 +326,8 @@ internal fun EpistemeDesktopApp(
     var showTagSelectionDialog by remember { mutableStateOf(false) }
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
     var showReaderAiHub by remember { mutableStateOf(false) }
+    var readerAiResultRequestId by remember { mutableStateOf(0L) }
+    var dismissedReaderAiResultRequestId by remember { mutableStateOf<Long?>(null) }
     var readerHubSummaryResult by remember { mutableStateOf<SummarizationResult?>(null) }
     var readerHubRecapResult by remember { mutableStateOf<RecapResult?>(null) }
     var isReaderHubSummaryLoading by remember { mutableStateOf(false) }
@@ -664,11 +666,34 @@ internal fun EpistemeDesktopApp(
         isReaderHubSummaryLoading = true
         readerHubSummaryResult = null
         scope.launch {
-            val result = desktopAiAdapter.summarize(text)
-            result.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+            var streamedSummary = ""
+            var streamedCost: Double? = null
+            var streamedFreeRemaining: Int? = null
+            fun updateStreamingSummary(error: String? = null) {
+                readerHubSummaryResult = SummarizationResult(
+                    summary = streamedSummary.takeIf { it.isNotBlank() },
+                    error = error,
+                    cost = streamedCost,
+                    freeRemaining = streamedFreeRemaining
+                )
+            }
+            val result = desktopAiAdapter.summarizeStreaming(
+                text = text,
+                onUsageReceived = { cost, freeRemaining ->
+                    cost?.let { streamedCost = it }
+                    freeRemaining?.let { streamedFreeRemaining = it }
+                    updateStreamingSummary()
+                },
+                onUpdate = { chunk ->
+                    streamedSummary += chunk
+                    updateStreamingSummary()
+                }
+            )
+            val finalSummary = result.summary?.takeIf { it.isNotBlank() } ?: streamedSummary.takeIf { it.isNotBlank() }
+            finalSummary?.let { summary ->
                 desktopSummaryCacheStore.saveSummary(bookKey, chapterIndex, chapterTitle, summary)
             }
-            readerHubSummaryResult = result
+            readerHubSummaryResult = result.copy(summary = finalSummary)
             isReaderHubSummaryLoading = false
             desktopFeatureNoticeForError(result.error)?.let { desktopFeatureNotice = it }
         }
@@ -733,6 +758,15 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun isReaderAiResultVisible(requestId: Long): Boolean =
+        readerAiResultRequestId == requestId && dismissedReaderAiResultRequestId != requestId
+
+    fun updateReaderAiResult(requestId: Long, aiResult: ReaderAiResultState) {
+        if (isReaderAiResultVisible(requestId)) {
+            readerExtrasState = readerExtrasState.copy(aiResult = aiResult)
+        }
+    }
+
     fun runReaderAiAction(feature: ReaderAiFeature, text: String) {
         val normalizedText = text.trim()
         if (normalizedText.isBlank()) return
@@ -741,21 +775,71 @@ internal fun EpistemeDesktopApp(
             desktopFeatureNotice = notice
             return
         }
-        readerExtrasState = readerExtrasState.copy(
-            aiResult = ReaderAiResultState(
+        readerAiResultRequestId += 1
+        val aiResultRequestId = readerAiResultRequestId
+        dismissedReaderAiResultRequestId = null
+        updateReaderAiResult(
+            aiResultRequestId,
+            ReaderAiResultState(
                 title = feature.displayName,
                 isLoading = true
             )
         )
         scope.launch {
             val result = when (feature) {
-                ReaderAiFeature.DEFINE -> desktopAiAdapter.define(
-                    text = normalizedText.take(2400),
-                    context = ReaderContextExtractor.currentPageText(readerSession)
-                ).let { it.definition to it.error }
+                ReaderAiFeature.DEFINE -> {
+                    var streamedDefinition = ""
+                    val definition = desktopAiAdapter.defineStreaming(
+                        text = normalizedText.take(2400),
+                        context = ReaderContextExtractor.currentPageText(readerSession),
+                        onUpdate = { chunk ->
+                            streamedDefinition += chunk
+                            updateReaderAiResult(
+                                aiResultRequestId,
+                                ReaderAiResultState(
+                                    title = feature.displayName,
+                                    text = streamedDefinition,
+                                    isLoading = true
+                                )
+                            )
+                        }
+                    )
+                    (definition.definition?.takeIf { it.isNotBlank() } ?: streamedDefinition) to definition.error
+                }
                 ReaderAiFeature.SUMMARIZE -> {
-                    val summary = desktopAiAdapter.summarize(normalizedText)
-                    summary.summary?.takeIf { it.isNotBlank() }?.let { generated ->
+                    var streamedSummary = ""
+                    var streamedCost: Double? = null
+                    var streamedFreeRemaining: Int? = null
+                    fun updateStreamingSummary() {
+                        val partial = SummarizationResult(
+                            summary = streamedSummary.takeIf { it.isNotBlank() },
+                            cost = streamedCost,
+                            freeRemaining = streamedFreeRemaining
+                        )
+                        readerHubSummaryResult = partial
+                        updateReaderAiResult(
+                            aiResultRequestId,
+                            ReaderAiResultState(
+                                title = feature.displayName,
+                                text = streamedSummary,
+                                isLoading = true
+                            )
+                        )
+                    }
+                    val summary = desktopAiAdapter.summarizeStreaming(
+                        text = normalizedText,
+                        onUsageReceived = { cost, freeRemaining ->
+                            cost?.let { streamedCost = it }
+                            freeRemaining?.let { streamedFreeRemaining = it }
+                            updateStreamingSummary()
+                        },
+                        onUpdate = { chunk ->
+                            streamedSummary += chunk
+                            updateStreamingSummary()
+                        }
+                    )
+                    val finalSummary = summary.summary?.takeIf { it.isNotBlank() } ?: streamedSummary.takeIf { it.isNotBlank() }
+                    finalSummary?.let { generated ->
                         desktopSummaryCacheStore.saveSummary(
                             readerHubBookKey(),
                             readerHubChapterIndex(),
@@ -763,8 +847,8 @@ internal fun EpistemeDesktopApp(
                             generated
                         )
                     }
-                    readerHubSummaryResult = summary
-                    summary.summary to summary.error
+                    readerHubSummaryResult = summary.copy(summary = finalSummary)
+                    finalSummary to summary.error
                 }
                 ReaderAiFeature.RECAP -> {
                     val recap = desktopAiAdapter.recap(normalizedText)
@@ -772,15 +856,18 @@ internal fun EpistemeDesktopApp(
                     recap.recap to recap.error
                 }
             }
-            readerExtrasState = readerExtrasState.copy(
-                aiResult = ReaderAiResultState(
+            updateReaderAiResult(
+                aiResultRequestId,
+                ReaderAiResultState(
                     title = feature.displayName,
                     text = result.first.orEmpty(),
                     errorMessage = result.second,
                     isLoading = false
                 )
             )
-            desktopFeatureNoticeForError(result.second)?.let { desktopFeatureNotice = it }
+            if (isReaderAiResultVisible(aiResultRequestId)) {
+                desktopFeatureNoticeForError(result.second)?.let { desktopFeatureNotice = it }
+            }
         }
     }
 
@@ -2389,6 +2476,7 @@ internal fun EpistemeDesktopApp(
                                     onExternalLookup = ::openReaderExternalLookup,
                                     onAiAction = ::runReaderAiAction,
                                     onAiResultDismiss = {
+                                        dismissedReaderAiResultRequestId = readerAiResultRequestId
                                         readerExtrasState = readerExtrasState.copy(aiResult = ReaderAiResultState())
                                     },
                                     onCloudTtsToggle = ::toggleReaderCloudTts,

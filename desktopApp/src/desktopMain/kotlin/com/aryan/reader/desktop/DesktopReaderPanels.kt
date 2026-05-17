@@ -46,7 +46,6 @@ import androidx.compose.ui.zIndex
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
 import com.aryan.reader.shared.ReaderAiByokSettings
-import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiModelOption
 import com.aryan.reader.shared.ReaderAiModelOptions
 import com.aryan.reader.shared.ReaderAiResultState
@@ -149,9 +148,14 @@ internal fun DesktopReaderAiResultSheet(
     ) {
         val errorMessage = result.errorMessage
         when {
-            result.isLoading -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            result.isLoading && result.text.isBlank() -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
             errorMessage != null -> Text(errorMessage, color = MaterialTheme.colorScheme.error)
-            else -> SharedMarkdownText(result.text)
+            else -> {
+                if (result.isLoading) {
+                    Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                SharedMarkdownText(result.text)
+            }
         }
     }
 }
@@ -393,13 +397,11 @@ private fun DesktopAiModelSelector(
 @Composable
 internal fun DesktopPdfExtrasPanel(
     pageText: String,
-    recapText: String,
     extrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
     externalLookupAvailable: Boolean,
     cloudTtsFeatureAvailable: Boolean,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
-    onAiAction: (ReaderAiFeature, String) -> Unit,
     onOpenAiHub: (() -> Unit)? = null,
     onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
     onCloudTtsPauseResume: () -> Unit,
@@ -517,24 +519,10 @@ internal fun DesktopPdfExtrasPanel(
             bookId = ttsReplacementBookId,
             onPreferencesChange = onTtsReplacementPreferencesChange
         )
-        if (settings.areReaderAiFeaturesAvailable) {
+        if (settings.areReaderAiFeaturesAvailable && onOpenAiHub != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                onOpenAiHub?.let { openAiHub ->
-                    TextButton(onClick = openAiHub) {
-                        Text("AI hub")
-                    }
-                }
-                TextButton(
-                    enabled = pageText.isNotBlank() && !extrasState.aiResult.isLoading,
-                    onClick = { onAiAction(ReaderAiFeature.SUMMARIZE, pageText) }
-                ) {
-                    Text("Summarize page")
-                }
-                TextButton(
-                    enabled = recapText.isNotBlank() && !extrasState.aiResult.isLoading,
-                    onClick = { onAiAction(ReaderAiFeature.RECAP, recapText) }
-                ) {
-                    Text("Recap")
+                TextButton(onClick = onOpenAiHub) {
+                    Text("AI hub")
                 }
             }
         }

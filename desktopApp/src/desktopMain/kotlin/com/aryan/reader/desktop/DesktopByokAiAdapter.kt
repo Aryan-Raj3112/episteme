@@ -38,8 +38,26 @@ class DesktopByokAiAdapter(
         return AiDefinitionResult(definition = result.getOrNull(), error = result.exceptionOrNull()?.message)
     }
 
+    override suspend fun defineStreaming(
+        text: String,
+        context: String?,
+        onUpdate: (String) -> Unit
+    ): AiDefinitionResult {
+        val result = callTextAi(ReaderAiFeature.DEFINE, text, context, onUpdate)
+        return AiDefinitionResult(definition = result.getOrNull(), error = result.exceptionOrNull()?.message)
+    }
+
     override suspend fun summarize(text: String): SummarizationResult {
         val result = callTextAi(ReaderAiFeature.SUMMARIZE, text)
+        return SummarizationResult(summary = result.getOrNull(), error = result.exceptionOrNull()?.message)
+    }
+
+    override suspend fun summarizeStreaming(
+        text: String,
+        onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit,
+        onUpdate: (String) -> Unit
+    ): SummarizationResult {
+        val result = callTextAi(ReaderAiFeature.SUMMARIZE, text, onUpdate = onUpdate)
         return SummarizationResult(summary = result.getOrNull(), error = result.exceptionOrNull()?.message)
     }
 
@@ -51,7 +69,8 @@ class DesktopByokAiAdapter(
     suspend fun callTextAi(
         feature: ReaderAiFeature,
         text: String,
-        context: String? = null
+        context: String? = null,
+        onUpdate: (String) -> Unit = {}
     ): Result<String> = withContext(Dispatchers.IO) {
         if (!networkAccess()) return@withContext Result.failure(IllegalStateException("AI features are unavailable in this desktop build."))
         if (text.isBlank()) return@withContext Result.failure(IllegalArgumentException("There is no text to send."))
@@ -64,12 +83,12 @@ class DesktopByokAiAdapter(
                 Result.failure(IllegalStateException("Choose a model for ${requestResult.featureName} in AI keys and models."))
             }
             is ReaderByokTextRequestResult.Ready -> runCatching {
-                requestResult.request.execute()
+                requestResult.request.execute(onUpdate)
             }
         }
     }
 
-    private fun ReaderByokTextRequest.execute(): String {
+    private fun ReaderByokTextRequest.execute(onUpdate: (String) -> Unit): String {
         var connection: HttpURLConnection? = null
         try {
             val url = if (model.provider == "groq") {
@@ -101,9 +120,9 @@ class DesktopByokAiAdapter(
                 throw IllegalStateException("AI provider error: $responseCode. ${errorBody.orEmpty().take(300)}")
             }
             val text = if (model.provider == "groq") {
-                streamGroqResponse(connection)
+                streamGroqResponse(connection, onUpdate)
             } else {
-                streamGeminiResponse(connection)
+                streamGeminiResponse(connection, onUpdate)
             }.trim()
             if (text.isBlank()) throw IllegalStateException("The AI provider returned an empty response.")
             return text
@@ -175,7 +194,7 @@ class DesktopByokAiAdapter(
         }.toString()
     }
 
-    private fun streamGeminiResponse(connection: HttpURLConnection): String {
+    private fun streamGeminiResponse(connection: HttpURLConnection, onUpdate: (String) -> Unit): String {
         val output = StringBuilder()
         connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
             var buffer = ""
@@ -206,7 +225,11 @@ class DesktopByokAiAdapter(
                     val jsonObject = buffer.substring(start, end + 1)
                     buffer = buffer.substring(end + 1)
                     val parsed = runCatching { DesktopAiJson.parseToJsonElement(jsonObject).jsonObject }.getOrNull()
-                    output.append(parsed.geminiTextChunk())
+                    val chunk = parsed.geminiTextChunk()
+                    if (chunk.isNotEmpty()) {
+                        output.append(chunk)
+                        onUpdate(chunk)
+                    }
                     if (parsed.geminiFinishReason() == "SAFETY") {
                         throw IllegalStateException("Blocked for safety reasons.")
                     }
@@ -216,7 +239,7 @@ class DesktopByokAiAdapter(
         return output.toString()
     }
 
-    private fun streamGroqResponse(connection: HttpURLConnection): String {
+    private fun streamGroqResponse(connection: HttpURLConnection, onUpdate: (String) -> Unit): String {
         val output = StringBuilder()
         var inThink = false
         var thinkBuffer = ""
@@ -268,10 +291,17 @@ class DesktopByokAiAdapter(
                         ?.jsonPrimitive
                         ?.contentOrNull
                 }.getOrNull().orEmpty()
-                output.append(cleanChunk(chunk))
+                val cleaned = cleanChunk(chunk)
+                if (cleaned.isNotEmpty()) {
+                    output.append(cleaned)
+                    onUpdate(cleaned)
+                }
             }
         }
-        if (!inThink && thinkBuffer.isNotBlank()) output.append(thinkBuffer)
+        if (!inThink && thinkBuffer.isNotBlank()) {
+            output.append(thinkBuffer)
+            onUpdate(thinkBuffer)
+        }
         return output.toString()
     }
 }
