@@ -3477,7 +3477,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         var description: String? = bundleResult?.description
         var bookForMetadata = epubBook
 
-        if (bookForMetadata == null && bundleResult == null && (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT)) {
+        if (bookForMetadata == null && bundleResult == null && type in EPUB_READER_FILE_TYPES) {
             Timber.d("Parsing downloaded book for cover/metadata: $displayName")
             Timber.tag("FileOpenPerf")
                 .d("[$bookId] addFileToRecent: Starting metadata parsing (no book provided)")
@@ -3548,7 +3548,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         val finalBookMetadata = bookForMetadata
 
-        if ((type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT) && finalBookMetadata != null) {
+        if (type in EPUB_READER_FILE_TYPES && finalBookMetadata != null) {
             title = title ?: finalBookMetadata.title.takeIf { it.isNotBlank() && it != "content" } ?: displayName
 
             author = author ?: finalBookMetadata.author.takeIf {
@@ -4309,7 +4309,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         Timber.tag("FileSwitch").d("PDF state updated, suppressing navigation event for smooth transition")
                     }
                 }
-            } else if (type == FileType.EPUB || type == FileType.MOBI || type == FileType.FB2 || type == FileType.MD || type == FileType.TXT || type == FileType.HTML || type == FileType.DOCX || type == FileType.ODT || type == FileType.FODT) {
+            } else if (type in EPUB_READER_FILE_TYPES) {
                 viewModelScope.launch {
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
                     Timber.tag("FileOpenPerf")

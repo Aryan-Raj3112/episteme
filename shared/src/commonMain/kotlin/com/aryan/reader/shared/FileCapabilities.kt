@@ -192,7 +192,7 @@ object SharedFileCapabilities {
             displayName = "PPTX",
             extensions = setOf("pptx"),
             androidSurface = ReaderFeatureSurface.PDF_VIEWER,
-            desktopSurface = null
+            desktopSurface = ReaderFeatureSurface.PDF_VIEWER
         )
     )
 
@@ -342,6 +342,12 @@ object SharedFileCapabilities {
     fun readableTypesFor(platform: ReaderPlatform): Set<FileType> {
         return all.mapNotNullTo(mutableSetOf()) { capability ->
             capability.type.takeIf { capability.surfaceFor(platform) != null }
+        }
+    }
+
+    fun readableTypesFor(platform: ReaderPlatform, surface: ReaderFeatureSurface): Set<FileType> {
+        return all.mapNotNullTo(mutableSetOf()) { capability ->
+            capability.type.takeIf { capability.surfaceFor(platform) == surface }
         }
     }
 

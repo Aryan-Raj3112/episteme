@@ -3,6 +3,7 @@ package com.aryan.reader
 import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
+import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.FileType as SharedFileType
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf as SharedShelf
@@ -10,6 +11,7 @@ import com.aryan.reader.shared.ShelfType as SharedShelfType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SharedModelMappersTest {
@@ -112,6 +114,8 @@ class SharedModelMappersTest {
         assertSame(folder, folder.toSharedSyncedFolder())
         assertEquals(filters, filters.toSharedLibraryFilters().toAndroidLibraryFilters())
         assertEquals(folder, folder.toSharedSyncedFolder().toAndroidSyncedFolder())
+        assertTrue(FileType.PPTX in PDF_VIEWER_FILE_TYPES)
+        assertEquals(ReaderFeatureSurface.PDF_VIEWER, FileType.PPTX.readerSurfaceOnAndroid())
         assertFalse(FileType.UNKNOWN in ANDROID_READABLE_FILE_TYPES)
         assertFalse(FileType.UNKNOWN in ANDROID_SYNCABLE_FILE_TYPES)
     }

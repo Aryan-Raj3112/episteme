@@ -1253,10 +1253,10 @@ internal fun EpistemeDesktopApp(
                                 )
                             } else {
                                 val readerFile = File(path)
-                                if (book.type == FileType.PDF) {
-                                    DesktopPdfium.load(readerFile, loadEmbeddedAnnotations = false)
-                                } else {
-                                    DesktopPdfium.loadComic(readerFile, book.type)
+                                when (book.type) {
+                                    FileType.PDF -> DesktopPdfium.load(readerFile, loadEmbeddedAnnotations = false)
+                                    FileType.PPTX -> DesktopPdfium.loadPptx(readerFile)
+                                    else -> DesktopPdfium.loadComic(readerFile, book.type)
                                 }
                             }
                             DesktopReaderOpenResult.Pdf(opening, book, document)

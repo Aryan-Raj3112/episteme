@@ -54,6 +54,7 @@ import com.aryan.reader.epubreader.EpubReaderScreen
 import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.feedback.SupportProjectScreen
 import com.aryan.reader.pdf.PdfViewerScreen
+import com.aryan.reader.shared.ReaderFeatureSurface
 import kotlinx.coroutines.delay
 
 object AppDestinations {
@@ -146,15 +147,16 @@ fun AppNavigation(
 
     LaunchedEffect(currentRoute, uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading) {
-            when (uiState.selectedFileType) {
-                FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.PPTX -> {
+            when (uiState.selectedFileType?.readerSurfaceOnAndroid()) {
+                ReaderFeatureSurface.PDF_VIEWER -> {
                     if (uiState.selectedPdfUri != null) {
                         if (currentRoute != AppDestinations.PDF_VIEWER_ROUTE) {
                             navController.syncRouteTo(AppDestinations.PDF_VIEWER_ROUTE)
                         }
                     }
                 }
-                FileType.EPUB, FileType.MOBI, FileType.MD, FileType.TXT, FileType.HTML, FileType.FB2, FileType.DOCX, FileType.ODT, FileType.FODT -> {
+                ReaderFeatureSurface.EPUB_READER,
+                ReaderFeatureSurface.TEXT_READER -> {
                     if (uiState.selectedEpubBook != null) {
                         if (currentRoute != AppDestinations.EPUB_READER_ROUTE) {
                             navController.syncRouteTo(AppDestinations.EPUB_READER_ROUTE)
@@ -162,11 +164,6 @@ fun AppNavigation(
                     }
                 }
                 null -> {
-                    if (currentRoute == AppDestinations.PDF_VIEWER_ROUTE || currentRoute == AppDestinations.EPUB_READER_ROUTE) {
-                        navController.syncRouteTo(AppDestinations.MAIN_ROUTE)
-                    }
-                }
-                FileType.UNKNOWN -> {
                     if (currentRoute == AppDestinations.PDF_VIEWER_ROUTE || currentRoute == AppDestinations.EPUB_READER_ROUTE) {
                         navController.syncRouteTo(AppDestinations.MAIN_ROUTE)
                     }

@@ -14,6 +14,14 @@ class FileCapabilitiesTest {
             PDF_VIEWER_FILE_TYPES + EPUB_READER_FILE_TYPES,
             SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID)
         )
+        assertEquals(
+            PDF_VIEWER_FILE_TYPES,
+            SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID, ReaderFeatureSurface.PDF_VIEWER)
+        )
+        assertEquals(
+            EPUB_READER_FILE_TYPES,
+            SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID, ReaderFeatureSurface.EPUB_READER)
+        )
         assertFalse(FileType.UNKNOWN in SharedFileCapabilities.knownFileTypes)
         assertFalse(FileType.UNKNOWN in SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID))
         assertNull(SharedFileCapabilities.primaryExtensionFor(FileType.UNKNOWN))
@@ -41,6 +49,7 @@ class FileCapabilitiesTest {
                 FileType.CBR,
                 FileType.CB7,
                 FileType.DOCX,
+                FileType.PPTX,
                 FileType.ODT,
                 FileType.FODT
             ),
@@ -62,7 +71,10 @@ class FileCapabilitiesTest {
             ReaderFeatureSurface.PDF_VIEWER,
             SharedFileCapabilities.surfaceFor(FileType.PPTX, ReaderPlatform.ANDROID)
         )
-        assertNull(SharedFileCapabilities.surfaceFor(FileType.PPTX, ReaderPlatform.DESKTOP))
+        assertEquals(
+            ReaderFeatureSurface.PDF_VIEWER,
+            SharedFileCapabilities.surfaceFor(FileType.PPTX, ReaderPlatform.DESKTOP)
+        )
         assertEquals(
             ReaderFeatureSurface.TEXT_READER,
             SharedFileCapabilities.surfaceFor(FileType.MD, ReaderPlatform.DESKTOP)
@@ -130,6 +142,6 @@ class FileCapabilitiesTest {
 
     @Test
     fun `desktop parity gaps list Android readable formats not yet available on desktop`() {
-        assertEquals(listOf(FileType.PPTX), SharedFileCapabilities.desktopParityGaps())
+        assertEquals(emptyList(), SharedFileCapabilities.desktopParityGaps())
     }
 }

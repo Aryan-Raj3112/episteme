@@ -31,6 +31,7 @@ data class DesktopPdfDocument(
     val title: String,
     val pageCount: Int,
     val pageSizes: List<DesktopPdfPageSize>,
+    internal val handleId: Long,
     val formatLabel: String = "PDF",
     val toc: List<PdfTocEntry> = emptyList(),
     private val initialEmbeddedAnnotations: List<SharedPdfEmbeddedAnnotation> = emptyList()
@@ -86,7 +87,7 @@ data class DesktopPdfDocument(
     }
 
     fun close() {
-        DesktopPdfium.closeDocument(path)
+        DesktopPdfium.closeDocument(this)
     }
 }
 
@@ -158,8 +159,10 @@ object DesktopPdfium {
     }
 
     private var initialized = false
-    private val openDocuments = LinkedHashMap<String, DesktopOpenPdfDocument>()
-    private val openComicDocuments = LinkedHashMap<String, DesktopComicDocument>()
+    private var nextHandleId = 0L
+    private val openDocuments = LinkedHashMap<Long, DesktopOpenPdfDocument>()
+    private val openComicDocuments = LinkedHashMap<Long, DesktopComicDocument>()
+    private val openPptxDocuments = LinkedHashMap<Long, DesktopPptxDocument>()
 
     fun isAvailable(): Boolean = pdfiumDll.exists()
 
@@ -226,8 +229,9 @@ object DesktopPdfium {
         val startedAt = System.currentTimeMillis()
         val loadedDocument = loadDocument(file, password)
         val document = loadedDocument.pointer
+        val handleId = nextDocumentHandleId()
         closeDocument(file.absolutePath)
-        openDocuments[file.absolutePath] = loadedDocument
+        openDocuments[handleId] = loadedDocument.copy(path = file.absolutePath)
 
         try {
             val pageCount = api.FPDF_GetPageCount(document)
@@ -265,12 +269,13 @@ object DesktopPdfium {
                 pageCount = pageCount,
                 pageSizes = pageSizes,
                 toc = toc,
+                handleId = handleId,
                 initialEmbeddedAnnotations = embeddedAnnotations
             )
             logPdfiumOpen("open_complete elapsedMs=${System.currentTimeMillis() - startedAt}")
             return result
         } catch (throwable: Throwable) {
-            openDocuments.remove(file.absolutePath)
+            openDocuments.remove(handleId)
             api.FPDF_CloseDocument(document)
             throw throwable
         }
@@ -280,8 +285,9 @@ object DesktopPdfium {
     fun loadComic(file: File, type: FileType): DesktopPdfDocument {
         val startedAt = System.currentTimeMillis()
         val comic = DesktopComicArchive.load(file, type)
+        val handleId = nextDocumentHandleId()
         closeDocument(file.absolutePath)
-        openComicDocuments[file.absolutePath] = comic
+        openComicDocuments[handleId] = comic
         logPdfiumOpen(
             "comic_open_complete type=${type.name} pages=${comic.pageCount} " +
                 "elapsedMs=${System.currentTimeMillis() - startedAt}"
@@ -291,7 +297,29 @@ object DesktopPdfium {
             title = comic.title,
             pageCount = comic.pageCount,
             pageSizes = comic.pageSizes,
-            formatLabel = type.name
+            formatLabel = type.name,
+            handleId = handleId
+        )
+    }
+
+    @Synchronized
+    fun loadPptx(file: File): DesktopPdfDocument {
+        val startedAt = System.currentTimeMillis()
+        val pptx = DesktopPptxDocuments.load(file)
+        val handleId = nextDocumentHandleId()
+        closeDocument(file.absolutePath)
+        openPptxDocuments[handleId] = pptx
+        logPdfiumOpen(
+            "pptx_open_complete pages=${pptx.pageCount} " +
+                "elapsedMs=${System.currentTimeMillis() - startedAt}"
+        )
+        return DesktopPdfDocument(
+            path = file.absolutePath,
+            title = pptx.title,
+            pageCount = pptx.pageCount,
+            pageSizes = pptx.pageSizes,
+            formatLabel = "PPTX",
+            handleId = handleId
         )
     }
 
@@ -304,8 +332,9 @@ object DesktopPdfium {
     ): DesktopPdfDocument {
         val startedAt = System.currentTimeMillis()
         val comic = DesktopComicArchive.loadOpdsStream(path, title, reference, catalog)
+        val handleId = nextDocumentHandleId()
         closeDocument(path)
-        openComicDocuments[path] = comic
+        openComicDocuments[handleId] = comic
         logPdfiumOpen(
             "opds_stream_open_complete pages=${comic.pageCount} " +
                 "elapsedMs=${System.currentTimeMillis() - startedAt}"
@@ -315,18 +344,23 @@ object DesktopPdfium {
             title = title,
             pageCount = comic.pageCount,
             pageSizes = comic.pageSizes,
-            formatLabel = "OPDS"
+            formatLabel = "OPDS",
+            handleId = handleId
         )
     }
 
     fun loadEmbeddedAnnotations(document: DesktopPdfDocument): List<SharedPdfEmbeddedAnnotation> {
-        if (synchronized(this) { openComicDocuments.containsKey(document.path) }) return emptyList()
+        if (synchronized(this) {
+            openComicDocuments.containsKey(document.handleId) || openPptxDocuments.containsKey(document.handleId)
+        }) return emptyList()
         val startedAt = System.currentTimeMillis()
         val annotations = mutableListOf<SharedPdfEmbeddedAnnotation>()
         for ((pageIndex, pageSize) in document.pageSizes.withIndex()) {
             val pageAnnotations = synchronized(this) {
-                if (openComicDocuments.containsKey(document.path)) return annotations
-                val nativeDocument = openDocuments[document.path]?.pointer ?: return annotations
+                if (openComicDocuments.containsKey(document.handleId) || openPptxDocuments.containsKey(document.handleId)) {
+                    return annotations
+                }
+                val nativeDocument = openDocuments[document.handleId]?.pointer ?: return annotations
                 extractEmbeddedAnnotationsForPage(nativeDocument, pageIndex, pageSize)
             }
             annotations += pageAnnotations
@@ -351,8 +385,45 @@ object DesktopPdfium {
 
     @Synchronized
     fun closeDocument(path: String) {
-        openDocuments.remove(path)?.let { api.FPDF_CloseDocument(it.pointer) }
-        openComicDocuments.remove(path)?.close()
+        val pdfHandleIds = openDocuments
+            .filterValues { it.path == path }
+            .keys
+            .toList()
+        val comicHandleIds = openComicDocuments
+            .filterValues { it.path == path }
+            .keys
+            .toList()
+        val pptxHandleIds = openPptxDocuments
+            .filterValues { it.path == path }
+            .keys
+            .toList()
+        pdfHandleIds.forEach(::closePdfDocumentHandle)
+        comicHandleIds.forEach(::closeComicDocumentHandle)
+        pptxHandleIds.forEach(::closePptxDocumentHandle)
+    }
+
+    @Synchronized
+    fun closeDocument(document: DesktopPdfDocument) {
+        closePdfDocumentHandle(document.handleId)
+        closeComicDocumentHandle(document.handleId)
+        closePptxDocumentHandle(document.handleId)
+    }
+
+    private fun nextDocumentHandleId(): Long {
+        nextHandleId += 1
+        return nextHandleId
+    }
+
+    private fun closePdfDocumentHandle(handleId: Long) {
+        openDocuments.remove(handleId)?.let { api.FPDF_CloseDocument(it.pointer) }
+    }
+
+    private fun closeComicDocumentHandle(handleId: Long) {
+        openComicDocuments.remove(handleId)?.close()
+    }
+
+    private fun closePptxDocumentHandle(handleId: Long) {
+        openPptxDocuments.remove(handleId)?.close()
     }
 
     fun indexSearchPages(
@@ -388,16 +459,18 @@ object DesktopPdfium {
 
     @Synchronized
     fun loadTextOnlyPage(document: DesktopPdfDocument, pageIndex: Int): String {
-        if (openComicDocuments.containsKey(document.path)) return ""
-        val nativeDocument = openDocuments[document.path]?.pointer ?: return ""
+        if (openComicDocuments.containsKey(document.handleId)) return ""
+        openPptxDocuments[document.handleId]?.let { return it.textOnlyPage(pageIndex) }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: return ""
         if (document.pageSizes.getOrNull(pageIndex) == null) return ""
         return extractPageText(nativeDocument, pageIndex)
     }
 
     @Synchronized
     fun loadTextPageData(document: DesktopPdfDocument, pageIndex: Int): DesktopPdfTextPageData {
-        if (openComicDocuments.containsKey(document.path)) return DesktopPdfTextPageData()
-        val nativeDocument = openDocuments[document.path]?.pointer ?: return DesktopPdfTextPageData()
+        if (openComicDocuments.containsKey(document.handleId)) return DesktopPdfTextPageData()
+        openPptxDocuments[document.handleId]?.let { return it.textPageData(pageIndex) }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: return DesktopPdfTextPageData()
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: return DesktopPdfTextPageData()
         return extractPageTextData(nativeDocument, pageIndex, pageSize)
     }
@@ -415,8 +488,11 @@ object DesktopPdfium {
         viewportWidth: Int? = null,
         viewportHeight: Int? = null
     ): DesktopPdfLinkTarget? {
-        if (openComicDocuments.containsKey(document.path)) return null
-        val nativeDocument = openDocuments[document.path]?.pointer ?: run {
+        if (openComicDocuments.containsKey(document.handleId)) return null
+        openPptxDocuments[document.handleId]?.let { pptx ->
+            return pptx.linkAt(pageIndex = pageIndex, normalizedX = normalizedX, normalizedY = normalizedY)
+        }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: run {
             logPdfiumLink("hit_test_skipped reason=document_not_open page=${pageIndex + 1}")
             return null
         }
@@ -459,7 +535,7 @@ object DesktopPdfium {
     ): DesktopPdfPageRender {
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
-        openComicDocuments[document.path]?.let { comic ->
+        openComicDocuments[document.handleId]?.let { comic ->
             val image = comic.renderPageBufferedImage(pageIndex, safeScale)
             return DesktopPdfPageRender(
                 image = image.toComposeImageBitmap(),
@@ -467,7 +543,15 @@ object DesktopPdfium {
                 height = image.height
             )
         }
-        val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
+        openPptxDocuments[document.handleId]?.let { pptx ->
+            val image = pptx.renderPageBufferedImage(pageIndex, safeScale)
+            return DesktopPdfPageRender(
+                image = image.toComposeImageBitmap(),
+                width = image.width,
+                height = image.height
+            )
+        }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: error("PDF document is not open.")
         val width = (pageSize.width * safeScale).roundToInt().coerceAtLeast(1)
         val height = (pageSize.height * safeScale).roundToInt().coerceAtLeast(1)
         val stride = width * 4
@@ -503,10 +587,13 @@ object DesktopPdfium {
     ): BufferedImage {
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: error("Invalid PDF page index $pageIndex.")
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
-        openComicDocuments[document.path]?.let { comic ->
+        openComicDocuments[document.handleId]?.let { comic ->
             return comic.renderPageBufferedImage(pageIndex, safeScale)
         }
-        val nativeDocument = openDocuments[document.path]?.pointer ?: error("PDF document is not open.")
+        openPptxDocuments[document.handleId]?.let { pptx ->
+            return pptx.renderPageBufferedImage(pageIndex, safeScale)
+        }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: error("PDF document is not open.")
         val width = (pageSize.width * safeScale).roundToInt().coerceAtLeast(1)
         val height = (pageSize.height * safeScale).roundToInt().coerceAtLeast(1)
         val stride = width * 4
@@ -539,7 +626,10 @@ object DesktopPdfium {
         viewportHeight: Int? = null,
         tolerance: Float = 0.006f
     ): Int? {
-        val nativeDocument = openDocuments[document.path]?.pointer ?: return null
+        openPptxDocuments[document.handleId]?.let { pptx ->
+            return pptx.charIndexAt(pageIndex, normalizedX, normalizedY, tolerance)
+        }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: return null
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: return null
         val viewport = pageSize.normalizedViewport(viewportWidth, viewportHeight)
         return runCatching {
@@ -575,7 +665,10 @@ object DesktopPdfium {
         viewportWidth: Int? = null,
         viewportHeight: Int? = null
     ): List<DesktopPdfTextRect> {
-        val nativeDocument = openDocuments[document.path]?.pointer ?: return emptyList()
+        openPptxDocuments[document.handleId]?.let { pptx ->
+            return pptx.textRectsForRange(pageIndex, startIndex, endIndex)
+        }
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: return emptyList()
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: return emptyList()
         val viewport = pageSize.normalizedViewport(viewportWidth, viewportHeight)
         val first = minOf(startIndex, endIndex).coerceAtLeast(0)
@@ -1177,7 +1270,8 @@ object DesktopPdfium {
 
     private data class DesktopOpenPdfDocument(
         val pointer: Pointer,
-        val backingMemory: Memory? = null
+        val backingMemory: Memory? = null,
+        val path: String = ""
     )
 
     private class PointerResource(

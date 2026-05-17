@@ -8,19 +8,17 @@ enum class FileType {
     PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX, ODT, FODT, PPTX, UNKNOWN
 }
 
-val PDF_VIEWER_FILE_TYPES = setOf(FileType.PDF, FileType.CBZ, FileType.CBR, FileType.CB7, FileType.PPTX)
+val PDF_VIEWER_FILE_TYPES: Set<FileType>
+    get() = SharedFileCapabilities.readableTypesFor(
+        ReaderPlatform.ANDROID,
+        ReaderFeatureSurface.PDF_VIEWER
+    )
 
-val EPUB_READER_FILE_TYPES = setOf(
-    FileType.EPUB,
-    FileType.MOBI,
-    FileType.MD,
-    FileType.TXT,
-    FileType.HTML,
-    FileType.FB2,
-    FileType.DOCX,
-    FileType.ODT,
-    FileType.FODT
-)
+val EPUB_READER_FILE_TYPES: Set<FileType>
+    get() = SharedFileCapabilities.readableTypesFor(
+        ReaderPlatform.ANDROID,
+        ReaderFeatureSurface.EPUB_READER
+    )
 
 enum class AddBooksSource {
     UNSHELVED,

@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
 
@@ -17,6 +18,10 @@ internal val ANDROID_READABLE_FILE_TYPES = SharedFileCapabilities.readableTypesF
 internal val ANDROID_SYNCABLE_FILE_TYPES = SharedFileCapabilities.syncableTypesFor(ReaderPlatform.ANDROID)
 internal val PDF_VIEWER_FILE_TYPES = com.aryan.reader.shared.PDF_VIEWER_FILE_TYPES
 internal val EPUB_READER_FILE_TYPES = com.aryan.reader.shared.EPUB_READER_FILE_TYPES
+
+internal fun FileType.readerSurfaceOnAndroid(): ReaderFeatureSurface? {
+    return SharedFileCapabilities.surfaceFor(this, ReaderPlatform.ANDROID)
+}
 
 data class Shelf(
     val id: String,
