@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -96,6 +97,7 @@ fun ReaderWorkspaceShell(
     onShareAction: (() -> Unit)? = null,
     onSaveCopyAction: (() -> Unit)? = null,
     onPrintAction: (() -> Unit)? = null,
+    onTextViewAction: (() -> Unit)? = null,
     topSearchBar: (@Composable () -> Unit)? = null,
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
@@ -301,6 +303,7 @@ fun ReaderWorkspaceShell(
                                     onShareAction = onShareAction,
                                     onSaveCopyAction = onSaveCopyAction,
                                     onPrintAction = onPrintAction,
+                                    onTextViewAction = onTextViewAction,
                                     onChromeHoverChange = ::updateChromeHovered,
                                     onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                     bottomBar = {}
@@ -341,6 +344,7 @@ fun ReaderWorkspaceShell(
                                     onShareAction = onShareAction,
                                     onSaveCopyAction = onSaveCopyAction,
                                     onPrintAction = onPrintAction,
+                                    onTextViewAction = onTextViewAction,
                                     onChromeHoverChange = ::updateChromeHovered,
                                     onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                     bottomBar = {
@@ -381,6 +385,7 @@ fun ReaderWorkspaceShell(
                         onShareAction = onShareAction,
                         onSaveCopyAction = onSaveCopyAction,
                         onPrintAction = onPrintAction,
+                        onTextViewAction = onTextViewAction,
                         onChromeHoverChange = ::updateChromeHovered,
                         onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                         bottomBar = {
@@ -573,6 +578,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     onShareAction: (() -> Unit)?,
     onSaveCopyAction: (() -> Unit)?,
     onPrintAction: (() -> Unit)?,
+    onTextViewAction: (() -> Unit)?,
     onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
     onToggleFullscreen: (() -> Unit)?,
     bottomBar: @Composable () -> Unit
@@ -623,6 +629,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
                 onShareAction = onShareAction,
                 onSaveCopyAction = onSaveCopyAction,
                 onPrintAction = onPrintAction,
+                onTextViewAction = onTextViewAction,
                 onChromeHoverChange = onChromeHoverChange,
                 onToggleFullscreen = onToggleFullscreen
             )
@@ -695,6 +702,7 @@ private fun ReaderWorkspaceTopChrome(
     onShareAction: (() -> Unit)?,
     onSaveCopyAction: (() -> Unit)?,
     onPrintAction: (() -> Unit)?,
+    onTextViewAction: (() -> Unit)?,
     onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
     onToggleFullscreen: (() -> Unit)?
 ) {
@@ -770,6 +778,30 @@ private fun ReaderWorkspaceTopChrome(
                                     onShareAction()
                                 },
                                 leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) }
+                            )
+                        }
+                        if (
+                            (fileActions.canGenerateTextView ||
+                                fileActions.hasGeneratedTextView ||
+                                fileActions.isGeneratingTextView) &&
+                            onTextViewAction != null
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        when {
+                                            fileActions.isGeneratingTextView -> "Generating Text View..."
+                                            fileActions.hasGeneratedTextView -> "Open Text View"
+                                            else -> "Generate Text View"
+                                        }
+                                    )
+                                },
+                                enabled = !fileActions.isGeneratingTextView,
+                                onClick = {
+                                    fileActionsExpanded = false
+                                    onTextViewAction()
+                                },
+                                leadingIcon = { Icon(Icons.Default.TextFields, contentDescription = null) }
                             )
                         }
                         if (fileActions.canSaveCopy && onSaveCopyAction != null) {

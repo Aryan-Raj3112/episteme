@@ -49,12 +49,14 @@ internal class DesktopCloudSync(
         var downloadedBooks = 0
 
         val remoteBooks = firestoreRepository.getAllBooks(input.userId, input.idToken)
+            .filterNot { isDesktopPdfReflowBookId(it.bookId) }
             .filterNot { SharedFileCapabilities.isManualOnlyReaderFileName(it.displayName) }
         val remoteShelves = firestoreRepository.getAllShelves(input.userId, input.idToken)
         val remoteFonts = firestoreRepository.getAllFonts(input.userId, input.idToken)
         var driveFiles = driveRepository.getFiles(input.driveAccessToken).associateBy { it.name }
 
         val localBooks = state.rawLibraryBooks
+            .filterNot { isDesktopPdfReflowBookId(it.id) }
             .filter { input.includeFolderBooks || it.sourceFolder == null }
             .filterNot { it.path?.startsWith("opds-pse") == true }
             .filterNot { SharedFileCapabilities.isManualOnlyReaderFileName(it.displayName) }
@@ -124,6 +126,7 @@ internal class DesktopCloudSync(
 
         driveFiles = driveRepository.getFiles(input.driveAccessToken).associateBy { it.name }
         state.rawLibraryBooks
+            .filterNot { isDesktopPdfReflowBookId(it.id) }
             .filter { it.sourceFolder == null }
             .filterNot { it.path?.startsWith("opds-pse") == true }
             .filterNot { SharedFileCapabilities.isManualOnlyReaderFileName(it.displayName) }
@@ -153,7 +156,9 @@ internal class DesktopCloudSync(
             deviceId = input.deviceId,
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs,
-            syncableBookIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id },
+            syncableBookIds = state.rawLibraryBooks
+                .filterNot { isDesktopPdfReflowBookId(it.id) }
+                .mapTo(mutableSetOf()) { it.id },
             remoteShelves = remoteShelves
         )
         shelfRecords = shelfSync.records
@@ -182,6 +187,7 @@ internal class DesktopCloudSync(
         book: BookItem,
         uploadContent: Boolean
     ): BookItem? {
+        if (isDesktopPdfReflowBookId(book.id)) return null
         if (book.sourceFolder != null) return null
         if (book.path?.startsWith("opds-pse") == true) return null
         if (SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)) return null
@@ -224,6 +230,7 @@ internal class DesktopCloudSync(
     ) {
         val driveFiles = driveRepository.getFiles(accessToken).associateBy { it.name }
         books
+            .filterNot { isDesktopPdfReflowBookId(it.id) }
             .filter { it.sourceFolder == null }
             .filterNot { it.path?.startsWith("opds-pse") == true }
             .filterNot { SharedFileCapabilities.isManualOnlyReaderFileName(it.displayName) }

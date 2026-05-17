@@ -142,6 +142,33 @@ class SharedJvmBookLoaderTest {
     }
 
     @Test
+    fun `html loader splits generated pdf reflow page breaks`() = withTempDir { dir ->
+        val file = File(dir, "source_reflow.html").apply {
+            writeText(
+                """
+                <!DOCTYPE html>
+                <html>
+                <head><title>Source (Reflow)</title></head>
+                <body>
+                <section><p class="page-marker">-- Page 1 --</p><p>First page text.</p></section>
+                <page-break></page-break>
+                <section><p class="page-marker">-- Page 2 --</p><p>Second page text.</p></section>
+                </body>
+                </html>
+                """.trimIndent()
+            )
+        }
+
+        val book = SharedJvmBookLoader.load(file, FileType.HTML)
+
+        assertEquals("Source (Reflow)", book.title)
+        assertEquals(2, book.chapters.size)
+        assertTrue(book.chapters[0].plainText.contains("First page text."))
+        assertEquals("Page 2", book.chapters[1].title)
+        assertTrue(book.chapters[1].plainText.contains("Second page text."))
+    }
+
+    @Test
     fun `epub loader keeps embedded images in semantic pagination blocks`() = withTempDir { dir ->
         val file = File(dir, "image-book.epub")
         writeZip(file) {

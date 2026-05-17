@@ -66,14 +66,25 @@ internal fun SharedLibraryStateProjector.projectDesktopLibraryState(
     shelfRecords: List<ShelfRecord>,
     shelfRefs: List<BookShelfRef>
 ): SharedReaderScreenState {
-    return project(
+    val allBooks = state.rawLibraryBooks
+    val visibleBooks = allBooks.filterNot { isDesktopPdfReflowBookId(it.id) }
+    val projected = project(
         SharedLibraryProjectionInput(
             state = state,
-            booksFromStore = state.rawLibraryBooks,
+            booksFromStore = visibleBooks,
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs,
-            tags = state.allTags.ifEmpty { state.rawLibraryBooks.collectTags() }
+            tags = state.allTags.ifEmpty { visibleBooks.collectTags() }
         )
+    )
+    val booksById = allBooks.associateBy { it.id }
+    val openTabs = state.openTabIds.mapNotNull { booksById[it] }
+    val openTabIds = openTabs.map { it.id }
+    return projected.copy(
+        rawLibraryBooks = allBooks,
+        openTabs = openTabs,
+        openTabIds = openTabIds,
+        activeTabBookId = state.activeTabBookId?.takeIf { it in openTabIds }
     )
 }
 

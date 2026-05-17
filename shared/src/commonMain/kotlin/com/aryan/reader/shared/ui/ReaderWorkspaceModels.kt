@@ -58,10 +58,18 @@ data class ReaderWorkspaceChromeModel(
 data class ReaderWorkspaceFileActionState(
     val canShare: Boolean = false,
     val canSaveCopy: Boolean = false,
-    val canPrint: Boolean = false
+    val canPrint: Boolean = false,
+    val canGenerateTextView: Boolean = false,
+    val hasGeneratedTextView: Boolean = false,
+    val isGeneratingTextView: Boolean = false
 ) {
     val hasAnyAction: Boolean
-        get() = canShare || canSaveCopy || canPrint
+        get() = canShare ||
+            canSaveCopy ||
+            canPrint ||
+            canGenerateTextView ||
+            hasGeneratedTextView ||
+            isGeneratingTextView
 }
 
 data class ReaderWorkspacePanelDefaults(

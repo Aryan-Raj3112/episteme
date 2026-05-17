@@ -177,7 +177,10 @@ internal fun PdfReaderScreen(
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard,
     onReaderAiEntitlementRequired: (ReaderAiFeature, String) -> Boolean = { _, _ -> false },
     onCloudTtsEntitlementRequired: () -> Boolean = { false },
-    onPaidFeatureError: (String?) -> Unit = {}
+    onPaidFeatureError: (String?) -> Unit = {},
+    hasReflowFile: Boolean = false,
+    isReflowingThisBook: Boolean = false,
+    onReflowAction: ((pageIndex: Int) -> Unit)? = null
 ) {
     val documentHandleId = document.handleId
     val zoomSpec = remember { DesktopPdfZoomSpec }
@@ -817,10 +820,13 @@ internal fun PdfReaderScreen(
     val localPdfFile = remember(document.path, document.formatLabel) {
         File(document.path).takeIf { document.formatLabel == "PDF" && it.isFile }
     }
-    val pdfFileActions = remember(localPdfFile) {
+    val pdfFileActions = remember(localPdfFile, hasReflowFile, isReflowingThisBook, onReflowAction) {
         ReaderWorkspaceFileActionState(
             canSaveCopy = localPdfFile != null,
-            canPrint = localPdfFile != null
+            canPrint = localPdfFile != null,
+            canGenerateTextView = localPdfFile != null && onReflowAction != null,
+            hasGeneratedTextView = hasReflowFile,
+            isGeneratingTextView = isReflowingThisBook
         )
     }
     val sidecarsReadyForExport = arePdfAnnotationsLoaded && isRichTextLoaded
@@ -2037,7 +2043,7 @@ internal fun PdfReaderScreen(
             selectedTool != PdfInkTool.NONE ||
             isTextSelectionMode,
         richTextEditing = isRichTextMode,
-        loading = isRendering || isSearchIndexing || isPdfFileActionLoading,
+        loading = isRendering || isSearchIndexing || isPdfFileActionLoading || isReflowingThisBook,
         errorMessage = renderError,
         extrasState = pdfExtrasState,
         aiAvailable = featurePolicy.aiAndCloud && aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
@@ -2143,6 +2149,7 @@ internal fun PdfReaderScreen(
         fileActions = pdfFileActions,
         onSaveCopyAction = requestSaveCopy,
         onPrintAction = requestPrint,
+        onTextViewAction = onReflowAction?.let { action -> { action(pdfState.pageIndex) } },
         topSearchBar = if (isPdfSearchActive) {
             {
                 DesktopPdfSearchTopBar(

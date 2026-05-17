@@ -272,6 +272,7 @@ internal fun EpistemeDesktopApp(
         mutableStateOf(initialLibrarySnapshot.customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() })
     }
     var activeReaderBookId by remember { mutableStateOf<String?>(null) }
+    var reflowingPdfBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val desktopEpubPaginationCache = remember { SharedEpubPaginationCache() }
     var epubPaginationCacheGeneration by remember { mutableStateOf(0) }
     LaunchedEffect(webViewRuntimeRequested) {
@@ -675,6 +676,7 @@ internal fun EpistemeDesktopApp(
 
     fun queueCloudBookMetadataSync(book: BookItem, uploadContent: Boolean = false) {
         if (!state.isSyncEnabled) return
+        if (isDesktopPdfReflowBookId(book.id)) return
         if (book.sourceFolder != null) return
         if (book.path?.startsWith("opds-pse") == true) return
         if (SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)) return
@@ -684,6 +686,7 @@ internal fun EpistemeDesktopApp(
             if (!uploadContent) delay(1_200L)
             val credentials = desktopCloudSyncCredentials(showBanner = false) ?: return@launch
             val latestBook = state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: return@launch
+            if (isDesktopPdfReflowBookId(latestBook.id)) return@launch
             if (latestBook.sourceFolder != null) return@launch
 
             if (uploadContent) {
@@ -2178,6 +2181,79 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun requestPdfReflow(
+        sourceBook: BookItem,
+        document: DesktopPdfDocument,
+        pageIndex: Int
+    ) {
+        if (document.formatLabel != "PDF") return
+        val reflowBookId = desktopPdfReflowBookId(sourceBook.id)
+        val existingReflowBook = state.rawLibraryBooks.firstOrNull { book ->
+            book.id == reflowBookId &&
+                book.path?.takeIf { it.isNotBlank() }?.let { File(it).isFile } == true
+        }
+        if (existingReflowBook != null) {
+            openReader(
+                existingReflowBook.copy(lastPageIndex = pageIndex),
+                force = true
+            )
+            return
+        }
+        if (sourceBook.id in reflowingPdfBookIds) return
+
+        reflowingPdfBookIds = reflowingPdfBookIds + sourceBook.id
+        updateState(state.withBanner("Generating Text View..."))
+        scope.launch {
+            try {
+                val originalTitle = sourceBook.title?.takeIf { it.isNotBlank() }
+                    ?: sourceBook.displayName.substringBeforeLast('.', sourceBook.displayName)
+                        .takeIf { it.isNotBlank() }
+                    ?: document.title
+                val destination = desktopBookImporter.createBookFile(
+                    desktopPdfReflowFileName(sourceBook.id, originalTitle)
+                )
+                val generated = withContext(Dispatchers.IO) {
+                    DesktopPdfReflowGenerator.generateHtmlFile(
+                        document = document,
+                        destFile = destination,
+                        startPage = 1,
+                        onProgress = {}
+                    )
+                }
+                if (!generated || !destination.isFile || destination.length() <= 0L) {
+                    runCatching { destination.delete() }
+                    updateState(state.withBanner("Text view generation failed.", isError = true))
+                    return@launch
+                }
+
+                val reflowBook = desktopPdfReflowBookItem(
+                    sourceBook = sourceBook,
+                    generatedFile = destination,
+                    nowMillis = System.currentTimeMillis(),
+                    initialPageIndex = pageIndex
+                )
+                updateState(
+                    state.copy(
+                        rawLibraryBooks = listOf(reflowBook) + state.rawLibraryBooks.filterNot { it.id == reflowBook.id }
+                    ).withBanner("Generated Text View.")
+                )
+                openReader(
+                    reflowBook,
+                    force = true
+                )
+            } catch (error: Throwable) {
+                updateState(
+                    state.withBanner(
+                        error.message ?: "Text view generation failed.",
+                        isError = true
+                    )
+                )
+            } finally {
+                reflowingPdfBookIds = reflowingPdfBookIds - sourceBook.id
+            }
+        }
+    }
+
     fun removeFolder(shelf: Shelf) {
         val removedBookIds = shelf.books.mapTo(mutableSetOf()) { it.id }
         val wasReadingRemovedBook = activeReaderBookId in removedBookIds
@@ -2805,6 +2881,15 @@ internal fun EpistemeDesktopApp(
                                     }
                                 )
                             } else if (pdfDocument != null) {
+                                val activePdfBook = activeReaderBookId
+                                    ?.let { bookId -> state.rawLibraryBooks.find { it.id == bookId } }
+                                val activePdfReflowBookId = activePdfBook?.let { desktopPdfReflowBookId(it.id) }
+                                val activePdfHasReflowFile = activePdfReflowBookId?.let { reflowBookId ->
+                                    state.rawLibraryBooks.any { book ->
+                                        book.id == reflowBookId &&
+                                            book.path?.takeIf { it.isNotBlank() }?.let { File(it).isFile } == true
+                                    }
+                                } == true
                                 PdfReaderScreen(
                                     document = pdfDocument,
                                     initialPageIndex = activeReaderBookId
@@ -2865,6 +2950,11 @@ internal fun EpistemeDesktopApp(
                                     },
                                     onPaidFeatureError = { errorMessage ->
                                         desktopFeatureNoticeForError(errorMessage)?.let { desktopFeatureNotice = it }
+                                    },
+                                    hasReflowFile = activePdfHasReflowFile,
+                                    isReflowingThisBook = activePdfBook?.id?.let { it in reflowingPdfBookIds } == true,
+                                    onReflowAction = activePdfBook?.let { book ->
+                                        { pageIndex -> requestPdfReflow(book, pdfDocument, pageIndex) }
                                     }
                                 )
                             } else {

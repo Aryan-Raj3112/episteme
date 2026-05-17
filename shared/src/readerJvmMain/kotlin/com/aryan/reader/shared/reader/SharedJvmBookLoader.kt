@@ -38,6 +38,7 @@ import javax.imageio.ImageIO
 object SharedJvmBookLoader {
     private val persistentBookCache = SharedJvmBookLoadCache()
     private val loadedBookCache = SharedJvmLruMemoryCache<SharedJvmBookLoadCacheKey, SharedEpubBook>(maxEntries = 12)
+    private val htmlPageBreakRegex = Regex("(?is)<page-break\\b[^>]*>(?:\\s*</page-break>)?")
 
     fun load(
         file: File,
@@ -167,6 +168,13 @@ object SharedJvmBookLoader {
         val html = file.readTextLenient()
         val sanitized = html.sanitizeReaderHtml()
         val title = sanitized.tagText("title").ifBlank { sanitized.tagText("h1") }.ifBlank { file.nameWithoutExtension }
+        val pageChapters = sanitized.splitHtmlPageBreakChapters(title)
+        if (pageChapters.size > 1) {
+            return ParsedDocument(
+                title = title,
+                chapters = pageChapters
+            ).toBook(file, parseCssRules(emptyMap()))
+        }
         return SharedEpubBook(
             id = file.absolutePath,
             fileName = file.name,
@@ -1030,6 +1038,27 @@ object SharedJvmBookLoader {
                 .ifBlank { if (index == 0) fallbackTitle else "Chapter ${index + 1}" }
             ParsedChapter(
                 title = title,
+                html = chapterHtml,
+                plainText = chapterHtml.htmlToText()
+            )
+        }
+    }
+
+    private fun String.splitHtmlPageBreakChapters(fallbackTitle: String): List<ParsedChapter> {
+        if (!contains("<page-break", ignoreCase = true)) return emptyList()
+        val parts = htmlPageBreakRegex.split(this)
+            .map { it.trim() }
+            .filter { it.htmlToText().isNotBlank() }
+        if (parts.size <= 1) return emptyList()
+        return parts.mapIndexed { index, chapterHtml ->
+            ParsedChapter(
+                title = if (index == 0) {
+                    chapterHtml.tagText("h1")
+                        .ifBlank { chapterHtml.tagText("h2") }
+                        .ifBlank { fallbackTitle }
+                } else {
+                    "Page ${index + 1}"
+                },
                 html = chapterHtml,
                 plainText = chapterHtml.htmlToText()
             )

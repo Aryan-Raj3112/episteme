@@ -18,6 +18,12 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotationThreads
 import com.aryan.reader.shared.pdf.SharedPdfIndexedPage
+import com.aryan.reader.shared.pdf.SharedPdfReflowImageElement
+import com.aryan.reader.shared.pdf.SharedPdfReflowPage
+import com.aryan.reader.shared.pdf.SharedPdfReflowPageElement
+import com.aryan.reader.shared.pdf.SharedPdfReflowTextElement
+import com.aryan.reader.shared.pdf.SharedPdfReflowTextLine
+import com.aryan.reader.shared.pdf.SharedPdfReflowTextSpan
 import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
@@ -29,10 +35,13 @@ import com.sun.jna.NativeLong
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
 import com.sun.jna.ptr.PointerByReference
+import java.io.ByteArrayOutputStream
 import java.awt.image.BufferedImage
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteOrder
+import java.util.Base64
+import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 
 data class DesktopPdfDocument(
@@ -169,6 +178,8 @@ object DesktopPdfium {
     private const val FPDF_ANNOT_INK = 15
     private const val FPDF_ANNOT_FLAG_PRINT = 1 shl 2
     private const val FPDF_NO_INCREMENTAL = 1L shl 1
+    private const val FPDF_PAGEOBJ_IMAGE = 3
+    private const val FPDF_TEXT_FONT_FLAG_ITALIC = 64
 
     private val textUrlRegex = Regex("""\b(?:https?://|www\.)[^\s<>"']+""", RegexOption.IGNORE_CASE)
     private val pdfiumDll: File by lazy(::resolvePdfiumDll)
@@ -550,6 +561,26 @@ object DesktopPdfium {
         val nativeDocument = openDocuments[document.handleId]?.pointer ?: return DesktopPdfTextPageData()
         val pageSize = document.pageSizes.getOrNull(pageIndex) ?: return DesktopPdfTextPageData()
         return extractPageTextData(nativeDocument, pageIndex, pageSize)
+    }
+
+    @Synchronized
+    fun loadReflowPage(document: DesktopPdfDocument, pageIndex: Int): SharedPdfReflowPage {
+        if (document.formatLabel != "PDF") {
+            return SharedPdfReflowPage(pageNumber = pageIndex + 1, elements = emptyList())
+        }
+        val nativeDocument = openDocuments[document.handleId]?.pointer
+            ?: return SharedPdfReflowPage(pageNumber = pageIndex + 1, elements = emptyList())
+        return extractReflowPage(nativeDocument, pageIndex, pageIndex + 1)
+    }
+
+    @Synchronized
+    fun loadReflowEdgeLines(document: DesktopPdfDocument, pageIndex: Int): List<String> {
+        if (document.formatLabel != "PDF") return emptyList()
+        val nativeDocument = openDocuments[document.handleId]?.pointer ?: return emptyList()
+        return extractPageText(nativeDocument, pageIndex)
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.length > 2 }
     }
 
     fun search(document: DesktopPdfDocument, query: String): List<SharedPdfSearchResult> {
@@ -1032,6 +1063,260 @@ object DesktopPdfium {
                 }
             }
         }.getOrDefault(DesktopPdfTextPageData())
+    }
+
+    private fun extractReflowPage(document: Pointer, pageIndex: Int, pageNumber: Int): SharedPdfReflowPage {
+        return runCatching {
+            loadPage(document, pageIndex).usePointer { page ->
+                val imageElements = extractReflowImageElements(page)
+                val textPage = api.FPDFText_LoadPage(page)
+                    ?: return@usePointer SharedPdfReflowPage(
+                        pageNumber = pageNumber,
+                        elements = imageElements.sortedByDescending { it.yPos }
+                    )
+                try {
+                    val charCount = api.FPDFText_CountChars(textPage)
+                    if (charCount <= 0) {
+                        return@usePointer SharedPdfReflowPage(
+                            pageNumber = pageNumber,
+                            elements = imageElements.sortedByDescending { it.yPos }
+                        )
+                    }
+
+                    val rawText = extractText(textPage, charCount)
+                    val actualCount = minOf(charCount, rawText.length)
+                    if (actualCount <= 0) {
+                        return@usePointer SharedPdfReflowPage(
+                            pageNumber = pageNumber,
+                            elements = imageElements.sortedByDescending { it.yPos }
+                        )
+                    }
+
+                    val sizes = reflowFontSizes(textPage, actualCount)
+                    val weights = reflowFontWeights(textPage, actualCount)
+                    val flags = reflowFontFlags(textPage, actualCount)
+                    val charBoxes = reflowCharBoxes(textPage, actualCount)
+
+                    val textLines = buildReflowTextLines(
+                        rawText = rawText,
+                        actualCount = actualCount,
+                        sizes = sizes,
+                        weights = weights,
+                        flags = flags,
+                        charBoxes = charBoxes
+                    )
+                    SharedPdfReflowPage(
+                        pageNumber = pageNumber,
+                        elements = mergeReflowElements(textLines, imageElements)
+                    )
+                } finally {
+                    api.FPDFText_ClosePage(textPage)
+                }
+            }
+        }.getOrDefault(SharedPdfReflowPage(pageNumber = pageNumber, elements = emptyList()))
+    }
+
+    private fun buildReflowTextLines(
+        rawText: String,
+        actualCount: Int,
+        sizes: FloatArray,
+        weights: IntArray,
+        flags: IntArray,
+        charBoxes: FloatArray
+    ): List<SharedPdfReflowTextLine> {
+        val textLines = mutableListOf<SharedPdfReflowTextLine>()
+        val currentSpans = mutableListOf<SharedPdfReflowTextSpan>()
+        val currentSpanBuf = StringBuilder()
+        var curSize = -1f
+        var curBold = false
+        var curItalic = false
+        var lineBaseline = 0f
+
+        fun commitSpan() {
+            if (currentSpanBuf.isNotEmpty()) {
+                currentSpans.add(
+                    SharedPdfReflowTextSpan(
+                        text = currentSpanBuf.toString(),
+                        size = curSize,
+                        isBold = curBold,
+                        isItalic = curItalic
+                    )
+                )
+                currentSpanBuf.clear()
+            }
+        }
+
+        fun commitLine() {
+            commitSpan()
+            if (currentSpans.isNotEmpty()) {
+                val text = currentSpans.joinToString("") { it.text }
+                if (text.isNotBlank()) {
+                    textLines += SharedPdfReflowTextLine(
+                        spans = currentSpans.toList(),
+                        yPos = lineBaseline,
+                        charCount = text.length
+                    )
+                }
+                currentSpans.clear()
+            }
+            lineBaseline = 0f
+        }
+
+        for (index in 0 until actualCount) {
+            val char = rawText[index]
+            if (char.code == 0) continue
+
+            if (char == '\r') {
+                commitLine()
+                continue
+            }
+            if (char == '\n') {
+                if (index > 0 && rawText[index - 1] == '\r') continue
+                commitLine()
+                continue
+            }
+
+            val charToProcess = when (char) {
+                '\u00A0' -> ' '
+                '\u00AD' -> '-'
+                '\t' -> ' '
+                else -> char
+            }
+            if (char.isDesktopPdfReflowJunk()) continue
+
+            val size = sizes.getOrElse(index) { 12f }.coerceAtLeast(0f)
+            val isBold = weights.getOrElse(index) { 0 } > 600
+            val isItalic = (flags.getOrElse(index) { 0 } and FPDF_TEXT_FONT_FLAG_ITALIC) != 0
+
+            if (currentSpanBuf.isEmpty() && currentSpans.isEmpty() && !charToProcess.isWhitespace()) {
+                lineBaseline = if (index * 4 + 1 < charBoxes.size) charBoxes[index * 4 + 1] else 0f
+            }
+
+            if (currentSpanBuf.isEmpty()) {
+                curSize = size
+                curBold = isBold
+                curItalic = isItalic
+                currentSpanBuf.append(charToProcess)
+            } else if (!charToProcess.isWhitespace() && (size != curSize || isBold != curBold || isItalic != curItalic)) {
+                commitSpan()
+                curSize = size
+                curBold = isBold
+                curItalic = isItalic
+                currentSpanBuf.append(charToProcess)
+            } else {
+                currentSpanBuf.append(charToProcess)
+            }
+        }
+        commitLine()
+        return textLines
+    }
+
+    private fun mergeReflowElements(
+        textLines: List<SharedPdfReflowTextLine>,
+        imageElements: List<SharedPdfReflowImageElement>
+    ): List<SharedPdfReflowPageElement> {
+        val finalElements = mutableListOf<SharedPdfReflowPageElement>()
+        val sortedImages = imageElements.sortedByDescending { it.yPos }
+        var imageIndex = 0
+        for (line in textLines) {
+            while (imageIndex < sortedImages.size && sortedImages[imageIndex].yPos >= line.yPos) {
+                finalElements += sortedImages[imageIndex]
+                imageIndex += 1
+            }
+            finalElements += SharedPdfReflowTextElement(line)
+        }
+        while (imageIndex < sortedImages.size) {
+            finalElements += sortedImages[imageIndex]
+            imageIndex += 1
+        }
+        return finalElements
+    }
+
+    private fun reflowFontSizes(textPage: Pointer, count: Int): FloatArray {
+        return FloatArray(count) { index ->
+            runCatching { api.FPDFText_GetFontSize(textPage, index).toFloat() }
+                .getOrDefault(12f)
+        }
+    }
+
+    private fun reflowFontWeights(textPage: Pointer, count: Int): IntArray {
+        return IntArray(count) { index ->
+            runCatching { api.FPDFText_GetFontWeight(textPage, index) }
+                .getOrDefault(0)
+        }
+    }
+
+    private fun reflowFontFlags(textPage: Pointer, count: Int): IntArray {
+        return IntArray(count) { index ->
+            val flags = IntArray(1)
+            runCatching {
+                api.FPDFText_GetFontInfo(textPage, index, null, NativeLong(0), flags)
+            }
+            flags[0]
+        }
+    }
+
+    private fun reflowCharBoxes(textPage: Pointer, count: Int): FloatArray {
+        val result = FloatArray(count * 4)
+        for (index in 0 until count) {
+            val left = DoubleArray(1)
+            val right = DoubleArray(1)
+            val bottom = DoubleArray(1)
+            val top = DoubleArray(1)
+            runCatching {
+                api.FPDFText_GetCharBox(textPage, index, left, right, bottom, top)
+            }
+            result[index * 4] = left[0].toFloat()
+            result[index * 4 + 1] = bottom[0].toFloat()
+            result[index * 4 + 2] = right[0].toFloat()
+            result[index * 4 + 3] = top[0].toFloat()
+        }
+        return result
+    }
+
+    private fun extractReflowImageElements(page: Pointer): List<SharedPdfReflowImageElement> {
+        val objectCount = runCatching { api.FPDFPage_CountObjects(page) }.getOrDefault(0)
+        if (objectCount <= 0) return emptyList()
+
+        val images = mutableListOf<SharedPdfReflowImageElement>()
+        for (index in 0 until objectCount) {
+            val pageObject = runCatching { api.FPDFPage_GetObject(page, index) }.getOrNull() ?: continue
+            val objectType = runCatching { api.FPDFPageObj_GetType(pageObject) }.getOrDefault(0)
+            if (objectType != FPDF_PAGEOBJ_IMAGE) continue
+
+            val left = FloatArray(1)
+            val bottom = FloatArray(1)
+            val right = FloatArray(1)
+            val top = FloatArray(1)
+            val hasBounds = runCatching {
+                api.FPDFPageObj_GetBounds(pageObject, left, bottom, right, top)
+            }.getOrDefault(0) != 0
+            if (!hasBounds) continue
+
+            val bitmap = runCatching { api.FPDFImageObj_GetBitmap(pageObject) }.getOrNull() ?: continue
+            try {
+                val width = runCatching { api.FPDFBitmap_GetWidth(bitmap) }.getOrDefault(0)
+                val height = runCatching { api.FPDFBitmap_GetHeight(bitmap) }.getOrDefault(0)
+                val stride = runCatching { api.FPDFBitmap_GetStride(bitmap) }.getOrDefault(0)
+                val buffer = runCatching { api.FPDFBitmap_GetBuffer(bitmap) }.getOrNull()
+                if (width > 0 && height > 0 && stride > 0 && buffer != null) {
+                    val image = buffer.toDesktopReflowImage(width, height, stride)
+                    val output = ByteArrayOutputStream()
+                    if (ImageIO.write(image, "jpg", output)) {
+                        images += SharedPdfReflowImageElement(
+                            base64Data = Base64.getEncoder().encodeToString(output.toByteArray()),
+                            width = width,
+                            height = height,
+                            yPos = top[0],
+                            mimeType = "image/jpeg"
+                        )
+                    }
+                }
+            } finally {
+                runCatching { api.FPDFBitmap_Destroy(bitmap) }
+            }
+        }
+        return images
     }
 
     private fun extractText(textPage: Pointer, charCount: Int): String {
@@ -1541,6 +1826,53 @@ object DesktopPdfium {
         return image
     }
 
+    private fun Pointer.toDesktopReflowImage(width: Int, height: Int, stride: Int): BufferedImage {
+        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+        val buffer = getByteBuffer(0, stride.toLong() * height.toLong()).order(ByteOrder.LITTLE_ENDIAN)
+        val pixels = IntArray(width * height)
+        val bytesPerPixel = (stride / width.coerceAtLeast(1)).coerceAtLeast(1)
+        for (y in 0 until height) {
+            val rowStart = y * stride
+            for (x in 0 until width) {
+                val offset = x * bytesPerPixel
+                val b: Int
+                val g: Int
+                val r: Int
+                val a: Int
+                if (bytesPerPixel >= 3) {
+                    b = buffer.get(rowStart + offset).toInt() and 0xFF
+                    g = buffer.get(rowStart + offset + 1).toInt() and 0xFF
+                    r = buffer.get(rowStart + offset + 2).toInt() and 0xFF
+                    a = if (bytesPerPixel >= 4) buffer.get(rowStart + offset + 3).toInt() and 0xFF else 255
+                } else {
+                    val gray = buffer.get(rowStart + offset).toInt() and 0xFF
+                    b = gray
+                    g = gray
+                    r = gray
+                    a = 255
+                }
+                val alpha = a / 255f
+                val outR = (r * alpha + 255f * (1f - alpha)).roundToInt().coerceIn(0, 255)
+                val outG = (g * alpha + 255f * (1f - alpha)).roundToInt().coerceIn(0, 255)
+                val outB = (b * alpha + 255f * (1f - alpha)).roundToInt().coerceIn(0, 255)
+                pixels[y * width + x] = (outR shl 16) or (outG shl 8) or outB
+            }
+        }
+        image.setRGB(0, 0, width, height, pixels, 0, width)
+        return image
+    }
+
+    private fun Char.isDesktopPdfReflowJunk(): Boolean {
+        val type = Character.getType(this)
+        return code == 0xFFFE ||
+            code == 0xFFFF ||
+            code == 0xFFFD ||
+            type == Character.PRIVATE_USE.toInt() ||
+            type == Character.SURROGATE.toInt() ||
+            type == Character.UNASSIGNED.toInt() ||
+            (type == Character.CONTROL.toInt() && code > 31)
+    }
+
     private fun pdfiumLoadErrorMessage(errorCode: Int): String {
         return when (errorCode) {
             0 -> "No Pdfium error detail was reported."
@@ -1810,6 +2142,16 @@ object DesktopPdfium {
         fun FPDF_ClosePage(page: Pointer)
         fun FPDF_GetPageWidthF(page: Pointer): Float
         fun FPDF_GetPageHeightF(page: Pointer): Float
+        fun FPDFPage_CountObjects(page: Pointer): Int
+        fun FPDFPage_GetObject(page: Pointer, index: Int): Pointer?
+        fun FPDFPageObj_GetType(pageObject: Pointer): Int
+        fun FPDFPageObj_GetBounds(
+            pageObject: Pointer,
+            left: FloatArray,
+            bottom: FloatArray,
+            right: FloatArray,
+            top: FloatArray
+        ): Int
         fun FPDFPage_GetAnnotCount(page: Pointer): Int
         fun FPDFPage_GetAnnot(page: Pointer, index: Int): Pointer?
         fun FPDFPage_CreateAnnot(page: Pointer, subtype: Int): Pointer?
@@ -1847,6 +2189,11 @@ object DesktopPdfium {
         fun FPDFImageObj_SetBitmap(pages: PointerByReference, pageCount: Int, imageObject: Pointer, bitmap: Pointer): Int
         fun FPDFPage_GenerateContent(page: Pointer): Int
         fun FPDF_SaveAsCopy(document: Pointer, writer: FpdfFileWrite, flags: NativeLong): Int
+        fun FPDFImageObj_GetBitmap(imageObject: Pointer): Pointer?
+        fun FPDFBitmap_GetWidth(bitmap: Pointer): Int
+        fun FPDFBitmap_GetHeight(bitmap: Pointer): Int
+        fun FPDFBitmap_GetStride(bitmap: Pointer): Int
+        fun FPDFBitmap_GetBuffer(bitmap: Pointer): Pointer?
         fun FPDFBitmap_CreateEx(width: Int, height: Int, format: Int, firstScan: Pointer, stride: Int): Pointer?
         fun FPDFBitmap_FillRect(bitmap: Pointer, left: Int, top: Int, width: Int, height: Int, color: Int)
         fun FPDFBitmap_Destroy(bitmap: Pointer)
@@ -1866,6 +2213,15 @@ object DesktopPdfium {
         fun FPDFText_CountChars(textPage: Pointer): Int
         fun FPDFText_GetText(textPage: Pointer, startIndex: Int, count: Int, result: Pointer): Int
         fun FPDFText_GetUnicode(textPage: Pointer, index: Int): Int
+        fun FPDFText_GetFontSize(textPage: Pointer, index: Int): Double
+        fun FPDFText_GetFontWeight(textPage: Pointer, index: Int): Int
+        fun FPDFText_GetFontInfo(
+            textPage: Pointer,
+            index: Int,
+            buffer: Pointer?,
+            buflen: NativeLong,
+            flags: IntArray
+        ): NativeLong
         fun FPDFText_GetCharBox(
             textPage: Pointer,
             index: Int,
