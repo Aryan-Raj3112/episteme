@@ -109,6 +109,13 @@ import com.aryan.reader.data.CustomFontEntity
 import java.io.File
 import kotlin.math.roundToInt
 
+typealias ReaderFont = com.aryan.reader.shared.ReaderFont
+typealias ReaderTextAlign = com.aryan.reader.shared.ReaderTextAlign
+typealias SystemUiMode = com.aryan.reader.shared.SystemUiMode
+typealias PageInfoMode = com.aryan.reader.shared.PageInfoMode
+typealias PageInfoPosition = com.aryan.reader.shared.PageInfoPosition
+typealias FormatSettings = com.aryan.reader.shared.FormatSettings
+
 const val SETTINGS_PREFS_NAME = "epub_reader_settings"
 private const val TEXT_ALIGN_KEY = "reader_text_align"
 private const val FONT_SIZE_KEY = "reader_font_size"
@@ -153,50 +160,45 @@ fun loadTtsPitch(context: Context): Float {
     return prefs.getFloat(TTS_PITCH_KEY, 1.0f)
 }
 
-enum class ReaderFont(val id: String, val displayName: String, val fontFamilyName: String) {
-    ORIGINAL("original", "Original", "Original"),
-    MERRIWEATHER("merriweather", "Merriweather", "Merriweather"),
-    LATO("lato", "Lato", "Lato"),
-    LORA("lora", "Lora", "Lora"),
-    ROBOTO_MONO("roboto_mono", "Roboto Mono", "Roboto Mono"),
-    LEXEND("lexend", "Lexend", "Lexend")
-}
+val ReaderTextAlign.iconResId: Int
+    get() = when (this) {
+        ReaderTextAlign.DEFAULT,
+        ReaderTextAlign.LEFT -> R.drawable.format_align_left
+        ReaderTextAlign.RIGHT -> R.drawable.format_align_right
+        ReaderTextAlign.JUSTIFY -> R.drawable.format_align_justify
+    }
 
-enum class ReaderTextAlign(val id: String, val cssValue: String, val iconResId: Int, @StringRes val displayNameRes: Int) {
-    DEFAULT("default", "", R.drawable.format_align_left, R.string.label_default),
-    LEFT("left", "left", R.drawable.format_align_left, R.string.label_left),
-    RIGHT("right", "right", R.drawable.format_align_right, R.string.label_right),
-    JUSTIFY("justify", "justify", R.drawable.format_align_justify, R.string.label_justify)
-}
+@get:StringRes
+val ReaderTextAlign.displayNameRes: Int
+    get() = when (this) {
+        ReaderTextAlign.DEFAULT -> R.string.label_default
+        ReaderTextAlign.LEFT -> R.string.label_left
+        ReaderTextAlign.RIGHT -> R.string.label_right
+        ReaderTextAlign.JUSTIFY -> R.string.label_justify
+    }
 
-enum class SystemUiMode(val id: Int, @StringRes val titleRes: Int) {
-    DEFAULT(0, R.string.label_always_show),
-    SYNC(1, R.string.label_sync_with_menus),
-    HIDDEN(2, R.string.label_always_hide)
-}
+@get:StringRes
+val SystemUiMode.titleRes: Int
+    get() = when (this) {
+        SystemUiMode.DEFAULT -> R.string.label_always_show
+        SystemUiMode.SYNC -> R.string.label_sync_with_menus
+        SystemUiMode.HIDDEN -> R.string.label_always_hide
+    }
 
-enum class PageInfoMode(val id: Int, @StringRes val titleRes: Int) {
-    DEFAULT(0, R.string.label_always_show),
-    SYNC(1, R.string.label_sync_with_menus),
-    HIDDEN(2, R.string.label_always_hide)
-}
+@get:StringRes
+val PageInfoMode.titleRes: Int
+    get() = when (this) {
+        PageInfoMode.DEFAULT -> R.string.label_always_show
+        PageInfoMode.SYNC -> R.string.label_sync_with_menus
+        PageInfoMode.HIDDEN -> R.string.label_always_hide
+    }
 
-enum class PageInfoPosition(val id: Int, @StringRes val titleRes: Int) {
-    BOTTOM(0, R.string.label_bottom),
-    TOP(1, R.string.label_top)
-}
-
-data class FormatSettings(
-    val fontSize: Float,
-    val lineHeight: Float,
-    val paragraphGap: Float,
-    val imageSize: Float,
-    val horizontalMargin: Float,
-    val verticalMargin: Float,
-    val font: ReaderFont,
-    val customPath: String?,
-    val textAlign: ReaderTextAlign
-)
+@get:StringRes
+val PageInfoPosition.titleRes: Int
+    get() = when (this) {
+        PageInfoPosition.BOTTOM -> R.string.label_bottom
+        PageInfoPosition.TOP -> R.string.label_top
+    }
 
 private const val FORMAT_IS_LOCAL_PREFIX = "format_is_local_"
 private const val LOCAL_FONT_SIZE_PREFIX = "local_font_size_"

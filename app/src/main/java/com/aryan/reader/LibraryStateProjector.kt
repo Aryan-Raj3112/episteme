@@ -142,13 +142,13 @@ fun applyLibraryFilters(files: List<RecentFileItem>, filters: LibraryFilters): L
     return files.mapSharedResults(
         sharedApplyLibraryFilters(
             books = files.map { it.toSharedProjectionBookItem() },
-            filters = filters.toSharedLibraryFilters()
+            filters = filters
         )
     )
 }
 
 fun sortFiles(files: List<RecentFileItem>, sortOrder: SortOrder): List<RecentFileItem> {
-    return files.mapSharedResults(sharedSortBooks(files.map { it.toSharedProjectionBookItem() }, sortOrder.toSharedSortOrder()))
+    return files.mapSharedResults(sharedSortBooks(files.map { it.toSharedProjectionBookItem() }, sortOrder))
 }
 
 private fun List<RecentFileItem>.mapSharedResults(sharedBooks: List<com.aryan.reader.shared.BookItem>): List<RecentFileItem> {

@@ -29,11 +29,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epubreader.FormatSettings as AndroidFormatSettings
-import com.aryan.reader.epubreader.PageInfoMode as AndroidPageInfoMode
-import com.aryan.reader.epubreader.PageInfoPosition as AndroidPageInfoPosition
 import com.aryan.reader.epubreader.ReaderFont as AndroidReaderFont
 import com.aryan.reader.epubreader.ReaderTextAlign as AndroidReaderTextAlign
-import com.aryan.reader.epubreader.SystemUiMode as AndroidSystemUiMode
 import com.aryan.reader.epubreader.loadFormatSettings
 import com.aryan.reader.epubreader.loadPageInfoMode
 import com.aryan.reader.epubreader.loadPageInfoPosition
@@ -56,12 +53,11 @@ import com.aryan.reader.pdf.loadPdfVerticalPageGapVisible
 import com.aryan.reader.pdf.loadPdfPageNumberOverlayVisible
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
-import com.aryan.reader.shared.PageInfoMode as SharedPageInfoMode
-import com.aryan.reader.shared.PageInfoPosition as SharedPageInfoPosition
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.SharedSettingsDestination
-import com.aryan.reader.shared.SystemUiMode as SharedSystemUiMode
 import com.aryan.reader.shared.parentDestination
+import com.aryan.reader.shared.toReaderSettingsFontFamily
+import com.aryan.reader.shared.toSharedReaderTextAlign
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -438,9 +434,9 @@ private fun loadAndroidEpubReaderDefaultSettings(
         themeId = loadReaderThemeId(context),
         textureAlpha = (1f - loadGlobalTextureTransparency(context)).coerceIn(0f, 1f),
         customFontPath = format.customPath?.takeIf { it.isNotBlank() },
-        systemUiMode = loadSystemUiMode(context).toSharedSystemUiMode(),
-        pageInfoMode = loadPageInfoMode(context).toSharedPageInfoMode(),
-        pageInfoPosition = loadPageInfoPosition(context).toSharedPageInfoPosition(),
+        systemUiMode = loadSystemUiMode(context),
+        pageInfoMode = loadPageInfoMode(context),
+        pageInfoPosition = loadPageInfoPosition(context),
         seamlessChapterNavigation = loadPullToTurn(context),
         chapterTurnDragMultiplier = loadPullToTurnMultiplier(context)
     )
@@ -453,7 +449,7 @@ private fun loadAndroidPdfReaderDefaultSettings(
     val base = ReaderSettings(
         themeId = loadPdfThemeId(context),
         textureAlpha = (1f - loadGlobalTextureTransparency(context)).coerceIn(0f, 1f),
-        systemUiMode = loadPdfSystemUiMode(context).toSharedSystemUiMode(),
+        systemUiMode = loadPdfSystemUiMode(context),
         pdfVerticalPageGapVisible = loadPdfVerticalPageGapVisible(context),
         pdfPageNumberOverlayVisible = loadPdfPageNumberOverlayVisible(context)
     )
@@ -476,9 +472,9 @@ private fun saveAndroidEpubReaderDefaultSettings(
         customFontPath = settings.customFontPath,
         textAlign = settings.textAlign.toAndroidTextAlign()
     )
-    saveSystemUiMode(context, settings.systemUiMode.toAndroidSystemUiMode())
-    savePageInfoMode(context, settings.pageInfoMode.toAndroidPageInfoMode())
-    savePageInfoPosition(context, settings.pageInfoPosition.toAndroidPageInfoPosition())
+    saveSystemUiMode(context, settings.systemUiMode)
+    savePageInfoMode(context, settings.pageInfoMode)
+    savePageInfoPosition(context, settings.pageInfoPosition)
     savePullToTurn(context, settings.seamlessChapterNavigation)
     savePullToTurnMultiplier(context, settings.chapterTurnDragMultiplier)
     saveReaderThemeId(context, settings.themeId ?: "system")
@@ -489,7 +485,7 @@ private fun saveAndroidPdfReaderDefaultSettings(
     context: Context,
     settings: ReaderSettings
 ) {
-    savePdfSystemUiMode(context, settings.systemUiMode.toAndroidSystemUiMode())
+    savePdfSystemUiMode(context, settings.systemUiMode)
     savePdfThemeId(context, settings.themeId ?: "no_theme")
     savePdfVerticalPageGapVisible(context, settings.pdfVerticalPageGapVisible)
     savePdfPageNumberOverlayVisible(context, settings.pdfPageNumberOverlayVisible)
@@ -514,23 +510,7 @@ private fun List<CustomFontEntity>.toSharedCustomFontItems(): List<CustomFontIte
 
 private fun AndroidFormatSettings.toSharedFontFamilyName(): String {
     return customPath?.substringAfterLast('/')?.substringAfterLast('\\')?.takeIf { it.isNotBlank() }
-        ?: when (font) {
-            AndroidReaderFont.ORIGINAL -> "Default"
-            AndroidReaderFont.MERRIWEATHER,
-            AndroidReaderFont.LORA -> "Serif"
-            AndroidReaderFont.LATO,
-            AndroidReaderFont.LEXEND -> "Sans"
-            AndroidReaderFont.ROBOTO_MONO -> "Mono"
-        }
-}
-
-private fun AndroidReaderTextAlign.toSharedReaderTextAlign(): SharedReaderTextAlign {
-    return when (this) {
-        AndroidReaderTextAlign.JUSTIFY -> SharedReaderTextAlign.JUSTIFY
-        AndroidReaderTextAlign.RIGHT -> SharedReaderTextAlign.RIGHT
-        AndroidReaderTextAlign.DEFAULT,
-        AndroidReaderTextAlign.LEFT -> SharedReaderTextAlign.START
-    }
+        ?: font.toReaderSettingsFontFamily()
 }
 
 private fun ReaderSettings.toAndroidReaderFont(): AndroidReaderFont {
@@ -563,28 +543,4 @@ private fun ReaderSettings.toAndroidRenderMode(): RenderMode {
         ReaderReadingMode.PAGINATED -> RenderMode.PAGINATED
         ReaderReadingMode.VERTICAL -> RenderMode.VERTICAL_SCROLL
     }
-}
-
-private fun AndroidSystemUiMode.toSharedSystemUiMode(): SharedSystemUiMode {
-    return SharedSystemUiMode.valueOf(name)
-}
-
-private fun SharedSystemUiMode.toAndroidSystemUiMode(): AndroidSystemUiMode {
-    return AndroidSystemUiMode.valueOf(name)
-}
-
-private fun AndroidPageInfoMode.toSharedPageInfoMode(): SharedPageInfoMode {
-    return SharedPageInfoMode.valueOf(name)
-}
-
-private fun SharedPageInfoMode.toAndroidPageInfoMode(): AndroidPageInfoMode {
-    return AndroidPageInfoMode.valueOf(name)
-}
-
-private fun AndroidPageInfoPosition.toSharedPageInfoPosition(): SharedPageInfoPosition {
-    return SharedPageInfoPosition.valueOf(name)
-}
-
-private fun SharedPageInfoPosition.toAndroidPageInfoPosition(): AndroidPageInfoPosition {
-    return AndroidPageInfoPosition.valueOf(name)
 }

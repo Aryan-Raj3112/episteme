@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.toArgb
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ReaderAppearanceModelsTest {
@@ -40,6 +41,17 @@ class ReaderAppearanceModelsTest {
     @Test
     fun `file texture display names use imported file names`() {
         assertEquals("custom-paper", readerTextureDisplayName("${ReaderTextureFilePrefix}C:\\textures\\custom-paper.png"))
+    }
+
+    @Test
+    fun `reader texture helpers normalize extensions and resolve mime types`() {
+        assertEquals("jpg", normalizeReaderTextureExtension("JPEG"))
+        assertEquals("webp", normalizeReaderTextureExtension(" webp "))
+        assertNull(normalizeReaderTextureExtension("svg"))
+
+        assertEquals("image/jpeg", readerTextureMimeTypeForExtension("jpg"))
+        assertEquals("image/webp", readerTextureMimeTypeForExtension("webp"))
+        assertEquals("image/png", readerTextureMimeTypeForExtension("unknown"))
     }
 
     @Test

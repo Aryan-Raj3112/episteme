@@ -25,6 +25,9 @@ class FileCapabilitiesTest {
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             SharedFileCapabilities.mimeTypeFor(FileType.PPTX)
         )
+        assertTrue("application/pdf" in SharedFileCapabilities.androidFilePickerMimeTypes)
+        assertTrue("text/x-kotlin" in SharedFileCapabilities.androidFilePickerMimeTypes)
+        assertFalse("*/*" in SharedFileCapabilities.androidFilePickerMimeTypes)
         assertEquals(
             setOf(
                 FileType.EPUB,
@@ -94,12 +97,32 @@ class FileCapabilitiesTest {
     }
 
     @Test
+    fun `shared metadata resolver handles provider mime types and guarded archive fallbacks`() {
+        assertEquals(FileType.PDF, SharedFileCapabilities.resolveFileTypeForMetadata("download", "application/pdf"))
+        assertEquals(
+            FileType.DOCX,
+            SharedFileCapabilities.resolveFileTypeForMetadata(
+                "download",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        )
+        assertEquals(
+            FileType.MD,
+            SharedFileCapabilities.resolveFileTypeForMetadata("notes.md.txt", "text/plain; charset=utf-8")
+        )
+        assertEquals(FileType.HTML, SharedFileCapabilities.resolveFileTypeForMetadata("payload", "application/json"))
+        assertEquals(FileType.CBZ, SharedFileCapabilities.resolveFileTypeForMetadata("comic.cbz", "application/zip"))
+        assertEquals(FileType.FB2, SharedFileCapabilities.resolveFileTypeForMetadata("book.fb2.zip", "application/zip"))
+        assertNull(SharedFileCapabilities.resolveFileTypeForMetadata("archive.zip", "application/zip"))
+    }
+
+    @Test
     fun `shared file name policy detects manual only files and suffixes`() {
         assertTrue(SharedFileCapabilities.isCodeOrDataFileName("table.csv"))
         assertTrue(SharedFileCapabilities.isManualOnlyReaderFileName("script.kt.txt"))
         assertFalse(SharedFileCapabilities.isManualOnlyReaderFileName("chapter.html"))
         assertFalse(SharedFileCapabilities.isLocalFolderSyncEligibleFile("table.csv", "text/csv"))
-        assertFalse(SharedFileCapabilities.isLocalFolderSyncEligibleFile("payload", "application/json"))
+        assertFalse(SharedFileCapabilities.isLocalFolderSyncEligibleFile("payload", "application/json; charset=utf-8"))
         assertTrue(SharedFileCapabilities.isLocalFolderSyncEligibleFile("book.fodt", "text/xml"))
         assertEquals(".md.txt", SharedFileCapabilities.fileExtensionSuffixForName("notes.md.txt"))
         assertEquals(".fb2.zip.txt", SharedFileCapabilities.fileExtensionSuffixForName("book.fb2.zip.txt"))

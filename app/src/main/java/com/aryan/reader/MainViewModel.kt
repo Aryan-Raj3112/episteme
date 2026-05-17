@@ -98,6 +98,7 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pptx.PptxCoverGenerator
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
@@ -1943,7 +1944,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val sanitizedFilters = filters.copy(
             fileTypes = filters.fileTypes.filterTo(mutableSetOf()) { it in ANDROID_READABLE_FILE_TYPES }
         )
-        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.FiltersChanged(sanitizedFilters.toSharedLibraryFilters())) }
+        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.FiltersChanged(sanitizedFilters)) }
 
         prefs.edit {
             putStringSet(KEY_FILTER_FILE_TYPES, sanitizedFilters.fileTypes.map { it.name }.toSet())
@@ -3686,7 +3687,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setSortOrder(sortOrder: SortOrder) {
-        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.SortChanged(sortOrder.toSharedSortOrder())) }
+        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.SortChanged(sortOrder)) }
         prefs.edit { putString(KEY_SORT_ORDER, sortOrder.name) }
     }
 
@@ -5643,12 +5644,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setAppThemeMode(mode: AppThemeMode) {
-        _internalState.update { it.withSharedAppAction(SharedAppAction.AppThemeChanged(mode.toSharedAppThemeMode())) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppThemeChanged(mode)) }
         prefs.edit { putString(KEY_APP_THEME_MODE, mode.name) }
     }
 
     fun setAppContrastOption(option: AppContrastOption) {
-        _internalState.update { it.withSharedAppAction(SharedAppAction.AppContrastChanged(option.toSharedAppContrastOption())) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppContrastChanged(option)) }
         prefs.edit { putString(KEY_APP_CONTRAST_OPTION, option.name) }
     }
 
@@ -5674,7 +5675,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun addCustomAppTheme(theme: CustomAppTheme) {
-        _internalState.update { it.withSharedAppAction(SharedAppAction.CustomAppThemeAdded(theme.toSharedCustomAppTheme())) }
+        _internalState.update { it.withSharedAppAction(SharedAppAction.CustomAppThemeAdded(theme)) }
         val current = _internalState.value.customAppThemes
         saveCustomAppThemes(current)
         prefs.edit { putInt(KEY_APP_SEED_COLOR, theme.seedColor.toArgb()) }
@@ -5914,21 +5915,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_TEXT_DIM_FACTOR_DARK = "app_text_dim_factor_dark"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
 
-        val SUPPORTED_MIME_TYPES = arrayOf(
-            "application/pdf", "application/epub+zip", "application/x-mobipocket-ebook",
-            "application/vnd.amazon.ebook", "application/vnd.amazon.mobi8-ebook", "text/markdown",
-            "text/x-markdown", "text/plain", "text/html", "application/xhtml+xml",
-            "application/x-fictionbook+xml", "application/x-zip-compressed-fb2", "application/zip",
-            "application/vnd.comicbook+zip", "application/x-cbz", "application/vnd.comicbook-rar",
-            "application/x-cbr", "application/x-rar-compressed", "application/x-cb7",
-            "application/x-7z-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "application/vnd.oasis.opendocument.text", "application/x-vnd.oasis.opendocument.text-flat-xml",
-            "text/csv", "text/comma-separated-values", "text/tab-separated-values", "application/json",
-            "application/xml", "text/xml", "text/x-java-source", "text/x-python", "text/x-kotlin",
-            "text/javascript", "application/javascript", "text/x-c", "text/x-c++",
-            "text/x-csharp", "text/x-ruby", "text/x-go", "text/x-log"
-        )
+        val SUPPORTED_MIME_TYPES = SharedFileCapabilities.androidFilePickerMimeTypes.toTypedArray()
     }
 }
 

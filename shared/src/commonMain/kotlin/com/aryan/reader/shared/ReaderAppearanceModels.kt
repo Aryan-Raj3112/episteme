@@ -70,6 +70,27 @@ enum class ReaderTexture(val id: String, val displayName: String, val assetPath:
 
 const val ReaderTextureFilePrefix = "file:"
 
+val ReaderTextureImportExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+
+fun normalizeReaderTextureExtension(extension: String?): String? {
+    val normalized = extension?.trim()?.lowercase() ?: return null
+    return when (normalized) {
+        "jpeg", "jpg" -> "jpg"
+        "png", "webp", "gif", "bmp" -> normalized
+        else -> null
+    }
+}
+
+fun readerTextureMimeTypeForExtension(extension: String): String {
+    return when (extension.lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        else -> "image/png"
+    }
+}
+
 data class ReaderTheme(
     val id: String,
     val name: String,

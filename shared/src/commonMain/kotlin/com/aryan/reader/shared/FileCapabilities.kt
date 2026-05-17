@@ -68,6 +68,33 @@ object SharedFileCapabilities {
         "text/x-log"
     )
 
+    val androidFilePickerMimeTypes: List<String> = listOf(
+        "application/pdf",
+        "application/epub+zip",
+        "application/x-mobipocket-ebook",
+        "application/vnd.amazon.ebook",
+        "application/vnd.amazon.mobi8-ebook",
+        "text/markdown",
+        "text/x-markdown",
+        "text/plain",
+        "text/html",
+        "application/xhtml+xml",
+        "application/x-fictionbook+xml",
+        "application/x-zip-compressed-fb2",
+        "application/zip",
+        "application/vnd.comicbook+zip",
+        "application/x-cbz",
+        "application/vnd.comicbook-rar",
+        "application/x-cbr",
+        "application/x-rar-compressed",
+        "application/x-cb7",
+        "application/x-7z-compressed",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "application/vnd.oasis.opendocument.text",
+        "application/x-vnd.oasis.opendocument.text-flat-xml"
+    ) + manualOnlyReaderMimeTypes
+
     val all: List<FileTypeCapability> = listOf(
         FileTypeCapability(
             type = FileType.EPUB,
@@ -217,6 +244,48 @@ object SharedFileCapabilities {
         return fileTypeForEffectiveName(effectiveName)
     }
 
+    fun resolveFileTypeForMetadata(fileName: String?, mimeType: String?): FileType? {
+        val normalizedMimeType = mimeType
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase()
+        return when (normalizedMimeType) {
+            "application/vnd.oasis.opendocument.text" -> FileType.ODT
+            "application/x-vnd.oasis.opendocument.text-flat-xml" -> FileType.FODT
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> FileType.PPTX
+            "application/zip", "application/vnd.comicbook+zip", "application/x-cbz" -> {
+                when {
+                    fileName?.endsWith(".cbz", ignoreCase = true) == true -> FileType.CBZ
+                    fileName?.endsWith(".fb2.zip", ignoreCase = true) == true -> FileType.FB2
+                    else -> null
+                }
+            }
+            "application/vnd.comicbook-rar", "application/x-cbr", "application/x-rar-compressed" -> {
+                if (fileName?.endsWith(".cbr", ignoreCase = true) == true) FileType.CBR else null
+            }
+            "application/x-cb7", "application/x-7z-compressed" -> {
+                if (fileName?.endsWith(".cb7", ignoreCase = true) == true) FileType.CB7 else null
+            }
+            "application/pdf" -> FileType.PDF
+            "application/epub+zip" -> FileType.EPUB
+            "application/x-fictionbook+xml", "application/x-zip-compressed-fb2" -> FileType.FB2
+            "application/x-mobipocket-ebook",
+            "application/vnd.amazon.ebook",
+            "application/vnd.amazon.mobi8-ebook" -> FileType.MOBI
+            "text/markdown", "text/x-markdown" -> FileType.MD
+            "text/html", "application/xhtml+xml" -> FileType.HTML
+            "text/plain" -> resolveFileTypeForName(fileName) ?: FileType.TXT
+            else -> {
+                if (normalizedMimeType != null && normalizedMimeType in manualOnlyReaderMimeTypes) {
+                    FileType.HTML
+                } else {
+                    resolveFileTypeForName(fileName)
+                }
+            }
+        }
+    }
+
     fun isCodeOrDataFileName(fileName: String): Boolean {
         return fileName.normalizedFileName()
             .withTransparentTextSuffix()
@@ -228,7 +297,11 @@ object SharedFileCapabilities {
     }
 
     fun isManualOnlyReaderMimeType(mimeType: String?): Boolean {
-        val normalized = mimeType?.lowercase() ?: return false
+        val normalized = mimeType
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase()
+            ?: return false
         return normalized in manualOnlyReaderMimeTypes
     }
 

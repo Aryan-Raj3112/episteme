@@ -5,31 +5,19 @@ import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.ShelfEntity
 import com.aryan.reader.data.TagEntity
-import com.aryan.reader.shared.AddBooksSource as SharedAddBooksSource
-import com.aryan.reader.shared.AppContrastOption as SharedAppContrastOption
-import com.aryan.reader.shared.AppThemeMode as SharedAppThemeMode
-import com.aryan.reader.shared.BannerMessage as SharedBannerMessage
 import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.BookShelfRef as SharedBookShelfRef
-import com.aryan.reader.shared.CustomAppTheme as SharedCustomAppTheme
 import com.aryan.reader.shared.EpubAnnotationSerializer
-import com.aryan.reader.shared.FileType as SharedFileType
-import com.aryan.reader.shared.LibraryFilters as SharedLibraryFilters
-import com.aryan.reader.shared.ReadStatusFilter as SharedReadStatusFilter
-import com.aryan.reader.shared.RenderMode as SharedRenderMode
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfRecord
-import com.aryan.reader.shared.ShelfType as SharedShelfType
-import com.aryan.reader.shared.SortOrder as SharedSortOrder
-import com.aryan.reader.shared.SyncedFolder as SharedSyncedFolder
 import com.aryan.reader.shared.Tag as SharedTag
 
 fun RecentFileItem.toSharedBookItem(): SharedBookItem {
     return SharedBookItem(
         id = bookId,
         path = uriString,
-        type = type.toSharedFileType(),
+        type = type,
         displayName = customName ?: displayName,
         timestamp = timestamp,
         coverImagePath = coverImagePath,
@@ -67,7 +55,7 @@ fun SharedBookItem.toRecentFileItem(
     return androidBooksById[id]?.copy(tags = resolvedTags)
         ?.copy(
             uriString = path,
-            type = type.toAndroidFileType(),
+            type = type,
             displayName = androidBooksById[id]?.displayName ?: displayName,
             timestamp = timestamp,
             coverImagePath = coverImagePath,
@@ -92,7 +80,7 @@ fun SharedBookItem.toRecentFileItem(
         ?: RecentFileItem(
             bookId = id,
             uriString = path,
-            type = type.toAndroidFileType(),
+            type = type,
             displayName = displayName,
             timestamp = timestamp,
             coverImagePath = coverImagePath,
@@ -169,11 +157,11 @@ fun ReaderScreenState.toSharedReaderScreenState(
     return SharedReaderScreenState(
         selectedBookId = selectedBookId,
         selectedUriString = selectedPdfUri?.toString() ?: selectedEpubUri?.toString(),
-        selectedFileType = selectedFileType?.toSharedFileType(),
+        selectedFileType = selectedFileType,
         isLoading = isLoading,
         errorMessage = errorMessage,
-        renderMode = renderMode.toSharedRenderMode(),
-        sortOrder = sortOrder.toSharedSortOrder(),
+        renderMode = renderMode,
+        sortOrder = sortOrder,
         viewingShelfId = viewingShelfId,
         isAddingBooksToShelf = isAddingBooksToShelf,
         showCreateShelfDialog = showCreateShelfDialog,
@@ -181,7 +169,7 @@ fun ReaderScreenState.toSharedReaderScreenState(
         libraryScreenStartPage = libraryScreenStartPage,
         showRenameShelfDialogFor = showRenameShelfDialogFor,
         showDeleteShelfDialogFor = showDeleteShelfDialogFor,
-        addBooksSource = addBooksSource.toSharedAddBooksSource(),
+        addBooksSource = addBooksSource,
         booksSelectedForAdding = booksSelectedForAdding,
         selectedBookIds = contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
         selectedShelfIds = contextualActionShelfIds,
@@ -189,10 +177,10 @@ fun ReaderScreenState.toSharedReaderScreenState(
         credits = credits,
         isSyncEnabled = isSyncEnabled,
         isFolderSyncEnabled = isFolderSyncEnabled,
-        bannerMessage = bannerMessage?.toSharedBannerMessage(),
+        bannerMessage = bannerMessage,
         downloadingBookIds = downloadingBookIds,
         uploadingBookIds = uploadingBookIds,
-        syncedFolders = syncedFolders.map { it.toSharedSyncedFolder() },
+        syncedFolders = syncedFolders,
         lastFolderScanTime = lastFolderScanTime,
         hasUnreadFeedback = hasUnreadFeedback,
         searchQuery = searchQuery,
@@ -204,7 +192,7 @@ fun ReaderScreenState.toSharedReaderScreenState(
         rawLibraryBooks = rawBooks.map { it.toSharedBookItem() },
         pinnedHomeBookIds = pinnedHomeBookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds,
-        libraryFilters = libraryFilters.toSharedLibraryFilters(),
+        libraryFilters = libraryFilters,
         recentFilesLimit = recentFilesLimit,
         isTabsEnabled = isTabsEnabled,
         openTabIds = openTabIds,
@@ -213,12 +201,12 @@ fun ReaderScreenState.toSharedReaderScreenState(
         showExternalFileSavePromptFor = showExternalFileSavePromptFor,
         externalFileBehavior = externalFileBehavior,
         useStrictFileFilter = useStrictFileFilter,
-        appThemeMode = appThemeMode.toSharedAppThemeMode(),
-        appContrastOption = appContrastOption.toSharedAppContrastOption(),
+        appThemeMode = appThemeMode,
+        appContrastOption = appContrastOption,
         appTextDimFactorLight = appTextDimFactorLight,
         appTextDimFactorDark = appTextDimFactorDark,
         appSeedColor = appSeedColor,
-        customAppThemes = customAppThemes.map { it.toSharedCustomAppTheme() },
+        customAppThemes = customAppThemes,
         allTags = dbTags.map { it.toSharedTag() },
         showTagSelectionDialogFor = showTagSelectionDialogFor
     )
@@ -271,7 +259,7 @@ fun SharedShelf.toAndroidShelf(
     return Shelf(
         id = id,
         name = name,
-        type = type.toAndroidShelfType(),
+        type = type,
         books = books.map { it.toRecentFileItem(androidBooksById, tagEntitiesById) },
         directBooks = directBooks.map { it.toRecentFileItem(androidBooksById, tagEntitiesById) },
         parentShelfId = parentShelfId,
@@ -279,92 +267,4 @@ fun SharedShelf.toAndroidShelf(
         depth = depth,
         sortKey = sortKey
     )
-}
-
-fun FileType.toSharedFileType(): SharedFileType {
-    return this
-}
-
-fun SharedFileType.toAndroidFileType(): FileType {
-    return this
-}
-
-fun RenderMode.toSharedRenderMode(): SharedRenderMode {
-    return this
-}
-
-fun SharedRenderMode.toAndroidRenderMode(): RenderMode {
-    return this
-}
-
-fun AddBooksSource.toSharedAddBooksSource(): SharedAddBooksSource {
-    return this
-}
-
-fun SharedAddBooksSource.toAndroidAddBooksSource(): AddBooksSource {
-    return this
-}
-
-fun SortOrder.toSharedSortOrder(): SharedSortOrder {
-    return this
-}
-
-fun SharedSortOrder.toAndroidSortOrder(): SortOrder {
-    return this
-}
-
-fun ReadStatusFilter.toSharedReadStatusFilter(): SharedReadStatusFilter {
-    return this
-}
-
-fun SharedReadStatusFilter.toAndroidReadStatusFilter(): ReadStatusFilter {
-    return this
-}
-
-fun LibraryFilters.toSharedLibraryFilters(): SharedLibraryFilters {
-    return this
-}
-
-fun SharedLibraryFilters.toAndroidLibraryFilters(): LibraryFilters {
-    return this
-}
-
-fun SyncedFolder.toSharedSyncedFolder(): SharedSyncedFolder {
-    return this
-}
-
-fun SharedSyncedFolder.toAndroidSyncedFolder(): SyncedFolder {
-    return this
-}
-
-private fun SharedShelfType.toAndroidShelfType(): ShelfType {
-    return ShelfType.valueOf(name)
-}
-
-fun BannerMessage.toSharedBannerMessage(): SharedBannerMessage {
-    return this
-}
-
-fun AppThemeMode.toSharedAppThemeMode(): SharedAppThemeMode {
-    return this
-}
-
-fun SharedAppThemeMode.toAndroidAppThemeMode(): AppThemeMode {
-    return this
-}
-
-fun AppContrastOption.toSharedAppContrastOption(): SharedAppContrastOption {
-    return this
-}
-
-fun SharedAppContrastOption.toAndroidAppContrastOption(): AppContrastOption {
-    return this
-}
-
-fun CustomAppTheme.toSharedCustomAppTheme(): SharedCustomAppTheme {
-    return this
-}
-
-fun SharedCustomAppTheme.toAndroidCustomAppTheme(): CustomAppTheme {
-    return this
 }

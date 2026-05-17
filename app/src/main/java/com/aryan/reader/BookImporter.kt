@@ -29,6 +29,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.UUID
 import androidx.core.net.toUri
+import com.aryan.reader.shared.SharedFileCapabilities
 
 private const val BOOKS_DIR = "books"
 
@@ -103,15 +104,18 @@ class BookImporter(private val context: Context) {
     }
 
     private fun getFileExtension(uri: Uri): String {
-        val path = uri.path ?: return "tmp"
-        return File(path).extension.lowercase().ifEmpty {
-            // Fallback for URIs that don't have a clear extension in the path
-            when (context.contentResolver.getType(uri)) {
-                "application/pdf" -> "pdf"
-                "application/epub+zip" -> "epub"
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> "pptx"
-                else -> "tmp"
-            }
-        }
+        val path = uri.path
+        val pathExtension = path
+            ?.let(::File)
+            ?.extension
+            ?.lowercase()
+            ?.takeIf { it.isNotBlank() }
+        if (pathExtension != null) return pathExtension
+
+        val metadataType = SharedFileCapabilities.resolveFileTypeForMetadata(
+            fileName = uri.lastPathSegment ?: path,
+            mimeType = context.contentResolver.getType(uri)
+        )
+        return metadataType?.let(SharedFileCapabilities::primaryExtensionFor) ?: "tmp"
     }
 }

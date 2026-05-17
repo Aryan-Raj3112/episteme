@@ -18,7 +18,8 @@ data class SummarizationResult(
     val summary: String? = null,
     val error: String? = null,
     val cost: Double? = null,
-    val freeRemaining: Int? = null
+    val freeRemaining: Int? = null,
+    val isCacheHit: Boolean = false
 )
 
 data class RecapResult(

@@ -71,8 +71,8 @@ internal object AndroidSharedStateBridge {
         val reduced = current.toBridgeSharedState(projectedState).reduce(action)
         return current.copy(
             searchQuery = reduced.searchQuery,
-            sortOrder = reduced.sortOrder.toAndroidSortOrder(),
-            libraryFilters = reduced.libraryFilters.toAndroidLibraryFilters(),
+            sortOrder = reduced.sortOrder,
+            libraryFilters = reduced.libraryFilters,
             contextualActionItems = reduced.selectedBookIds.mapNotNullTo(mutableSetOf()) { androidBooksById[it] },
             contextualActionShelfIds = reduced.selectedShelfIds,
             libraryScreenStartPage = reduced.libraryScreenStartPage,
@@ -87,12 +87,12 @@ internal object AndroidSharedStateBridge {
     ): ReaderScreenState {
         val reduced = current.toBridgeSharedState(projectedState).reduce(action)
         return current.copy(
-            appThemeMode = reduced.appThemeMode.toAndroidAppThemeMode(),
-            appContrastOption = reduced.appContrastOption.toAndroidAppContrastOption(),
+            appThemeMode = reduced.appThemeMode,
+            appContrastOption = reduced.appContrastOption,
             appTextDimFactorLight = reduced.appTextDimFactorLight,
             appTextDimFactorDark = reduced.appTextDimFactorDark,
             appSeedColor = reduced.appSeedColor,
-            customAppThemes = reduced.customAppThemes.map { it.toAndroidCustomAppTheme() }
+            customAppThemes = reduced.customAppThemes
         )
     }
 

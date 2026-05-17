@@ -72,6 +72,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.aryan.reader.R
 import com.aryan.reader.epubreader.OptionSegmentedControl
 import com.aryan.reader.epubreader.SystemUiMode
+import com.aryan.reader.epubreader.titleRes
 
 
 enum class PdfFlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }

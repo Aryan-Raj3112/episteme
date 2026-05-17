@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderTextureFilePrefix
+import com.aryan.reader.shared.ReaderTextureImportExtensions
+import com.aryan.reader.shared.readerTextureMimeTypeForExtension
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.Base64
@@ -14,11 +16,10 @@ internal object DesktopReaderTextures {
     private val bytesCache = mutableMapOf<String, ByteArray?>()
     private val dataUriCache = mutableMapOf<String, String?>()
     private val imageCache = mutableMapOf<String, ImageBitmap?>()
-    private val importExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
 
     fun importedTextureIds(): List<String> {
         return readerTextureDirectory()
-            .listFiles { file -> file.isFile && file.extension.lowercase(Locale.ROOT) in importExtensions }
+            .listFiles { file -> file.isFile && file.extension.lowercase(Locale.ROOT) in ReaderTextureImportExtensions }
             ?.sortedBy { it.name.lowercase(Locale.ROOT) }
             ?.map { ReaderTextureFilePrefix + it.absolutePath }
             .orEmpty()
@@ -27,7 +28,7 @@ internal object DesktopReaderTextures {
     fun importTexture(source: File): String? {
         if (!source.isFile) return null
         val extension = source.extension.lowercase(Locale.ROOT)
-            .takeIf { it in importExtensions }
+            .takeIf { it in ReaderTextureImportExtensions }
             ?: return null
         val safeName = source.nameWithoutExtension
             .replace(Regex("[^A-Za-z0-9._-]+"), "_")
@@ -49,7 +50,7 @@ internal object DesktopReaderTextures {
         return dataUriCache.getOrPut(textureId) {
             val bytes = bytesFor(textureId) ?: return@getOrPut null
             val extension = textureExtension(textureId)
-            "data:${imageMimeTypeForExtension(extension)};base64," +
+            "data:${readerTextureMimeTypeForExtension(extension)};base64," +
                 Base64.getEncoder().encodeToString(bytes)
         }
     }
@@ -93,15 +94,5 @@ internal object DesktopReaderTextures {
 
     private fun readerTextureDirectory(): File {
         return File(desktopUserDataRoot(), "reader_textures")
-    }
-}
-
-private fun imageMimeTypeForExtension(extension: String): String {
-    return when (extension.lowercase(Locale.ROOT)) {
-        "jpg", "jpeg" -> "image/jpeg"
-        "webp" -> "image/webp"
-        "gif" -> "image/gif"
-        "bmp" -> "image/bmp"
-        else -> "image/png"
     }
 }

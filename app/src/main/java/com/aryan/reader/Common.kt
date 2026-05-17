@@ -169,6 +169,11 @@ import com.aryan.reader.epubreader.PREF_CUSTOM_THEMES
 import com.aryan.reader.epubreader.PREF_READER_THEME
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.PdfHighlightColor
+import com.aryan.reader.shared.BuiltInReaderThemes
+import com.aryan.reader.shared.ReaderTextureFilePrefix
+import com.aryan.reader.shared.normalizeReaderTextureExtension
+import com.aryan.reader.shared.readerTextureDisplayName as sharedReaderTextureDisplayName
+import com.aryan.reader.shared.readerTextureMimeTypeForExtension
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsCacheManager
@@ -211,6 +216,9 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+
+typealias ReaderTexture = com.aryan.reader.shared.ReaderTexture
+typealias ReaderTheme = com.aryan.reader.shared.ReaderTheme
 
 const val aiServerBasePath = BuildConfig.AI_WORKER_URL
 const val summarizeEndpoint = "/summarize"
@@ -465,18 +473,9 @@ data class SearchResult(
     val chunkIndex: Int
 )
 
-data class AiDefinitionResult(
-    val definition: String? = null,
-    val error: String? = null
-)
+typealias AiDefinitionResult = com.aryan.reader.shared.AiDefinitionResult
 
-data class SummarizationResult(
-    val summary: String? = null,
-    val error: String? = null,
-    val cost: Double? = null,
-    val freeRemaining: Int? = null,
-    val isCacheHit: Boolean = false
-)
+typealias SummarizationResult = com.aryan.reader.shared.SummarizationResult
 
 data class CachedSummaryItem(
     val chapterIndex: Int,
@@ -2449,51 +2448,26 @@ fun ColorComparePill(
     }
 }
 
-enum class ReaderTexture(val id: String, val displayName: String, val assetPath: String? = null, val resId: Int? = null) {
-    NATURAL_WHITE("asset:ep_naturalwhite.webp", "Natural White", "textures/ep_naturalwhite.webp"),
-    NATURAL_BLACK("asset:ep_naturalblack.webp", "Natural Black", "textures/ep_naturalblack.webp"),
-    LIGHT_VENEER("asset:light-veneer.webp", "Light Veneer", "textures/light-veneer.webp"),
-    RETINA_WOOD("asset:retina_wood.webp", "Retina Wood", "textures/retina_wood.webp"),
-    GREY_WASH("asset:grey_wash_wall.webp", "Grey Wash", "textures/grey_wash_wall.webp"),
-    CLASSY_FABRIC("asset:classy_fabric.webp", "Classy Fabric", "textures/classy_fabric.webp"),
-    RETRO_INTRO("asset:retro_intro.webp", "Retro Intro", "textures/retro_intro.webp"),
-    PAPER("paper", "Paper", resId = R.drawable.texture_paper),
-    CANVAS("canvas", "Canvas", resId = R.drawable.texture_canvas),
-    EINK("eink", "E-Ink", resId = R.drawable.texture_eink),
-    SLATE("slate", "Slate", resId = R.drawable.texture_slate)
-}
-
-private const val TEXTURE_FILE_PREFIX = "file:"
 private const val READER_TEXTURE_DIR = "reader_textures"
 
 fun readerTextureDisplayName(textureId: String?): String {
-    if (textureId == null) return "None"
-    return ReaderTexture.entries.find { it.id == textureId }?.displayName
-        ?: File(textureId.removePrefix(TEXTURE_FILE_PREFIX)).nameWithoutExtension.ifBlank { "Custom Image" }
+    return sharedReaderTextureDisplayName(textureId)
 }
 
 fun importReaderTexture(context: Context, uri: Uri): String? {
     return try {
-        val extension = context.contentResolver.getType(uri)
-            ?.substringAfterLast('/')
-            ?.lowercase(Locale.ROOT)
-            ?.let {
-                when (it) {
-                    "jpeg", "jpg" -> "jpg"
-                    "png", "webp", "gif", "bmp" -> it
-                    else -> null
-                }
-            } ?: uri.lastPathSegment
-            ?.substringAfterLast('.', "")
-            ?.lowercase(Locale.ROOT)
-            ?.takeIf { it in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp") }
+        val extension = normalizeReaderTextureExtension(
+            context.contentResolver.getType(uri)?.substringAfterLast('/')
+        ) ?: normalizeReaderTextureExtension(
+            uri.lastPathSegment?.substringAfterLast('.', "")
+        )
             ?: "img"
         val dir = File(context.filesDir, READER_TEXTURE_DIR).apply { mkdirs() }
         val output = File(dir, "texture_${System.currentTimeMillis()}.$extension")
         context.contentResolver.openInputStream(uri)?.use { input ->
             output.outputStream().use { out -> input.copyTo(out) }
         } ?: return null
-        TEXTURE_FILE_PREFIX + output.absolutePath
+        ReaderTextureFilePrefix + output.absolutePath
     } catch (e: Exception) {
         Timber.e(e, "Failed to import reader texture")
         null
@@ -2564,17 +2538,17 @@ private fun calculateBitmapSampleSize(width: Int, height: Int, maxDimension: Int
 fun loadReaderTextureBitmap(context: Context, textureId: String?): ImageBitmap? {
     if (textureId == null) return null
     return try {
-        val bitmap = if (textureId.startsWith(TEXTURE_FILE_PREFIX)) {
+        val bitmap = if (textureId.startsWith(ReaderTextureFilePrefix)) {
             decodeSampledBitmapFile(
-                path = textureId.removePrefix(TEXTURE_FILE_PREFIX),
+                path = textureId.removePrefix(ReaderTextureFilePrefix),
                 maxDimension = MAX_READER_TEXTURE_DIMENSION_PX
             )
         } else {
             val texture = ReaderTexture.entries.find { it.id == textureId } ?: return null
+            val resourceId = texture.androidTextureResourceId()
             when {
-                texture.assetPath != null -> context.assets.open(texture.assetPath).use(BitmapFactory::decodeStream)
-                texture.resId != null -> BitmapFactory.decodeResource(context.resources, texture.resId)
-                else -> null
+                resourceId != null -> BitmapFactory.decodeResource(context.resources, resourceId)
+                else -> context.assets.open(texture.assetPath).use(BitmapFactory::decodeStream)
             }
         }
         val safeBitmap = bitmap?.scaledToCanvasLimit(
@@ -2595,8 +2569,8 @@ fun getReaderTextureDataUri(context: Context, textureId: String?): String? {
     if (textureId == null) return null
     return try {
         var mimeType = "image/png"
-        val bytes = if (textureId.startsWith(TEXTURE_FILE_PREFIX)) {
-            val file = File(textureId.removePrefix(TEXTURE_FILE_PREFIX))
+        val bytes = if (textureId.startsWith(ReaderTextureFilePrefix)) {
+            val file = File(textureId.removePrefix(ReaderTextureFilePrefix))
             mimeType = "image/png"
             val decodedBitmap = decodeSampledBitmapFile(file.absolutePath, MAX_READER_TEXTURE_DIMENSION_PX)
                 ?: return null
@@ -2617,19 +2591,19 @@ fun getReaderTextureDataUri(context: Context, textureId: String?): String? {
             }
         } else {
             val texture = ReaderTexture.entries.find { it.id == textureId } ?: return null
+            val resourceId = texture.androidTextureResourceId()
             when {
-                texture.assetPath != null -> {
-                    mimeType = imageMimeTypeForExtension(texture.assetPath.substringAfterLast('.', "png"))
-                    context.assets.open(texture.assetPath).use { it.readBytes() }
-                }
-                texture.resId != null -> {
-                    val bitmap = BitmapFactory.decodeResource(context.resources, texture.resId)
+                resourceId != null -> {
+                    val bitmap = BitmapFactory.decodeResource(context.resources, resourceId)
                     ByteArrayOutputStream().use { out ->
                         bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
                         out.toByteArray()
                     }
                 }
-                else -> null
+                else -> {
+                    mimeType = readerTextureMimeTypeForExtension(texture.assetPath.substringAfterLast('.', "png"))
+                    context.assets.open(texture.assetPath).use { it.readBytes() }
+                }
             }
         } ?: return null
         "data:$mimeType;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -2639,40 +2613,17 @@ fun getReaderTextureDataUri(context: Context, textureId: String?): String? {
     }
 }
 
-private fun imageMimeTypeForExtension(extension: String): String {
-    return when (extension.lowercase(Locale.ROOT)) {
-        "jpg", "jpeg" -> "image/jpeg"
-        "webp" -> "image/webp"
-        "gif" -> "image/gif"
-        "bmp" -> "image/bmp"
-        else -> "image/png"
+private fun ReaderTexture.androidTextureResourceId(): Int? {
+    return when (this) {
+        ReaderTexture.PAPER -> R.drawable.texture_paper
+        ReaderTexture.CANVAS -> R.drawable.texture_canvas
+        ReaderTexture.EINK -> R.drawable.texture_eink
+        ReaderTexture.SLATE -> R.drawable.texture_slate
+        else -> null
     }
 }
 
-data class ReaderTheme(
-    val id: String,
-    val name: String,
-    val backgroundColor: Color,
-    val textColor: Color,
-    val isDark: Boolean,
-    val textureId: String? = null,
-    val isCustom: Boolean = false
-)
-
-val BuiltInThemes = listOf(
-    ReaderTheme("system", "System", Color.Unspecified, Color.Unspecified, false),
-    ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
-    ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
-    ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
-    ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
-    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true),
-    ReaderTheme("natural_white_texture", "Natural White", Color(0xFFF7F1E5), Color(0xFF1D1B18), false, textureId = ReaderTexture.NATURAL_WHITE.id),
-    ReaderTheme("retina_texture", "Retina", Color(0xFFF1E4CD), Color(0xFF2A2119), false, textureId = ReaderTexture.RETINA_WOOD.id),
-    ReaderTheme("veneer_texture", "Veneer", Color(0xFFF4E7CF), Color(0xFF2A2119), false, textureId = ReaderTexture.LIGHT_VENEER.id),
-    ReaderTheme("grey_wash_texture", "Grey Wash", Color(0xFF202124), Color(0xFFFFFFFF), true, textureId = ReaderTexture.GREY_WASH.id),
-    ReaderTheme("fabric_texture", "Fabric", Color(0xFF262626), Color(0xFFE8E2D8), true, textureId = ReaderTexture.CLASSY_FABRIC.id),
-    ReaderTheme("retro_texture", "Retro", Color(0xFFF6ECD8), Color(0xFF2F2118), false, textureId = ReaderTexture.RETRO_INTRO.id)
-)
+val BuiltInThemes = BuiltInReaderThemes
 
 fun saveReaderThemeId(context: Context, themeId: String) {
     val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -2700,7 +2651,10 @@ fun getImportedTextures(context: Context): List<String> {
     return try {
         val dir = File(context.filesDir, READER_TEXTURE_DIR)
         if (!dir.exists()) emptyList()
-        else dir.listFiles()?.map { TEXTURE_FILE_PREFIX + it.absolutePath } ?: emptyList()
+        else dir.listFiles()
+            ?.filter { it.isFile }
+            ?.map { ReaderTextureFilePrefix + it.absolutePath }
+            ?: emptyList()
     } catch (_: Exception) {
         emptyList()
     }
@@ -3181,7 +3135,7 @@ private fun TexturePickerSection(
             )
             TextureChoice(
                 label = stringResource(R.string.theme_texture_upload),
-                textureId = selectedTextureId?.takeIf { it.startsWith(TEXTURE_FILE_PREFIX) },
+                textureId = selectedTextureId?.takeIf { it.startsWith(ReaderTextureFilePrefix) },
                 selectedTextureId = selectedTextureId,
                 onTextureSelected = { onImportTexture() },
                 isUpload = true,
@@ -3189,7 +3143,7 @@ private fun TexturePickerSection(
             )
         }
         Spacer(Modifier.height(8.dp))
-        ReaderTexture.entries.filter { it.assetPath != null }.chunked(2).forEach { rowTextures ->
+        ReaderTexture.entries.filter { it.androidTextureResourceId() == null }.chunked(2).forEach { rowTextures ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                 rowTextures.forEach { texture ->
                     TextureChoice(
@@ -3234,7 +3188,7 @@ private fun TextureChoice(
 ) {
     val context = LocalContext.current
     val textureBitmap = remember(textureId) { loadReaderTextureBitmap(context, textureId) }
-    val selected = if (isUpload) selectedTextureId?.startsWith(TEXTURE_FILE_PREFIX) == true else selectedTextureId == textureId
+    val selected = if (isUpload) selectedTextureId?.startsWith(ReaderTextureFilePrefix) == true else selectedTextureId == textureId
     Surface(
         onClick = { onTextureSelected(textureId) },
         modifier = modifier.height(52.dp),
@@ -3254,7 +3208,7 @@ private fun TextureChoice(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = if (isUpload && selectedTextureId?.startsWith(TEXTURE_FILE_PREFIX) == true) {
+                text = if (isUpload && selectedTextureId?.startsWith(ReaderTextureFilePrefix) == true) {
                     readerTextureDisplayName(selectedTextureId)
                 } else label,
                 style = MaterialTheme.typography.labelSmall,
@@ -3868,8 +3822,11 @@ fun AiResultContentView(
 
             val showUsageBadge = result?.isCacheHit == true || (BuildConfig.FLAVOR != "oss" && (result?.cost != null || isLoading))
             if (result != null && showUsageBadge && (!result.summary.isNullOrBlank() || isLoading)) {
+                val cost = result.cost
+                val freeRemaining = result.freeRemaining
+                val isFreeGeneratedResult = cost == 0.0 && freeRemaining != null
                 Surface(
-                    color = if (result.isCacheHit || (result.cost == 0.0 && result.freeRemaining != null)) Color(
+                    color = if (result.isCacheHit || isFreeGeneratedResult) Color(
                         0xFF4CAF50
                     ).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
                     shape = RoundedCornerShape(12.dp)
@@ -3877,19 +3834,19 @@ fun AiResultContentView(
                     Text(
                         text = if (result.isCacheHit) {
                             stringResource(R.string.ai_cache_hit_free)
-                        } else if (result.cost != null) {
-                            if (result.cost == 0.0 && result.freeRemaining != null) {
+                        } else if (cost != null) {
+                            if (isFreeGeneratedResult) {
                                 stringResource(R.string.ai_generated_free_remaining,
-                                    result.freeRemaining
+                                    freeRemaining
                                 )
                             } else {
-                                stringResource(R.string.ai_generated_cost, result.cost.toString())
+                                stringResource(R.string.ai_generated_cost, cost.toString())
                             }
                         } else {
                             stringResource(R.string.ai_generating_cost_calculating)
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (result.isCacheHit || (result.cost == 0.0 && result.freeRemaining != null)) Color(
+                        color = if (result.isCacheHit || isFreeGeneratedResult) Color(
                             0xFF388E3C
                         ) else MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
