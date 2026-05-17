@@ -400,6 +400,7 @@ internal fun DesktopPdfExtrasPanel(
     cloudTtsFeatureAvailable: Boolean,
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
+    onOpenAiHub: (() -> Unit)? = null,
     onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
@@ -449,6 +450,7 @@ internal fun DesktopPdfExtrasPanel(
                             extrasState.cloudTts.isPaused -> "Paused"
                             extrasState.cloudTts.isPlaying -> "Reading"
                             settings.isCloudTtsAvailable -> "Cloud TTS ready"
+                            settings.serverBackedReaderAiFeatures -> "Cloud TTS needs signed-in credits"
                             else -> "Cloud TTS needs Gemini"
                         },
                         fontWeight = FontWeight.SemiBold
@@ -517,6 +519,11 @@ internal fun DesktopPdfExtrasPanel(
         )
         if (settings.areReaderAiFeaturesAvailable) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                onOpenAiHub?.let { openAiHub ->
+                    TextButton(onClick = openAiHub) {
+                        Text("AI hub")
+                    }
+                }
                 TextButton(
                     enabled = pageText.isNotBlank() && !extrasState.aiResult.isLoading,
                     onClick = { onAiAction(ReaderAiFeature.SUMMARIZE, pageText) }

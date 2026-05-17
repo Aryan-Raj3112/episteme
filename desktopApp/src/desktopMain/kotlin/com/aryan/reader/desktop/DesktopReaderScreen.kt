@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -84,11 +85,13 @@ internal fun DesktopReaderScreen(
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
+    onOpenAiHub: (() -> Unit)? = null,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onDownloadReaderImage: (ReaderImageReference) -> Unit,
     readerTextureDataUri: (String) -> String?,
     readerCustomTextureIds: List<String>,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
+    bottomChromeExtraContent: @Composable ColumnScope.() -> Unit = {},
     webViewRuntimeState: DesktopWebViewRuntimeState,
     webViewNetworkAccessEnabled: Boolean,
     epubPaginationCache: SharedEpubPaginationCache,
@@ -354,6 +357,7 @@ internal fun DesktopReaderScreen(
         onCloudTtsPauseResume = onCloudTtsPauseResume,
         onCloudTtsStop = onCloudTtsStop,
         onCloudTtsClearCache = onCloudTtsClearCache,
+        onOpenAiHub = onOpenAiHub,
         onAutoScrollChange = onAutoScrollChange,
         onDownloadReaderImage = onDownloadReaderImage,
         readerImagePreviewContent = { image, previewModifier ->
@@ -364,7 +368,8 @@ internal fun DesktopReaderScreen(
         },
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
-        onImportReaderTexture = onImportReaderTexture
+        onImportReaderTexture = onImportReaderTexture,
+        bottomChromeExtraContent = bottomChromeExtraContent
     ) { renderPlan, onVisiblePageChanged, onHighlightSelected, onChromeActivity ->
         Surface(
             color = renderPlan.background,

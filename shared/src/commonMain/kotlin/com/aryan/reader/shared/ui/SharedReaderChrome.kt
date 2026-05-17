@@ -215,12 +215,14 @@ fun SharedReaderScreen(
     onCloudTtsPauseResume: () -> Unit = {},
     onCloudTtsStop: () -> Unit = {},
     onCloudTtsClearCache: () -> Unit = {},
+    onOpenAiHub: (() -> Unit)? = null,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit = {},
     onDownloadReaderImage: ((ReaderImageReference) -> Unit)? = null,
     readerImagePreviewContent: (@Composable (ReaderImageReference, Modifier) -> Unit)? = null,
     readerTextureDataUri: (String) -> String? = { null },
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
+    bottomChromeExtraContent: @Composable ColumnScope.() -> Unit = {},
     readerContent: @Composable ColumnScope.(
         renderPlan: ReaderContentRenderPlan,
         onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
@@ -414,6 +416,7 @@ fun SharedReaderScreen(
                 aiByokSettings = byokSettings,
                 cloudTtsControlsAvailable = cloudTtsControlsAvailable,
                 onAiAction = onAiAction,
+                onOpenAiHub = onOpenAiHub,
                 onCloudTtsStart = onCloudTtsStart,
                 onCloudTtsStop = onCloudTtsStop,
                 onAutoScrollChange = onAutoScrollChange,
@@ -446,6 +449,7 @@ fun SharedReaderScreen(
                 border = BorderStroke(1.dp, foreground.copy(alpha = 0.12f))
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                    bottomChromeExtraContent()
                     val showJumpHistory = !session.isSearchActive && session.shouldShowJumpHistory
                     if (showJumpHistory) {
                         SharedReaderJumpHistoryBar(
@@ -1210,6 +1214,7 @@ private fun SharedReaderControlPanel(
     aiByokSettings: ReaderAiByokSettings,
     cloudTtsControlsAvailable: Boolean,
     onAiAction: (ReaderAiFeature, String) -> Unit,
+    onOpenAiHub: (() -> Unit)?,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
@@ -1296,6 +1301,7 @@ private fun SharedReaderControlPanel(
                         toolbarPreferences = toolbarPreferences,
                         cloudTtsControlsAvailable = cloudTtsControlsAvailable,
                         onAiAction = onAiAction,
+                        onOpenAiHub = onOpenAiHub,
                         onCloudTtsStart = onCloudTtsStart,
                         onCloudTtsStop = onCloudTtsStop,
                         onAutoScrollChange = onAutoScrollChange,
@@ -1935,6 +1941,7 @@ private fun SharedReaderExtrasControls(
     toolbarPreferences: ReaderToolbarPreferences,
     cloudTtsControlsAvailable: Boolean,
     onAiAction: (ReaderAiFeature, String) -> Unit,
+    onOpenAiHub: (() -> Unit)?,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
@@ -1987,6 +1994,7 @@ private fun SharedReaderExtrasControls(
                                 extrasState.cloudTts.isPaused -> "Paused"
                                 extrasState.cloudTts.isPlaying -> "Reading"
                                 settings.isCloudTtsAvailable -> "Ready"
+                                settings.serverBackedReaderAiFeatures -> "Needs signed-in credits"
                                 else -> "Needs Gemini key"
                             },
                             fontWeight = FontWeight.SemiBold
@@ -2033,6 +2041,11 @@ private fun SharedReaderExtrasControls(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.horizontalScroll(rememberScrollState())
                 ) {
+                    onOpenAiHub?.let { openAiHub ->
+                        TextButton(onClick = openAiHub) {
+                            Text("AI hub")
+                        }
+                    }
                     TextButton(
                         enabled = currentPageText.isNotBlank() && !extrasState.aiResult.isLoading,
                         onClick = { onAiAction(ReaderAiFeature.DEFINE, currentPageText.take(1200)) }

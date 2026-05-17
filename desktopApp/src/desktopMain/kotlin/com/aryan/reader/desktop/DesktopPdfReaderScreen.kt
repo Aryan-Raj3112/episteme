@@ -82,6 +82,7 @@ import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFeaturePolicy
+import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
@@ -164,6 +165,10 @@ internal fun PdfReaderScreen(
     ttsAdapter: DesktopGeminiCloudTtsAdapter,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
+    summaryCacheStore: DesktopSummaryCacheStore = DesktopSummaryCacheStore(),
+    credits: Int = 0,
+    showPaidCredits: Boolean = false,
+    onAiByokSettingsChange: (ReaderAiByokSettings) -> Unit = {},
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard,
     onReaderAiEntitlementRequired: (ReaderAiFeature, String) -> Boolean = { _, _ -> false },
     onCloudTtsEntitlementRequired: () -> Boolean = { false },
@@ -232,6 +237,10 @@ internal fun PdfReaderScreen(
         )
     }
     var pdfTtsJob by remember(documentHandleId) { mutableStateOf<Job?>(null) }
+    var showPdfAiHub by remember(documentHandleId) { mutableStateOf(false) }
+    var pdfHubSummaryResult by remember(documentHandleId) { mutableStateOf<SummarizationResult?>(null) }
+    var isPdfHubSummaryLoading by remember(documentHandleId) { mutableStateOf(false) }
+    var showPdfCloudTtsSettings by remember(documentHandleId) { mutableStateOf(false) }
     val annotationFile = remember(documentHandleId) { desktopPdfAnnotationFile(document.path) }
     val bookmarkFile = remember(documentHandleId) { desktopPdfBookmarkFile(document.path) }
     val richTextFile = remember(documentHandleId) { desktopPdfRichTextFile(document.path) }
@@ -485,6 +494,11 @@ internal fun PdfReaderScreen(
     val displayMode = pdfState.displayMode
     val zoomControlScale = pdfZoomPreview?.zoom ?: scale
     val shouldShowPdfZoomIndicator = abs(zoomControlScale - 1f) > 0.001f
+
+    LaunchedEffect(documentHandleId, pageIndex) {
+        pdfHubSummaryResult = null
+        isPdfHubSummaryLoading = false
+    }
 
     LaunchedEffect(zoomControlScale, document.path) {
         if (!isPdfZoomIndicatorInitialized) {
@@ -1121,6 +1135,53 @@ internal fun PdfReaderScreen(
         cacheSummary = currentPdfTtsCacheSummary()
     )
 
+    fun pdfHubBookKey(): String {
+        val path = document.path.trim()
+        if (path.isNotBlank()) return path
+        val title = document.title.trim()
+        return if (title.isNotBlank()) title else document.handleId.toString()
+    }
+
+    fun pdfHubBookTitle(): String {
+        val title = document.title.trim()
+        if (title.isNotBlank()) return title
+        val fileName = document.path.substringAfterLast('\\').substringAfterLast('/').trim()
+        return if (fileName.isNotBlank()) fileName else "PDF"
+    }
+
+    fun clearPdfHubSummary() {
+        pdfHubSummaryResult = null
+        isPdfHubSummaryLoading = false
+    }
+
+    fun generatePdfHubSummary(force: Boolean) {
+        val pageText = currentPdfPageText(16_000)
+        val bookKey = pdfHubBookKey()
+        val pageTitle = "Page ${pageIndex + 1}"
+        if (pageText.isBlank()) {
+            pdfHubSummaryResult = SummarizationResult(error = "There is no text to summarize on this page.")
+            return
+        }
+        if (!force) {
+            summaryCacheStore.getSummary(bookKey, pageIndex)?.let { cached ->
+                pdfHubSummaryResult = SummarizationResult(summary = cached, isCacheHit = true)
+                return
+            }
+        }
+        if (onReaderAiEntitlementRequired(ReaderAiFeature.SUMMARIZE, pageText)) return
+        isPdfHubSummaryLoading = true
+        pdfHubSummaryResult = null
+        pdfScope.launch {
+            val result = aiAdapter.summarize(pageText)
+            result.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+                summaryCacheStore.saveSummary(bookKey, pageIndex, pageTitle, summary)
+            }
+            pdfHubSummaryResult = result
+            isPdfHubSummaryLoading = false
+            onPaidFeatureError(result.error)
+        }
+    }
+
     fun runPdfAiAction(feature: ReaderAiFeature, text: String) {
         val normalizedText = text.trim()
         if (normalizedText.isBlank()) return
@@ -1135,7 +1196,14 @@ internal fun PdfReaderScreen(
         pdfScope.launch {
             val result = when (feature) {
                 ReaderAiFeature.DEFINE -> aiAdapter.define(normalizedText.take(2400), currentPdfPageText()).let { it.definition to it.error }
-                ReaderAiFeature.SUMMARIZE -> aiAdapter.summarize(normalizedText).let { it.summary to it.error }
+                ReaderAiFeature.SUMMARIZE -> {
+                    val summary = aiAdapter.summarize(normalizedText)
+                    summary.summary?.takeIf { it.isNotBlank() }?.let { generated ->
+                        summaryCacheStore.saveSummary(pdfHubBookKey(), pageIndex, "Page ${pageIndex + 1}", generated)
+                    }
+                    pdfHubSummaryResult = summary
+                    summary.summary to summary.error
+                }
                 ReaderAiFeature.RECAP -> aiAdapter.recap(normalizedText).let { it.recap to it.error }
             }
             pdfExtrasState = pdfExtrasState.copy(
@@ -1995,6 +2063,7 @@ internal fun PdfReaderScreen(
                 onTextStyleChange = ::updateTextStyleConfig,
                 onExternalLookup = ::openPdfExternalLookup,
                 onAiAction = ::runPdfAiAction,
+                onOpenAiHub = { showPdfAiHub = true },
                 onCloudTtsStart = ::startPdfCloudTts,
                 onCloudTtsPauseResume = ::pauseResumePdfCloudTts,
                 onCloudTtsStop = ::stopPdfCloudTts,
@@ -2019,7 +2088,41 @@ internal fun PdfReaderScreen(
                 onPageScrubFinished = ::finishPdfPageScrub,
                 onJumpBack = ::goBackInJumpHistory,
                 onJumpForward = ::goForwardInJumpHistory,
-                onClearJumpHistory = { jumpHistory = jumpHistory.clear() }
+                onClearJumpHistory = { jumpHistory = jumpHistory.clear() },
+                extraContent = {
+                    if (featurePolicy.aiAndCloud) {
+                        val ttsActive = pdfExtrasState.cloudTts.isLoading ||
+                            pdfExtrasState.cloudTts.isPlaying ||
+                            pdfExtrasState.cloudTts.isPaused
+                        if (showPdfCloudTtsSettings) {
+                            DesktopCloudTtsSettingsOverlay(
+                                settings = aiByokSettings,
+                                isTtsActive = ttsActive,
+                                showCredits = showPaidCredits,
+                                credits = credits,
+                                cacheSummary = pdfExtrasState.cloudTts.cacheSummary,
+                                onClearCache = ::clearPdfCloudTtsCache,
+                                onSettingsChange = { next ->
+                                    onAiByokSettingsChange(
+                                        aiByokSettings.sanitized().copy(
+                                            ttsSpeakerId = next.sanitized().ttsSpeakerId
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                        DesktopCloudTtsChromeControls(
+                            settings = aiByokSettings,
+                            cloudTts = pdfExtrasState.cloudTts,
+                            credits = credits,
+                            showCredits = showPaidCredits,
+                            onRead = { startPdfCloudTts(ReaderTtsReadScope.BOOK) },
+                            onPauseResume = ::pauseResumePdfCloudTts,
+                            onStop = ::stopPdfCloudTts,
+                            onOpenSettings = { showPdfCloudTtsSettings = !showPdfCloudTtsSettings }
+                        )
+                    }
+                }
             )
         },
         fullscreenBottomBar = {
@@ -2035,7 +2138,41 @@ internal fun PdfReaderScreen(
                 onPageScrubFinished = ::finishPdfPageScrub,
                 onJumpBack = ::goBackInJumpHistory,
                 onJumpForward = ::goForwardInJumpHistory,
-                onClearJumpHistory = { jumpHistory = jumpHistory.clear() }
+                onClearJumpHistory = { jumpHistory = jumpHistory.clear() },
+                extraContent = {
+                    if (featurePolicy.aiAndCloud) {
+                        val ttsActive = pdfExtrasState.cloudTts.isLoading ||
+                            pdfExtrasState.cloudTts.isPlaying ||
+                            pdfExtrasState.cloudTts.isPaused
+                        if (showPdfCloudTtsSettings) {
+                            DesktopCloudTtsSettingsOverlay(
+                                settings = aiByokSettings,
+                                isTtsActive = ttsActive,
+                                showCredits = showPaidCredits,
+                                credits = credits,
+                                cacheSummary = pdfExtrasState.cloudTts.cacheSummary,
+                                onClearCache = ::clearPdfCloudTtsCache,
+                                onSettingsChange = { next ->
+                                    onAiByokSettingsChange(
+                                        aiByokSettings.sanitized().copy(
+                                            ttsSpeakerId = next.sanitized().ttsSpeakerId
+                                        )
+                                    )
+                                }
+                            )
+                        }
+                        DesktopCloudTtsChromeControls(
+                            settings = aiByokSettings,
+                            cloudTts = pdfExtrasState.cloudTts,
+                            credits = credits,
+                            showCredits = showPaidCredits,
+                            onRead = { startPdfCloudTts(ReaderTtsReadScope.BOOK) },
+                            onPauseResume = ::pauseResumePdfCloudTts,
+                            onStop = ::stopPdfCloudTts,
+                            onOpenSettings = { showPdfCloudTtsSettings = !showPdfCloudTtsSettings }
+                        )
+                    }
+                }
             )
         }
     ) { _ ->
@@ -2858,6 +2995,27 @@ internal fun PdfReaderScreen(
             )
         }
         when {
+            showPdfAiHub -> {
+                DesktopAiHubSheet(
+                    bookKey = pdfHubBookKey(),
+                    bookTitle = pdfHubBookTitle(),
+                    itemIndex = pageIndex,
+                    itemTitle = "Page ${pageIndex + 1}",
+                    summaryCacheStore = summaryCacheStore,
+                    summaryResult = pdfHubSummaryResult,
+                    isSummaryLoading = isPdfHubSummaryLoading,
+                    recapResult = null,
+                    isRecapLoading = false,
+                    recapProgressMessage = null,
+                    onGenerateSummary = ::generatePdfHubSummary,
+                    onClearSummary = ::clearPdfHubSummary,
+                    onGenerateRecap = null,
+                    onClearRecap = {},
+                    onDismiss = { showPdfAiHub = false },
+                    credits = credits,
+                    showCredits = showPaidCredits
+                )
+            }
             selectedTextHighlight != null -> {
                 DesktopReaderBottomSheet(
                     title = selectedTextHighlight.desktopSheetTitle(),

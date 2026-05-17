@@ -33,6 +33,7 @@ import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderContextExtractor
+import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderFeatureSurface
@@ -56,6 +57,7 @@ import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SmartCollectionDefinition
+import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
@@ -240,6 +242,7 @@ internal fun EpistemeDesktopApp(
             }
         )
     }
+    val desktopSummaryCacheStore = remember { DesktopSummaryCacheStore() }
     var selectedTab by remember { mutableStateOf(SharedAppTab.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(NonReaderLibraryTab.BOOKS) }
     var customFonts by remember {
@@ -322,6 +325,13 @@ internal fun EpistemeDesktopApp(
     var showAddToShelfDialog by remember { mutableStateOf(false) }
     var showTagSelectionDialog by remember { mutableStateOf(false) }
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
+    var showReaderAiHub by remember { mutableStateOf(false) }
+    var readerHubSummaryResult by remember { mutableStateOf<SummarizationResult?>(null) }
+    var readerHubRecapResult by remember { mutableStateOf<RecapResult?>(null) }
+    var isReaderHubSummaryLoading by remember { mutableStateOf(false) }
+    var isReaderHubRecapLoading by remember { mutableStateOf(false) }
+    var readerHubRecapProgressMessage by remember { mutableStateOf<String?>(null) }
+    var showReaderCloudTtsSettings by remember { mutableStateOf(false) }
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
     var desktopFeatureNotice by remember { mutableStateOf<DesktopFeatureNotice?>(null) }
@@ -463,8 +473,29 @@ internal fun EpistemeDesktopApp(
     }
 
     fun updateAiByokSettings(next: ReaderAiByokSettings) {
-        if (!desktopBuildProfile.byokAiAvailable) return
         val sanitized = next.sanitized()
+        if (!desktopBuildProfile.byokAiAvailable) {
+            val desktopSettings = aiByokSettings.sanitized().copy(
+                hideReaderAiFeatures = sanitized.hideReaderAiFeatures,
+                ttsSpeakerId = sanitized.ttsSpeakerId
+            )
+            aiByokSettings = desktopSettings
+            readerExtrasState = readerExtrasState.copy(
+                cloudTts = readerExtrasState.cloudTts.copy(
+                    isAvailable = effectiveAiSettings().isCloudTtsAvailable,
+                    errorMessage = null,
+                    cacheSummary = desktopTtsAdapter.cacheSummary(readerSession.reader.book.title, desktopSettings.ttsSpeakerId)
+                )
+            )
+            runCatching { aiByokStore.save(desktopSettings) }
+                .onFailure { error ->
+                    logDesktopTts("settings_save_failed error=\"${error.desktopTtsSummary()}\"")
+                    scope.launch {
+                        snackbarHostState.showSnackbar(error.message ?: "AI settings could not be saved securely.")
+                    }
+                }
+            return
+        }
         logDesktopTts(
             "settings_update keyPresent=${sanitized.geminiKey.isNotBlank()} " +
                 "ttsModel=\"${sanitized.ttsModel.desktopTtsPreview()}\" speaker=\"${sanitized.ttsSpeakerId.desktopTtsPreview()}\" " +
@@ -563,6 +594,145 @@ internal fun EpistemeDesktopApp(
         openExternalUrl(externalLookupUrl(action, normalizedText.take(1800)))
     }
 
+    fun readerHubBookKey(): String {
+        return activeReaderBookId
+            ?: readerSession.reader.book.id.ifBlank { readerSession.reader.book.title.ifBlank { "Untitled" } }
+    }
+
+    fun readerHubChapterIndex(): Int {
+        return readerSession.reader.currentPage?.chapterIndex
+            ?: readerSession.reader.currentPageIndex
+    }
+
+    fun readerHubChapterTitle(index: Int = readerHubChapterIndex()): String {
+        return readerSession.reader.book.chapters.getOrNull(index)?.title?.takeIf { it.isNotBlank() }
+            ?: readerSession.reader.currentPage?.chapterTitle?.takeIf { it.isNotBlank() }
+            ?: "Chapter ${index + 1}"
+    }
+
+    fun readerHubChapterText(index: Int = readerHubChapterIndex()): String {
+        return readerSession.reader.book.chapters.getOrNull(index)?.plainText?.trim().orEmpty()
+    }
+
+    fun readerHubCurrentChapterText(): String {
+        return ReaderContextExtractor.currentChapterText(readerSession).trim()
+            .ifBlank { readerHubChapterText() }
+            .ifBlank { readerSession.reader.currentPage?.text?.trim().orEmpty() }
+    }
+
+    fun readerHubCurrentTextForRecap(): String {
+        val chapterText = readerHubChapterText()
+        val endOffset = readerSession.reader.currentPage?.endOffset ?: chapterText.length
+        return if (chapterText.isNotBlank()) {
+            chapterText.take(endOffset.coerceIn(0, chapterText.length)).trim()
+                .ifBlank { chapterText.take(500).trim() }
+        } else {
+            ReaderContextExtractor.textBeforeCurrentLocation(readerSession).trim().takeLast(24_000)
+        }
+    }
+
+    fun clearReaderHubSummary() {
+        readerHubSummaryResult = null
+        isReaderHubSummaryLoading = false
+    }
+
+    fun clearReaderHubRecap() {
+        readerHubRecapResult = null
+        isReaderHubRecapLoading = false
+        readerHubRecapProgressMessage = null
+    }
+
+    fun generateReaderHubSummary(force: Boolean) {
+        val text = readerHubCurrentChapterText()
+        val chapterIndex = readerHubChapterIndex()
+        val chapterTitle = readerHubChapterTitle(chapterIndex)
+        val bookKey = readerHubBookKey()
+        if (text.isBlank()) {
+            readerHubSummaryResult = SummarizationResult(error = "There is no text to summarize.")
+            return
+        }
+        if (!force) {
+            desktopSummaryCacheStore.getSummary(bookKey, chapterIndex)?.let { cached ->
+                readerHubSummaryResult = SummarizationResult(summary = cached, isCacheHit = true)
+                return
+            }
+        }
+        desktopFeatureNoticeForReaderAi(ReaderAiFeature.SUMMARIZE, text)?.let { notice ->
+            desktopFeatureNotice = notice
+            return
+        }
+        isReaderHubSummaryLoading = true
+        readerHubSummaryResult = null
+        scope.launch {
+            val result = desktopAiAdapter.summarize(text)
+            result.summary?.takeIf { it.isNotBlank() }?.let { summary ->
+                desktopSummaryCacheStore.saveSummary(bookKey, chapterIndex, chapterTitle, summary)
+            }
+            readerHubSummaryResult = result
+            isReaderHubSummaryLoading = false
+            desktopFeatureNoticeForError(result.error)?.let { desktopFeatureNotice = it }
+        }
+    }
+
+    fun generateReaderHubRecap() {
+        val currentText = readerHubCurrentTextForRecap()
+        if (currentText.isBlank()) {
+            readerHubRecapResult = RecapResult(error = "There is no reading context for a recap.")
+            return
+        }
+        desktopFeatureNoticeForReaderAi(ReaderAiFeature.RECAP, currentText)?.let { notice ->
+            desktopFeatureNotice = notice
+            return
+        }
+        val book = readerSession.reader.book
+        val bookKey = readerHubBookKey()
+        val currentChapterIndex = readerHubChapterIndex().coerceIn(0, book.chapters.size.coerceAtLeast(1) - 1)
+        isReaderHubRecapLoading = true
+        readerHubRecapResult = null
+        readerHubRecapProgressMessage = "Checking past chapters..."
+        scope.launch {
+            val pastSummaries = mutableListOf<String>()
+            for (chapterIndex in 0 until currentChapterIndex) {
+                readerHubRecapProgressMessage = "Analyzing Chapter ${chapterIndex + 1}..."
+                val cached = desktopSummaryCacheStore.getSummary(bookKey, chapterIndex)
+                if (!cached.isNullOrBlank()) {
+                    pastSummaries += cached
+                    continue
+                }
+                val chapterText = readerHubChapterText(chapterIndex)
+                if (chapterText.length <= 100) continue
+                val summary = desktopAiAdapter.summarize(chapterText)
+                summary.summary?.takeIf { it.isNotBlank() }?.let { generated ->
+                    val title = readerHubChapterTitle(chapterIndex)
+                    desktopSummaryCacheStore.saveSummary(bookKey, chapterIndex, title, generated)
+                    pastSummaries += generated
+                }
+                if (summary.error != null) {
+                    desktopFeatureNoticeForError(summary.error)?.let { desktopFeatureNotice = it }
+                }
+                delay(500)
+            }
+
+            readerHubRecapProgressMessage = "Generating recap..."
+            val recap = (desktopAiAdapter as? DesktopPaidAiAdapter)
+                ?.recapWithContext(pastSummaries, currentText)
+                ?: desktopAiAdapter.recap(
+                    buildString {
+                        pastSummaries.forEachIndexed { index, summary ->
+                            append("Past chapter ${index + 1} summary:\n")
+                            append(summary)
+                            append("\n\n")
+                        }
+                        append(currentText)
+                    }
+                )
+            readerHubRecapResult = recap
+            isReaderHubRecapLoading = false
+            readerHubRecapProgressMessage = null
+            desktopFeatureNoticeForError(recap.error)?.let { desktopFeatureNotice = it }
+        }
+    }
+
     fun runReaderAiAction(feature: ReaderAiFeature, text: String) {
         val normalizedText = text.trim()
         if (normalizedText.isBlank()) return
@@ -583,8 +753,24 @@ internal fun EpistemeDesktopApp(
                     text = normalizedText.take(2400),
                     context = ReaderContextExtractor.currentPageText(readerSession)
                 ).let { it.definition to it.error }
-                ReaderAiFeature.SUMMARIZE -> desktopAiAdapter.summarize(normalizedText).let { it.summary to it.error }
-                ReaderAiFeature.RECAP -> desktopAiAdapter.recap(normalizedText).let { it.recap to it.error }
+                ReaderAiFeature.SUMMARIZE -> {
+                    val summary = desktopAiAdapter.summarize(normalizedText)
+                    summary.summary?.takeIf { it.isNotBlank() }?.let { generated ->
+                        desktopSummaryCacheStore.saveSummary(
+                            readerHubBookKey(),
+                            readerHubChapterIndex(),
+                            readerHubChapterTitle(),
+                            generated
+                        )
+                    }
+                    readerHubSummaryResult = summary
+                    summary.summary to summary.error
+                }
+                ReaderAiFeature.RECAP -> {
+                    val recap = desktopAiAdapter.recap(normalizedText)
+                    readerHubRecapResult = recap
+                    recap.recap to recap.error
+                }
             }
             readerExtrasState = readerExtrasState.copy(
                 aiResult = ReaderAiResultState(
@@ -1737,6 +1923,17 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    LaunchedEffect(activeReaderBookId, readerSession.reader.currentPage?.chapterIndex) {
+        clearReaderHubSummary()
+        clearReaderHubRecap()
+    }
+
+    LaunchedEffect(activePdfDocument, selectedTab) {
+        if (activePdfDocument != null || selectedTab != SharedAppTab.READER) {
+            showReaderAiHub = false
+        }
+    }
+
     LaunchedEffect(aiByokSettings, state.currentUser, state.credits, activeReaderBookId, readerSession.reader.book.title) {
         readerExtrasState = readerExtrasState.copy(
             cloudTts = readerExtrasState.cloudTts.copy(
@@ -2130,6 +2327,10 @@ internal fun EpistemeDesktopApp(
                                     onTtsReplacementPreferencesChange = { preferences ->
                                         updateState(state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)))
                                     },
+                                    summaryCacheStore = desktopSummaryCacheStore,
+                                    credits = state.credits,
+                                    showPaidCredits = !desktopBuildProfile.byokAiAvailable,
+                                    onAiByokSettingsChange = ::updateAiByokSettings,
                                     featurePolicy = featurePolicy,
                                     onReaderAiEntitlementRequired = { feature, text ->
                                         desktopFeatureNoticeForReaderAi(feature, text)?.let { notice ->
@@ -2195,11 +2396,54 @@ internal fun EpistemeDesktopApp(
                                     onCloudTtsPauseResume = ::pauseResumeReaderCloudTts,
                                     onCloudTtsStop = ::stopReaderCloudTts,
                                     onCloudTtsClearCache = ::clearReaderCloudTtsCache,
+                                    onOpenAiHub = { showReaderAiHub = true },
                                     onAutoScrollChange = ::updateReaderAutoScroll,
                                     onDownloadReaderImage = ::downloadReaderImage,
                                     readerTextureDataUri = DesktopReaderTextures::dataUriFor,
                                     readerCustomTextureIds = readerCustomTextureIds,
                                     onImportReaderTexture = ::importDesktopReaderTexture,
+                                    bottomChromeExtraContent = {
+                                        if (featurePolicy.aiAndCloud) {
+                                            val settings = effectiveAiSettings()
+                                            val ttsActive = readerExtrasState.cloudTts.isLoading ||
+                                                readerExtrasState.cloudTts.isPlaying ||
+                                                readerExtrasState.cloudTts.isPaused
+                                            if (showReaderCloudTtsSettings) {
+                                                DesktopCloudTtsSettingsOverlay(
+                                                    settings = settings,
+                                                    isTtsActive = ttsActive,
+                                                    showCredits = !desktopBuildProfile.byokAiAvailable,
+                                                    credits = state.credits,
+                                                    cacheSummary = readerExtrasState.cloudTts.cacheSummary,
+                                                    onClearCache = ::clearReaderCloudTtsCache,
+                                                    onSettingsChange = { next ->
+                                                        updateAiByokSettings(
+                                                            aiByokSettings.sanitized().copy(
+                                                                ttsSpeakerId = next.sanitized().ttsSpeakerId
+                                                            )
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                            DesktopCloudTtsChromeControls(
+                                                settings = settings,
+                                                cloudTts = readerExtrasState.cloudTts,
+                                                credits = state.credits,
+                                                showCredits = !desktopBuildProfile.byokAiAvailable,
+                                                onRead = {
+                                                    startReaderCloudTts(
+                                                        ReaderTtsReadScope.BOOK,
+                                                        ReaderTtsPlanner.chunksFromCurrentLocation(readerSession)
+                                                    )
+                                                },
+                                                onPauseResume = ::pauseResumeReaderCloudTts,
+                                                onStop = ::stopReaderCloudTts,
+                                                onOpenSettings = {
+                                                    showReaderCloudTtsSettings = !showReaderCloudTtsSettings
+                                                }
+                                            )
+                                        }
+                                    },
                                     webViewRuntimeState = webViewRuntimeState,
                                     webViewNetworkAccessEnabled = featurePolicy.networkAccess,
                                     epubPaginationCache = desktopEpubPaginationCache,
@@ -2210,6 +2454,28 @@ internal fun EpistemeDesktopApp(
                 }
             }
             DesktopDropImportOverlay(dropImportState)
+        }
+
+        if (showReaderAiHub && activePdfDocument == null && selectedTab == SharedAppTab.READER) {
+            DesktopAiHubSheet(
+                bookKey = readerHubBookKey(),
+                bookTitle = readerSession.reader.book.title.ifBlank { "Untitled" },
+                itemIndex = readerHubChapterIndex(),
+                itemTitle = readerHubChapterTitle(),
+                summaryCacheStore = desktopSummaryCacheStore,
+                summaryResult = readerHubSummaryResult,
+                isSummaryLoading = isReaderHubSummaryLoading,
+                recapResult = readerHubRecapResult,
+                isRecapLoading = isReaderHubRecapLoading,
+                recapProgressMessage = readerHubRecapProgressMessage,
+                onGenerateSummary = ::generateReaderHubSummary,
+                onClearSummary = ::clearReaderHubSummary,
+                onGenerateRecap = ::generateReaderHubRecap,
+                onClearRecap = ::clearReaderHubRecap,
+                onDismiss = { showReaderAiHub = false },
+                credits = state.credits,
+                showCredits = !desktopBuildProfile.byokAiAvailable
+            )
         }
 
         desktopFeatureNotice?.let { notice ->

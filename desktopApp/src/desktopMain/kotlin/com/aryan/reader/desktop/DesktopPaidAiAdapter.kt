@@ -46,7 +46,7 @@ internal class DesktopPaidAiAdapter(
             body = buildJsonObject { put("text", JsonPrimitive(trimmed.take(2400))) }.toString(),
             authRequired = multiWord
         )
-        return AiDefinitionResult(definition = result.getOrNull(), error = result.exceptionOrNull()?.message)
+        return AiDefinitionResult(definition = result.getOrNull()?.text, error = result.exceptionOrNull()?.message)
     }
 
     override suspend fun summarize(text: String): SummarizationResult {
@@ -62,23 +62,46 @@ internal class DesktopPaidAiAdapter(
             }.toString(),
             authRequired = true
         )
-        return SummarizationResult(summary = result.getOrNull(), error = result.exceptionOrNull()?.message)
+        val response = result.getOrNull()
+        return SummarizationResult(
+            summary = response?.text,
+            error = result.exceptionOrNull()?.message,
+            cost = response?.cost,
+            freeRemaining = response?.freeRemaining
+        )
     }
 
     override suspend fun recap(textBeforeCurrentLocation: String): RecapResult {
-        val trimmed = textBeforeCurrentLocation.trim()
+        return recapWithContext(emptyList(), textBeforeCurrentLocation)
+    }
+
+    suspend fun recapWithContext(pastSummaries: List<String>, currentText: String): RecapResult {
+        val trimmed = currentText.trim()
         if (trimmed.isBlank()) return RecapResult(error = "There is no reading context for a recap.")
         val gate = paidGenerationGate(freeProSummaryAllowed = false)
         if (gate != null) return RecapResult(error = gate)
         val result = callWorker(
             path = "/recap",
             body = buildJsonObject {
-                put("past_summaries", buildJsonArray {})
+                put(
+                    "past_summaries",
+                    buildJsonArray {
+                        pastSummaries.filter { it.isNotBlank() }.forEach { summary ->
+                            add(JsonPrimitive(summary))
+                        }
+                    }
+                )
                 put("current_text", JsonPrimitive(trimmed))
             }.toString(),
             authRequired = true
         )
-        return RecapResult(recap = result.getOrNull(), error = result.exceptionOrNull()?.message)
+        val response = result.getOrNull()
+        return RecapResult(
+            recap = response?.text,
+            error = result.exceptionOrNull()?.message,
+            cost = response?.cost,
+            freeRemaining = response?.freeRemaining
+        )
     }
 
     private fun paidGenerationGate(freeProSummaryAllowed: Boolean): String? {
@@ -96,7 +119,7 @@ internal class DesktopPaidAiAdapter(
         path: String,
         body: String,
         authRequired: Boolean
-    ): Result<String> = withContext(Dispatchers.IO) {
+    ): Result<DesktopPaidAiResponse> = withContext(Dispatchers.IO) {
         if (!isAvailable) return@withContext Result.failure(IllegalStateException("AI features are unavailable."))
         val token = currentAuthToken()
         if (authRequired && token.isNullOrBlank()) {
@@ -130,10 +153,10 @@ internal class DesktopPaidAiAdapter(
                 if (connection.responseCode !in 200..299) {
                     throw IllegalStateException(workerErrorMessage(responseText) ?: "AI request failed: HTTP ${connection.responseCode}")
                 }
-                val text = parseWorkerStream(responseText).trim()
-                if (text.isBlank()) throw IllegalStateException("The AI service returned an empty response.")
+                val parsed = parseWorkerStream(responseText)
+                if (parsed.text.isBlank()) throw IllegalStateException("The AI service returned an empty response.")
                 onUsageCompleted()
-                text
+                parsed
             } finally {
                 connection.disconnect()
             }
@@ -141,20 +164,30 @@ internal class DesktopPaidAiAdapter(
     }
 }
 
+private data class DesktopPaidAiResponse(
+    val text: String,
+    val cost: Double? = null,
+    val freeRemaining: Int? = null
+)
+
 private val DesktopPaidAiJson = Json { ignoreUnknownKeys = true }
 
-private fun parseWorkerStream(responseText: String): String {
+private fun parseWorkerStream(responseText: String): DesktopPaidAiResponse {
     val output = StringBuilder()
+    var cost: Double? = null
+    var freeRemaining: Int? = null
     responseText.lineSequence().forEach { line ->
         val trimmed = line.trim()
         if (trimmed.isBlank()) return@forEach
         val parsed = runCatching { DesktopPaidAiJson.parseToJsonElement(trimmed).jsonObject }.getOrNull()
+        parsed?.get("cost_deducted")?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { cost = it }
+        parsed?.get("free_summaries_remaining")?.jsonPrimitive?.contentOrNull?.toIntOrNull()?.let { freeRemaining = it }
         parsed?.get("chunk")?.jsonPrimitive?.contentOrNull?.let(output::append)
         parsed?.get("error")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { error ->
             throw IllegalStateException(workerErrorMessage(error) ?: error)
         }
     }
-    return output.toString()
+    return DesktopPaidAiResponse(text = output.toString().trim(), cost = cost, freeRemaining = freeRemaining)
 }
 
 private fun workerErrorMessage(errorBody: String): String? {

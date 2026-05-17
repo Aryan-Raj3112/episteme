@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -71,7 +72,8 @@ internal fun DesktopPdfFullscreenBottomChrome(
     onPageScrubFinished: () -> Unit,
     onJumpBack: () -> Unit,
     onJumpForward: () -> Unit,
-    onClearJumpHistory: () -> Unit
+    onClearJumpHistory: () -> Unit,
+    extraContent: @Composable ColumnScope.() -> Unit = {}
 ) {
     val chromeBackground = MaterialTheme.colorScheme.surface
     val chromeContent = MaterialTheme.colorScheme.onSurface
@@ -89,6 +91,7 @@ internal fun DesktopPdfFullscreenBottomChrome(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
+            extraContent()
             val hasJumpTargets = jumpBackPage != null || jumpForwardPage != null
             DesktopPdfJumpHistoryControls(
                 visible = showJumpHistory,
@@ -154,7 +157,8 @@ internal fun DesktopPdfBottomChrome(
     onPageScrubFinished: () -> Unit,
     onJumpBack: () -> Unit,
     onJumpForward: () -> Unit,
-    onClearJumpHistory: () -> Unit
+    onClearJumpHistory: () -> Unit,
+    extraContent: @Composable ColumnScope.() -> Unit = {}
 ) {
     val chromeBackground = MaterialTheme.colorScheme.surface
     val chromeContent = MaterialTheme.colorScheme.onSurface
@@ -170,6 +174,7 @@ internal fun DesktopPdfBottomChrome(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
+            extraContent()
             DesktopPdfJumpHistoryControls(
                 visible = showJumpHistory,
                 backPage = jumpBackPage,
