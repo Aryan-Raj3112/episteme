@@ -210,6 +210,7 @@ import com.aryan.reader.tts.loadTtsMode
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -217,6 +218,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -1017,6 +1019,13 @@ fun EpubReaderHost(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var showBars by remember { mutableStateOf(false) }
     val chapters = remember(epubBook.chapters) { epubBook.chapters }
+    var readerImages by remember(epubBook) { mutableStateOf<List<EpubReaderImageReference>>(emptyList()) }
+
+    LaunchedEffect(epubBook) {
+        readerImages = withContext(Dispatchers.IO) {
+            epubBook.readerImageReferencesForDrawer()
+        }
+    }
 
     var currentChapterIndex by rememberSaveable(epubBook.title) {
         mutableIntStateOf(
@@ -1053,6 +1062,7 @@ fun EpubReaderHost(
 
     var cfiToLoad by remember { mutableStateOf(initialCfi) }
     var fragmentToLoad by remember { mutableStateOf<String?>(null) }
+    var imageToLoad by remember { mutableStateOf<EpubReaderImageReference?>(null) }
     var isInitialCfiLoad by remember(initialLocator) { mutableStateOf(initialLocator != null) }
     var bookmarkPageMap by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
@@ -1372,6 +1382,7 @@ fun EpubReaderHost(
         chunkTargetOverride = null
         cfiToLoad = null
         fragmentToLoad = null
+        imageToLoad = null
         isNavigatingToPosition = false
         suppressNextVerticalTtsDetach = false
     }
@@ -1596,6 +1607,33 @@ fun EpubReaderHost(
             }
         )
     }
+
+    var pendingImageDownload by remember { mutableStateOf<EpubReaderImageReference?>(null) }
+    val imageSaveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("image/*"),
+        onResult = { uri ->
+            val image = pendingImageDownload
+            pendingImageDownload = null
+            if (uri != null && image != null) {
+                scope.launch {
+                    val saved = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val bytes = image.readDownloadBytes() ?: error("Image bytes are unavailable")
+                            context.contentResolver.openOutputStream(uri)?.use { output ->
+                                output.write(bytes)
+                            } ?: error("Could not open image destination")
+                        }.isSuccess
+                    }
+                    val message = if (saved) {
+                        context.getString(R.string.saved_image_message, image.suggestedDownloadFileName())
+                    } else {
+                        context.getString(R.string.error_save_image)
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    )
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -2505,6 +2543,42 @@ fun EpubReaderHost(
         }
     }
 
+    fun scrollCurrentVerticalChapterToImage(image: EpubReaderImageReference) {
+        val targetChunk = image.chunkIndex
+        if (targetChunk != null && targetChunk >= 0) {
+            injectVerticalChunksThrough(targetChunk)
+        }
+        val escapedSource = escapeJsString(image.sourcePath)
+        val escapedOriginalSource = escapeJsString(image.originalSource)
+        webViewRefForTts?.evaluateJavascript(
+            "javascript:window.scrollToReaderImageSource('$escapedSource', ${image.ordinalInChapter}, '$escapedOriginalSource');",
+            null
+        )
+    }
+
+    fun navigateVerticalToImage(image: EpubReaderImageReference) {
+        scope.launch {
+            recordEpubJump(chapterStartJumpLocator(image.chapterIndex))
+            clearPendingTtsRelocationState("sidebar_image_vertical")
+            imageToLoad = image
+            cfiToLoad = null
+            fragmentToLoad = null
+            initialScrollTargetForChapter = null
+            if (image.chapterIndex != currentChapterIndex) {
+                chunkTargetOverride = image.chunkIndex?.coerceAtLeast(0)
+                Timber.tag(TAG_LINK_NAV)
+                    .d("[CHAPTER-NAV] source=SIDEBAR_IMAGE, from=$currentChapterIndex, to=${image.chapterIndex}, image='${image.sourceName()}'")
+                currentScrollYPosition = 0
+                currentScrollHeightValue = 0
+                currentChapterIndex = image.chapterIndex
+            } else {
+                chunkTargetOverride = null
+                scrollCurrentVerticalChapterToImage(image)
+                imageToLoad = null
+            }
+        }
+    }
+
     fun navigateVerticalToCfi(chapterIndex: Int, cfi: String) {
         scope.launch {
             val locator = locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi)
@@ -2795,6 +2869,7 @@ fun EpubReaderHost(
                 chapters = chapters,
                 tableOfContents = epubBook.tableOfContents,
                 activeFragmentId = activeFragmentId,
+                readerImages = readerImages,
                 bookmarks = bookmarks,
                 userHighlights = userHighlights,
                 currentChapterIndex = currentChapterIndex,
@@ -2803,6 +2878,56 @@ fun EpubReaderHost(
                 activeHighlightPalette = currentHighlightPalette,
                 onOpenPaletteManager = { showPaletteManager = true },
                 onHighlightColorChange = onHighlightColorChange,
+                onNavigateToImage = { image ->
+                    scope.launch {
+                        drawerState.close()
+                        when (currentRenderMode) {
+                            RenderMode.VERTICAL_SCROLL -> {
+                                navigateVerticalToImage(image)
+                            }
+                            RenderMode.PAGINATED -> {
+                                val bookPaginator = paginator as? BookPaginator
+                                if (bookPaginator != null) {
+                                    isNavigatingByToc = true
+                                    try {
+                                        val imagePage = bookPaginator.findStablePageForImageSource(
+                                            chapterIndex = image.chapterIndex,
+                                            sourcePath = image.sourcePath,
+                                            elementId = image.elementId,
+                                            ordinalInChapter = image.ordinalInChapter
+                                        )
+                                        if (imagePage != null) {
+                                            val (pageIndex, locator) = imagePage
+                                            paginatedJumpLocatorForPage(
+                                                pageIndex = pageIndex,
+                                                targetLocator = locator,
+                                                allowPageFallback = true
+                                            )?.let { recordEpubJump(it) }
+                                            scrollPaginatedToJumpPage(pageIndex, locator)
+                                        } else {
+                                            val fallbackPage = bookPaginator.findStableChapterStartPage(image.chapterIndex)
+                                            if (fallbackPage != null) {
+                                                recordEpubJump(chapterStartJumpLocator(image.chapterIndex).copy(pageIndex = fallbackPage))
+                                                scrollPaginatedToJumpPage(
+                                                    fallbackPage,
+                                                    Locator(image.chapterIndex, 0, 0),
+                                                    fallbackToChapterStart = true
+                                                )
+                                            }
+                                        }
+                                    } finally {
+                                        isNavigatingByToc = false
+                                    }
+                                }
+                            }
+                        }
+                        if (showBars) showBars = false
+                    }
+                },
+                onDownloadImage = { image ->
+                    pendingImageDownload = image
+                    imageSaveLauncher.launch(image.suggestedDownloadFileName())
+                },
                 onNavigateToTocEntry = { entry ->
                     scope.launch {
                         drawerState.close()
@@ -3651,6 +3776,9 @@ fun EpubReaderHost(
                                             initialPageScrollY = currentScrollYPosition,
                                             initialCfi = cfiToLoad,
                                             initialFragmentId = fragmentToLoad.also { },
+                                            initialImageSource = imageToLoad?.sourcePath,
+                                            initialImageOriginalSource = imageToLoad?.originalSource,
+                                            initialImageOrdinal = imageToLoad?.ordinalInChapter ?: 0,
                                             userHighlights = userHighlights.filter { it.chapterIndex == targetChapterIndex },
                                             activeHighlightPalette = currentHighlightPalette,
                                             onUpdatePalette = onUpdateHighlightPalette,
@@ -3693,12 +3821,14 @@ fun EpubReaderHost(
                                                     )
                                                 } else {
                                                     val wasCfiScroll = cfiToLoad != null
-                                                    Timber.tag("NavDiag").d("onChapterInitiallyScrolled for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
-                                                    logTtsChapterDiag("Chapter initially scrolled. targetChapter=$targetChapterIndex wasCfiScroll=$wasCfiScroll")
+                                                    val wasImageScroll = imageToLoad != null
+                                                    Timber.tag("NavDiag").d("onChapterInitiallyScrolled for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll, Was image scroll: $wasImageScroll")
+                                                    logTtsChapterDiag("Chapter initially scrolled. targetChapter=$targetChapterIndex wasCfiScroll=$wasCfiScroll wasImageScroll=$wasImageScroll")
                                                     initialScrollTargetForChapter = null
                                                     cfiToLoad = null
                                                     fragmentToLoad = null
-                                                    Timber.d("Initial scroll consumed for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll")
+                                                    imageToLoad = null
+                                                    Timber.d("Initial scroll consumed for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll, Was image scroll: $wasImageScroll")
                                                     isWebViewReady = true
 
                                                     if (wasCfiScroll) {

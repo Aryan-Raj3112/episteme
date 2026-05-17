@@ -49,12 +49,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.isPrimaryPressed
@@ -96,15 +91,12 @@ import com.aryan.reader.shared.pdf.PdfVisiblePageLayout
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
-import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
-import com.aryan.reader.shared.pdf.SharedPdfBookmarkSerializer
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
-import com.aryan.reader.shared.pdf.SharedPdfRichDocument
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
@@ -844,116 +836,52 @@ internal fun PdfReaderScreen(
         )
     }
 
-    LaunchedEffect(documentHandleId) {
-        arePdfAnnotationsLoaded = false
-        val loadedAnnotations = if (annotationFile.exists()) {
-            withContext(Dispatchers.IO) {
-                SharedPdfAnnotationSerializer.decode(annotationFile.readText())
-            }
-        } else {
-            emptyList()
-        }
-        dispatchPdf(SharedPdfReaderAction.AnnotationsLoaded(loadedAnnotations))
-        arePdfAnnotationsLoaded = true
-    }
+    DesktopPdfAnnotationSidecarEffect(
+        documentHandleId = documentHandleId,
+        annotationFile = annotationFile,
+        annotations = annotations,
+        annotationsLoaded = arePdfAnnotationsLoaded,
+        onAnnotationsLoadedChange = { arePdfAnnotationsLoaded = it },
+        onAnnotationsLoaded = { loadedAnnotations ->
+            dispatchPdf(SharedPdfReaderAction.AnnotationsLoaded(loadedAnnotations))
+        },
+        onLocalSidecarsChanged = onLocalSidecarsChanged
+    )
 
-    LaunchedEffect(documentHandleId, annotations, arePdfAnnotationsLoaded) {
-        if (!arePdfAnnotationsLoaded) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            runCatching {
-                annotationFile.parentFile?.mkdirs()
-                annotationFile.writeText(SharedPdfAnnotationSerializer.encode(annotations))
-            }
-        }
-        onLocalSidecarsChanged()
-    }
+    DesktopPdfRichTextSidecarEffect(
+        documentHandleId = documentHandleId,
+        richTextFile = richTextFile,
+        richTextController = richTextController,
+        onRichTextLoadedChange = { isRichTextLoaded = it }
+    )
 
-    LaunchedEffect(documentHandleId) {
-        isRichTextLoaded = false
-        SharedPdfRichTextLog.d(
-            "desktop.loadRichText start path=\"${richTextFile.absolutePath.logPreview(160)}\" exists=${richTextFile.exists()}"
-        )
-        val loadedRichText = withContext(Dispatchers.IO) {
-            if (richTextFile.exists()) {
-                val raw = richTextFile.readText()
-                SharedPdfRichTextLog.d(
-                    "desktop.loadRichText read path=\"${richTextFile.absolutePath.logPreview(160)}\" rawLen=${raw.length}"
-                )
-                SharedPdfRichTextSerializer.decode(raw)
-            } else {
-                SharedPdfRichDocument()
-            }
-        }
-        SharedPdfRichTextLog.d(
-            "desktop.loadRichText decoded textLen=${loadedRichText.text.length} spans=${loadedRichText.spans.size}"
-        )
-        richTextController.replaceDocument(loadedRichText)
-        isRichTextLoaded = true
-        SharedPdfRichTextLog.d("desktop.loadRichText ready")
-    }
+    DesktopPdfBookmarkSidecarEffect(
+        documentHandleId = documentHandleId,
+        bookmarkFile = bookmarkFile,
+        bookmarks = bookmarks,
+        bookmarksLoaded = arePdfBookmarksLoaded,
+        onBookmarksLoadedChange = { arePdfBookmarksLoaded = it },
+        onBookmarksLoaded = { loadedBookmarks ->
+            dispatchPdf(SharedPdfReaderAction.BookmarksLoaded(loadedBookmarks))
+        },
+        onLocalSidecarsChanged = onLocalSidecarsChanged
+    )
 
-    LaunchedEffect(documentHandleId) {
-        arePdfBookmarksLoaded = false
-        val loadedBookmarks = if (bookmarkFile.exists()) {
-            withContext(Dispatchers.IO) {
-                SharedPdfBookmarkSerializer.decode(bookmarkFile.readText())
-            }
-        } else {
-            emptyList()
-        }
-        dispatchPdf(SharedPdfReaderAction.BookmarksLoaded(loadedBookmarks))
-        arePdfBookmarksLoaded = true
-    }
+    DesktopPdfSearchIndexSidecarEffect(
+        documentHandleId = documentHandleId,
+        document = document,
+        searchIndexFile = searchIndexFile,
+        onIndexedSearchPageCountChange = { indexedSearchPageCount = it },
+        onSearchIndexingChange = { isSearchIndexing = it }
+    )
 
-    LaunchedEffect(documentHandleId, bookmarks, arePdfBookmarksLoaded) {
-        if (!arePdfBookmarksLoaded) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            runCatching {
-                bookmarkFile.parentFile?.mkdirs()
-                bookmarkFile.writeText(SharedPdfBookmarkSerializer.encode(bookmarks))
-            }
-        }
-        onLocalSidecarsChanged()
-    }
-
-    LaunchedEffect(documentHandleId) {
-        val restoredPageCount = withContext(Dispatchers.IO) {
-            restoreDesktopPdfSearchIndex(document, searchIndexFile)
-        }
-        indexedSearchPageCount = restoredPageCount
-        isSearchIndexing = indexedSearchPageCount < document.pageCount
-        logPdfZoomPerf {
-            "search_index_restore indexed=$indexedSearchPageCount/${document.pageCount} active=$isSearchIndexing"
-        }
-        withContext(Dispatchers.IO) {
-            DesktopPdfium.indexSearchPages(
-                document = document,
-                onProgress = { indexed, _ ->
-                    indexedSearchPageCount = indexed
-                    logPdfZoomPerf { "search_index_progress indexed=$indexed/${document.pageCount}" }
-                },
-                shouldContinue = { isActive }
-            )
-            if (isActive) {
-                saveDesktopPdfSearchIndex(document, searchIndexFile)
-            }
-        }
-        if (!isActive) return@LaunchedEffect
-        indexedSearchPageCount = document.indexedSearchTextPageCount()
-        isSearchIndexing = false
-        logPdfZoomPerf { "search_index_done indexed=$indexedSearchPageCount/${document.pageCount}" }
-    }
-
-    LaunchedEffect(documentHandleId, searchQuery, indexedSearchPageCount) {
-        val normalizedQuery = searchQuery.trim()
-        searchResults = if (normalizedQuery.isBlank()) {
-            emptyList()
-        } else {
-            withContext(Dispatchers.IO) {
-                DesktopPdfium.search(document, normalizedQuery)
-            }
-        }
-    }
+    DesktopPdfSearchResultsEffect(
+        documentHandleId = documentHandleId,
+        document = document,
+        searchQuery = searchQuery,
+        indexedSearchPageCount = indexedSearchPageCount,
+        onSearchResultsChange = { searchResults = it }
+    )
 
     fun goToPage(
         target: Int,
@@ -1845,18 +1773,7 @@ internal fun PdfReaderScreen(
         externalLookupAvailable = featurePolicy.externalLookup
     )
 
-    fun handlePdfReaderKeyEvent(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
-        if (event.type != KeyEventType.KeyDown) return false
-        if (isFullscreen && event.key == Key.Escape) {
-            setPdfFullscreen(false)
-            return true
-        }
-        val isEditingTextAnnotation =
-            activeTextDraft != null ||
-                (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
-        if ((isEditingTextAnnotation || isRichTextMode) && !event.isCtrlPressed) {
-            return false
-        }
+    fun runPdfKeyCommand(command: DesktopPdfKeyCommand): Boolean {
         fun scrollVertically(delta: Float): Boolean {
             pdfScope.launch {
                 if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
@@ -1867,122 +1784,67 @@ internal fun PdfReaderScreen(
             }
             return true
         }
-        return when {
-            event.key == Key.DirectionLeft -> {
+
+        return when (command) {
+            DesktopPdfKeyCommand.EXIT_FULLSCREEN -> {
+                setPdfFullscreen(false)
+                true
+            }
+            DesktopPdfKeyCommand.PREVIOUS_PAGE -> {
                 goToPage(pageIndex - 1)
                 true
             }
-            event.key == Key.DirectionRight -> {
+            DesktopPdfKeyCommand.NEXT_PAGE -> {
                 goToPage(pageIndex + 1)
                 true
             }
-            event.key == Key.DirectionUp -> scrollVertically(-96f)
-            event.key == Key.DirectionDown -> scrollVertically(96f)
-            event.key == Key.PageUp -> {
-                goToPage(pageIndex - 1)
-                true
-            }
-            event.key == Key.PageDown -> {
-                goToPage(pageIndex + 1)
-                true
-            }
-            event.key == Key.MoveHome -> {
+            DesktopPdfKeyCommand.SCROLL_UP -> scrollVertically(-96f)
+            DesktopPdfKeyCommand.SCROLL_DOWN -> scrollVertically(96f)
+            DesktopPdfKeyCommand.FIRST_PAGE -> {
                 goToPage(0)
                 true
             }
-            event.key == Key.MoveEnd -> {
+            DesktopPdfKeyCommand.LAST_PAGE -> {
                 goToPage(document.pageCount - 1)
                 true
             }
-            event.isCtrlPressed && event.key == Key.F -> {
+            DesktopPdfKeyCommand.SEARCH -> {
                 dispatchPdf(SharedPdfReaderAction.SearchOpened)
                 true
             }
-            event.isCtrlPressed && event.key == Key.Equals -> {
+            DesktopPdfKeyCommand.ZOOM_IN -> {
                 cancelPendingPdfZoomPreview()
                 dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
                 true
             }
-            event.isCtrlPressed && event.key == Key.Minus -> {
+            DesktopPdfKeyCommand.ZOOM_OUT -> {
                 cancelPendingPdfZoomPreview()
                 dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
                 true
             }
-            else -> false
         }
     }
 
+    fun isPdfTextEditingActive(): Boolean {
+        return activeTextDraft != null ||
+            (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT) ||
+            isRichTextMode
+    }
+
+    fun handlePdfReaderKeyEvent(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        val command = event.desktopPdfKeyCommandOrNull(
+            fullscreen = isFullscreen,
+            editingText = isPdfTextEditingActive()
+        ) ?: return false
+        return runPdfKeyCommand(command)
+    }
+
     fun handlePdfReaderAwtKeyEvent(event: AwtKeyEvent): Boolean {
-        if (event.id != AwtKeyEvent.KEY_PRESSED) return false
-        if (isFullscreen && event.keyCode == AwtKeyEvent.VK_ESCAPE) {
-            setPdfFullscreen(false)
-            return true
-        }
-        val isEditingTextAnnotation =
-            activeTextDraft != null ||
-                (selectedTool == PdfInkTool.TEXT && selectedAnnotation?.kind == PdfAnnotationKind.TEXT)
-        if ((isEditingTextAnnotation || isRichTextMode) && !event.isControlDown) {
-            return false
-        }
-        fun scrollVertically(delta: Float): Boolean {
-            pdfScope.launch {
-                if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
-                    verticalListState.scrollBy(delta)
-                } else {
-                    pageVerticalScrollState.scrollBy(delta)
-                }
-            }
-            return true
-        }
-        return when (event.keyCode) {
-            AwtKeyEvent.VK_LEFT -> {
-                goToPage(pageIndex - 1)
-                true
-            }
-            AwtKeyEvent.VK_RIGHT -> {
-                goToPage(pageIndex + 1)
-                true
-            }
-            AwtKeyEvent.VK_UP -> scrollVertically(-96f)
-            AwtKeyEvent.VK_DOWN -> scrollVertically(96f)
-            AwtKeyEvent.VK_PAGE_UP -> {
-                goToPage(pageIndex - 1)
-                true
-            }
-            AwtKeyEvent.VK_PAGE_DOWN -> {
-                goToPage(pageIndex + 1)
-                true
-            }
-            AwtKeyEvent.VK_HOME -> {
-                goToPage(0)
-                true
-            }
-            AwtKeyEvent.VK_END -> {
-                goToPage(document.pageCount - 1)
-                true
-            }
-            AwtKeyEvent.VK_F -> {
-                if (!event.isControlDown) return false
-                dispatchPdf(SharedPdfReaderAction.SearchOpened)
-                true
-            }
-            AwtKeyEvent.VK_EQUALS,
-            AwtKeyEvent.VK_PLUS,
-            AwtKeyEvent.VK_ADD -> {
-                if (!event.isControlDown) return false
-                cancelPendingPdfZoomPreview()
-                dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
-                true
-            }
-            AwtKeyEvent.VK_MINUS,
-            AwtKeyEvent.VK_SUBTRACT -> {
-                if (!event.isControlDown) return false
-                cancelPendingPdfZoomPreview()
-                dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
-                true
-            }
-            else -> false
-        }
+        val command = event.desktopPdfKeyCommandOrNull(
+            fullscreen = isFullscreen,
+            editingText = isPdfTextEditingActive()
+        ) ?: return false
+        return runPdfKeyCommand(command)
     }
 
     DesktopReaderFullscreenKeyEffect(

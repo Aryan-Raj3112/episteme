@@ -770,10 +770,13 @@
     <string name="tab_bookmarks">Bookmarks</string>
     <string name="tab_highlights">Highlights</string>
     <string name="tab_pages">Pages</string>
+    <string name="tab_images">Images</string>
     <string name="action_expand_all">Expand All</string>
     <string name="action_collapse_all">Collapse All</string>
     <string name="action_locate">Locate</string>
     <string name="no_bookmarks_yet">You haven\'t added any bookmarks yet.</string>
+    <string name="no_images_found">No images found.</string>
+    <string name="content_desc_download_image">Download image</string>
     <string name="content_desc_more_options_bookmark">More options for bookmark</string>
     <string name="dialog_rename_bookmark">Rename Bookmark</string>
     <string name="label_new_name">New Name</string>
@@ -787,6 +790,8 @@
     <string name="dialog_delete_highlight_desc">Are you sure you want to permanently delete this highlight?</string>
 
     <!-- EpubReaderScreen.kt -->
+    <string name="saved_image_message">Saved %1$s</string>
+    <string name="error_save_image">Could not save image.</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="banner_original_pdf_not_found">Original PDF not found.</string>
     <!-- Error state shown in the reader. %1$s = the file path that could not be found. -->

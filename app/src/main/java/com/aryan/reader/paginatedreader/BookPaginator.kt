@@ -103,6 +103,14 @@ private data class PaginationRequest(val chapterIndex: Int, val priority: Int) :
 
 private const val PAGE_INDEX_ANCHOR_SEPARATOR = "\u001F"
 
+private fun String.normalizedImageSourceForNavigation(): String {
+    return substringBefore('#')
+        .substringBefore('?')
+        .replace('\\', '/')
+        .removePrefix("file://")
+        .lowercase()
+}
+
 private data class TextRangeIndex(
     val pageInChapter: Int,
     val blockIndex: Int,
@@ -654,6 +662,43 @@ class BookPaginator(
             "stable_locator resolved locator=$locator page=$finalPageIndex chapterStart=$chapterStartPage pageInChapter=$pageInChapter"
         )
         finalPageIndex
+    }
+
+    suspend fun findStablePageForImageSource(
+        chapterIndex: Int,
+        sourcePath: String,
+        elementId: String?,
+        ordinalInChapter: Int
+    ): Pair<Int, Locator>? = withContext(Dispatchers.IO) {
+        val chapter = chapters.getOrNull(chapterIndex) ?: return@withContext null
+        val imageBlocks = getAllBlocks(getBlocksForChapter(chapter, chapterIndex))
+            .filterIsInstance<ImageBlock>()
+        if (imageBlocks.isEmpty()) return@withContext null
+
+        val normalizedSource = sourcePath.normalizedImageSourceForNavigation()
+        val normalizedFileName = normalizedSource.substringAfterLast('/')
+        val matchingBySource = imageBlocks.filter { block ->
+            val normalizedBlockPath = block.path.normalizedImageSourceForNavigation()
+            normalizedBlockPath == normalizedSource ||
+                normalizedBlockPath.endsWith("/$normalizedFileName") ||
+                normalizedSource.endsWith("/${normalizedBlockPath.substringAfterLast('/')}")
+        }
+        val targetBlock = elementId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { id -> imageBlocks.firstOrNull { it.elementId == id } }
+            ?: matchingBySource.getOrNull(ordinalInChapter.coerceAtLeast(0))
+            ?: matchingBySource.firstOrNull()
+            ?: return@withContext null
+
+        val locator = Locator(
+            chapterIndex = chapterIndex,
+            blockIndex = targetBlock.blockIndex,
+            charOffset = 0
+        )
+        val targetPage = findStablePageForLocator(locator)
+            ?: findStableChapterStartPage(chapterIndex)
+            ?: return@withContext null
+        targetPage to locator
     }
 
     suspend fun getTtsChunksForChapter(chapterIndex: Int, startingFromPageInChapter: Int = 0): List<TtsChunk>? {

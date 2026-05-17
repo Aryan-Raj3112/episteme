@@ -468,6 +468,9 @@ fun ChapterWebView(
     ttsScope: CoroutineScope,
     tocFragments: List<String>,
     initialFragmentId: String? = null,
+    initialImageSource: String? = null,
+    initialImageOriginalSource: String? = null,
+    initialImageOrdinal: Int = 0,
     onTtsTextReady: suspend (String) -> Unit,
     isProUser: Boolean,
     isOss: Boolean = false,
@@ -1011,6 +1014,14 @@ fun ChapterWebView(
                                 }
                                 onChapterInitiallyScrolled()
                                 scrollActionTaken = true
+                            } else if (!initialImageSource.isNullOrBlank()) {
+                                val imageJsCommand =
+                                    "javascript:window.scrollToReaderImageSource('${escapeJsString(initialImageSource)}', $initialImageOrdinal, '${escapeJsString(initialImageOriginalSource.orEmpty())}');"
+                                Timber.tag("NavDiag").d("WebView onPageFinished: Scrolling to image source: $initialImageSource")
+                                view?.evaluateJavascript(imageJsCommand) {
+                                    onChapterInitiallyScrolled()
+                                    scrollActionTaken = true
+                                }
                             } else if (initialScrollTarget != null) {
                                 val scrollJsCommand = when (initialScrollTarget) {
                                     ChapterScrollPosition.END -> "javascript:window.scrollToChapterEnd();"

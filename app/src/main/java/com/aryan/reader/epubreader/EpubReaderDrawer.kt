@@ -19,9 +19,11 @@
  */
 package com.aryan.reader.epubreader
 
+import android.graphics.BitmapFactory
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -32,6 +34,7 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -55,6 +58,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
@@ -66,12 +70,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -83,7 +88,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -94,8 +101,10 @@ import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.EpubTocEntry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 @Composable
@@ -207,6 +216,7 @@ fun EpubReaderDrawerSheet(
     chapters: List<EpubChapter>,
     tableOfContents: List<EpubTocEntry>,
     activeFragmentId: String?,
+    readerImages: List<EpubReaderImageReference>,
     bookmarks: Set<Bookmark>,
     userHighlights: List<UserHighlight>,
     currentChapterIndex: Int,
@@ -214,6 +224,8 @@ fun EpubReaderDrawerSheet(
     renderMode: RenderMode,
     onNavigateToChapter: (Int) -> Unit,
     onNavigateToTocEntry: (EpubTocEntry) -> Unit,
+    onNavigateToImage: (EpubReaderImageReference) -> Unit,
+    onDownloadImage: (EpubReaderImageReference) -> Unit,
     onNavigateToBookmark: (Bookmark) -> Unit,
     onNavigateToHighlight: (UserHighlight) -> Unit,
     onDeleteBookmark: (Bookmark) -> Unit,
@@ -227,11 +239,15 @@ fun EpubReaderDrawerSheet(
     ModalDrawerSheet(
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
     ) {
-        val drawerPagerState = rememberPagerState(pageCount = { 3 })
+        val drawerPagerState = rememberPagerState(pageCount = { 4 })
         val drawerScope = rememberCoroutineScope()
 
         Column(modifier = Modifier.fillMaxSize()) {
-            TabRow(selectedTabIndex = drawerPagerState.currentPage) {
+            ScrollableTabRow(
+                selectedTabIndex = drawerPagerState.currentPage,
+                edgePadding = 0.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Tab(
                     selected = drawerPagerState.currentPage == 0,
                     onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(0) } },
@@ -246,6 +262,11 @@ fun EpubReaderDrawerSheet(
                     selected = drawerPagerState.currentPage == 2,
                     onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(2) } },
                     text = { Text(stringResource(R.string.tab_annotations)) }
+                )
+                Tab(
+                    selected = drawerPagerState.currentPage == 3,
+                    onClick = { drawerScope.launch { drawerPagerState.animateScrollToPage(3) } },
+                    text = { Text(stringResource(R.string.tab_images)) }
                 )
             }
 
@@ -281,6 +302,11 @@ fun EpubReaderDrawerSheet(
                         activeHighlightPalette = activeHighlightPalette,
                         onOpenPaletteManager = onOpenPaletteManager,
                         onHighlightColorChange = onHighlightColorChange
+                    )
+                    3 -> ImagesList(
+                        readerImages = readerImages,
+                        onNavigateToImage = onNavigateToImage,
+                        onDownloadImage = onDownloadImage
                     )
                 }
             }
@@ -706,6 +732,145 @@ private fun BookmarksList(
                     }
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun ImagesList(
+    readerImages: List<EpubReaderImageReference>,
+    onNavigateToImage: (EpubReaderImageReference) -> Unit,
+    onDownloadImage: (EpubReaderImageReference) -> Unit
+) {
+    if (readerImages.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = stringResource(R.string.no_images_found),
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center
+            )
+        }
+        return
+    }
+
+    val listState = rememberLazyListState()
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 4.dp),
+            contentPadding = PaddingValues(vertical = 4.dp)
+        ) {
+            items(
+                items = readerImages,
+                key = { it.id }
+            ) { image ->
+                ListItem(
+                    leadingContent = {
+                        EpubReaderImageThumbnail(
+                            image = image,
+                            modifier = Modifier.size(width = 72.dp, height = 56.dp)
+                        )
+                    },
+                    headlineContent = {
+                        Text(
+                            text = image.displayTitle,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    supportingContent = {
+                        Column {
+                            Text(
+                                text = image.chapterTitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val metadata = listOfNotNull(image.dimensionLabel, image.sourceName()).joinToString(" - ")
+                            if (metadata.isNotBlank()) {
+                                Text(
+                                    text = metadata,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { onDownloadImage(image) }) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = stringResource(R.string.content_desc_download_image)
+                            )
+                        }
+                    },
+                    modifier = Modifier.clickable { onNavigateToImage(image) }
+                )
+                HorizontalDivider()
+            }
+        }
+
+        VerticalScrollbar(
+            listState = listState,
+            modifier = Modifier.align(Alignment.CenterEnd)
+        )
+    }
+}
+
+@Composable
+private fun EpubReaderImageThumbnail(
+    image: EpubReaderImageReference,
+    modifier: Modifier = Modifier
+) {
+    var bitmap by remember(image.sourcePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    LaunchedEffect(image.sourcePath) {
+        bitmap = withContext(Dispatchers.IO) {
+            if (image.sourcePath.startsWith("data:", ignoreCase = true)) {
+                val bytes = image.readDownloadBytes()
+                bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            } else {
+                BitmapFactory.decodeFile(image.sourcePath)
+            }
+        }
+    }
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+    ) {
+        val currentBitmap = bitmap
+        if (currentBitmap != null) {
+            Image(
+                bitmap = currentBitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = (image.index + 1).toString(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

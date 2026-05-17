@@ -81,9 +81,9 @@ fun epubReaderWorkspaceModel(
     val preferences = toolbarPreferences.sanitized()
     val leftSections = listOf(
         ReaderWorkspaceLeftSection.CONTENTS,
-        ReaderWorkspaceLeftSection.IMAGES,
         ReaderWorkspaceLeftSection.NOTES,
-        ReaderWorkspaceLeftSection.BOOKMARKS
+        ReaderWorkspaceLeftSection.BOOKMARKS,
+        ReaderWorkspaceLeftSection.IMAGES
     )
     val inspectorSections = buildList {
         if (preferences.isVisible(ReaderTool.THEME) || preferences.isVisible(ReaderTool.FORMAT)) {

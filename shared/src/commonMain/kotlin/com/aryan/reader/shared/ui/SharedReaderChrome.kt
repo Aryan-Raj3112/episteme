@@ -3034,12 +3034,9 @@ private fun SharedReaderSidebar(
     onDeleteHighlight: (UserHighlight) -> Unit
 ) {
     val tabs = remember(sections) {
-        listOf(
-            ReaderWorkspaceLeftSection.CONTENTS,
-            ReaderWorkspaceLeftSection.IMAGES,
-            ReaderWorkspaceLeftSection.NOTES,
-            ReaderWorkspaceLeftSection.BOOKMARKS
-        ).filter { it in sections }
+        sections
+            .filter { it.isReaderNavigationSection() }
+            .distinct()
     }
     var selectedSection by remember(tabs) { mutableStateOf(tabs.firstOrNull()) }
     val selectedTabIndex = tabs.indexOf(selectedSection).takeIf { it >= 0 } ?: 0
@@ -3055,7 +3052,8 @@ private fun SharedReaderSidebar(
             if (tabs.isNotEmpty()) {
                 ScrollableTabRow(
                     selectedTabIndex = selectedTabIndex,
-                    edgePadding = 0.dp
+                    edgePadding = 0.dp,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     tabs.forEach { section ->
                         Tab(
@@ -3101,6 +3099,17 @@ private fun SharedReaderSidebar(
                 else -> SharedReaderEmptyNavigation("No navigation items")
             }
         }
+    }
+}
+
+private fun ReaderWorkspaceLeftSection.isReaderNavigationSection(): Boolean {
+    return when (this) {
+        ReaderWorkspaceLeftSection.CONTENTS,
+        ReaderWorkspaceLeftSection.IMAGES,
+        ReaderWorkspaceLeftSection.NOTES,
+        ReaderWorkspaceLeftSection.BOOKMARKS -> true
+        ReaderWorkspaceLeftSection.PAGES,
+        ReaderWorkspaceLeftSection.SEARCH -> false
     }
 }
 
