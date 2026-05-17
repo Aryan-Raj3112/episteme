@@ -140,14 +140,14 @@ fun SharedAppShell(
                             selectedTab = shellModel.selectedPrimaryTab,
                             primaryTabs = shellModel.primaryTabs,
                             onTabSelected = onTabSelected,
-                            onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
+                            onToolsClick = { showToolsPanel = true }
                         )
                     } else {
                         SharedAppCompactRail(
                             selectedTab = shellModel.selectedPrimaryTab,
                             primaryTabs = shellModel.primaryTabs,
                             onTabSelected = onTabSelected,
-                            onToolsClick = { onTabSelected(SharedAppTab.SETTINGS) }
+                            onToolsClick = { showToolsPanel = true }
                         )
                     }
                 }
@@ -242,20 +242,20 @@ private fun SharedAppSidebar(
 ) {
     Surface(
         modifier = Modifier
-            .width(244.dp)
+            .width(SharedUiTokens.sidebarWidth)
             .fillMaxHeight(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 0.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(SharedUiTokens.compactGap)
         ) {
             Column(Modifier.padding(horizontal = 10.dp, vertical = 12.dp)) {
                 Text("Episteme", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Desktop library", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Library and reader", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             primaryTabs.forEach { tab ->
                 SharedSidebarNavItem(
@@ -267,7 +267,7 @@ private fun SharedAppSidebar(
             Spacer(Modifier.weight(1f))
             HorizontalDivider()
             SharedSidebarButton(
-                label = "Settings",
+                label = "Tools",
                 icon = Icons.Default.Settings,
                 onClick = onToolsClick
             )
@@ -282,7 +282,7 @@ private fun SharedAppCompactRail(
     onTabSelected: (SharedAppTab) -> Unit,
     onToolsClick: () -> Unit
 ) {
-    NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
+    NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         primaryTabs.forEach { tab ->
             NavigationRailItem(
                 selected = selectedTab == tab,
@@ -293,7 +293,7 @@ private fun SharedAppCompactRail(
         }
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onToolsClick) {
-            Icon(Icons.Default.Settings, contentDescription = "Settings")
+            Icon(Icons.Default.Settings, contentDescription = "Tools")
         }
     }
 }
@@ -371,6 +371,9 @@ private fun SharedToolsPanel(
     onOpenTab: (SharedAppTab) -> Unit,
     onTabsEnabledChange: (Boolean) -> Unit
 ) {
+    val hasWorkspaceActions = SharedAppToolAction.SETTINGS in toolActions ||
+        SharedAppToolAction.APP_THEME in toolActions ||
+        SharedAppToolAction.TABS_TOGGLE in toolActions
     val hasLibraryActions = SharedAppToolAction.IMPORT_FILES in toolActions ||
         SharedAppToolAction.IMPORT_FOLDER in toolActions ||
         SharedAppToolAction.SYNC in toolActions
@@ -400,6 +403,38 @@ private fun SharedToolsPanel(
                 }
                 IconButton(onClick = onClose) {
                     Icon(Icons.Default.Close, contentDescription = "Close tools")
+                }
+            }
+
+            if (hasWorkspaceActions) {
+                SharedToolsSection("Workspace") {
+                    if (SharedAppToolAction.SETTINGS in toolActions) {
+                        SharedToolRow(Icons.Default.Settings, "Settings hub") { onOpenTab(SharedAppTab.SETTINGS) }
+                    }
+                    if (SharedAppToolAction.APP_THEME in toolActions) {
+                        SharedToolRow(
+                            icon = Icons.Default.Palette,
+                            title = "App theme",
+                            onClick = onAppThemeRequested
+                        )
+                    }
+                    if (SharedAppToolAction.TABS_TOGGLE in toolActions) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 2.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Active reader tabs", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Text(if (isTabsEnabled) "Enabled" else "Disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = isTabsEnabled,
+                                onCheckedChange = onTabsEnabledChange
+                            )
+                        }
+                    }
                 }
             }
 
@@ -434,33 +469,6 @@ private fun SharedToolsPanel(
                                 onSyncRequested()
                             }
                         }
-                    }
-                }
-            }
-
-            SharedToolsSection("Appearance") {
-                if (SharedAppToolAction.APP_THEME in toolActions) {
-                    SharedToolRow(
-                        icon = Icons.Default.Palette,
-                        title = "App theme",
-                        onClick = onAppThemeRequested
-                    )
-                }
-                if (SharedAppToolAction.TABS_TOGGLE in toolActions) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 2.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Active reader tabs", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Text(if (isTabsEnabled) "Enabled" else "Disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Switch(
-                            checked = isTabsEnabled,
-                            onCheckedChange = onTabsEnabledChange
-                        )
                     }
                 }
             }

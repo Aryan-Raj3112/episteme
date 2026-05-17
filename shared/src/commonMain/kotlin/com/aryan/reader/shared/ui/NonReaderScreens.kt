@@ -97,6 +97,7 @@ import com.aryan.reader.shared.IN_APP_STORAGE_SOURCE
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.ReadStatusFilter
+import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
@@ -120,24 +121,15 @@ enum class NonReaderLibraryTab {
     COMPLETED
 }
 
-private val AndroidLibraryTabs = listOf(
-    NonReaderLibraryTab.BOOKS,
-    NonReaderLibraryTab.SHELVES,
-    NonReaderLibraryTab.FOLDERS
-)
-
-internal fun visibleNonReaderLibraryTabs(): List<NonReaderLibraryTab> = AndroidLibraryTabs
-
-private fun NonReaderLibraryTab.visibleLibraryTab(): NonReaderLibraryTab {
-    return takeIf { it in AndroidLibraryTabs } ?: NonReaderLibraryTab.BOOKS
-}
-
-internal fun SharedReaderScreenState.visibleBooksForLibrarySelection(tab: NonReaderLibraryTab): List<BookItem> {
-    return when (tab.visibleLibraryTab()) {
+internal fun SharedReaderScreenState.visibleBooksForLibrarySelection(
+    tab: NonReaderLibraryTab,
+    platform: ReaderPlatform = ReaderPlatform.ANDROID
+): List<BookItem> {
+    return when (tab.visibleLibraryTab(platform)) {
         NonReaderLibraryTab.BOOKS,
         NonReaderLibraryTab.UNREAD,
         NonReaderLibraryTab.IN_PROGRESS,
-        NonReaderLibraryTab.COMPLETED -> libraryBooks
+        NonReaderLibraryTab.COMPLETED -> booksForNonReaderLibraryTab(tab, platform)
         NonReaderLibraryTab.SHELVES -> shelves
             .filter { it.type != ShelfType.FOLDER && it.type != ShelfType.TAG && it.type != ShelfType.SMART }
             .flatMap { it.books }
@@ -341,27 +333,28 @@ fun SharedLibraryScreen(
     onSyncFolderMetadata: () -> Unit = {},
     onScanFolders: () -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
+    platform: ReaderPlatform = ReaderPlatform.ANDROID,
     useImportEmptyStateWhenLibraryEmpty: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val organization = state.toNonReaderLibraryOrganizationModel()
-    val activeLibraryTab = selectedTab.visibleLibraryTab()
+    val activeLibraryTab = selectedTab.visibleLibraryTab(platform)
     var showFilters by remember { mutableStateOf(false) }
     var viewMode by remember { mutableStateOf(BookViewMode.COVERS) }
 
     fun selectLibraryTab(tab: NonReaderLibraryTab) {
-        onTabChange(tab.visibleLibraryTab())
+        onTabChange(tab.visibleLibraryTab(platform))
     }
 
     NonReaderScreenScaffold(
         title = "Library",
-        subtitle = "Search, sort, filter, and organize local metadata",
+        subtitle = "Browse your collection",
         modifier = modifier
     ) {
         if (state.selectedBookIds.isNotEmpty()) {
             val selectedBooks = state.rawLibraryBooks.filter { it.id in state.selectedBookIds }
             val allSelectedPinned = selectedBooks.isNotEmpty() && selectedBooks.all { it.id in state.pinnedLibraryBookIds }
-            val visibleSelectionBooks = state.visibleBooksForLibrarySelection(activeLibraryTab)
+            val visibleSelectionBooks = state.visibleBooksForLibrarySelection(activeLibraryTab, platform)
             val allVisibleSelected = visibleSelectionBooks.isNotEmpty() &&
                 state.selectedBookIds.containsAll(visibleSelectionBooks.map { it.id })
             SelectionToolbar(
@@ -399,7 +392,8 @@ fun SharedLibraryScreen(
                             organization = organization,
                             selectedTab = activeLibraryTab,
                             onTabSelected = ::selectLibraryTab,
-                            modifier = Modifier.width(232.dp).fillMaxHeight()
+                            platform = platform,
+                            modifier = Modifier.width(SharedUiTokens.sidebarWidth).fillMaxHeight()
                         )
                         Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             LibraryToolbar(
@@ -411,14 +405,14 @@ fun SharedLibraryScreen(
                                 onStateChange = onStateChange,
                                 onImportBooks = onImportBooks,
                                 onImportFolder = onImportFolder,
-                                onCreateShelf = onCreateShelf,
-                                onCreateSmartShelf = onCreateSmartShelf
+                                onCreateShelf = onCreateShelf
                             )
                             LibraryContent(
                                 state = state,
                                 selectedTab = activeLibraryTab,
                                 viewMode = viewMode,
                                 showFilters = showFilters,
+                                platform = platform,
                                 onStateChange = onStateChange,
                                 onTabChange = ::selectLibraryTab,
                                 onImportBooks = onImportBooks,
@@ -443,7 +437,8 @@ fun SharedLibraryScreen(
                         LibraryTabStrip(
                             organization = organization,
                             selectedTab = activeLibraryTab,
-                            onTabSelected = ::selectLibraryTab
+                            onTabSelected = ::selectLibraryTab,
+                            platform = platform
                         )
                         LibraryToolbar(
                             state = state,
@@ -454,14 +449,14 @@ fun SharedLibraryScreen(
                             onStateChange = onStateChange,
                             onImportBooks = onImportBooks,
                             onImportFolder = onImportFolder,
-                            onCreateShelf = onCreateShelf,
-                            onCreateSmartShelf = onCreateSmartShelf
+                            onCreateShelf = onCreateShelf
                         )
                         LibraryContent(
                             state = state,
                             selectedTab = activeLibraryTab,
                             viewMode = viewMode,
                             showFilters = showFilters,
+                            platform = platform,
                             onStateChange = onStateChange,
                             onTabChange = ::selectLibraryTab,
                             onImportBooks = onImportBooks,
@@ -548,12 +543,12 @@ private fun NonReaderScreenScaffold(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(SharedUiTokens.screenPadding),
+        verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             trailing()
@@ -573,14 +568,14 @@ private fun ContinueReadingCard(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        shape = RoundedCornerShape(SharedUiTokens.surfaceRadius),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = sharedSubtleBorder()
     ) {
         Row(
-            modifier = Modifier.padding(18.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(18.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             BookCoverArt(
                 book = book,
@@ -812,16 +807,17 @@ private fun LibraryOrganizationSidebar(
     organization: NonReaderLibraryOrganizationModel,
     selectedTab: NonReaderLibraryTab,
     onTabSelected: (NonReaderLibraryTab) -> Unit,
+    platform: ReaderPlatform,
     modifier: Modifier = Modifier
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        shape = RoundedCornerShape(SharedUiTokens.surfaceRadius),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = sharedSubtleBorder()
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(10.dp),
+            modifier = Modifier.fillMaxSize().padding(SharedUiTokens.compactGap),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             item {
@@ -833,7 +829,7 @@ private fun LibraryOrganizationSidebar(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
                 )
             }
-            visibleNonReaderLibraryTabs().forEach { tab ->
+            visibleNonReaderLibraryTabs(platform).forEach { tab ->
                 item {
                     LibraryNavItem(
                         icon = tab.icon,
@@ -852,14 +848,15 @@ private fun LibraryOrganizationSidebar(
 private fun LibraryTabStrip(
     organization: NonReaderLibraryOrganizationModel,
     selectedTab: NonReaderLibraryTab,
-    onTabSelected: (NonReaderLibraryTab) -> Unit
+    onTabSelected: (NonReaderLibraryTab) -> Unit,
+    platform: ReaderPlatform
 ) {
     Row(
         modifier = Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        visibleNonReaderLibraryTabs().forEach { tab ->
+        visibleNonReaderLibraryTabs(platform).forEach { tab ->
             FilterChip(
                 selected = selectedTab == tab,
                 onClick = { onTabSelected(tab) },
@@ -907,8 +904,7 @@ private fun LibraryToolbar(
     onStateChange: (SharedReaderScreenState) -> Unit,
     onImportBooks: () -> Unit,
     onImportFolder: () -> Unit,
-    onCreateShelf: () -> Unit,
-    onCreateSmartShelf: () -> Unit
+    onCreateShelf: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SharedStableOutlinedTextField(
@@ -975,6 +971,7 @@ private fun LibraryContent(
     selectedTab: NonReaderLibraryTab,
     viewMode: BookViewMode,
     showFilters: Boolean,
+    platform: ReaderPlatform,
     onStateChange: (SharedReaderScreenState) -> Unit,
     onTabChange: (NonReaderLibraryTab) -> Unit = {},
     onImportBooks: () -> Unit,
@@ -1007,7 +1004,7 @@ private fun LibraryContent(
             NonReaderLibraryTab.UNREAD,
             NonReaderLibraryTab.IN_PROGRESS,
             NonReaderLibraryTab.COMPLETED -> {
-                val books = state.libraryBooks
+                val books = state.booksForNonReaderLibraryTab(selectedTab, platform)
                 if (books.isEmpty()) {
                     if (state.rawLibraryBooks.isEmpty() && useImportEmptyStateWhenLibraryEmpty) {
                         LibraryImportEmptyState(
@@ -1256,11 +1253,11 @@ private fun LibraryFilterPanel(
     onStateChange: (SharedReaderScreenState) -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        shape = RoundedCornerShape(SharedUiTokens.surfaceRadius),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = sharedSubtleBorder()
     ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(SharedUiTokens.panelPadding), verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Filters", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 if (state.libraryFilters.isActive || state.searchQuery.isNotBlank()) {

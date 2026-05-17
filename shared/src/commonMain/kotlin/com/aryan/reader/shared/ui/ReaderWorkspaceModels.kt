@@ -123,7 +123,7 @@ fun epubReaderWorkspaceModel(
         topActions = topActions,
         bottomActions = bottomActions,
         chrome = readerWorkspaceChromeModel(
-            preferAutoHide = false,
+            preferAutoHide = true,
             searchActive = session.isSearchActive,
             leftPanelOpen = false,
             inspectorOpen = false,
@@ -207,7 +207,7 @@ fun pdfReaderWorkspaceModel(
         ),
         defaultPdfInteractionMode = null,
         chrome = readerWorkspaceChromeModel(
-            preferAutoHide = false,
+            preferAutoHide = true,
             searchActive = searchActive || state.searchQuery.isNotBlank(),
             leftPanelOpen = false,
             inspectorOpen = false,

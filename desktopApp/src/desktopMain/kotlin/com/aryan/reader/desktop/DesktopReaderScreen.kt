@@ -364,15 +364,16 @@ internal fun DesktopReaderScreen(
         },
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
-        onImportReaderTexture = onImportReaderTexture
+        onImportReaderTexture = onImportReaderTexture,
+        preferDockedChrome = session.reader.settings.readingMode == ReaderReadingMode.VERTICAL
     ) { renderPlan, onVisiblePageChanged, onHighlightSelected ->
         Surface(
             color = renderPlan.background,
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
                 .onSizeChanged { size ->
                     val next = ReaderViewportSpec(size.width, size.height)
                     logReaderGap(

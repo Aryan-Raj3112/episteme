@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFolderPathResolver
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
@@ -42,7 +43,6 @@ import com.aryan.reader.shared.Tag
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
-import com.aryan.reader.shared.ui.SharedHomeScreen
 import com.aryan.reader.shared.ui.SharedLibraryScreen
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
@@ -150,6 +150,9 @@ internal fun DesktopReaderOpeningScreen(
 @Composable
 internal fun HomeScreen(
     state: SharedReaderScreenState,
+    selectedLibraryTab: NonReaderLibraryTab,
+    onLibraryTabChange: (NonReaderLibraryTab) -> Unit,
+    onStateChange: (SharedReaderScreenState) -> Unit,
     onImportBooks: () -> Unit,
     onImportFolder: () -> Unit,
     onRead: (BookItem) -> Unit,
@@ -158,34 +161,40 @@ internal fun HomeScreen(
     onRemoveSelected: () -> Unit,
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
+    onCreateShelf: () -> Unit,
+    onCreateSmartShelf: () -> Unit,
+    onRenameShelf: (Shelf) -> Unit,
+    onDeleteShelf: (Shelf) -> Unit,
+    onRemoveFolder: (Shelf) -> Unit,
     onTagSelectedBooks: () -> Unit,
     onAddSelectedBooksToShelf: () -> Unit,
-    onOpenTab: (BookItem) -> Unit,
-    onCloseTab: (BookItem) -> Unit,
-    onCloseAllTabs: () -> Unit,
-    onRecentLimitChange: (Int) -> Unit,
-    onTogglePinned: (BookItem) -> Unit,
-    onOpenSettings: () -> Unit
+    onSyncFolderMetadata: () -> Unit,
+    onScanFolders: () -> Unit,
+    onTogglePinned: (BookItem) -> Unit
 ) {
-    SharedHomeScreen(
+    LibraryScreen(
         state = state,
+        selectedLibraryTab = selectedLibraryTab,
+        onLibraryTabChange = onLibraryTabChange,
+        onStateChange = onStateChange,
         onImportBooks = onImportBooks,
         onImportFolder = onImportFolder,
-        onOpenBook = onRead,
-        onToggleSelection = onSelect,
+        onRead = onRead,
+        onSelect = onSelect,
         onClearSelection = onClearSelection,
         onRemoveSelected = onRemoveSelected,
         onShowBookInfo = onShowBookInfo,
         onEditBook = onEditBook,
+        onCreateShelf = onCreateShelf,
+        onCreateSmartShelf = onCreateSmartShelf,
+        onRenameShelf = onRenameShelf,
+        onDeleteShelf = onDeleteShelf,
+        onRemoveFolder = onRemoveFolder,
         onTagSelectedBooks = onTagSelectedBooks,
         onAddSelectedBooksToShelf = onAddSelectedBooksToShelf,
-        onOpenTab = onOpenTab,
-        onCloseTab = onCloseTab,
-        onCloseAllTabs = onCloseAllTabs,
-        onRecentLimitChange = onRecentLimitChange,
-        onTogglePinned = onTogglePinned,
-        onOpenSettings = onOpenSettings,
-        showActiveTabs = false
+        onSyncFolderMetadata = onSyncFolderMetadata,
+        onScanFolders = onScanFolders,
+        onTogglePinned = onTogglePinned
     )
 }
 
@@ -237,6 +246,7 @@ internal fun LibraryScreen(
         onSyncFolderMetadata = onSyncFolderMetadata,
         onScanFolders = onScanFolders,
         onTogglePinned = onTogglePinned,
+        platform = ReaderPlatform.DESKTOP,
         useImportEmptyStateWhenLibraryEmpty = true
     )
 }

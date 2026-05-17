@@ -1865,6 +1865,7 @@ internal fun PdfReaderScreen(
         },
         isFullscreen = isFullscreen,
         onFullscreenChange = ::setPdfFullscreen,
+        preferDockedChrome = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
         isBookmarked = bookmarks.any { it.pageIndex == pageIndex },
         onToggleBookmark = { toggleBookmark(pageIndex) },
         onSearchAction = { dispatchPdf(SharedPdfReaderAction.SearchOpened) },
@@ -2061,7 +2062,7 @@ internal fun PdfReaderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(verticalViewportBackground, RoundedCornerShape(8.dp))
+                    .background(verticalViewportBackground, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
                     .onGloballyPositioned { coordinates ->
                         pdfZoomViewportRootOffset = coordinates.positionInRoot()
                     }
@@ -2164,7 +2165,7 @@ internal fun PdfReaderScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(8.dp))
+                        .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
                         .onGloballyPositioned { coordinates ->
                             pdfZoomViewportRootOffset = coordinates.positionInRoot()
                         }

@@ -172,12 +172,12 @@ fun SharedScreenScaffold(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .padding(SharedUiTokens.screenPadding),
+        verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             trailing()
@@ -221,6 +221,7 @@ fun SharedReaderScreen(
     readerTextureDataUri: (String) -> String? = { null },
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
+    preferDockedChrome: Boolean = false,
     readerContent: @Composable ColumnScope.(
         renderPlan: ReaderContentRenderPlan,
         onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
@@ -315,6 +316,7 @@ fun SharedReaderScreen(
         onReturnToLibrary = onReturnToLibrary,
         isFullscreen = isFullscreen,
         onFullscreenChange = ::setFullscreen,
+        preferDockedChrome = preferDockedChrome,
         isBookmarked = session.currentBookmark != null,
         onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
         onSearchAction = { dispatch(ReaderAction.SearchOpened) },
@@ -1235,15 +1237,16 @@ private fun SharedReaderControlPanel(
         modifier = Modifier
             .width(340.dp)
             .fillMaxHeight(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(8.dp)
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(SharedUiTokens.surfaceRadius),
+        border = sharedSubtleBorder()
     ) {
         LazyColumn(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(SharedUiTokens.panelPadding),
+            verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)
         ) {
             item {
-                Text("Reader controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Reader tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1308,10 +1311,10 @@ private fun SharedReaderControlPanel(
 }
 
 private enum class ReaderControlSection(val title: String) {
-    PAGE("Page"),
-    FORMAT("Format"),
-    THEME("Theme"),
-    EXTRAS("Extras")
+    PAGE("Navigation"),
+    FORMAT("Typography"),
+    THEME("Appearance"),
+    EXTRAS("Assist")
 }
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(session: ReaderSessionState): List<ReaderControlSection> {

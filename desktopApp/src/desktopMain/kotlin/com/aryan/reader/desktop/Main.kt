@@ -1612,6 +1612,9 @@ internal fun EpistemeDesktopApp(
                 when (tab) {
                         SharedAppTab.HOME -> HomeScreen(
                             state = state,
+                            selectedLibraryTab = selectedLibraryTab,
+                            onLibraryTabChange = { selectedLibraryTab = it },
+                            onStateChange = ::updateState,
                             onImportBooks = {
                                 importFiles(chooseFiles())
                             },
@@ -1628,18 +1631,16 @@ internal fun EpistemeDesktopApp(
                                 bookInfoInitiallyEditing = true
                                 bookInfoDialogFor = it
                             },
+                            onCreateShelf = { showCreateShelfDialog = true },
+                            onCreateSmartShelf = { showCreateSmartShelfDialog = true },
+                            onRenameShelf = { shelfToRename = it },
+                            onDeleteShelf = { shelfToDelete = it },
+                            onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
                             onAddSelectedBooksToShelf = { showAddToShelfDialog = true },
-                            onOpenTab = ::openReader,
-                            onCloseTab = ::closeReaderTab,
-                            onCloseAllTabs = ::closeAllReaderTabs,
-                            onRecentLimitChange = { limit -> updateState(state.reduce(LibraryAction.RecentLimitChanged(limit))) },
-                            onTogglePinned = { book -> updateState(state.reduce(AppAction.HomePinToggled(book.id))) },
-                            onOpenSettings = {
-                                settingsQuery = ""
-                                settingsDestination = SharedSettingsDestination.ROOT
-                                selectAppTab(SharedAppTab.SETTINGS)
-                            }
+                            onSyncFolderMetadata = { syncFolderMetadata() },
+                            onScanFolders = { scanSyncedFolders() },
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
                         )
 
                         SharedAppTab.SETTINGS -> SharedSettingsHub(

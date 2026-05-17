@@ -20,8 +20,27 @@ import kotlin.test.assertTrue
 class NonReaderLayoutModelsTest {
 
     @Test
-    fun `desktop library exposes the same top level organization tabs as Android`() {
-        val visibleTabs = visibleNonReaderLibraryTabs()
+    fun `android library keeps the simple top level organization tabs`() {
+        val visibleTabs = visibleNonReaderLibraryTabs(ReaderPlatform.ANDROID)
+
+        assertEquals(
+            listOf(
+                NonReaderLibraryTab.BOOKS,
+                NonReaderLibraryTab.SHELVES,
+                NonReaderLibraryTab.FOLDERS
+            ),
+            visibleTabs
+        )
+        assertFalse(NonReaderLibraryTab.SMART_SHELVES in visibleTabs)
+        assertFalse(NonReaderLibraryTab.TAGS in visibleTabs)
+        assertFalse(NonReaderLibraryTab.UNREAD in visibleTabs)
+        assertFalse(NonReaderLibraryTab.IN_PROGRESS in visibleTabs)
+        assertFalse(NonReaderLibraryTab.COMPLETED in visibleTabs)
+    }
+
+    @Test
+    fun `desktop library keeps browse focused on books shelves and folders`() {
+        val visibleTabs = visibleNonReaderLibraryTabs(ReaderPlatform.DESKTOP)
 
         assertEquals(
             listOf(
@@ -157,6 +176,30 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `hidden desktop status tabs fall back to all books`() {
+        val unread = book("unread", type = FileType.EPUB, progress = 0f)
+        val inProgress = book("progress", type = FileType.PDF, progress = 44f)
+        val complete = book("complete", type = FileType.CBZ, progress = 100f)
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(unread, inProgress, complete),
+            libraryBooks = listOf(unread, inProgress, complete)
+        )
+
+        assertEquals(
+            listOf("unread", "progress", "complete"),
+            state.booksForNonReaderLibraryTab(NonReaderLibraryTab.UNREAD, ReaderPlatform.DESKTOP).map { it.id }
+        )
+        assertEquals(
+            listOf("unread", "progress", "complete"),
+            state.visibleBooksForLibrarySelection(NonReaderLibraryTab.IN_PROGRESS, ReaderPlatform.DESKTOP).map { it.id }
+        )
+        assertEquals(
+            listOf("unread", "progress", "complete"),
+            state.booksForNonReaderLibraryTab(NonReaderLibraryTab.COMPLETED, ReaderPlatform.DESKTOP).map { it.id }
+        )
+    }
+
+    @Test
     fun `library visible selection follows folder shelf navigation`() {
         val rootBook = book("root", sourceFolder = "/sync")
         val childBook = book("child", sourceFolder = "/sync")
@@ -214,11 +257,12 @@ class NonReaderLayoutModelsTest {
         )
 
         assertEquals(
-            listOf(SharedAppTab.HOME, SharedAppTab.LIBRARY, SharedAppTab.CATALOGS),
+            listOf(SharedAppTab.LIBRARY, SharedAppTab.CATALOGS),
             model.primaryTabs
         )
-        assertEquals(SharedAppTab.HOME, model.selectedPrimaryTab)
+        assertEquals(SharedAppTab.LIBRARY, model.selectedPrimaryTab)
         assertTrue(SharedAppToolAction.IMPORT_FILES in model.toolActions)
+        assertTrue(SharedAppToolAction.SETTINGS in model.toolActions)
         assertTrue(SharedAppToolAction.IMPORT_FOLDER in model.toolActions)
         assertTrue(SharedAppToolAction.SYNC in model.toolActions)
         assertTrue(SharedAppToolAction.APP_THEME in model.toolActions)
@@ -258,11 +302,12 @@ class NonReaderLayoutModelsTest {
             featurePolicy = SharedFeaturePolicy.OssOffline
         )
 
-        assertEquals(listOf(SharedAppTab.HOME, SharedAppTab.LIBRARY), model.primaryTabs)
-        assertEquals(SharedAppTab.HOME, model.selectedPrimaryTab)
+        assertEquals(listOf(SharedAppTab.LIBRARY), model.primaryTabs)
+        assertEquals(SharedAppTab.LIBRARY, model.selectedPrimaryTab)
         assertFalse(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertFalse(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)
         assertFalse(SharedAppToolAction.SUPPORT in model.toolActions)
+        assertTrue(SharedAppToolAction.SETTINGS in model.toolActions)
         assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
         assertTrue(SharedAppToolAction.ABOUT in model.toolActions)
         assertTrue(model.showPrimaryNavigation)

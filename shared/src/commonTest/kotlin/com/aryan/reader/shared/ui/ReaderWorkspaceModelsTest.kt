@@ -54,7 +54,7 @@ class ReaderWorkspaceModelsTest {
         assertTrue(ReaderWorkspaceBottomAction.PAGE_SLIDER in model.bottomActions)
         assertFalse(model.panelDefaults.leftOpen)
         assertFalse(model.panelDefaults.inspectorOpen)
-        assertFalse(model.chrome.preferAutoHide)
+        assertTrue(model.chrome.preferAutoHide)
     }
 
     @Test
@@ -226,7 +226,7 @@ class ReaderWorkspaceModelsTest {
         assertTrue(ReaderWorkspaceTopAction.AI in model.topActions)
         assertFalse(model.panelDefaults.leftOpen)
         assertFalse(model.panelDefaults.inspectorOpen)
-        assertFalse(model.chrome.preferAutoHide)
+        assertTrue(model.chrome.preferAutoHide)
     }
 
     @Test
@@ -251,7 +251,7 @@ class ReaderWorkspaceModelsTest {
         )
 
         assertTrue(model.chrome.forceVisible)
-        assertFalse(model.chrome.preferAutoHide)
+        assertTrue(model.chrome.preferAutoHide)
         assertTrue("search" in model.chrome.forceVisibleReasons)
         assertTrue("annotation" in model.chrome.forceVisibleReasons)
         assertTrue("error" in model.chrome.forceVisibleReasons)

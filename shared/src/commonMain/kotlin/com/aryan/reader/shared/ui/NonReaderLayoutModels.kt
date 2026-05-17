@@ -14,6 +14,7 @@ import com.aryan.reader.shared.progressPercentValue
 import com.aryan.reader.shared.toHomeScreenModel
 
 enum class SharedAppToolAction {
+    SETTINGS,
     IMPORT_FILES,
     IMPORT_FOLDER,
     SYNC,
@@ -39,20 +40,21 @@ fun sharedAppShellModel(
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard
 ): SharedAppShellModel {
     val primaryTabs = buildList {
-        add(SharedAppTab.HOME)
         add(SharedAppTab.LIBRARY)
         if (featurePolicy.opdsCatalogs) add(SharedAppTab.CATALOGS)
     }
     val selectedPrimaryTab = when (selectedTab) {
+        SharedAppTab.HOME -> SharedAppTab.LIBRARY
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY
         SharedAppTab.SETTINGS,
         SharedAppTab.CUSTOM_FONTS,
         SharedAppTab.SUPPORT,
         SharedAppTab.FEEDBACK,
-        SharedAppTab.ABOUT -> SharedAppTab.HOME
+        SharedAppTab.ABOUT -> SharedAppTab.LIBRARY
         else -> selectedTab
-    }.takeIf { it in primaryTabs } ?: SharedAppTab.HOME
+    }.takeIf { it in primaryTabs } ?: SharedAppTab.LIBRARY
     val toolActions = buildList {
+        add(SharedAppToolAction.SETTINGS)
         add(SharedAppToolAction.IMPORT_FILES)
         add(SharedAppToolAction.IMPORT_FOLDER)
         add(SharedAppToolAction.SYNC)
@@ -146,6 +148,45 @@ private val LibraryFileTypeGroupTemplates = listOf(
         fileTypes = listOf(FileType.CBZ, FileType.CBR, FileType.CB7)
     )
 )
+
+private val AndroidLibraryTabs = listOf(
+    NonReaderLibraryTab.BOOKS,
+    NonReaderLibraryTab.SHELVES,
+    NonReaderLibraryTab.FOLDERS
+)
+
+private val DesktopLibraryTabs = listOf(
+    NonReaderLibraryTab.BOOKS,
+    NonReaderLibraryTab.SHELVES,
+    NonReaderLibraryTab.FOLDERS
+)
+
+internal fun visibleNonReaderLibraryTabs(
+    platform: ReaderPlatform = ReaderPlatform.ANDROID
+): List<NonReaderLibraryTab> {
+    return when (platform) {
+        ReaderPlatform.ANDROID -> AndroidLibraryTabs
+        ReaderPlatform.DESKTOP -> DesktopLibraryTabs
+    }
+}
+
+internal fun NonReaderLibraryTab.visibleLibraryTab(
+    platform: ReaderPlatform = ReaderPlatform.ANDROID
+): NonReaderLibraryTab {
+    return takeIf { it in visibleNonReaderLibraryTabs(platform) } ?: NonReaderLibraryTab.BOOKS
+}
+
+internal fun SharedReaderScreenState.booksForNonReaderLibraryTab(
+    tab: NonReaderLibraryTab,
+    platform: ReaderPlatform = ReaderPlatform.ANDROID
+): List<BookItem> {
+    return when (tab.visibleLibraryTab(platform)) {
+        NonReaderLibraryTab.UNREAD -> libraryBooks.filter { progressPercentValue(it.progressPercentage) == 0 }
+        NonReaderLibraryTab.IN_PROGRESS -> libraryBooks.filter { progressPercentValue(it.progressPercentage) in 1..99 }
+        NonReaderLibraryTab.COMPLETED -> libraryBooks.filter { progressPercentValue(it.progressPercentage) >= 100 }
+        else -> libraryBooks
+    }
+}
 
 internal fun nonReaderLibraryFileTypeGroups(
     platform: ReaderPlatform = ReaderPlatform.DESKTOP
