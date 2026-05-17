@@ -1865,7 +1865,6 @@ internal fun PdfReaderScreen(
         },
         isFullscreen = isFullscreen,
         onFullscreenChange = ::setPdfFullscreen,
-        preferDockedChrome = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
         isBookmarked = bookmarks.any { it.pageIndex == pageIndex },
         onToggleBookmark = { toggleBookmark(pageIndex) },
         onSearchAction = { dispatchPdf(SharedPdfReaderAction.SearchOpened) },
@@ -2021,7 +2020,7 @@ internal fun PdfReaderScreen(
                 onClearJumpHistory = { jumpHistory = jumpHistory.clear() }
             )
         }
-    ) {
+    ) { _ ->
         SharedPdfRichTextHiddenInput(
             controller = richTextController,
             enabled = isRichTextMode,

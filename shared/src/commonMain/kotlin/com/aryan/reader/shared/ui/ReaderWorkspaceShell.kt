@@ -46,12 +46,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlinx.coroutines.delay
@@ -68,7 +73,6 @@ fun ReaderWorkspaceShell(
     isFullscreen: Boolean = false,
     onFullscreenChange: ((Boolean) -> Unit)? = null,
     fullscreenExitMessage: String = "Esc to exit",
-    preferDockedChrome: Boolean = false,
     isBookmarked: Boolean = false,
     onToggleBookmark: (() -> Unit)? = null,
     onSearchAction: (() -> Unit)? = null,
@@ -77,7 +81,7 @@ fun ReaderWorkspaceShell(
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
     fullscreenBottomBar: (@Composable () -> Unit)? = null,
-    content: @Composable BoxScope.() -> Unit
+    content: @Composable BoxScope.(onChromeActivity: () -> Unit) -> Unit
 ) {
     var leftPanelOpen by remember(model.kind, model.panelDefaults.leftOpen) {
         mutableStateOf(model.panelDefaults.leftOpen)
@@ -87,6 +91,20 @@ fun ReaderWorkspaceShell(
     }
     var modalAnchorBounds by remember { mutableStateOf<SharedReaderModalAnchorBounds?>(null) }
     var fullscreenBannerVisible by remember { mutableStateOf(false) }
+    var chromeVisible by remember(model.kind) { mutableStateOf(false) }
+    var chromeRevealTick by remember(model.kind) { mutableStateOf(0L) }
+    var lastChromeRevealAt by remember(model.kind) { mutableStateOf(0L) }
+
+    fun revealChrome(eventTimeMillis: Long = 0L) {
+        val shouldRefreshDelay = !chromeVisible ||
+            eventTimeMillis <= 0L ||
+            eventTimeMillis - lastChromeRevealAt >= ReaderChromeRevealThrottleMillis
+        chromeVisible = true
+        if (shouldRefreshDelay) {
+            lastChromeRevealAt = eventTimeMillis
+            chromeRevealTick += 1
+        }
+    }
 
     LaunchedEffect(isFullscreen) {
         if (isFullscreen) {
@@ -108,189 +126,202 @@ fun ReaderWorkspaceShell(
         }
     }
 
+    LaunchedEffect(model.kind, isFullscreen) {
+        chromeVisible = false
+    }
+
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) shellConstraints@ {
         val wide = this@shellConstraints.maxWidth >= 1120.dp
-        val useOverlaySearch = topSearchBar != null && !preferDockedChrome
-        val useDockedSearch = topSearchBar != null && !useOverlaySearch
-        val useFloatingChrome = !isFullscreen &&
-            !preferDockedChrome &&
-            model.chrome.preferAutoHide &&
-            !model.chrome.forceVisible &&
-            !useOverlaySearch &&
-            !leftPanelOpen &&
-            !rightPanelOpen
-        val showDockedChrome = !useFloatingChrome &&
-            !useOverlaySearch &&
-            (useDockedSearch || !isFullscreen)
-        val shellPadding = if (isFullscreen || useFloatingChrome || useOverlaySearch) 0.dp else 8.dp
-        val shellGap = if (isFullscreen || useFloatingChrome || useOverlaySearch) 0.dp else 6.dp
+        val chromeLockedVisible = topSearchBar != null || leftPanelOpen || rightPanelOpen
+        val showChrome = chromeLockedVisible || chromeVisible
+        val showTopChrome = showChrome && topSearchBar == null && !isFullscreen
+        val showBottomChrome = showChrome
         LaunchedEffect(wide, leftPanelOpen, rightPanelOpen) {
             if (!wide && leftPanelOpen && rightPanelOpen) {
                 rightPanelOpen = false
             }
         }
+        LaunchedEffect(chromeRevealTick, chromeLockedVisible) {
+            if (chromeLockedVisible) {
+                chromeVisible = true
+                return@LaunchedEffect
+            }
+            if (chromeRevealTick == 0L) {
+                chromeVisible = false
+                return@LaunchedEffect
+            }
+            chromeVisible = true
+            delay(ReaderChromeAutoHideDelayMillis)
+            chromeVisible = false
+        }
 
         CompositionLocalProvider(LocalSharedReaderModalAnchorBounds provides modalAnchorBounds) {
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(
-                        start = shellPadding,
-                        top = shellPadding,
-                        end = shellPadding
-                    )
+                    .readerChromeRevealPointerInput(::revealChrome)
                     .onGloballyPositioned { coordinates ->
                         logReaderGapLayout(
                             layer = "shell_column",
                             bounds = coordinates.boundsInWindow(),
                             details = if (isFullscreen) {
                                 "fullscreen=true padding=0 verticalGap=0"
-                            } else if (useFloatingChrome || useOverlaySearch) {
-                                "floatingChrome=$useFloatingChrome overlaySearch=$useOverlaySearch padding=0 verticalGap=0"
                             } else {
-                                "fullscreen=false padding=start8 top8 end8 bottom0 verticalGap=6"
+                                "fullscreen=false overlayChrome=true padding=0 verticalGap=0"
                             }
                         )
-                    },
-                verticalArrangement = Arrangement.spacedBy(shellGap)
-            ) {
-                if (showDockedChrome) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onGloballyPositioned { coordinates ->
-                                logReaderGapLayout("top_chrome_slot", coordinates.boundsInWindow())
-                            }
-                    ) {
-                        if (useDockedSearch) {
-                            topSearchBar?.invoke()
-                        } else {
-                            ReaderWorkspaceTopChrome(
-                                modifier = Modifier.fillMaxWidth(),
-                                title = title,
-                                subtitle = subtitle,
-                                progressLabel = progressLabel,
-                                topActions = model.topActions,
-                                hasLeftPanel = model.leftSections.isNotEmpty(),
-                                hasRightPanel = model.inspectorSections.isNotEmpty(),
-                                leftPanelOpen = leftPanelOpen,
-                                rightPanelOpen = rightPanelOpen,
-                                isBookmarked = isBookmarked,
-                                isFullscreen = isFullscreen,
-                                onReturnToLibrary = onReturnToLibrary,
-                                onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                                onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
-                                onToggleBookmark = onToggleBookmark,
-                                onSearchAction = onSearchAction,
-                                onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } }
-                            )
-                        }
                     }
-                }
-
+            ) {
+                val showLeftPanel = leftPanelOpen && model.leftSections.isNotEmpty()
+                val showRightPanel = rightPanelOpen && model.inspectorSections.isNotEmpty()
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+                        .fillMaxSize()
+                        .clipToBounds()
                         .onGloballyPositioned { coordinates ->
                             logReaderGapLayout("content_slot", coordinates.boundsInWindow())
+                            val bounds = coordinates.boundsInWindow()
+                            val nextBounds = SharedReaderModalAnchorBounds(
+                                leftPx = bounds.left,
+                                topPx = bounds.top,
+                                widthPx = bounds.width,
+                                heightPx = bounds.height
+                            )
+                            if (modalAnchorBounds != nextBounds) {
+                                modalAnchorBounds = nextBounds
+                            }
                         }
                 ) {
-                    val showLeftPanel = leftPanelOpen && model.leftSections.isNotEmpty()
-                    val showRightPanel = rightPanelOpen && model.inspectorSections.isNotEmpty()
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clipToBounds()
-                            .onGloballyPositioned { coordinates ->
-                                val bounds = coordinates.boundsInWindow()
-                                val nextBounds = SharedReaderModalAnchorBounds(
-                                    leftPx = bounds.left,
-                                    topPx = bounds.top,
-                                    widthPx = bounds.width,
-                                    heightPx = bounds.height
+                    content(::revealChrome)
+                }
+                ReaderWorkspacePanelOverlays(
+                    showLeftPanel = showLeftPanel,
+                    showRightPanel = showRightPanel,
+                    wide = wide,
+                    onCloseLeftPanel = { leftPanelOpen = false },
+                    onCloseRightPanel = { rightPanelOpen = false },
+                    leftSidebar = leftSidebar,
+                    rightInspector = rightInspector
+                )
+                val useDetachedChromeLayer =
+                    model.kind == ReaderWorkspaceKind.EPUB &&
+                        modalAnchorBounds != null
+                if (useDetachedChromeLayer) {
+                    if (topSearchBar != null || showTopChrome) {
+                        SharedReaderModalLayer(
+                            level = SharedReaderModalLevel.ChromeTop,
+                            onDismiss = {}
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .readerChromeRevealPointerInput(::revealChrome)
+                            ) {
+                                ReaderWorkspaceChromeOverlay(
+                                    showTopBar = showTopChrome,
+                                    showBottomBar = false,
+                                    topSearchBar = topSearchBar,
+                                    title = title,
+                                    subtitle = subtitle,
+                                    progressLabel = progressLabel,
+                                    topActions = model.topActions,
+                                    hasLeftPanel = model.leftSections.isNotEmpty(),
+                                    hasRightPanel = model.inspectorSections.isNotEmpty(),
+                                    leftPanelOpen = leftPanelOpen,
+                                    rightPanelOpen = rightPanelOpen,
+                                    isBookmarked = isBookmarked,
+                                    isFullscreen = isFullscreen,
+                                    onReturnToLibrary = onReturnToLibrary,
+                                    onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
+                                    onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                                    onToggleBookmark = onToggleBookmark,
+                                    onSearchAction = onSearchAction,
+                                    onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
+                                    bottomBar = {}
                                 )
-                                if (modalAnchorBounds != nextBounds) {
-                                    modalAnchorBounds = nextBounds
+                            }
+                        }
+                    }
+                    if (showBottomChrome) {
+                        SharedReaderModalLayer(
+                            level = SharedReaderModalLevel.ChromeBottom,
+                            onDismiss = {}
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .readerChromeRevealPointerInput(::revealChrome)
+                            ) {
+                                ReaderWorkspaceChromeOverlay(
+                                    showTopBar = false,
+                                    showBottomBar = true,
+                                    topSearchBar = null,
+                                    title = title,
+                                    subtitle = subtitle,
+                                    progressLabel = progressLabel,
+                                    topActions = model.topActions,
+                                    hasLeftPanel = model.leftSections.isNotEmpty(),
+                                    hasRightPanel = model.inspectorSections.isNotEmpty(),
+                                    leftPanelOpen = leftPanelOpen,
+                                    rightPanelOpen = rightPanelOpen,
+                                    isBookmarked = isBookmarked,
+                                    isFullscreen = isFullscreen,
+                                    onReturnToLibrary = onReturnToLibrary,
+                                    onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
+                                    onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                                    onToggleBookmark = onToggleBookmark,
+                                    onSearchAction = onSearchAction,
+                                    onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
+                                    bottomBar = {
+                                        key(isFullscreen) {
+                                            val immersiveBottomBar = fullscreenBottomBar
+                                            if (isFullscreen && immersiveBottomBar != null) {
+                                                immersiveBottomBar()
+                                            } else {
+                                                bottomBar()
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    ReaderWorkspaceChromeOverlay(
+                        showTopBar = showTopChrome,
+                        showBottomBar = showBottomChrome,
+                        topSearchBar = topSearchBar,
+                        title = title,
+                        subtitle = subtitle,
+                        progressLabel = progressLabel,
+                        topActions = model.topActions,
+                        hasLeftPanel = model.leftSections.isNotEmpty(),
+                        hasRightPanel = model.inspectorSections.isNotEmpty(),
+                        leftPanelOpen = leftPanelOpen,
+                        rightPanelOpen = rightPanelOpen,
+                        isBookmarked = isBookmarked,
+                        isFullscreen = isFullscreen,
+                        onReturnToLibrary = onReturnToLibrary,
+                        onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
+                        onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                        onToggleBookmark = onToggleBookmark,
+                        onSearchAction = onSearchAction,
+                        onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
+                        bottomBar = {
+                            key(isFullscreen) {
+                                val immersiveBottomBar = fullscreenBottomBar
+                                if (isFullscreen && immersiveBottomBar != null) {
+                                    immersiveBottomBar()
+                                } else {
+                                    bottomBar()
                                 }
                             }
-                    ) {
-                        content()
-                    }
-                    ReaderWorkspacePanelOverlays(
-                        showLeftPanel = showLeftPanel,
-                        showRightPanel = showRightPanel,
-                        wide = wide,
-                        onCloseLeftPanel = { leftPanelOpen = false },
-                        onCloseRightPanel = { rightPanelOpen = false },
-                        leftSidebar = leftSidebar,
-                        rightInspector = rightInspector
+                        }
                     )
-                }
-
-                if (!useFloatingChrome) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onGloballyPositioned { coordinates ->
-                                logReaderGapLayout("bottom_bar_slot", coordinates.boundsInWindow())
-                            }
-                    ) {
-                        key(isFullscreen) {
-                            val immersiveBottomBar = fullscreenBottomBar
-                            if (isFullscreen && immersiveBottomBar != null) {
-                                immersiveBottomBar()
-                            } else {
-                                bottomBar()
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (useFloatingChrome) {
-                ReaderWorkspaceFloatingChrome(
-                    title = title,
-                    subtitle = subtitle,
-                    progressLabel = progressLabel,
-                    topActions = model.topActions,
-                    hasLeftPanel = model.leftSections.isNotEmpty(),
-                    hasRightPanel = model.inspectorSections.isNotEmpty(),
-                    leftPanelOpen = leftPanelOpen,
-                    rightPanelOpen = rightPanelOpen,
-                    isBookmarked = isBookmarked,
-                    isFullscreen = isFullscreen,
-                    onReturnToLibrary = onReturnToLibrary,
-                    onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                    onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
-                    onToggleBookmark = onToggleBookmark,
-                    onSearchAction = onSearchAction,
-                    onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
-                    bottomBar = {
-                        key(isFullscreen) {
-                            val immersiveBottomBar = fullscreenBottomBar
-                            if (isFullscreen && immersiveBottomBar != null) {
-                                immersiveBottomBar()
-                            } else {
-                                bottomBar()
-                            }
-                        }
-                    }
-                )
-            }
-            if (useOverlaySearch) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                        .widthIn(max = 820.dp)
-                        .fillMaxWidth()
-                ) {
-                    topSearchBar?.invoke()
                 }
             }
         }
@@ -300,6 +331,43 @@ fun ReaderWorkspaceShell(
             modifier = Modifier.align(Alignment.TopCenter)
         )
     }
+}
+
+private const val ReaderChromeAutoHideDelayMillis = 2_050L
+private const val ReaderChromeRevealThrottleMillis = 120L
+private const val ReaderChromeZIndex = 10_000f
+
+private fun Modifier.readerChromeRevealPointerInput(
+    onReveal: (Long) -> Unit
+): Modifier {
+    return pointerInput(onReveal) {
+        awaitPointerEventScope {
+            var lastMovePosition: Offset? = null
+            pointerLoop@ while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                when (event.type) {
+                    PointerEventType.Move -> {
+                        val position = event.changes.firstOrNull()?.position ?: continue@pointerLoop
+                        if (!lastMovePosition.isMeaningfulMoveTo(position)) continue@pointerLoop
+                        lastMovePosition = position
+                        onReveal(event.changes.maxOfOrNull { it.uptimeMillis } ?: 0L)
+                    }
+                    PointerEventType.Press,
+                    PointerEventType.Scroll -> {
+                        event.changes.firstOrNull()?.position?.let { lastMovePosition = it }
+                        onReveal(event.changes.maxOfOrNull { it.uptimeMillis } ?: 0L)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun Offset?.isMeaningfulMoveTo(next: Offset): Boolean {
+    val previous = this ?: return true
+    val dx = next.x - previous.x
+    val dy = next.y - previous.y
+    return (dx * dx) + (dy * dy) >= 1f
 }
 
 @Composable
@@ -352,7 +420,10 @@ private fun ReaderWorkspacePanelOverlays(
 }
 
 @Composable
-private fun BoxScope.ReaderWorkspaceFloatingChrome(
+private fun BoxScope.ReaderWorkspaceChromeOverlay(
+    showTopBar: Boolean,
+    showBottomBar: Boolean,
+    topSearchBar: (@Composable () -> Unit)?,
     title: String,
     subtitle: String,
     progressLabel: String,
@@ -371,35 +442,60 @@ private fun BoxScope.ReaderWorkspaceFloatingChrome(
     onToggleFullscreen: (() -> Unit)?,
     bottomBar: @Composable () -> Unit
 ) {
-    ReaderWorkspaceTopChrome(
-        modifier = Modifier
-            .align(Alignment.TopCenter)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
-            .widthIn(max = 820.dp)
-            .fillMaxWidth(),
-        title = title,
-        subtitle = subtitle,
-        progressLabel = progressLabel,
-        topActions = topActions,
-        hasLeftPanel = hasLeftPanel,
-        hasRightPanel = hasRightPanel,
-        leftPanelOpen = leftPanelOpen,
-        rightPanelOpen = rightPanelOpen,
-        isBookmarked = isBookmarked,
-        isFullscreen = isFullscreen,
-        onReturnToLibrary = onReturnToLibrary,
-        onToggleLeftPanel = onToggleLeftPanel,
-        onToggleRightPanel = onToggleRightPanel,
-        onToggleBookmark = onToggleBookmark,
-        onSearchAction = onSearchAction,
-        onToggleFullscreen = onToggleFullscreen
-    )
-    Box(
+    if (topSearchBar != null) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .widthIn(max = 820.dp)
+                .fillMaxWidth()
+                .zIndex(ReaderChromeZIndex)
+        ) {
+            topSearchBar.invoke()
+        }
+    } else {
+        AnimatedVisibility(
+            visible = showTopBar,
+            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .widthIn(max = 820.dp)
+                .fillMaxWidth()
+                .zIndex(ReaderChromeZIndex)
+        ) {
+            ReaderWorkspaceTopChrome(
+                modifier = Modifier.fillMaxWidth(),
+                title = title,
+                subtitle = subtitle,
+                progressLabel = progressLabel,
+                topActions = topActions,
+                hasLeftPanel = hasLeftPanel,
+                hasRightPanel = hasRightPanel,
+                leftPanelOpen = leftPanelOpen,
+                rightPanelOpen = rightPanelOpen,
+                isBookmarked = isBookmarked,
+                isFullscreen = isFullscreen,
+                onReturnToLibrary = onReturnToLibrary,
+                onToggleLeftPanel = onToggleLeftPanel,
+                onToggleRightPanel = onToggleRightPanel,
+                onToggleBookmark = onToggleBookmark,
+                onSearchAction = onSearchAction,
+                onToggleFullscreen = onToggleFullscreen
+            )
+        }
+    }
+    AnimatedVisibility(
+        visible = showBottomBar,
+        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .widthIn(max = 980.dp)
             .fillMaxWidth()
+            .zIndex(ReaderChromeZIndex)
     ) {
         bottomBar()
     }

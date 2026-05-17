@@ -349,6 +349,7 @@ fun SharedLibraryScreen(
     NonReaderScreenScaffold(
         title = "Library",
         subtitle = "Browse your collection",
+        showHeader = false,
         modifier = modifier
     ) {
         if (state.selectedBookIds.isNotEmpty()) {
@@ -536,6 +537,7 @@ private fun NonReaderScreenScaffold(
     title: String,
     subtitle: String,
     modifier: Modifier = Modifier,
+    showHeader: Boolean = true,
     trailing: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -546,12 +548,14 @@ private fun NonReaderScreenScaffold(
             .padding(SharedUiTokens.screenPadding),
         verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (showHeader) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                trailing()
             }
-            trailing()
         }
         content()
     }
@@ -1428,11 +1432,11 @@ private fun BookGrid(
         }
     } else {
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(164.dp),
+            columns = GridCells.Adaptive(148.dp),
             modifier = modifier.fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             items(books, key = { it.id }) { book ->
                 BookTile(
@@ -1487,7 +1491,7 @@ private fun BookTile(
                     modifier = Modifier.fillMaxWidth().aspectRatio(0.68f)
                 )
                 Row(
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     if (pinned) {
@@ -1500,8 +1504,8 @@ private fun BookTile(
                         OverlayBadge(Icons.Default.Cloud, "Stream")
                     }
                 }
-                Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
-                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(34.dp)) {
+                Box(Modifier.align(Alignment.TopEnd).padding(3.dp)) {
+                    IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Book actions")
                     }
                     BookActionMenu(
@@ -1515,11 +1519,11 @@ private fun BookTile(
                         onToggleSelection = onToggleSelection
                     )
                 }
-                TypeBadge(book.type, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp))
+                TypeBadge(book.type, modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp))
                 val percent = progressPercentValue(book.progressPercentage)
                 if (percent > 0) {
                     Surface(
-                        modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+                        modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
                         shape = RoundedCornerShape(50),
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.94f),
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -1528,7 +1532,7 @@ private fun BookTile(
                     }
                 }
             }
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(book.cardTitle(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(book.cardAuthor(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, minLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -1563,8 +1567,8 @@ private fun BookListItem(
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            BookCoverArt(book = book, selected = selected, modifier = Modifier.size(width = 58.dp, height = 84.dp))
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BookCoverArt(book = book, selected = selected, modifier = Modifier.size(width = 52.dp, height = 76.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(book.cardTitle(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(book.cardAuthor(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)

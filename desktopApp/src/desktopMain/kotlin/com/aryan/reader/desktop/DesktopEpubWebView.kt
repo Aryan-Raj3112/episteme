@@ -30,6 +30,10 @@ import com.multiplatform.webview.web.WebViewNavigator
 import com.multiplatform.webview.web.WebViewState
 import com.multiplatform.webview.web.rememberWebViewNavigator
 import kotlinx.coroutines.launch
+import java.awt.AWTEvent
+import java.awt.Toolkit
+import java.awt.event.AWTEventListener
+import java.awt.event.MouseEvent
 
 @Composable
 internal fun DesktopEpubWebView(
@@ -44,6 +48,7 @@ internal fun DesktopEpubWebView(
     onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
+    onPointerActivity: () -> Unit = {},
     networkAccessEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -53,6 +58,7 @@ internal fun DesktopEpubWebView(
     val latestOnSelectionAction by rememberUpdatedState(onSelectionAction)
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
+    val latestOnPointerActivity by rememberUpdatedState(onPointerActivity)
     val scope = rememberCoroutineScope()
     val linkRequestInterceptor = remember(scope, networkAccessEnabled) {
         object : RequestInterceptor {
@@ -111,6 +117,9 @@ internal fun DesktopEpubWebView(
                     scope.launch { latestOnKeyboardNavigation(action) }
                 }
             },
+            desktopEpubBridgeHandler("readerPointerActivity") { _ ->
+                scope.launch { latestOnPointerActivity() }
+            },
             desktopEpubBridgeHandler("readerTtsHighlightLog") { message ->
                 logDesktopTts("epub_highlight_js ${message.params.logPreview(500)}")
             },
@@ -163,6 +172,44 @@ internal fun DesktopEpubWebView(
             encoding = "utf-8",
             historyUrl = null
         )
+    }
+
+    DisposableEffect(Unit) {
+        var lastActivityAt = 0L
+        var lastMouseX: Int? = null
+        var lastMouseY: Int? = null
+        val listener = AWTEventListener { event ->
+            val mouseEvent = event as? MouseEvent ?: return@AWTEventListener
+            if (
+                mouseEvent.id != MouseEvent.MOUSE_MOVED &&
+                mouseEvent.id != MouseEvent.MOUSE_DRAGGED &&
+                mouseEvent.id != MouseEvent.MOUSE_PRESSED &&
+                mouseEvent.id != MouseEvent.MOUSE_WHEEL
+            ) {
+                return@AWTEventListener
+            }
+            if (mouseEvent.id == MouseEvent.MOUSE_MOVED || mouseEvent.id == MouseEvent.MOUSE_DRAGGED) {
+                val screenX = mouseEvent.xOnScreen
+                val screenY = mouseEvent.yOnScreen
+                if (lastMouseX == screenX && lastMouseY == screenY) return@AWTEventListener
+                lastMouseX = screenX
+                lastMouseY = screenY
+            } else {
+                lastMouseX = mouseEvent.xOnScreen
+                lastMouseY = mouseEvent.yOnScreen
+            }
+            val now = mouseEvent.`when`.takeIf { it > 0L } ?: System.currentTimeMillis()
+            if (now - lastActivityAt < 120L) return@AWTEventListener
+            lastActivityAt = now
+            scope.launch { latestOnPointerActivity() }
+        }
+        val eventMask = AWTEvent.MOUSE_MOTION_EVENT_MASK or
+            AWTEvent.MOUSE_EVENT_MASK or
+            AWTEvent.MOUSE_WHEEL_EVENT_MASK
+        Toolkit.getDefaultToolkit().addAWTEventListener(listener, eventMask)
+        onDispose {
+            Toolkit.getDefaultToolkit().removeAWTEventListener(listener)
+        }
     }
 
     Box(modifier = modifier) {
@@ -284,6 +331,30 @@ private fun LoadingState.isFinished(): Boolean = this is LoadingState.Finished
 
 private val DesktopEpubKeyNavigationScript = """
     (function () {
+      if (!window.readerDesktopPointerActivityInstalled) {
+        window.readerDesktopPointerActivityInstalled = true;
+        var lastPointerActivityAt = 0;
+        var lastPointerX = null;
+        var lastPointerY = null;
+        function notifyPointerActivity(event, requireMovement) {
+          if (requireMovement && event) {
+            var x = Math.round(event.screenX || event.clientX || 0);
+            var y = Math.round(event.screenY || event.clientY || 0);
+            if (lastPointerX === x && lastPointerY === y) return;
+            lastPointerX = x;
+            lastPointerY = y;
+          }
+          var now = Date.now();
+          if (now - lastPointerActivityAt < 120) return;
+          lastPointerActivityAt = now;
+          if (!window.kmpJsBridge || !window.kmpJsBridge.callNative) return;
+          window.kmpJsBridge.callNative('readerPointerActivity', '{}');
+        }
+        document.addEventListener('mousemove', function (event) { notifyPointerActivity(event, true); }, true);
+        document.addEventListener('pointermove', function (event) { notifyPointerActivity(event, true); }, true);
+        document.addEventListener('pointerdown', function (event) { notifyPointerActivity(event, false); }, true);
+        document.addEventListener('wheel', function (event) { notifyPointerActivity(event, false); }, true);
+      }
       if (window.readerDesktopKeyNavigationInstalled) return;
       window.readerDesktopKeyNavigationInstalled = true;
       document.addEventListener('keydown', function (event) {

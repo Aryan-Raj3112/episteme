@@ -16,7 +16,9 @@ internal val LocalSharedReaderModalAnchorBounds = compositionLocalOf<SharedReade
 
 internal enum class SharedReaderModalLevel {
     Panel,
-    Popup
+    Popup,
+    ChromeTop,
+    ChromeBottom
 }
 
 val SharedReaderPopupDefaultMaxWidth = 440.dp

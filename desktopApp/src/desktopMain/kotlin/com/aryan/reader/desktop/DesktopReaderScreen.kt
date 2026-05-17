@@ -364,9 +364,8 @@ internal fun DesktopReaderScreen(
         },
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
-        onImportReaderTexture = onImportReaderTexture,
-        preferDockedChrome = session.reader.settings.readingMode == ReaderReadingMode.VERTICAL
-    ) { renderPlan, onVisiblePageChanged, onHighlightSelected ->
+        onImportReaderTexture = onImportReaderTexture
+    ) { renderPlan, onVisiblePageChanged, onHighlightSelected, onChromeActivity ->
         Surface(
             color = renderPlan.background,
             shape = RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp),
@@ -422,6 +421,7 @@ internal fun DesktopReaderScreen(
                                 onSelectionAction = handleDesktopSelectionAction,
                                 onLinkClicked = handleDesktopEpubLinkClicked,
                                 onVisiblePageChanged = onVisiblePageChanged,
+                                onPointerActivity = onChromeActivity,
                                 networkAccessEnabled = webViewNetworkAccessEnabled,
                                 modifier = Modifier.fillMaxSize()
                             )

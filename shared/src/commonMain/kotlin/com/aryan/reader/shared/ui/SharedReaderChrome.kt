@@ -221,11 +221,11 @@ fun SharedReaderScreen(
     readerTextureDataUri: (String) -> String? = { null },
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
-    preferDockedChrome: Boolean = false,
     readerContent: @Composable ColumnScope.(
         renderPlan: ReaderContentRenderPlan,
         onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
-        onHighlightSelected: (String) -> Unit
+        onHighlightSelected: (String) -> Unit,
+        onChromeActivity: () -> Unit
     ) -> Unit
 ) {
     val readerState = session.reader
@@ -316,7 +316,6 @@ fun SharedReaderScreen(
         onReturnToLibrary = onReturnToLibrary,
         isFullscreen = isFullscreen,
         onFullscreenChange = ::setFullscreen,
-        preferDockedChrome = preferDockedChrome,
         isBookmarked = session.currentBookmark != null,
         onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
         onSearchAction = { dispatch(ReaderAction.SearchOpened) },
@@ -484,7 +483,7 @@ fun SharedReaderScreen(
                 contentColor = foreground
             )
         }
-    ) {
+    ) { onChromeActivity ->
         LaunchedEffect(sidebarNavigationHighlightId) {
             if (sidebarNavigationHighlightId != null) {
                 delay(1_200)
@@ -583,7 +582,8 @@ fun SharedReaderScreen(
                     } else {
                         selectedHighlightId = highlightId
                     }
-                }
+                },
+                onChromeActivity
             )
         }
         SharedReaderSearchOverlay(

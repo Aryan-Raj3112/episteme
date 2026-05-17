@@ -27,10 +27,17 @@ internal actual fun SharedReaderModalLayer(
     val ownerWindow = remember { currentNonModalOwnerWindow() }
     val dialogSize = with(density) {
         anchor?.let {
-            DpSize(
-                width = it.widthPx.toDp().coerceAtLeast(360.dp),
-                height = it.heightPx.toDp().coerceAtLeast(360.dp)
-            )
+            if (level.isChromeLayer()) {
+                DpSize(
+                    width = it.widthPx.toDp().coerceAtLeast(360.dp),
+                    height = level.chromeLayerHeight().coerceAtMost(it.heightPx.toDp().coerceAtLeast(1.dp))
+                )
+            } else {
+                DpSize(
+                    width = it.widthPx.toDp().coerceAtLeast(360.dp),
+                    height = it.heightPx.toDp().coerceAtLeast(360.dp)
+                )
+            }
         } ?: DpSize(720.dp, 620.dp)
     }
     val dialogPosition = with(density) {
@@ -38,9 +45,13 @@ internal actual fun SharedReaderModalLayer(
             runCatching { window.locationOnScreen }.getOrNull()
         }
         if (anchor != null && ownerLocation != null) {
+            val topPx = when (level) {
+                SharedReaderModalLevel.ChromeBottom -> anchor.topPx + anchor.heightPx - dialogSize.height.toPx()
+                else -> anchor.topPx
+            }
             WindowPosition(
                 (ownerLocation.x + anchor.leftPx).toDp(),
-                (ownerLocation.y + anchor.topPx).toDp()
+                (ownerLocation.y + topPx).toDp()
             )
         } else {
             WindowPosition(Alignment.Center)
@@ -50,15 +61,19 @@ internal actual fun SharedReaderModalLayer(
     val windowTitle = when (level) {
         SharedReaderModalLevel.Panel -> "Reader Panel"
         SharedReaderModalLevel.Popup -> "Reader Popup"
+        SharedReaderModalLevel.ChromeTop -> "Reader Chrome Top"
+        SharedReaderModalLevel.ChromeBottom -> "Reader Chrome Bottom"
     }
 
     LaunchedEffect(dialogPosition, dialogSize) {
         state.position = dialogPosition
         state.size = dialogSize
     }
-    DisposableEffect(ownerWindow) {
-        onDispose {
-            ownerWindow?.restoreFocusAfterSharedReaderModal()
+    if (!level.isChromeLayer()) {
+        DisposableEffect(ownerWindow) {
+            onDispose {
+                ownerWindow?.restoreFocusAfterSharedReaderModal()
+            }
         }
     }
 
@@ -70,19 +85,26 @@ internal actual fun SharedReaderModalLayer(
         transparent = true,
         resizable = false,
         alwaysOnTop = true,
-        focusable = true
+        focusable = !level.isChromeLayer()
     ) {
         val modalWindow = window
         LaunchedEffect(modalWindow, level) {
             modalWindow.name = SharedReaderModalWindowNamePrefix + level.name
             modalWindow.isAlwaysOnTop = true
-            val frontAttempts = if (level == SharedReaderModalLevel.Popup) 4 else 3
+            val frontAttempts = when (level) {
+                SharedReaderModalLevel.Popup -> 4
+                SharedReaderModalLevel.Panel -> 3
+                SharedReaderModalLevel.ChromeTop,
+                SharedReaderModalLevel.ChromeBottom -> 1
+            }
             repeat(frontAttempts) { attempt ->
                 delay(if (attempt == 0) 30L else 80L)
                 modalWindow.isAlwaysOnTop = true
                 modalWindow.toFront()
-                modalWindow.requestFocus()
-                modalWindow.requestFocusInWindow()
+                if (!level.isChromeLayer()) {
+                    modalWindow.requestFocus()
+                    modalWindow.requestFocusInWindow()
+                }
             }
         }
         content()
@@ -90,6 +112,18 @@ internal actual fun SharedReaderModalLayer(
 }
 
 private const val SharedReaderModalWindowNamePrefix = "shared-reader-modal:"
+private val SharedReaderChromeTopLayerHeight = 104.dp
+private val SharedReaderChromeBottomLayerHeight = 164.dp
+
+private fun SharedReaderModalLevel.isChromeLayer(): Boolean {
+    return this == SharedReaderModalLevel.ChromeTop || this == SharedReaderModalLevel.ChromeBottom
+}
+
+private fun SharedReaderModalLevel.chromeLayerHeight() = when (this) {
+    SharedReaderModalLevel.ChromeTop -> SharedReaderChromeTopLayerHeight
+    SharedReaderModalLevel.ChromeBottom -> SharedReaderChromeBottomLayerHeight
+    else -> 0.dp
+}
 
 private fun AwtWindow.restoreFocusAfterSharedReaderModal() {
     EventQueue.invokeLater {
@@ -129,5 +163,6 @@ private fun AwtWindow.isSharedReaderModalWindow(): Boolean {
     }
     return name?.startsWith(SharedReaderModalWindowNamePrefix) == true ||
         windowTitle.startsWith("Reader Panel") ||
-        windowTitle.startsWith("Reader Popup")
+        windowTitle.startsWith("Reader Popup") ||
+        windowTitle.startsWith("Reader Chrome")
 }
