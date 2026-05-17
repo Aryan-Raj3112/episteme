@@ -11,6 +11,7 @@ import org.gradle.jvm.tasks.Jar
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -359,6 +360,26 @@ val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
 val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
+val rootLocalProperties = Properties()
+val rootLocalPropertiesFile = rootProject.file("local.properties")
+if (rootLocalPropertiesFile.exists()) {
+    rootLocalPropertiesFile.inputStream().use(rootLocalProperties::load)
+}
+fun desktopConfigValue(vararg keys: String): String {
+    return keys.firstNotNullOfOrNull { key ->
+        providers.gradleProperty(key).orNull
+            ?: rootLocalProperties.getProperty(key)
+            ?: System.getenv(key)
+    }?.trim().orEmpty()
+}
+val desktopCloudConfig = mapOf(
+    "AI_WORKER_URL" to desktopConfigValue("DESKTOP_AI_WORKER_URL", "AI_WORKER_URL"),
+    "TTS_WORKER_URL" to desktopConfigValue("DESKTOP_TTS_WORKER_URL", "TTS_WORKER_URL", "AI_WORKER_URL"),
+    "FIREBASE_WEB_API_KEY" to desktopConfigValue("DESKTOP_FIREBASE_WEB_API_KEY", "FIREBASE_WEB_API_KEY", "GOOGLE_API_KEY"),
+    "FIREBASE_PROJECT_ID" to desktopConfigValue("DESKTOP_FIREBASE_PROJECT_ID", "FIREBASE_PROJECT_ID").ifBlank { "reader-9fc469d7" },
+    "GOOGLE_OAUTH_CLIENT_ID" to desktopConfigValue("DESKTOP_GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID", "DEFAULT_WEB_CLIENT_ID"),
+    "GOOGLE_OAUTH_CLIENT_SECRET" to desktopConfigValue("DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_WEB_CLIENT_SECRET", "DEFAULT_WEB_CLIENT_SECRET")
+)
 val bundledWebViewDir = layout.projectDirectory.dir(desktopKcefBundleDirectoryName(desktopOsName, desktopOsArch))
 val bundledPdfiumDir = layout.projectDirectory.dir(
     "../third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}"
@@ -462,6 +483,20 @@ val prepareBundledDesktopResources by tasks.registering(Sync::class) {
     }
     from(bundledPdfiumDir) {
         into("common/third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}")
+    }
+    into("common") {
+        from(
+            providers.provider {
+                temporaryDir.resolve("desktop-cloud.properties").also { file ->
+                    file.parentFile.mkdirs()
+                    file.writeText(
+                        desktopCloudConfig.entries.joinToString(separator = "\n", postfix = "\n") { (key, value) ->
+                            "$key=${value.replace("\\", "\\\\").replace("\n", "")}"
+                        }
+                    )
+                }
+            }
+        )
     }
     into(generatedDesktopResourcesDir)
 }

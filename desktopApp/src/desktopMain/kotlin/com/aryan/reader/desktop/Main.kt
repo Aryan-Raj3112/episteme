@@ -3,9 +3,12 @@ package com.aryan.reader.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -103,6 +106,18 @@ import java.util.Base64
 import java.util.UUID
 import kotlin.math.max
 
+private enum class DesktopFeatureNoticeAction {
+    SIGN_IN,
+    OPEN_PRO
+}
+
+private data class DesktopFeatureNotice(
+    val title: String,
+    val message: String,
+    val confirmLabel: String = "OK",
+    val action: DesktopFeatureNoticeAction? = null
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun EpistemeDesktopApp(
@@ -129,21 +144,12 @@ internal fun EpistemeDesktopApp(
             idFactory = { UUID.randomUUID().toString() }
         )
     }
+    val desktopCloudConfig = remember { loadDesktopCloudConfig() }
+    val desktopAuthRepository = remember { DesktopFirebaseAuthRepository(desktopCloudConfig) }
+    val desktopAccountProfileRepository = remember { DesktopAccountProfileRepository(desktopCloudConfig) }
     val aiByokStore = remember { DesktopAiByokStore() }
     var aiByokSettings by remember {
-        mutableStateOf(aiByokStore.load().withDesktopFeaturePolicy(featurePolicy))
-    }
-    val desktopAiAdapter = remember {
-        DesktopByokAiAdapter(
-            settingsProvider = { aiByokSettings.withDesktopFeaturePolicy(featurePolicy) },
-            networkAccess = { featurePolicy.networkAccess }
-        )
-    }
-    val desktopTtsAdapter = remember {
-        DesktopGeminiCloudTtsAdapter(
-            settingsProvider = { aiByokSettings.withDesktopFeaturePolicy(featurePolicy) },
-            networkAccess = { featurePolicy.networkAccess }
-        )
+        mutableStateOf(aiByokStore.load())
     }
     val initialLibrarySnapshot = remember { libraryDatabase.load().withDesktopDefaults() }
     val scope = rememberCoroutineScope()
@@ -177,6 +183,61 @@ internal fun EpistemeDesktopApp(
                 shelfRecords = shelfRecords,
                 shelfRefs = shelfRefs
             )
+        )
+    }
+    var accountStatusMessage by remember { mutableStateOf<String?>(null) }
+    var accountBusy by remember { mutableStateOf(false) }
+    var accountRefreshRequestCount by remember { mutableStateOf(0) }
+    fun effectiveAiSettings(): ReaderAiByokSettings {
+        val hidden = aiByokSettings.hideReaderAiFeatures
+        return if (desktopBuildProfile.byokAiAvailable) {
+            aiByokSettings.withDesktopFeaturePolicy(featurePolicy)
+        } else {
+            ReaderAiByokSettings(
+                hideReaderAiFeatures = hidden,
+                ttsSpeakerId = aiByokSettings.sanitized().ttsSpeakerId,
+                serverBackedReaderAiFeatures = featurePolicy.aiAndCloud && featurePolicy.networkAccess,
+                serverBackedCloudTts = featurePolicy.aiAndCloud &&
+                    featurePolicy.networkAccess &&
+                    state.currentUser != null &&
+                    state.credits > 0 &&
+                    desktopCloudConfig.isTtsWorkerConfigured
+            )
+        }
+    }
+    val desktopAiAdapter = remember(desktopBuildProfile) {
+        if (desktopBuildProfile.byokAiAvailable) {
+            DesktopByokAiAdapter(
+                settingsProvider = { effectiveAiSettings() },
+                networkAccess = { featurePolicy.networkAccess }
+            )
+        } else {
+            DesktopPaidAiAdapter(
+                config = desktopCloudConfig,
+                networkAccess = { featurePolicy.networkAccess },
+                hideReaderAiFeatures = { effectiveAiSettings().hideReaderAiFeatures },
+                currentAuthToken = { desktopAuthRepository.freshIdToken() },
+                currentSignedIn = { state.currentUser != null },
+                currentIsProUser = { state.isProUser },
+                currentCredits = { state.credits },
+                onUsageCompleted = {
+                    scope.launch { accountRefreshRequestCount++ }
+                    Unit
+                }
+            )
+        }
+    }
+    val desktopTtsAdapter = remember(desktopBuildProfile) {
+        DesktopGeminiCloudTtsAdapter(
+            settingsProvider = { effectiveAiSettings() },
+            networkAccess = { featurePolicy.networkAccess },
+            workerUrlProvider = { desktopCloudConfig.ttsWorkerUrl },
+            authTokenProvider = { desktopAuthRepository.freshIdToken() },
+            useWorkerProvider = { !desktopBuildProfile.byokAiAvailable },
+            onWorkerUsageCompleted = {
+                scope.launch { accountRefreshRequestCount++ }
+                Unit
+            }
         )
     }
     var selectedTab by remember { mutableStateOf(SharedAppTab.HOME) }
@@ -245,7 +306,7 @@ internal fun EpistemeDesktopApp(
         mutableStateOf(
             ReaderExtrasState(
                 cloudTts = ReaderCloudTtsState(
-                    isAvailable = aiByokSettings.isCloudTtsAvailable
+                    isAvailable = effectiveAiSettings().isCloudTtsAvailable
                 )
             )
         )
@@ -263,6 +324,7 @@ internal fun EpistemeDesktopApp(
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
+    var desktopFeatureNotice by remember { mutableStateOf<DesktopFeatureNotice?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
@@ -344,8 +406,64 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    suspend fun refreshDesktopAccountProfile(showBanner: Boolean = false) {
+        if (!featurePolicy.aiAndCloud || desktopBuildProfile.byokAiAvailable) return
+        val session = desktopAuthRepository.restoreSavedSession()
+        if (session == null) {
+            updateState(state.copy(currentUser = null, isProUser = false, credits = 0, isSyncEnabled = false))
+            return
+        }
+        val token = desktopAuthRepository.freshIdToken()
+        if (token.isNullOrBlank()) {
+            updateState(state.copy(currentUser = null, isProUser = false, credits = 0, isSyncEnabled = false))
+            return
+        }
+        runCatching {
+            desktopAccountProfileRepository.fetchProfile(session.user.uid, token)
+        }.onSuccess { profile ->
+            updateState(
+                state.copy(
+                    currentUser = session.user,
+                    isProUser = profile.isProUser,
+                    credits = profile.credits
+                )
+            )
+            accountStatusMessage = if (profile.isProUser) {
+                "Account checked. Pro is unlocked."
+            } else {
+                "Account checked. Pro is not unlocked."
+            }
+            if (showBanner) updateState(state.withBanner("Account status refreshed."))
+        }.onFailure { error ->
+            accountStatusMessage = error.message ?: "Could not check account status."
+            if (showBanner) updateState(state.withBanner(accountStatusMessage.orEmpty(), isError = true))
+        }
+    }
+
+    fun signInDesktopAccount() {
+        if (!desktopCloudConfig.isAuthConfigured) {
+            updateState(state.withBanner("Desktop Google sign-in is not configured for this build.", isError = true))
+            return
+        }
+        scope.launch {
+            accountBusy = true
+            accountStatusMessage = "Waiting for Google sign-in..."
+            runCatching {
+                desktopAuthRepository.signIn(::openExternalUrl)
+            }.onSuccess { session ->
+                updateState(state.copy(currentUser = session.user, isProUser = false, credits = 0))
+                accountStatusMessage = "Signed in. Checking Pro and credits..."
+                refreshDesktopAccountProfile()
+            }.onFailure { error ->
+                accountStatusMessage = error.message ?: "Google sign-in failed."
+                updateState(state.withBanner(accountStatusMessage.orEmpty(), isError = true))
+            }
+            accountBusy = false
+        }
+    }
+
     fun updateAiByokSettings(next: ReaderAiByokSettings) {
-        if (!featurePolicy.aiAndCloud) return
+        if (!desktopBuildProfile.byokAiAvailable) return
         val sanitized = next.sanitized()
         logDesktopTts(
             "settings_update keyPresent=${sanitized.geminiKey.isNotBlank()} " +
@@ -355,7 +473,7 @@ internal fun EpistemeDesktopApp(
         aiByokSettings = sanitized
         readerExtrasState = readerExtrasState.copy(
             cloudTts = readerExtrasState.cloudTts.copy(
-                isAvailable = sanitized.isCloudTtsAvailable,
+                isAvailable = effectiveAiSettings().isCloudTtsAvailable,
                 errorMessage = null,
                 cacheSummary = desktopTtsAdapter.cacheSummary(readerSession.reader.book.title, sanitized.ttsSpeakerId)
             )
@@ -381,11 +499,62 @@ internal fun EpistemeDesktopApp(
         }
 
     fun readerCloudTtsStoppedState(statusMessage: String? = null, errorMessage: String? = null) = ReaderCloudTtsState(
-        isAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
+        isAvailable = effectiveAiSettings().isCloudTtsAvailable,
         statusMessage = statusMessage,
         errorMessage = errorMessage,
         cacheSummary = currentReaderTtsCacheSummary()
     )
+
+    fun cloudTtsUnavailableMessage(): String {
+        return if (desktopBuildProfile.byokAiAvailable) {
+            "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+        } else if (state.currentUser == null) {
+            "Sign in with Google to use cloud TTS."
+        } else if (state.credits <= 0) {
+            "Out of credits. Pro and credits can only be purchased from the Android app."
+        } else {
+            "Cloud TTS is not configured for this desktop build."
+        }
+    }
+
+    fun desktopFeatureNoticeForReaderAi(feature: ReaderAiFeature, text: String): DesktopFeatureNotice? {
+        if (desktopBuildProfile.byokAiAvailable) return null
+        if (!featurePolicy.networkAccess || !desktopCloudConfig.isAiWorkerConfigured) {
+            return desktopFeatureUnavailableNotice("Desktop AI is not configured for this build.")
+        }
+        if (effectiveAiSettings().hideReaderAiFeatures) {
+            return desktopFeatureUnavailableNotice("Reader AI features are hidden.")
+        }
+        if (feature == ReaderAiFeature.DEFINE && desktopReaderWordCount(text) > 1 && state.currentUser == null) {
+            return desktopSignInRequiredNotice("multi-word smart dictionary")
+        }
+        if (feature == ReaderAiFeature.DEFINE && desktopReaderWordCount(text) > 1 && !state.isProUser) {
+            return desktopProRequiredNotice("Multi-word smart dictionary")
+        }
+        if (feature == ReaderAiFeature.SUMMARIZE && state.currentUser == null) {
+            return desktopSignInRequiredNotice("summaries")
+        }
+        if (feature == ReaderAiFeature.SUMMARIZE && !state.isProUser && state.credits <= 0) {
+            return desktopOutOfCreditsNotice("summaries")
+        }
+        if (feature == ReaderAiFeature.RECAP && state.currentUser == null) {
+            return desktopSignInRequiredNotice("recaps")
+        }
+        if (feature == ReaderAiFeature.RECAP && state.credits <= 0) {
+            return desktopOutOfCreditsNotice("recaps")
+        }
+        return null
+    }
+
+    fun desktopFeatureNoticeForCloudTts(): DesktopFeatureNotice? {
+        if (desktopBuildProfile.byokAiAvailable) return null
+        if (!featurePolicy.networkAccess || !desktopCloudConfig.isTtsWorkerConfigured) {
+            return desktopFeatureUnavailableNotice("Cloud TTS is not configured for this desktop build.")
+        }
+        if (state.currentUser == null) return desktopSignInRequiredNotice("cloud TTS")
+        if (state.credits <= 0) return desktopOutOfCreditsNotice("cloud TTS")
+        return null
+    }
 
     fun openReaderExternalLookup(action: ReaderExternalLookupAction, text: String) {
         if (!featurePolicy.externalLookup) return
@@ -397,7 +566,11 @@ internal fun EpistemeDesktopApp(
     fun runReaderAiAction(feature: ReaderAiFeature, text: String) {
         val normalizedText = text.trim()
         if (normalizedText.isBlank()) return
-        if (!aiByokSettings.sanitized().areReaderAiFeaturesAvailable) return
+        if (!effectiveAiSettings().areReaderAiFeaturesAvailable) return
+        desktopFeatureNoticeForReaderAi(feature, normalizedText)?.let { notice ->
+            desktopFeatureNotice = notice
+            return
+        }
         readerExtrasState = readerExtrasState.copy(
             aiResult = ReaderAiResultState(
                 title = feature.displayName,
@@ -421,6 +594,7 @@ internal fun EpistemeDesktopApp(
                     isLoading = false
                 )
             )
+            desktopFeatureNoticeForError(result.second)?.let { desktopFeatureNotice = it }
         }
     }
 
@@ -517,6 +691,13 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun signOutDesktopAccount() {
+        desktopAuthRepository.signOut()
+        stopReaderCloudTts()
+        updateState(state.copy(currentUser = null, isProUser = false, credits = 0, isSyncEnabled = false))
+        accountStatusMessage = "Signed out."
+    }
+
     fun pauseResumeReaderCloudTts() {
         val current = readerExtrasState.cloudTts
         if (current.isPaused) {
@@ -582,10 +763,11 @@ internal fun EpistemeDesktopApp(
         }
         if (!desktopTtsAdapter.isAvailable) {
             logDesktopTts("reader_sequence_blocked reason=adapter_unavailable")
+            desktopFeatureNoticeForCloudTts()?.let { desktopFeatureNotice = it }
             readerExtrasState = readerExtrasState.copy(
                 cloudTts = ReaderCloudTtsState(
                     isAvailable = false,
-                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models.",
+                    errorMessage = cloudTtsUnavailableMessage(),
                     cacheSummary = currentReaderTtsCacheSummary()
                 )
             )
@@ -647,6 +829,7 @@ internal fun EpistemeDesktopApp(
                         cloudTts = readerCloudTtsStoppedState(statusMessage = "Stopped")
                     )
                 } else {
+                    desktopFeatureNoticeForError(error.message)?.let { desktopFeatureNotice = it }
                     readerExtrasState.copy(
                         cloudTts = readerCloudTtsStoppedState(errorMessage = error.message ?: "Cloud TTS failed.")
                     )
@@ -684,10 +867,11 @@ internal fun EpistemeDesktopApp(
         }
         if (!desktopTtsAdapter.isAvailable) {
             logDesktopTts("reader_toggle_blocked reason=adapter_unavailable")
+            desktopFeatureNoticeForCloudTts()?.let { desktopFeatureNotice = it }
             readerExtrasState = readerExtrasState.copy(
                 cloudTts = ReaderCloudTtsState(
                     isAvailable = false,
-                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models.",
+                    errorMessage = cloudTtsUnavailableMessage(),
                     cacheSummary = currentReaderTtsCacheSummary()
                 )
             )
@@ -1529,6 +1713,18 @@ internal fun EpistemeDesktopApp(
     )
 
     LaunchedEffect(Unit) {
+        if (featurePolicy.aiAndCloud && !desktopBuildProfile.byokAiAvailable) {
+            refreshDesktopAccountProfile(showBanner = false)
+        }
+    }
+
+    LaunchedEffect(accountRefreshRequestCount) {
+        if (accountRefreshRequestCount > 0 && featurePolicy.aiAndCloud && !desktopBuildProfile.byokAiAvailable) {
+            refreshDesktopAccountProfile(showBanner = false)
+        }
+    }
+
+    LaunchedEffect(Unit) {
         if (state.syncedFolders.isNotEmpty()) {
             scanSyncedFolders(showBanner = false)
         }
@@ -1541,10 +1737,10 @@ internal fun EpistemeDesktopApp(
         }
     }
 
-    LaunchedEffect(aiByokSettings, activeReaderBookId, readerSession.reader.book.title) {
+    LaunchedEffect(aiByokSettings, state.currentUser, state.credits, activeReaderBookId, readerSession.reader.book.title) {
         readerExtrasState = readerExtrasState.copy(
             cloudTts = readerExtrasState.cloudTts.copy(
-                isAvailable = aiByokSettings.isCloudTtsAvailable,
+                isAvailable = effectiveAiSettings().isCloudTtsAvailable,
                 errorMessage = null,
                 cacheSummary = currentReaderTtsCacheSummary()
             )
@@ -1603,7 +1799,7 @@ internal fun EpistemeDesktopApp(
                     }
                     updateState(state.reduce(AppAction.TabsEnabledChanged(enabled)))
                 },
-                onAiSettingsRequested = if (featurePolicy.aiAndCloud) {
+                onAiSettingsRequested = if (desktopBuildProfile.byokAiAvailable) {
                     { showAiByokSettingsDialog = true }
                 } else {
                     null
@@ -1649,19 +1845,21 @@ internal fun EpistemeDesktopApp(
                                     platform = SharedSettingsPlatform.DESKTOP,
                                     featurePolicy = featurePolicy,
                                     isDebugBuild = false,
-                                    isSignedIn = false,
-                                    isProUser = true,
+                                    isSignedIn = state.currentUser != null,
+                                    isProUser = state.isProUser,
+                                    accountAvailable = featurePolicy.aiAndCloud && !desktopBuildProfile.byokAiAvailable,
                                     syncAvailable = false,
                                     folderSyncAvailable = true,
-                                    aiSettingsAvailable = featurePolicy.aiAndCloud,
+                                    aiSettingsAvailable = desktopBuildProfile.byokAiAvailable,
                                     includeLanguage = false,
                                     includeScreenCaptureProtection = false,
                                     includeExternalFileBehavior = false,
                                     includeStrictFileFilter = false,
                                     includeReaderTabs = false,
-                                    includeHideReaderAi = false,
+                                    includeHideReaderAi = featurePolicy.aiAndCloud,
                                     isTabsEnabled = state.isTabsEnabled,
-                                    isFolderSyncEnabled = state.isFolderSyncEnabled
+                                    isFolderSyncEnabled = state.isFolderSyncEnabled,
+                                    hideReaderAi = effectiveAiSettings().hideReaderAiFeatures
                                 )
                             ),
                             query = settingsQuery,
@@ -1702,7 +1900,14 @@ internal fun EpistemeDesktopApp(
                                         updateState(state.reduce(AppAction.TabsEnabledChanged(!state.isTabsEnabled)))
                                     }
                                     SharedSettingsAction.FOLDER_SYNC -> updateState(state.reduce(AppAction.FolderSyncEnabledChanged(!state.isFolderSyncEnabled)))
-                                    SharedSettingsAction.AI_SETTINGS -> showAiByokSettingsDialog = true
+                                    SharedSettingsAction.AI_SETTINGS -> if (desktopBuildProfile.byokAiAvailable) showAiByokSettingsDialog = true
+                                    SharedSettingsAction.SIGN_IN -> signInDesktopAccount()
+                                    SharedSettingsAction.SIGN_OUT -> signOutDesktopAccount()
+                                    SharedSettingsAction.HIDE_READER_AI -> {
+                                        val next = aiByokSettings.copy(hideReaderAiFeatures = !effectiveAiSettings().hideReaderAiFeatures)
+                                        aiByokSettings = next
+                                        runCatching { aiByokStore.save(next.sanitized()) }
+                                    }
                                     SharedSettingsAction.CUSTOM_FONTS -> selectAppTab(SharedAppTab.CUSTOM_FONTS)
                                     SharedSettingsAction.HELP_FEEDBACK -> selectAppTab(SharedAppTab.FEEDBACK)
                                     SharedSettingsAction.SUPPORT -> selectAppTab(SharedAppTab.SUPPORT)
@@ -1715,21 +1920,36 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.EXPORT_LOGS,
                                     SharedSettingsAction.DEBUG_ACTIONS,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
-                                    SharedSettingsAction.SIGN_IN,
-                                    SharedSettingsAction.SIGN_OUT,
                                     SharedSettingsAction.CLOUD_SYNC,
                                     SharedSettingsAction.LANGUAGE,
                                     SharedSettingsAction.RECENT_LIMIT,
                                     SharedSettingsAction.STRICT_FILE_FILTER,
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,
                                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                                    SharedSettingsAction.HIDE_READER_AI,
                                     SharedSettingsAction.TTS_SETTINGS,
                                     SharedSettingsAction.PDF_READER_DEFAULTS,
                                     SharedSettingsAction.TEXT_READER_DEFAULTS,
                                     SharedSettingsAction.READER_TOOLBAR,
                                     SharedSettingsAction.TTS_REPLACEMENTS,
                                     SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
+                                }
+                            }
+                        )
+
+                        SharedAppTab.PRO -> DesktopProScreen(
+                            user = state.currentUser,
+                            isProUser = state.isProUser,
+                            credits = state.credits,
+                            authConfigured = desktopCloudConfig.isAuthConfigured,
+                            isBusy = accountBusy,
+                            statusMessage = accountStatusMessage,
+                            onSignIn = ::signInDesktopAccount,
+                            onSignOut = ::signOutDesktopAccount,
+                            onRefresh = {
+                                scope.launch {
+                                    accountBusy = true
+                                    refreshDesktopAccountProfile(showBanner = true)
+                                    accountBusy = false
                                 }
                             }
                         )
@@ -1903,14 +2123,29 @@ internal fun EpistemeDesktopApp(
                                             ?.let { bookId -> state.rawLibraryBooks.firstOrNull { it.id == bookId } }
                                             ?.let(::syncBookSidecars)
                                     },
-                                    aiByokSettings = aiByokSettings,
+                                    aiByokSettings = effectiveAiSettings(),
                                     aiAdapter = desktopAiAdapter,
                                     ttsAdapter = desktopTtsAdapter,
                                     ttsReplacementPreferences = state.readerTtsReplacementPreferences,
                                     onTtsReplacementPreferencesChange = { preferences ->
                                         updateState(state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)))
                                     },
-                                    featurePolicy = featurePolicy
+                                    featurePolicy = featurePolicy,
+                                    onReaderAiEntitlementRequired = { feature, text ->
+                                        desktopFeatureNoticeForReaderAi(feature, text)?.let { notice ->
+                                            desktopFeatureNotice = notice
+                                            true
+                                        } ?: false
+                                    },
+                                    onCloudTtsEntitlementRequired = {
+                                        desktopFeatureNoticeForCloudTts()?.let { notice ->
+                                            desktopFeatureNotice = notice
+                                            true
+                                        } ?: false
+                                    },
+                                    onPaidFeatureError = { errorMessage ->
+                                        desktopFeatureNoticeForError(errorMessage)?.let { desktopFeatureNotice = it }
+                                    }
                                 )
                             } else {
                                 DesktopReaderScreen(
@@ -1947,7 +2182,7 @@ internal fun EpistemeDesktopApp(
                                     },
                                     customFonts = customFonts,
                                     readerExtrasState = readerExtrasState,
-                                    aiByokSettings = aiByokSettings,
+                                    aiByokSettings = effectiveAiSettings(),
                                     externalLookupAvailable = featurePolicy.externalLookup,
                                     cloudTtsControlsAvailable = featurePolicy.aiAndCloud,
                                     onExternalLookup = ::openReaderExternalLookup,
@@ -1977,7 +2212,38 @@ internal fun EpistemeDesktopApp(
             DesktopDropImportOverlay(dropImportState)
         }
 
-        if (showAiByokSettingsDialog) {
+        desktopFeatureNotice?.let { notice ->
+            AlertDialog(
+                onDismissRequest = { desktopFeatureNotice = null },
+                title = { Text(notice.title) },
+                text = { Text(notice.message) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            desktopFeatureNotice = null
+                            when (notice.action) {
+                                DesktopFeatureNoticeAction.SIGN_IN -> signInDesktopAccount()
+                                DesktopFeatureNoticeAction.OPEN_PRO -> selectAppTab(SharedAppTab.PRO)
+                                null -> Unit
+                            }
+                        }
+                    ) {
+                        Text(notice.confirmLabel)
+                    }
+                },
+                dismissButton = if (notice.action != null) {
+                    {
+                        TextButton(onClick = { desktopFeatureNotice = null }) {
+                            Text("Not now")
+                        }
+                    }
+                } else {
+                    null
+                }
+            )
+        }
+
+        if (showAiByokSettingsDialog && desktopBuildProfile.byokAiAvailable) {
             DesktopAiByokSettingsDialog(
                 settings = aiByokSettings,
                 secureStorageAvailable = aiByokStore.isSecureStorageAvailable,
@@ -2139,6 +2405,72 @@ internal fun EpistemeDesktopApp(
             )
         }
     }
+}
+
+private fun desktopSignInRequiredNotice(featureLabel: String): DesktopFeatureNotice {
+    return DesktopFeatureNotice(
+        title = "Sign in required",
+        message = "Sign in with Google to use $featureLabel on desktop.",
+        confirmLabel = "Sign in",
+        action = DesktopFeatureNoticeAction.SIGN_IN
+    )
+}
+
+private fun desktopOutOfCreditsNotice(featureLabel: String): DesktopFeatureNotice {
+    return DesktopFeatureNotice(
+        title = "Out of credits",
+        message = "Using $featureLabel needs credits on desktop. Pro and credits can only be purchased from the Android app.",
+        confirmLabel = "View Pro and credits",
+        action = DesktopFeatureNoticeAction.OPEN_PRO
+    )
+}
+
+private fun desktopProRequiredNotice(featureLabel: String): DesktopFeatureNotice {
+    return DesktopFeatureNotice(
+        title = "Pro required",
+        message = "$featureLabel requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.",
+        confirmLabel = "View Pro and credits",
+        action = DesktopFeatureNoticeAction.OPEN_PRO
+    )
+}
+
+private fun desktopFeatureUnavailableNotice(message: String): DesktopFeatureNotice {
+    return DesktopFeatureNotice(
+        title = "Feature unavailable",
+        message = message
+    )
+}
+
+private fun desktopFeatureNoticeForError(errorMessage: String?): DesktopFeatureNotice? {
+    val message = errorMessage?.trim().orEmpty()
+    if (message.isBlank()) return null
+    return when {
+        message.contains("INSUFFICIENT_CREDITS", ignoreCase = true) ||
+            message.contains("Out of credits", ignoreCase = true) ||
+            message.contains("HTTP 402", ignoreCase = true) ||
+            message.contains("status code 402", ignoreCase = true) ||
+            message.contains("SUMMARY_LIMIT", ignoreCase = true) ||
+            (message.contains("free summar", ignoreCase = true) && message.contains("limit", ignoreCase = true)) ||
+            message.contains("needs credits", ignoreCase = true) ||
+            message.contains("This action needs credits", ignoreCase = true) ->
+            desktopOutOfCreditsNotice("This feature")
+
+        message.contains("Sign in", ignoreCase = true) ||
+            message.contains("HTTP 401", ignoreCase = true) ||
+            message.contains("status code 401", ignoreCase = true) ||
+            message.contains("Authentication required", ignoreCase = true) ->
+            desktopSignInRequiredNotice("this feature")
+
+        message.contains("requires Pro", ignoreCase = true) ||
+            message.contains("REQUIRES_PRO", ignoreCase = true) ->
+            desktopProRequiredNotice("This feature")
+
+        else -> null
+    }
+}
+
+private fun desktopReaderWordCount(text: String): Int {
+    return text.trim().split(Regex("\\s+")).count { it.isNotBlank() }
 }
 
 private fun ReaderImageReference.desktopImageBytes(): ByteArray {

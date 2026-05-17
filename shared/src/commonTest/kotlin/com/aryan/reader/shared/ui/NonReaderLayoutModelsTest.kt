@@ -266,6 +266,7 @@ class NonReaderLayoutModelsTest {
         assertTrue(SharedAppToolAction.IMPORT_FOLDER in model.toolActions)
         assertTrue(SharedAppToolAction.SYNC in model.toolActions)
         assertTrue(SharedAppToolAction.APP_THEME in model.toolActions)
+        assertTrue(SharedAppToolAction.PRO in model.toolActions)
         assertTrue(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
         assertTrue(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)
@@ -304,6 +305,7 @@ class NonReaderLayoutModelsTest {
 
         assertEquals(listOf(SharedAppTab.LIBRARY), model.primaryTabs)
         assertEquals(SharedAppTab.LIBRARY, model.selectedPrimaryTab)
+        assertFalse(SharedAppToolAction.PRO in model.toolActions)
         assertFalse(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertFalse(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)
         assertFalse(SharedAppToolAction.SUPPORT in model.toolActions)

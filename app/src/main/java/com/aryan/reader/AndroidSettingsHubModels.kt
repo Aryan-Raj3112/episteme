@@ -24,6 +24,7 @@ fun androidSettingsHubInput(
         isDebugBuild = isDebugBuild,
         isSignedIn = uiState.currentUser != null,
         isProUser = uiState.isProUser,
+        accountAvailable = supportsSync,
         syncAvailable = supportsSync,
         folderSyncAvailable = supportsSync,
         aiSettingsAvailable = supportsOssAiKeys,

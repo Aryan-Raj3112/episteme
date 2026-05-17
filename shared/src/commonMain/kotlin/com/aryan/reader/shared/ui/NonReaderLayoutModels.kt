@@ -19,6 +19,7 @@ enum class SharedAppToolAction {
     IMPORT_FOLDER,
     SYNC,
     APP_THEME,
+    PRO,
     AI_SETTINGS,
     CUSTOM_FONTS,
     HELP_FEEDBACK,
@@ -47,6 +48,7 @@ fun sharedAppShellModel(
         SharedAppTab.HOME -> SharedAppTab.LIBRARY
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY
         SharedAppTab.SETTINGS,
+        SharedAppTab.PRO,
         SharedAppTab.CUSTOM_FONTS,
         SharedAppTab.SUPPORT,
         SharedAppTab.FEEDBACK,
@@ -59,6 +61,7 @@ fun sharedAppShellModel(
         add(SharedAppToolAction.IMPORT_FOLDER)
         add(SharedAppToolAction.SYNC)
         add(SharedAppToolAction.APP_THEME)
+        if (featurePolicy.aiAndCloud) add(SharedAppToolAction.PRO)
         if (aiSettingsAvailable && featurePolicy.aiAndCloud) add(SharedAppToolAction.AI_SETTINGS)
         add(SharedAppToolAction.CUSTOM_FONTS)
         if (featurePolicy.projectLinks) {

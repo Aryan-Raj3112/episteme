@@ -1,5 +1,6 @@
 package com.aryan.reader.desktop
 
+import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.SharedFeaturePolicy
 import java.io.File
 import java.nio.file.Files
@@ -18,6 +19,8 @@ class DesktopBuildProfileTest {
         assertEquals("Standard edition", profile.buildLabel)
         assertEquals(SharedFeaturePolicy.Standard, profile.featurePolicy)
         assertTrue(profile.featurePolicy.networkAccess)
+        assertFalse(profile.featurePolicy.byokAi)
+        assertFalse(profile.byokAiAvailable)
     }
 
     @Test
@@ -30,6 +33,8 @@ class DesktopBuildProfileTest {
         assertEquals(SharedFeaturePolicy.OssOffline, profile.featurePolicy)
         assertFalse(profile.featurePolicy.networkAccess)
         assertFalse(profile.featurePolicy.aiAndCloud)
+        assertTrue(profile.featurePolicy.byokAi)
+        assertFalse(profile.byokAiAvailable)
         assertFalse(profile.featurePolicy.opdsCatalogs)
         assertFalse(profile.featurePolicy.googleFontsDownload)
     }
@@ -41,6 +46,31 @@ class DesktopBuildProfileTest {
         assertEquals(DesktopFlavorOssOffline, profile.flavor)
         assertEquals(EpistemeDesktopOssAppName, profile.appName)
         assertEquals(SharedFeaturePolicy.OssOffline, profile.featurePolicy)
+    }
+
+    @Test
+    fun `desktop BYOK settings are only exposed by an online OSS-style policy`() {
+        val settings = ReaderAiByokSettings(
+            geminiKey = "gemini_secret",
+            modelForAll = "gemini:gemini-flash-lite-latest"
+        )
+        val onlineOssPolicy = SharedFeaturePolicy(
+            networkAccess = true,
+            aiAndCloud = true,
+            byokAi = true
+        )
+
+        assertTrue(
+            DesktopBuildProfile(
+                flavor = "oss-online",
+                appName = "Episteme oss",
+                buildLabel = "OSS edition",
+                featurePolicy = onlineOssPolicy
+            ).byokAiAvailable
+        )
+        assertEquals(settings, settings.withDesktopFeaturePolicy(onlineOssPolicy))
+        assertTrue(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.Standard).hideReaderAiFeatures)
+        assertTrue(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.OssOffline).hideReaderAiFeatures)
     }
 
     @Test

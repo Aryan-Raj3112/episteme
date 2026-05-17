@@ -46,7 +46,9 @@ data class ReaderAiByokSettings(
     val recapModel: String = "",
     val ttsModel: String = "",
     val hideReaderAiFeatures: Boolean = false,
-    val ttsSpeakerId: String = DEFAULT_CLOUD_TTS_SPEAKER_ID
+    val ttsSpeakerId: String = DEFAULT_CLOUD_TTS_SPEAKER_ID,
+    val serverBackedReaderAiFeatures: Boolean = false,
+    val serverBackedCloudTts: Boolean = false
 ) {
     fun sanitized(): ReaderAiByokSettings {
         val knownTextModelIds = ReaderAiModelOptions.mapTo(mutableSetOf()) { it.id }
@@ -83,8 +85,9 @@ data class ReaderAiByokSettings(
     }
 
     val hasAnyAiKey: Boolean get() = geminiKey.isNotBlank() || groqKey.isNotBlank()
-    val areReaderAiFeaturesAvailable: Boolean get() = !hideReaderAiFeatures && hasAnyAiKey
-    val isCloudTtsAvailable: Boolean get() = geminiKey.isNotBlank() && ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
+    val areReaderAiFeaturesAvailable: Boolean get() = !hideReaderAiFeatures && (serverBackedReaderAiFeatures || hasAnyAiKey)
+    val isByokCloudTtsAvailable: Boolean get() = geminiKey.isNotBlank() && ttsModel == GEMINI_CLOUD_TTS_MODEL_ID
+    val isCloudTtsAvailable: Boolean get() = serverBackedCloudTts || isByokCloudTtsAvailable
 }
 
 val ReaderAiModelOptions = listOf(

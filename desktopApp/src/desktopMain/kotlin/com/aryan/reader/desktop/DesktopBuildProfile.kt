@@ -19,6 +19,7 @@ internal data class DesktopBuildProfile(
     val featurePolicy: SharedFeaturePolicy
 ) {
     val isOssOffline: Boolean get() = flavor == DesktopFlavorOssOffline
+    val byokAiAvailable: Boolean get() = featurePolicy.byokAi && featurePolicy.aiAndCloud && featurePolicy.networkAccess
 }
 
 internal fun currentDesktopBuildProfile(): DesktopBuildProfile {
@@ -57,7 +58,7 @@ private fun normalizedDesktopFlavor(rawFlavor: String?): String {
 internal fun ReaderAiByokSettings.withDesktopFeaturePolicy(
     featurePolicy: SharedFeaturePolicy
 ): ReaderAiByokSettings {
-    return if (featurePolicy.aiAndCloud) {
+    return if (featurePolicy.byokAi && featurePolicy.aiAndCloud && featurePolicy.networkAccess) {
         sanitized()
     } else {
         ReaderAiByokSettings(hideReaderAiFeatures = true)

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.Button
@@ -77,6 +78,7 @@ enum class SharedAppTab {
     CATALOGS,
     READER,
     SETTINGS,
+    PRO,
     CUSTOM_FONTS,
     SUPPORT,
     FEEDBACK,
@@ -377,7 +379,8 @@ private fun SharedToolsPanel(
     val hasLibraryActions = SharedAppToolAction.IMPORT_FILES in toolActions ||
         SharedAppToolAction.IMPORT_FOLDER in toolActions ||
         SharedAppToolAction.SYNC in toolActions
-    val hasSettingsActions = SharedAppToolAction.AI_SETTINGS in toolActions ||
+    val hasSettingsActions = SharedAppToolAction.PRO in toolActions ||
+        SharedAppToolAction.AI_SETTINGS in toolActions ||
         SharedAppToolAction.CUSTOM_FONTS in toolActions
     val hasProjectActions = SharedAppToolAction.HELP_FEEDBACK in toolActions ||
         SharedAppToolAction.SUPPORT in toolActions ||
@@ -475,6 +478,9 @@ private fun SharedToolsPanel(
 
             if (hasSettingsActions) {
                 SharedToolsSection("Settings") {
+                    if (SharedAppToolAction.PRO in toolActions) {
+                        SharedToolRow(Icons.Default.Star, "Pro and credits") { onOpenTab(SharedAppTab.PRO) }
+                    }
                     if (SharedAppToolAction.AI_SETTINGS in toolActions) {
                         SharedToolRow(Icons.Default.Settings, "AI keys and models", onAiSettingsRequested)
                     }
@@ -545,6 +551,7 @@ private val SharedAppTab.label: String
         SharedAppTab.CATALOGS -> "OPDS"
         SharedAppTab.READER -> "Reader"
         SharedAppTab.SETTINGS -> "Settings"
+        SharedAppTab.PRO -> "Pro"
         SharedAppTab.CUSTOM_FONTS -> "Custom fonts"
         SharedAppTab.SUPPORT -> "Support"
         SharedAppTab.FEEDBACK -> "Feedback"
@@ -559,6 +566,7 @@ private val SharedAppTab.icon: ImageVector
         SharedAppTab.CATALOGS -> Icons.Default.Cloud
         SharedAppTab.READER -> Icons.AutoMirrored.Filled.MenuBook
         SharedAppTab.SETTINGS -> Icons.Default.Settings
+        SharedAppTab.PRO -> Icons.Default.Star
         SharedAppTab.CUSTOM_FONTS -> Icons.Default.TextFields
         SharedAppTab.SUPPORT -> Icons.Default.Favorite
         SharedAppTab.FEEDBACK -> Icons.Default.Feedback

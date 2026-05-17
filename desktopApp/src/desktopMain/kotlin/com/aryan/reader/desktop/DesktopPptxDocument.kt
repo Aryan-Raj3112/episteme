@@ -363,12 +363,14 @@ private object DesktopPptxRenderer {
     private fun Graphics2D.drawShape(shape: DesktopPptxShapeElement) {
         withRotation(shape.bounds, shape.rotationDegrees) {
             val geometry = shape.geometry()
-            if (shape.preset != "line" && shape.fillColor != null && shape.fillColor.pptxAlpha() > 0) {
-                paint = shape.fillColor.toAwtColor()
+            val fillColor = shape.fillColor
+            if (shape.preset != "line" && fillColor != null && fillColor.pptxAlpha() > 0) {
+                paint = fillColor.toAwtColor()
                 fill(geometry)
             }
-            if (shape.lineColor != null && shape.lineColor.pptxAlpha() > 0) {
-                color = shape.lineColor.toAwtColor()
+            val lineColor = shape.lineColor
+            if (lineColor != null && lineColor.pptxAlpha() > 0) {
+                color = lineColor.toAwtColor()
                 stroke = BasicStroke(shape.lineWidthPoint.coerceAtLeast(0.25f))
                 draw(geometry)
             }
@@ -472,7 +474,10 @@ private fun layoutTableCells(table: DesktopPptxTableElement): List<LaidOutDeskto
         .mapNotNull { it.heightPoint?.takeIf { height -> height > 0f } }
         .sumOf { it.toDouble() }
         .toFloat()
-    val missingRows = table.rows.count { it.heightPoint == null || it.heightPoint <= 0f }
+    val missingRows = table.rows.count { row ->
+        val heightPoint = row.heightPoint
+        heightPoint == null || heightPoint <= 0f
+    }
     val fallbackHeight = if (missingRows > 0) {
         ((table.bounds.height() - explicitHeight).coerceAtLeast(1f)) / missingRows
     } else {
@@ -486,7 +491,10 @@ private fun layoutTableCells(table: DesktopPptxTableElement): List<LaidOutDeskto
             .mapNotNull { it.widthPoint?.takeIf { width -> width > 0f } }
             .sumOf { it.toDouble() }
             .toFloat()
-        val missingCells = row.cells.count { it.widthPoint == null || it.widthPoint <= 0f }
+        val missingCells = row.cells.count { cell ->
+            val widthPoint = cell.widthPoint
+            widthPoint == null || widthPoint <= 0f
+        }
         val fallbackWidth = if (missingCells > 0) {
             ((table.bounds.width() - explicitWidth).coerceAtLeast(1f)) / missingCells
         } else if (row.cells.isNotEmpty()) {
@@ -528,29 +536,30 @@ private fun DesktopPptxShapeElement.textBounds(): DesktopPptxRect {
 }
 
 private fun DesktopPptxShapeElement.geometry(): Shape {
-    val rect = bounds.toAwtRect()
+    val shapeBounds = bounds
+    val rect = shapeBounds.toAwtRect()
     return when (preset) {
-        "line" -> Line2D.Float(bounds.left, bounds.top, bounds.right, bounds.bottom)
-        "ellipse" -> Ellipse2D.Float(bounds.left, bounds.top, bounds.width(), bounds.height())
+        "line" -> Line2D.Float(shapeBounds.left, shapeBounds.top, shapeBounds.right, shapeBounds.bottom)
+        "ellipse" -> Ellipse2D.Float(shapeBounds.left, shapeBounds.top, shapeBounds.width(), shapeBounds.height())
         "roundrect", "roundRect" -> RoundRectangle2D.Float(
-            bounds.left,
-            bounds.top,
-            bounds.width(),
-            bounds.height(),
-            bounds.width() * 0.16f,
-            bounds.height() * 0.16f
+            shapeBounds.left,
+            shapeBounds.top,
+            shapeBounds.width(),
+            shapeBounds.height(),
+            shapeBounds.width() * 0.16f,
+            shapeBounds.height() * 0.16f
         )
         "triangle" -> Path2D.Float().apply {
-            moveTo(bounds.centerX(), bounds.top)
-            lineTo(bounds.right, bounds.bottom)
-            lineTo(bounds.left, bounds.bottom)
+            moveTo(shapeBounds.centerX(), shapeBounds.top)
+            lineTo(shapeBounds.right, shapeBounds.bottom)
+            lineTo(shapeBounds.left, shapeBounds.bottom)
             closePath()
         }
         "diamond" -> Path2D.Float().apply {
-            moveTo(bounds.centerX(), bounds.top)
-            lineTo(bounds.right, bounds.centerY())
-            lineTo(bounds.centerX(), bounds.bottom)
-            lineTo(bounds.left, bounds.centerY())
+            moveTo(shapeBounds.centerX(), shapeBounds.top)
+            lineTo(shapeBounds.right, shapeBounds.centerY())
+            lineTo(shapeBounds.centerX(), shapeBounds.bottom)
+            lineTo(shapeBounds.left, shapeBounds.centerY())
             closePath()
         }
         else -> rect

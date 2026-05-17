@@ -643,6 +643,7 @@ data class SharedSettingsHubInput(
     val isDebugBuild: Boolean = false,
     val isSignedIn: Boolean = false,
     val isProUser: Boolean = false,
+    val accountAvailable: Boolean = true,
     val syncAvailable: Boolean = true,
     val folderSyncAvailable: Boolean = true,
     val aiSettingsAvailable: Boolean = true,
@@ -743,7 +744,7 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
         SharedSettingsSectionModel(
             section = SharedSettingsSection.SYNC_ACCOUNTS,
             items = buildList {
-                if (input.syncAvailable && input.featurePolicy.aiAndCloud) {
+                if (input.accountAvailable && input.featurePolicy.aiAndCloud) {
                     if (input.isSignedIn) {
                         add(
                             SharedSettingsItemModel(
@@ -762,6 +763,8 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                             )
                         )
                     }
+                }
+                if (input.syncAvailable && input.featurePolicy.aiAndCloud) {
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.CLOUD_SYNC,

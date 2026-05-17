@@ -54,6 +54,10 @@ private data class DesktopTtsSequenceChunk(
 class DesktopGeminiCloudTtsAdapter(
     private val settingsProvider: () -> ReaderAiByokSettings,
     private val networkAccess: () -> Boolean = { true },
+    private val workerUrlProvider: () -> String = { "" },
+    private val authTokenProvider: suspend () -> String? = { null },
+    private val useWorkerProvider: () -> Boolean = { false },
+    private val onWorkerUsageCompleted: suspend () -> Unit = {},
     httpClient: HttpClient? = null,
     private val cacheManager: ReaderTtsFileCacheManager = ReaderTtsFileCacheManager(defaultDesktopTtsCacheRoot())
 ) : TtsAdapter {
@@ -72,7 +76,14 @@ class DesktopGeminiCloudTtsAdapter(
     private var activePlayer: DesktopStreamingPcmPlayer? = null
 
     override val isAvailable: Boolean
-        get() = networkAccess() && settingsProvider().sanitized().isCloudTtsAvailable
+        get() {
+            val settings = settingsProvider().sanitized()
+            return networkAccess() && if (useWorkerProvider()) {
+                settings.serverBackedCloudTts && workerUrlProvider().isNotBlank()
+            } else {
+                settings.isByokCloudTtsAvailable
+            }
+        }
 
     override suspend fun speak(text: String) {
         val trimmed = text.trim()
@@ -171,11 +182,13 @@ class DesktopGeminiCloudTtsAdapter(
         onChunkStart: suspend (Int) -> Unit
     ) = withContext(Dispatchers.IO) {
         val settings = settingsProvider().sanitized()
+        val useWorker = useWorkerProvider()
+        val authToken = if (useWorker) authTokenProvider() else null
         val totalTextChars = chunks.sumOf { it.text.length }
         logDesktopTts(
             "stream_start book=\"${bookTitle.desktopTtsPreview()}\" chunks=${chunks.size} totalTextChars=$totalTextChars keyPresent=${settings.geminiKey.isNotBlank()} " +
                 "ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" speaker=\"${settings.ttsSpeakerId.desktopTtsPreview()}\" " +
-                "available=${settings.isCloudTtsAvailable}"
+                "available=${settings.isCloudTtsAvailable} worker=$useWorker"
         )
         if (!networkAccess()) {
             logDesktopTts("stream_blocked reason=network_disabled")
@@ -183,7 +196,17 @@ class DesktopGeminiCloudTtsAdapter(
         }
         if (!settings.isCloudTtsAvailable) {
             logDesktopTts("stream_blocked reason=not_available")
-            throw IllegalStateException("Cloud TTS needs a saved Gemini key and the Gemini cloud TTS model selected.")
+            throw IllegalStateException(
+                if (useWorker) {
+                    "Cloud TTS needs a signed-in account with credits."
+                } else {
+                    "Cloud TTS needs a saved Gemini key and the Gemini cloud TTS model selected."
+                }
+            )
+        }
+        if (useWorker && authToken.isNullOrBlank()) {
+            logDesktopTts("stream_blocked reason=missing_auth_token")
+            throw IllegalStateException("Sign in with Google to use cloud TTS.")
         }
 
         val audioBytesReceived = AtomicLong(0)
@@ -287,9 +310,19 @@ class DesktopGeminiCloudTtsAdapter(
 
         suspend fun ensureWebSocket(): WebSocket {
             webSocket?.let { return it }
-            val encodedKey = URLEncoder.encode(settings.geminiKey, Charsets.UTF_8.name())
-            val uri = URI("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$encodedKey")
-            logDesktopTts("ws_connect_start endpoint=GeminiLive keyChars=${settings.geminiKey.length}")
+            val uri = if (useWorker) {
+                val workerUrl = workerUrlProvider().removeSuffix("/")
+                val wsUrl = workerUrl
+                    .replace("https://", "wss://")
+                    .replace("http://", "ws://")
+                val speaker = URLEncoder.encode(settings.ttsSpeakerId, Charsets.UTF_8.name())
+                val token = URLEncoder.encode(authToken.orEmpty(), Charsets.UTF_8.name())
+                URI("$wsUrl/live?speaker=$speaker&token=$token")
+            } else {
+                val encodedKey = URLEncoder.encode(settings.geminiKey, Charsets.UTF_8.name())
+                URI("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$encodedKey")
+            }
+            logDesktopTts("ws_connect_start endpoint=${if (useWorker) "Worker" else "GeminiLive"} keyChars=${settings.geminiKey.length}")
             val connectedWebSocket = runCatching {
                 httpClient.newWebSocketBuilder()
                     .buildAsync(uri, listener)
@@ -421,6 +454,7 @@ class DesktopGeminiCloudTtsAdapter(
             activeWebSocket = null
             activePlayer = null
             logDesktopTts("stream_complete chunks=${chunks.size} audioBytes=${audioBytesReceived.get()}")
+            if (useWorker) onWorkerUsageCompleted()
         } catch (error: Throwable) {
             currentTurnComplete.set(null)
             activeCacheOutput.getAndSet(null)?.let { output -> runCatching { output.close() } }

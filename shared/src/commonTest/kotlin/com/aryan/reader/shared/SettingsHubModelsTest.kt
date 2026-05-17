@@ -48,10 +48,30 @@ class SettingsHubModelsTest {
     }
 
     @Test
-    fun `sync unavailable hides account rows while preserving folder sync`() {
+    fun `sync unavailable hides cloud sync while preserving account and folder sync`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(
                 platform = SharedSettingsPlatform.DESKTOP,
+                syncAvailable = false,
+                folderSyncAvailable = true,
+                isSignedIn = true,
+                isProUser = true
+            )
+        )
+        val actions = model.visibleNestedActions()
+
+        assertFalse(SharedSettingsAction.SIGN_IN in actions)
+        assertTrue(SharedSettingsAction.SIGN_OUT in actions)
+        assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
+        assertTrue(SharedSettingsAction.FOLDER_SYNC in actions)
+    }
+
+    @Test
+    fun `account unavailable hides sign-in rows independently from cloud sync`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.DESKTOP,
+                accountAvailable = false,
                 syncAvailable = false,
                 folderSyncAvailable = true,
                 isSignedIn = true,

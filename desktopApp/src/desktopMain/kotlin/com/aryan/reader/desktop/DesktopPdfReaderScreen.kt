@@ -66,6 +66,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.aryan.reader.shared.AiAdapter
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
@@ -159,11 +160,14 @@ internal fun PdfReaderScreen(
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     onLocalSidecarsChanged: () -> Unit = {},
     aiByokSettings: ReaderAiByokSettings,
-    aiAdapter: DesktopByokAiAdapter,
+    aiAdapter: AiAdapter,
     ttsAdapter: DesktopGeminiCloudTtsAdapter,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
-    featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard
+    featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard,
+    onReaderAiEntitlementRequired: (ReaderAiFeature, String) -> Boolean = { _, _ -> false },
+    onCloudTtsEntitlementRequired: () -> Boolean = { false },
+    onPaidFeatureError: (String?) -> Unit = {}
 ) {
     val documentHandleId = document.handleId
     val zoomSpec = remember { DesktopPdfZoomSpec }
@@ -1121,6 +1125,7 @@ internal fun PdfReaderScreen(
         val normalizedText = text.trim()
         if (normalizedText.isBlank()) return
         if (!aiByokSettings.sanitized().areReaderAiFeaturesAvailable) return
+        if (onReaderAiEntitlementRequired(feature, normalizedText)) return
         pdfExtrasState = pdfExtrasState.copy(
             aiResult = ReaderAiResultState(
                 title = feature.displayName,
@@ -1141,6 +1146,7 @@ internal fun PdfReaderScreen(
                     isLoading = false
                 )
             )
+            onPaidFeatureError(result.second)
         }
     }
 
@@ -1193,6 +1199,14 @@ internal fun PdfReaderScreen(
         )
     }
 
+    fun pdfCloudTtsUnavailableMessage(): String {
+        return if (aiByokSettings.serverBackedReaderAiFeatures || aiByokSettings.serverBackedCloudTts) {
+            "Cloud TTS needs a signed-in account with credits. Pro and credits can only be purchased from the Android app."
+        } else {
+            "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+        }
+    }
+
     fun startPdfCloudTts(readScope: ReaderTtsReadScope) {
         val settings = aiByokSettings.sanitized()
         logDesktopTts(
@@ -1207,10 +1221,11 @@ internal fun PdfReaderScreen(
         }
         if (!ttsAdapter.isAvailable) {
             logDesktopTts("pdf_sequence_blocked reason=adapter_unavailable")
+            onCloudTtsEntitlementRequired()
             pdfExtrasState = pdfExtrasState.copy(
                 cloudTts = ReaderCloudTtsState(
                     isAvailable = false,
-                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models.",
+                    errorMessage = pdfCloudTtsUnavailableMessage(),
                     cacheSummary = currentPdfTtsCacheSummary()
                 )
             )
@@ -1275,6 +1290,7 @@ internal fun PdfReaderScreen(
                         cloudTts = pdfCloudTtsStoppedState(statusMessage = "Stopped")
                     )
                 } else {
+                    onPaidFeatureError(error.message)
                     pdfExtrasState.copy(
                         cloudTts = pdfCloudTtsStoppedState(errorMessage = error.message ?: "Cloud TTS failed.")
                     )
@@ -1312,10 +1328,11 @@ internal fun PdfReaderScreen(
         }
         if (!ttsAdapter.isAvailable) {
             logDesktopTts("pdf_toggle_blocked reason=adapter_unavailable")
+            onCloudTtsEntitlementRequired()
             pdfExtrasState = pdfExtrasState.copy(
                 cloudTts = ReaderCloudTtsState(
                     isAvailable = false,
-                    errorMessage = "Add a Gemini key and select Gemini cloud TTS in AI keys and models.",
+                    errorMessage = pdfCloudTtsUnavailableMessage(),
                     cacheSummary = currentPdfTtsCacheSummary()
                 )
             )
@@ -1376,6 +1393,7 @@ internal fun PdfReaderScreen(
                     cloudTts = if (error is kotlinx.coroutines.CancellationException) {
                         pdfCloudTtsStoppedState(statusMessage = "Stopped")
                     } else {
+                        onPaidFeatureError(error.message)
                         pdfCloudTtsStoppedState(errorMessage = error.message ?: "Cloud TTS failed.")
                     }
                 )

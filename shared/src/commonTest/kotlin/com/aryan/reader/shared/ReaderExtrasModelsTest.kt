@@ -49,7 +49,7 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
-    fun `cloud tts is available only with gemini key and cloud tts model`() {
+    fun `BYOK cloud tts is available only with gemini key and cloud tts model`() {
         assertFalse(ReaderAiByokSettings(geminiKey = "key").isCloudTtsAvailable)
         assertFalse(ReaderAiByokSettings(ttsModel = GEMINI_CLOUD_TTS_MODEL_ID).isCloudTtsAvailable)
 
@@ -59,6 +59,19 @@ class ReaderExtrasModelsTest {
                 ttsModel = GEMINI_CLOUD_TTS_MODEL_ID
             ).isCloudTtsAvailable
         )
+    }
+
+    @Test
+    fun `server backed reader AI and cloud tts availability do not require BYOK keys`() {
+        val serverBacked = ReaderAiByokSettings(
+            serverBackedReaderAiFeatures = true,
+            serverBackedCloudTts = true
+        )
+
+        assertTrue(serverBacked.areReaderAiFeaturesAvailable)
+        assertTrue(serverBacked.isCloudTtsAvailable)
+        assertFalse(serverBacked.isByokCloudTtsAvailable)
+        assertFalse(serverBacked.copy(hideReaderAiFeatures = true).areReaderAiFeaturesAvailable)
     }
 
     @Test
