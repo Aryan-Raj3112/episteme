@@ -10,6 +10,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -176,6 +177,24 @@ class EpubReaderBridgeAndControlsTest {
 
         verify { webView.evaluateJavascript("javascript:window.autoScroll.start(1.25);", null) }
         verify { webView.evaluateJavascript("javascript:window.autoScroll.stop();", null) }
+    }
+
+    @Test
+    fun `web view hit test guard treats chromium null state as unknown tap`() {
+        val type = readWebViewHitTestTypeOrNull {
+            throw NullPointerException("chromium hit test result missing")
+        }
+
+        assertNull(type)
+        assertFalse(isWebViewAnchorHitTestType(type))
+    }
+
+    @Test
+    fun `web view hit test helper detects anchor result types`() {
+        assertTrue(isWebViewAnchorHitTestType(WebView.HitTestResult.SRC_ANCHOR_TYPE))
+        assertTrue(isWebViewAnchorHitTestType(WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE))
+        assertFalse(isWebViewAnchorHitTestType(null))
+        assertFalse(isWebViewAnchorHitTestType(WebView.HitTestResult.IMAGE_TYPE))
     }
 
     @Test

@@ -38,6 +38,20 @@ import org.json.JSONObject
 
 enum class DragOperation { NONE, PULLING_DOWN_FROM_TOP, PULLING_UP_FROM_BOTTOM }
 
+internal fun readWebViewHitTestTypeOrNull(hitTestTypeProvider: () -> Int?): Int? {
+    return try {
+        hitTestTypeProvider()
+    } catch (e: NullPointerException) {
+        Timber.w(e, "WebView hit test state was unavailable for tap.")
+        null
+    }
+}
+
+internal fun isWebViewAnchorHitTestType(type: Int?): Boolean {
+    return type == WebView.HitTestResult.SRC_ANCHOR_TYPE ||
+        type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
+}
+
 @SuppressLint("ViewConstructor")
 class InteractiveWebView(
     context: Context,
@@ -376,10 +390,11 @@ class InteractiveWebView(
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 Timber.d("onSingleTapConfirmed")
 
-                val hitTestResult = this@InteractiveWebView.hitTestResult
-                val type = hitTestResult.type
+                val type = readWebViewHitTestTypeOrNull {
+                    this@InteractiveWebView.hitTestResult?.type
+                }
 
-                if (type == HitTestResult.SRC_ANCHOR_TYPE || type == HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
+                if (isWebViewAnchorHitTestType(type)) {
                     Timber.d("Tap was on a link. Consuming tap, not toggling app bars.")
                     return true
                 }

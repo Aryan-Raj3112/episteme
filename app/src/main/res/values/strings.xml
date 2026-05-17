@@ -22,6 +22,7 @@
     <!-- Tab label in the multi-tab PDF reader — means the slot is available (unused), NOT "free of cost". -->
     <string name="tab_free">Free</string>
     <string name="active_tabs">Active Tabs</string>
+    <string name="pdf_tabs_show_top_app_bar_tabs">Show tabs in top app bar</string>
     <string name="close_tab">Close Tab</string>
     <string name="close_all_tabs">Close All Tabs</string>
     <string name="dialog_close_all_tabs">Close All Tabs?</string>

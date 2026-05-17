@@ -94,8 +94,11 @@ class PdfReaderPreferencesTest {
         val prefs = InMemorySharedPreferences()
         val context = contextWithPrefs(prefs)
 
+        assertTrue(loadPdfTopTabStripVisible(context))
+
         savePdfThemeId(context, "sepia")
         saveKeepScreenOn(context, true)
+        savePdfTopTabStripVisible(context, false)
         saveUseOnlineDict(context, false)
         saveExternalDictPackage(context, "com.example.dict")
         saveExternalTranslatePackage(context, "com.example.translate")
@@ -108,6 +111,7 @@ class PdfReaderPreferencesTest {
 
         assertEquals("sepia", loadPdfThemeId(context))
         assertTrue(loadKeepScreenOn(context))
+        assertFalse(loadPdfTopTabStripVisible(context))
         assertFalse(loadUseOnlineDict(context))
         assertEquals("com.example.dict", loadExternalDictPackage(context))
         assertEquals("com.example.translate", loadExternalTranslatePackage(context))

@@ -373,6 +373,7 @@ fun PdfViewerScreen(
     var systemUiMode by remember { mutableStateOf(loadPdfSystemUiMode(context)) }
     var showVerticalPageGap by remember { mutableStateOf(loadPdfVerticalPageGapVisible(context)) }
     var showPageNumberOverlay by remember { mutableStateOf(loadPdfPageNumberOverlayVisible(context)) }
+    var showTopTabStrip by remember { mutableStateOf(loadPdfTopTabStripVisible(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
     var rightToLeftPagination by remember { mutableStateOf(loadPdfRightToLeftPagination(context)) }
@@ -444,7 +445,8 @@ fun PdfViewerScreen(
     val isTabsEnabled = uiState.isTabsEnabled
     val openTabs = uiState.openTabs
     val activeTabBookId = uiState.activeTabBookId
-    val isPdfTabStripVisible = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
+    val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
+    val isPdfTabStripVisible = canShowPdfTabs && showTopTabStrip
     val originalFileName by remember(uiState.recentFiles,  effectivePdfUri) {
         derivedStateOf {
             uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }?.displayName
@@ -3767,9 +3769,10 @@ fun PdfViewerScreen(
                     userHighlights = visibleUserHighlights,
                     currentPage = currentPage,
                     totalPages = totalDisplayPages,
-                    isTabsEnabled = isPdfTabStripVisible,
+                    isTabsEnabled = canShowPdfTabs,
                     openTabs = openTabs,
                     activeTabBookId = activeTabBookId,
+                    isTopTabStripVisible = showTopTabStrip,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
                         coroutineScope.launch {
@@ -3808,6 +3811,10 @@ fun PdfViewerScreen(
                             drawerState.close()
                             showNewTabSheet = true
                         }
+                    },
+                    onTopTabStripVisibilityChange = { isVisible ->
+                        showTopTabStrip = isVisible
+                        savePdfTopTabStripVisible(context, isVisible)
                     },
                     onRenameBookmark = { bookmarkToRename, newTitle ->
                         if (newTitle.isNotBlank()) {
@@ -5336,7 +5343,7 @@ fun PdfViewerScreen(
                     isReflowingThisBook = isReflowingThisBook,
                     hasReflowFile = hasReflowFile,
                     isPdfDocumentLoaded = pdfDocument != null,
-                    isTabsEnabled = isTabsEnabled,
+                    isTabsEnabled = isPdfTabStripVisible,
                     openTabs = openTabs,
                     activeTabBookId = activeTabBookId,
                     effectiveFileType = effectiveFileType,

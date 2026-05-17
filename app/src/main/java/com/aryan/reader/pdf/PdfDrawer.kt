@@ -48,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -316,9 +317,11 @@ private fun PdfTabsDrawerPage(
     activeTabBookId: String?,
     currentPage: Int,
     totalPages: Int,
+    isTopTabStripVisible: Boolean,
     onTabSelected: (String) -> Unit,
     onTabClosed: (String) -> Unit,
-    onNewTabClick: () -> Unit
+    onNewTabClick: () -> Unit,
+    onTopTabStripVisibilityChange: (Boolean) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -353,6 +356,28 @@ private fun PdfTabsDrawerPage(
                     contentDescription = stringResource(R.string.content_desc_new_tab)
                 )
             }
+        }
+
+        HorizontalDivider()
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onTopTabStripVisibilityChange(!isTopTabStripVisible) }
+                .padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 10.dp)
+                .testTag("PdfTopTabStripVisibilityToggle"),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.pdf_tabs_show_top_app_bar_tabs),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = isTopTabStripVisible,
+                onCheckedChange = null
+            )
         }
 
         HorizontalDivider()
@@ -542,11 +567,13 @@ internal fun PdfNavigationDrawerContent(
     isTabsEnabled: Boolean = false,
     openTabs: List<RecentFileItem> = emptyList(),
     activeTabBookId: String? = null,
+    isTopTabStripVisible: Boolean = true,
     customHighlightColors: Map<PdfHighlightColor, Color>,
     onPageSelected: (Int) -> Unit,
     onTabSelected: (String) -> Unit = {},
     onTabClosed: (String) -> Unit = {},
     onNewTabClick: () -> Unit = {},
+    onTopTabStripVisibilityChange: (Boolean) -> Unit = {},
     onRenameBookmark: (PdfBookmark, String) -> Unit,
     onDeleteBookmark: (PdfBookmark) -> Unit,
     onDeleteHighlight: (PdfUserHighlight) -> Unit,
@@ -601,6 +628,7 @@ internal fun PdfNavigationDrawerContent(
                     activeTabBookId = activeTabBookId,
                     currentPage = currentPage,
                     totalPages = totalPages,
+                    isTopTabStripVisible = isTopTabStripVisible,
                     onTabSelected = { bookId ->
                         if (bookId == activeTabBookId) {
                             onCloseDrawer()
@@ -610,7 +638,8 @@ internal fun PdfNavigationDrawerContent(
                         }
                     },
                     onTabClosed = onTabClosed,
-                    onNewTabClick = onNewTabClick
+                    onNewTabClick = onNewTabClick,
+                    onTopTabStripVisibilityChange = onTopTabStripVisibilityChange
                 )
 
                 PdfDrawerSection.CHAPTERS -> { // Chapters Page
