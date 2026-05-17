@@ -31,9 +31,15 @@ internal data class DesktopAuthSession(
     val user: UserData,
     val idToken: String,
     val refreshToken: String,
-    val expiresAtEpochMillis: Long
+    val expiresAtEpochMillis: Long,
+    val googleAccessToken: String = "",
+    val googleRefreshToken: String = "",
+    val googleAccessTokenExpiresAtEpochMillis: Long = 0L
 ) {
     val isFresh: Boolean get() = idToken.isNotBlank() && expiresAtEpochMillis - System.currentTimeMillis() > 60_000L
+    val isGoogleAccessTokenFresh: Boolean
+        get() = googleAccessToken.isNotBlank() &&
+            googleAccessTokenExpiresAtEpochMillis - System.currentTimeMillis() > 60_000L
 }
 
 internal class DesktopFirebaseAuthRepository(
@@ -54,8 +60,13 @@ internal class DesktopFirebaseAuthRepository(
             throw IllegalStateException("Desktop Google sign-in is not configured.")
         }
         val oauthCode = requestGoogleOAuthCode(openUrl)
-        val googleIdToken = exchangeCodeForGoogleIdToken(oauthCode.code, oauthCode.redirectUri, oauthCode.codeVerifier)
-        val nextSession = signInWithFirebase(googleIdToken)
+        val googleTokens = exchangeCodeForGoogleTokens(oauthCode.code, oauthCode.redirectUri, oauthCode.codeVerifier)
+        val existingGoogleRefreshToken = session?.googleRefreshToken.orEmpty()
+        val nextSession = signInWithFirebase(googleTokens.idToken).copy(
+            googleAccessToken = googleTokens.accessToken,
+            googleRefreshToken = googleTokens.refreshToken.ifBlank { existingGoogleRefreshToken },
+            googleAccessTokenExpiresAtEpochMillis = googleTokens.expiresAtEpochMillis
+        )
         session = nextSession
         store.save(nextSession)
         return nextSession
@@ -69,6 +80,18 @@ internal class DesktopFirebaseAuthRepository(
     suspend fun freshIdToken(): String? {
         val current = session ?: store.load()?.also { session = it } ?: return null
         return refreshSessionIfNeeded(current)?.idToken
+    }
+
+    suspend fun freshGoogleAccessToken(): String? {
+        val current = session ?: store.load()?.also { session = it } ?: return null
+        if (current.isGoogleAccessTokenFresh) return current.googleAccessToken
+        if (current.googleRefreshToken.isBlank()) return null
+        return runCatching {
+            refreshGoogleAccessToken(current)
+        }.onSuccess { refreshed ->
+            session = refreshed
+            store.save(refreshed)
+        }.getOrNull()?.googleAccessToken
     }
 
     private suspend fun refreshSessionIfNeeded(current: DesktopAuthSession): DesktopAuthSession? {
@@ -164,19 +187,20 @@ internal class DesktopFirebaseAuthRepository(
             "client_id" to config.googleOAuthClientId,
             "redirect_uri" to redirectUri,
             "response_type" to "code",
-            "scope" to "openid email profile",
+            "scope" to DesktopGoogleOAuthScopes,
             "code_challenge" to codeChallenge,
             "code_challenge_method" to "S256",
             "state" to state,
-            "prompt" to "select_account"
+            "access_type" to "offline",
+            "prompt" to "consent select_account"
         )
     }
 
-    private suspend fun exchangeCodeForGoogleIdToken(
+    private suspend fun exchangeCodeForGoogleTokens(
         code: String,
         redirectUri: String,
         codeVerifier: String
-    ): String = withContext(Dispatchers.IO) {
+    ): DesktopGoogleTokens = withContext(Dispatchers.IO) {
         val tokenRequest = listOfNotNull(
             "client_id" to config.googleOAuthClientId,
             config.googleOAuthClientSecret.takeIf { it.isNotBlank() }?.let { "client_secret" to it },
@@ -190,8 +214,16 @@ internal class DesktopFirebaseAuthRepository(
             body = formEncode(tokenRequest)
         )
         val parsed = DesktopAuthJson.parseToJsonElement(response).jsonObject
-        parsed.string("id_token")
+        val idToken = parsed.string("id_token")
             ?: throw IllegalStateException(parsed.string("error_description") ?: "Google sign-in did not return an ID token.")
+        val accessToken = parsed.string("access_token")
+            ?: throw IllegalStateException(parsed.string("error_description") ?: "Google sign-in did not return a Drive access token.")
+        DesktopGoogleTokens(
+            idToken = idToken,
+            accessToken = accessToken,
+            refreshToken = parsed.string("refresh_token").orEmpty(),
+            expiresAtEpochMillis = System.currentTimeMillis() + ((parsed.string("expires_in")?.toLongOrNull() ?: 3600L) * 1000L)
+        )
     }
 
     private suspend fun signInWithFirebase(googleIdToken: String): DesktopAuthSession = withContext(Dispatchers.IO) {
@@ -239,10 +271,37 @@ internal class DesktopFirebaseAuthRepository(
         )
     }
 
+    private suspend fun refreshGoogleAccessToken(current: DesktopAuthSession): DesktopAuthSession = withContext(Dispatchers.IO) {
+        val tokenRequest = listOfNotNull(
+            "client_id" to config.googleOAuthClientId,
+            config.googleOAuthClientSecret.takeIf { it.isNotBlank() }?.let { "client_secret" to it },
+            "refresh_token" to current.googleRefreshToken,
+            "grant_type" to "refresh_token"
+        )
+        val parsed = postForm(
+            url = "https://oauth2.googleapis.com/token",
+            body = formEncode(tokenRequest)
+        ).let { DesktopAuthJson.parseToJsonElement(it).jsonObject }
+        val accessToken = parsed.string("access_token")
+            ?: throw IllegalStateException(parsed.string("error_description") ?: "Could not refresh Google Drive access.")
+        val expiresAt = System.currentTimeMillis() + ((parsed.string("expires_in")?.toLongOrNull() ?: 3600L) * 1000L)
+        current.copy(
+            googleAccessToken = accessToken,
+            googleAccessTokenExpiresAtEpochMillis = expiresAt
+        )
+    }
+
     private data class DesktopOAuthCode(
         val code: String,
         val redirectUri: String,
         val codeVerifier: String
+    )
+
+    private data class DesktopGoogleTokens(
+        val idToken: String,
+        val accessToken: String,
+        val refreshToken: String,
+        val expiresAtEpochMillis: Long
     )
 
     private fun googleOAuthCallbackPage(title: String, message: String): String {
@@ -284,6 +343,10 @@ internal class DesktopAuthStore(
             val refreshToken = refreshTokenRef.takeIf { it.isNotBlank() }
                 ?.let { secretCodec.unprotect(RefreshTokenKey, it) }
                 .orEmpty()
+            val googleRefreshTokenRef = properties.getProperty(GoogleRefreshTokenKey, "")
+            val googleRefreshToken = googleRefreshTokenRef.takeIf { it.isNotBlank() }
+                ?.let { secretCodec.unprotect(GoogleRefreshTokenKey, it) }
+                .orEmpty()
             if (refreshToken.isBlank()) return null
             DesktopAuthSession(
                 user = UserData(
@@ -294,7 +357,8 @@ internal class DesktopAuthStore(
                 ),
                 idToken = "",
                 refreshToken = refreshToken,
-                expiresAtEpochMillis = 0L
+                expiresAtEpochMillis = 0L,
+                googleRefreshToken = googleRefreshToken
             )
         }.getOrNull()
     }
@@ -309,6 +373,10 @@ internal class DesktopAuthStore(
                 .getOrNull()
                 ?.takeIf { it.isNotBlank() }
                 ?.let { setProperty(RefreshTokenKey, it) }
+            runCatching { secretCodec.protect(GoogleRefreshTokenKey, session.googleRefreshToken) }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { setProperty(GoogleRefreshTokenKey, it) }
         }
         settingsFile.parentFile?.mkdirs()
         settingsFile.outputStream().use { output ->
@@ -318,15 +386,18 @@ internal class DesktopAuthStore(
 
     fun clear() {
         secretCodec.delete(RefreshTokenKey)
+        secretCodec.delete(GoogleRefreshTokenKey)
         settingsFile.delete()
     }
 
     private companion object {
         const val RefreshTokenKey = "firebaseRefreshTokenProtected"
+        const val GoogleRefreshTokenKey = "googleRefreshTokenProtected"
     }
 }
 
 private val DesktopAuthJson = Json { ignoreUnknownKeys = true }
+private const val DesktopGoogleOAuthScopes = "openid email profile https://www.googleapis.com/auth/drive.appdata"
 
 private fun JsonObject.string(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
 

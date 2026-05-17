@@ -53,6 +53,23 @@ class DesktopCustomFontStore(
         return !target.exists() || target.delete()
     }
 
+    fun getFontFile(fileName: String): File {
+        fontsDir.mkdirs()
+        return File(fontsDir, fileName)
+    }
+
+    internal fun syncedFontItem(metadata: DesktopCloudFontMetadata): CustomFontItem {
+        return CustomFontItem(
+            id = metadata.id,
+            displayName = metadata.displayName,
+            fileName = metadata.fileName,
+            fileExtension = metadata.fileExtension,
+            path = getFontFile(metadata.fileName).absolutePath,
+            timestamp = metadata.timestamp,
+            isDeleted = metadata.isDeleted
+        )
+    }
+
     fun loadGoogleFontsList(): List<String> {
         googleFontsCache?.let { return it }
         val loaded = runCatching {

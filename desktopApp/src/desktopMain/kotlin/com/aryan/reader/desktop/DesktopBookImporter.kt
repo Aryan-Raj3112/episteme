@@ -16,6 +16,11 @@ internal data class DesktopPreparedImport(
 internal class DesktopBookImporter(
     private val booksDirectory: File = File(desktopUserDataRoot(), "books")
 ) {
+    fun createBookFile(fileName: String): File {
+        booksDirectory.mkdirs()
+        return File(booksDirectory, fileName)
+    }
+
     fun prepareImports(files: List<ImportedBookFile>): DesktopPreparedImport {
         val preparedFiles = mutableListOf<ImportedBookFile>()
         var failedCount = 0

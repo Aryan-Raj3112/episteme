@@ -120,6 +120,13 @@ private data class DesktopFeatureNotice(
     val action: DesktopFeatureNoticeAction? = null
 )
 
+private data class DesktopCloudSyncCredentials(
+    val userId: String,
+    val idToken: String,
+    val driveAccessToken: String,
+    val deviceId: String
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun EpistemeDesktopApp(
@@ -149,6 +156,19 @@ internal fun EpistemeDesktopApp(
     val desktopCloudConfig = remember { loadDesktopCloudConfig() }
     val desktopAuthRepository = remember { DesktopFirebaseAuthRepository(desktopCloudConfig) }
     val desktopAccountProfileRepository = remember { DesktopAccountProfileRepository(desktopCloudConfig) }
+    val desktopCloudSyncSettingsStore = remember { DesktopCloudSyncSettingsStore() }
+    val initialDesktopCloudSyncSettings = remember { desktopCloudSyncSettingsStore.load() }
+    val desktopInstallationIdStore = remember { DesktopInstallationIdStore() }
+    val desktopFirestoreRepository = remember { DesktopFirestoreRepository(desktopCloudConfig) }
+    val desktopGoogleDriveRepository = remember { DesktopGoogleDriveRepository() }
+    val desktopCloudSync = remember {
+        DesktopCloudSync(
+            firestoreRepository = desktopFirestoreRepository,
+            driveRepository = desktopGoogleDriveRepository,
+            bookImporter = desktopBookImporter,
+            customFontStore = customFontStore
+        )
+    }
     val aiByokStore = remember { DesktopAiByokStore() }
     var aiByokSettings by remember {
         mutableStateOf(aiByokStore.load())
@@ -178,7 +198,10 @@ internal fun EpistemeDesktopApp(
     var shelfRecords by remember { mutableStateOf(initialLibrarySnapshot.shelfRecords) }
     var shelfRefs by remember { mutableStateOf(initialLibrarySnapshot.shelfRefs) }
     var state by remember {
-        val initialState = initialLibrarySnapshot.toDesktopReaderScreenState()
+        val initialState = initialLibrarySnapshot.toDesktopReaderScreenState().copy(
+            isSyncEnabled = initialDesktopCloudSyncSettings.isSyncEnabled,
+            isFolderSyncEnabled = initialDesktopCloudSyncSettings.isFolderSyncEnabled
+        )
         mutableStateOf(
             libraryProjector.projectDesktopLibraryState(
                 state = initialState,
@@ -346,6 +369,10 @@ internal fun EpistemeDesktopApp(
     var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
     var opdsState by remember { mutableStateOf(opdsController.state) }
     var readerTtsJob by remember { mutableStateOf<Job?>(null) }
+    var desktopCloudSyncJob by remember { mutableStateOf<Job?>(null) }
+    var pendingDesktopCloudSyncAfterActive by remember { mutableStateOf(false) }
+    val desktopBookCloudSyncJobs = remember { mutableMapOf<String, Job>() }
+    var initialDesktopCloudSyncDone by remember { mutableStateOf(false) }
 
     fun projectState(
         next: SharedReaderScreenState,
@@ -381,13 +408,14 @@ internal fun EpistemeDesktopApp(
     fun replaceLibrary(
         next: SharedReaderScreenState,
         records: List<ShelfRecord> = shelfRecords,
-        refs: List<BookShelfRef> = shelfRefs
+        refs: List<BookShelfRef> = shelfRefs,
+        fonts: List<CustomFontItem> = customFonts
     ) {
         shelfRecords = records
         shelfRefs = refs
         val projected = projectState(next, records, refs)
         state = projected
-        persistSnapshot(projected, records, refs)
+        persistSnapshot(projected, records, refs, fonts)
     }
 
     fun updateState(next: SharedReaderScreenState) {
@@ -419,26 +447,52 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun desktopCloudSyncAvailable(): Boolean {
+        return featurePolicy.aiAndCloud &&
+            featurePolicy.networkAccess &&
+            !desktopBuildProfile.byokAiAvailable &&
+            desktopCloudConfig.isAuthConfigured
+    }
+
+    fun saveDesktopCloudSyncSettings(
+        syncEnabled: Boolean = state.isSyncEnabled,
+        folderSyncEnabled: Boolean = state.isFolderSyncEnabled
+    ) {
+        desktopCloudSyncSettingsStore.save(
+            DesktopCloudSyncSettings(
+                isSyncEnabled = syncEnabled,
+                isFolderSyncEnabled = folderSyncEnabled
+            )
+        )
+    }
+
     suspend fun refreshDesktopAccountProfile(showBanner: Boolean = false) {
         if (!featurePolicy.aiAndCloud || desktopBuildProfile.byokAiAvailable) return
         val session = desktopAuthRepository.restoreSavedSession()
         if (session == null) {
+            if (state.isSyncEnabled) saveDesktopCloudSyncSettings(syncEnabled = false)
             updateState(state.copy(currentUser = null, isProUser = false, credits = 0, isSyncEnabled = false))
             return
         }
         val token = desktopAuthRepository.freshIdToken()
         if (token.isNullOrBlank()) {
+            if (state.isSyncEnabled) saveDesktopCloudSyncSettings(syncEnabled = false)
             updateState(state.copy(currentUser = null, isProUser = false, credits = 0, isSyncEnabled = false))
             return
         }
         runCatching {
             desktopAccountProfileRepository.fetchProfile(session.user.uid, token)
         }.onSuccess { profile ->
+            val nextSyncEnabled = state.isSyncEnabled && profile.isProUser
+            if (!nextSyncEnabled && state.isSyncEnabled) {
+                saveDesktopCloudSyncSettings(syncEnabled = false)
+            }
             updateState(
                 state.copy(
                     currentUser = session.user,
                     isProUser = profile.isProUser,
-                    credits = profile.credits
+                    credits = profile.credits,
+                    isSyncEnabled = nextSyncEnabled
                 )
             )
             accountStatusMessage = if (profile.isProUser) {
@@ -472,6 +526,277 @@ internal fun EpistemeDesktopApp(
                 updateState(state.withBanner(accountStatusMessage.orEmpty(), isError = true))
             }
             accountBusy = false
+        }
+    }
+
+    suspend fun desktopCloudSyncCredentials(showBanner: Boolean): DesktopCloudSyncCredentials? {
+        if (!desktopCloudSyncAvailable()) {
+            if (showBanner) {
+                updateState(state.withBanner("Desktop cloud sync is not configured for this build.", isError = true))
+            }
+            return null
+        }
+
+        val session = desktopAuthRepository.restoreSavedSession()
+        val user = state.currentUser ?: session?.user
+        if (user == null) {
+            if (showBanner) updateState(state.withBanner("Sign in with Google to use cloud sync.", isError = true))
+            return null
+        }
+
+        if (!state.isProUser) {
+            if (showBanner) updateState(state.withBanner("A Pro account is required for cloud sync.", isError = true))
+            return null
+        }
+
+        val idToken = desktopAuthRepository.freshIdToken()
+        if (idToken.isNullOrBlank()) {
+            if (showBanner) updateState(state.withBanner("Sign in again to use cloud sync.", isError = true))
+            return null
+        }
+
+        val driveAccessToken = desktopAuthRepository.freshGoogleAccessToken()
+        if (driveAccessToken.isNullOrBlank()) {
+            if (showBanner) {
+                updateState(state.withBanner("Sign in again to grant Google Drive sync access.", isError = true))
+            }
+            return null
+        }
+
+        return DesktopCloudSyncCredentials(
+            userId = user.uid,
+            idToken = idToken,
+            driveAccessToken = driveAccessToken,
+            deviceId = desktopInstallationIdStore.getOrCreateId()
+        )
+    }
+
+    fun desktopCloudSyncCompleteMessage(result: DesktopCloudSyncResult): String {
+        val details = buildList {
+            if (result.uploadedBooks > 0) add("Uploaded ${result.uploadedBooks}.")
+            if (result.downloadedBooks > 0) add("Downloaded ${result.downloadedBooks}.")
+        }
+        return if (details.isEmpty()) {
+            "Cloud sync complete."
+        } else {
+            "Cloud sync complete. ${details.joinToString(" ")}"
+        }
+    }
+
+    fun syncDesktopCloud(showBanner: Boolean = false): Job {
+        desktopCloudSyncJob?.takeIf { it.isActive }?.let { return it }
+        val job = scope.launch {
+            if (!state.isSyncEnabled) return@launch
+            val credentials = desktopCloudSyncCredentials(showBanner) ?: return@launch
+            val snapshotState = state
+            val snapshotShelfRecords = shelfRecords
+            val snapshotShelfRefs = shelfRefs
+            val snapshotFonts = customFonts
+
+            if (showBanner) {
+                updateState(state.copy(isRefreshing = true).withBanner("Cloud sync: checking library..."))
+            }
+
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    desktopCloudSync.sync(
+                        DesktopCloudSyncInput(
+                            userId = credentials.userId,
+                            idToken = credentials.idToken,
+                            driveAccessToken = credentials.driveAccessToken,
+                            deviceId = credentials.deviceId,
+                            state = snapshotState,
+                            shelfRecords = snapshotShelfRecords,
+                            shelfRefs = snapshotShelfRefs,
+                            customFonts = snapshotFonts,
+                            includeFolderBooks = snapshotState.isFolderSyncEnabled
+                        )
+                    )
+                }
+            }.onSuccess { result ->
+                customFonts = result.customFonts
+                val syncedState = result.state.copy(
+                    isSyncEnabled = state.isSyncEnabled,
+                    isFolderSyncEnabled = state.isFolderSyncEnabled,
+                    isRefreshing = false
+                )
+                replaceLibrary(
+                    next = if (showBanner) syncedState.withBanner(desktopCloudSyncCompleteMessage(result)) else syncedState,
+                    records = result.shelfRecords,
+                    refs = result.shelfRefs,
+                    fonts = result.customFonts
+                )
+            }.onFailure { error ->
+                val failed = state.copy(isRefreshing = false)
+                if (showBanner) {
+                    updateState(failed.withBanner(error.message ?: "Cloud sync failed.", isError = true))
+                } else {
+                    updateState(failed)
+                }
+            }
+        }
+        desktopCloudSyncJob = job
+        job.invokeOnCompletion {
+            if (desktopCloudSyncJob == job) desktopCloudSyncJob = null
+        }
+        return job
+    }
+
+    fun setDesktopCloudSyncEnabled(enabled: Boolean) {
+        if (enabled && !desktopCloudSyncAvailable()) {
+            updateState(state.withBanner("Desktop cloud sync is not configured for this build.", isError = true))
+            return
+        }
+        if (enabled && state.currentUser == null) {
+            updateState(state.withBanner("Sign in with Google to use cloud sync.", isError = true))
+            return
+        }
+        if (enabled && !state.isProUser) {
+            updateState(state.withBanner("A Pro account is required for cloud sync.", isError = true))
+            return
+        }
+
+        saveDesktopCloudSyncSettings(syncEnabled = enabled)
+        val next = state.reduce(AppAction.SyncEnabledChanged(enabled))
+        updateState(next)
+        if (enabled) {
+            syncDesktopCloud(showBanner = true)
+        }
+    }
+
+    fun setDesktopFolderSyncEnabled(enabled: Boolean) {
+        saveDesktopCloudSyncSettings(folderSyncEnabled = enabled)
+        val next = state.reduce(AppAction.FolderSyncEnabledChanged(enabled))
+        updateState(next)
+        if (enabled && next.isSyncEnabled) {
+            syncDesktopCloud(showBanner = false)
+        }
+    }
+
+    fun queueCloudBookMetadataSync(book: BookItem, uploadContent: Boolean = false) {
+        if (!state.isSyncEnabled) return
+        if (book.sourceFolder != null) return
+        if (book.path?.startsWith("opds-pse") == true) return
+        if (SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)) return
+
+        desktopBookCloudSyncJobs.remove(book.id)?.cancel()
+        val job = scope.launch {
+            if (!uploadContent) delay(1_200L)
+            val credentials = desktopCloudSyncCredentials(showBanner = false) ?: return@launch
+            val latestBook = state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: return@launch
+            if (latestBook.sourceFolder != null) return@launch
+
+            if (uploadContent) {
+                updateState(state.copy(uploadingBookIds = state.uploadingBookIds + latestBook.id))
+            }
+
+            try {
+                val syncedBook = withContext(Dispatchers.IO) {
+                    desktopCloudSync.uploadBookAndMetadata(
+                        input = DesktopCloudSyncInput(
+                            userId = credentials.userId,
+                            idToken = credentials.idToken,
+                            driveAccessToken = credentials.driveAccessToken,
+                            deviceId = credentials.deviceId,
+                            state = state,
+                            shelfRecords = shelfRecords,
+                            shelfRefs = shelfRefs,
+                            customFonts = customFonts,
+                            includeFolderBooks = state.isFolderSyncEnabled
+                        ),
+                        book = latestBook,
+                        uploadContent = uploadContent
+                    )
+                } ?: return@launch
+
+                updateState(
+                    state.copy(
+                        rawLibraryBooks = state.rawLibraryBooks.map { current ->
+                            if (current.id == syncedBook.id && current.timestamp == latestBook.timestamp) {
+                                current.copy(timestamp = syncedBook.timestamp)
+                            } else {
+                                current
+                            }
+                        }
+                    )
+                )
+            } finally {
+                if (uploadContent) {
+                    updateState(state.copy(uploadingBookIds = state.uploadingBookIds - latestBook.id))
+                }
+            }
+        }
+        desktopBookCloudSyncJobs[book.id] = job
+        job.invokeOnCompletion {
+            if (desktopBookCloudSyncJobs[book.id] == job) {
+                desktopBookCloudSyncJobs.remove(book.id)
+            }
+        }
+    }
+
+    fun syncCloudShelfChange(record: ShelfRecord, refs: List<BookShelfRef>, isDeleted: Boolean = false) {
+        if (!state.isSyncEnabled || record.isSmart) return
+        scope.launch {
+            val credentials = desktopCloudSyncCredentials(showBanner = false) ?: return@launch
+            withContext(Dispatchers.IO) {
+                desktopCloudSync.syncShelfChange(
+                    userId = credentials.userId,
+                    idToken = credentials.idToken,
+                    deviceId = credentials.deviceId,
+                    record = record,
+                    refs = refs,
+                    isDeleted = isDeleted
+                )
+            }
+        }
+    }
+
+    fun deleteBooksFromDesktopCloud(books: List<BookItem>) {
+        if (!state.isSyncEnabled || books.isEmpty()) return
+        scope.launch {
+            val credentials = desktopCloudSyncCredentials(showBanner = false) ?: return@launch
+            withContext(Dispatchers.IO) {
+                desktopCloudSync.deleteBooksFromCloud(
+                    userId = credentials.userId,
+                    idToken = credentials.idToken,
+                    accessToken = credentials.driveAccessToken,
+                    deviceId = credentials.deviceId,
+                    books = books
+                )
+            }
+        }
+    }
+
+    fun deleteCustomFontFromDesktopCloud(font: CustomFontItem) {
+        if (!state.isSyncEnabled) return
+        scope.launch {
+            val credentials = desktopCloudSyncCredentials(showBanner = false) ?: return@launch
+            withContext(Dispatchers.IO) {
+                desktopCloudSync.deleteFontFromCloud(
+                    userId = credentials.userId,
+                    idToken = credentials.idToken,
+                    accessToken = credentials.driveAccessToken,
+                    font = font
+                )
+            }
+        }
+    }
+
+    fun queueFullCloudSyncAfterLocalChange() {
+        if (!state.isSyncEnabled) return
+        val active = desktopCloudSyncJob
+        if (active?.isActive == true) {
+            if (pendingDesktopCloudSyncAfterActive) return
+            pendingDesktopCloudSyncAfterActive = true
+            scope.launch {
+                active.join()
+                pendingDesktopCloudSyncAfterActive = false
+                if (state.isSyncEnabled) {
+                    syncDesktopCloud(showBanner = false)
+                }
+            }
+        } else {
+            syncDesktopCloud(showBanner = false)
         }
     }
 
@@ -922,6 +1247,7 @@ internal fun EpistemeDesktopApp(
             if (shouldSyncSidecars) {
                 updatedBook?.let(::syncBookSidecars)
             }
+            updatedBook?.let { queueCloudBookMetadataSync(it) }
         }
     }
 
@@ -943,6 +1269,7 @@ internal fun EpistemeDesktopApp(
             )
             updateState(next)
             updatedBook?.let(::syncBookSidecars)
+            updatedBook?.let { queueCloudBookMetadataSync(it) }
         }
     }
 
@@ -968,6 +1295,7 @@ internal fun EpistemeDesktopApp(
     fun signOutDesktopAccount() {
         desktopAuthRepository.signOut()
         stopReaderCloudTts()
+        saveDesktopCloudSyncSettings(syncEnabled = false)
         updateState(state.copy(currentUser = null, isProUser = false, credits = 0, isSyncEnabled = false))
         accountStatusMessage = "Signed out."
     }
@@ -1219,6 +1547,9 @@ internal fun EpistemeDesktopApp(
             }
         updateState(next)
         onImported(importPlan.importedBooks)
+        importPlan.importedBooks.forEach { imported ->
+            queueCloudBookMetadataSync(imported, uploadContent = true)
+        }
         val targetBookIds = importPlan.importedBooks.mapTo(mutableSetOf()) { it.id }
         if (targetBookIds.isEmpty()) return
         val originalTargetBooksById = next.rawLibraryBooks
@@ -1247,6 +1578,9 @@ internal fun EpistemeDesktopApp(
                         }
                     )
                 )
+                enrichedBooksById.values.forEach { enriched ->
+                    queueCloudBookMetadataSync(enriched, uploadContent = false)
+                }
             }
         }
     }
@@ -1338,6 +1672,7 @@ internal fun EpistemeDesktopApp(
                 readerSession = readerEngine.createSession(desktopEmptyReaderBook())
                 selectedTab = SharedAppTab.HOME
             }
+            queueFullCloudSyncAfterLocalChange()
         }
     }
 
@@ -1347,6 +1682,20 @@ internal fun EpistemeDesktopApp(
 
     fun scanSyncedFolders(showBanner: Boolean = true) {
         syncLocalFolders(showBanner = showBanner, metadataOnly = false)
+    }
+
+    fun syncDesktopLibrary(showBanner: Boolean = true) {
+        val hasCloud = state.isSyncEnabled
+        val hasFolders = state.syncedFolders.isNotEmpty()
+        if (!hasCloud && !hasFolders) {
+            updateState(state.withBanner("No sync methods are active.", isError = true))
+            return
+        }
+        if (hasFolders) {
+            scanSyncedFolders(showBanner = showBanner)
+        } else if (hasCloud) {
+            syncDesktopCloud(showBanner = showBanner)
+        }
     }
 
     fun importFolder(folder: File) {
@@ -1367,6 +1716,7 @@ internal fun EpistemeDesktopApp(
                     .filterNot { it.isDeleted }
                     .sortedBy { it.displayName.lowercase() }
                 updateState(state.withBanner("Imported ${font.displayName}."))
+                queueFullCloudSyncAfterLocalChange()
             }
             .onFailure { error ->
                 updateState(state.withBanner(error.message ?: "Could not import font.", isError = true))
@@ -1390,6 +1740,7 @@ internal fun EpistemeDesktopApp(
                         .filterNot { it.isDeleted }
                         .sortedBy { it.displayName.lowercase() }
                     updateState(state.withBanner("${font.displayName} downloaded successfully."))
+                    queueFullCloudSyncAfterLocalChange()
                 }
                 .onFailure { error ->
                     updateState(state.withBanner(error.message ?: "Could not download $fontName.", isError = true))
@@ -1416,17 +1767,22 @@ internal fun EpistemeDesktopApp(
             )
         }
         updateState(state.copy(rawLibraryBooks = clearedSettings).withBanner("Deleted ${font.displayName}."))
+        deleteCustomFontFromDesktopCloud(font)
     }
 
     fun removeSelectedBooks() {
+        val booksToRemove = state.rawLibraryBooks.filter { it.id in state.selectedBookIds }
         SharedLibraryEditor.removeSelectedBooks(state, shelfRecords, shelfRefs)?.let {
             replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+            deleteBooksFromDesktopCloud(booksToRemove)
         }
     }
 
     fun createShelf(name: String) {
-        SharedLibraryEditor.createShelf(state, shelfRecords, shelfRefs, name, System.currentTimeMillis())?.let {
-            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        SharedLibraryEditor.createShelf(state, shelfRecords, shelfRefs, name, System.currentTimeMillis())?.let { result ->
+            replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+            result.shelfRecords.lastOrNull { record -> record.name == name.trim() }
+                ?.let { record -> syncCloudShelfChange(record, result.shelfRefs) }
         }
     }
 
@@ -1437,19 +1793,31 @@ internal fun EpistemeDesktopApp(
     }
 
     fun renameShelf(shelf: Shelf, name: String) {
-        SharedLibraryEditor.renameShelf(state, shelfRecords, shelfRefs, shelf, name)?.let {
-            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        val previousRecord = shelfRecords.firstOrNull { it.id == shelf.id }
+        SharedLibraryEditor.renameShelf(state, shelfRecords, shelfRefs, shelf, name)?.let { result ->
+            replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+            result.shelfRecords.firstOrNull { record -> record.id == shelf.id }
+                ?.let { record ->
+                    if (previousRecord != null && previousRecord.name != record.name) {
+                        syncCloudShelfChange(previousRecord, shelfRefs, isDeleted = true)
+                    }
+                    syncCloudShelfChange(record, result.shelfRefs)
+                }
         }
     }
 
     fun deleteShelf(shelf: Shelf) {
+        val record = shelfRecords.firstOrNull { it.id == shelf.id }
         val result = SharedLibraryEditor.deleteShelf(state, shelfRecords, shelfRefs, shelf)
         replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+        record?.let { syncCloudShelfChange(it, shelfRefs, isDeleted = true) }
     }
 
     fun addSelectedBooksToShelf(shelfId: String) {
-        SharedLibraryEditor.addSelectedBooksToShelf(state, shelfRecords, shelfRefs, shelfId, System.currentTimeMillis())?.let {
-            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        SharedLibraryEditor.addSelectedBooksToShelf(state, shelfRecords, shelfRefs, shelfId, System.currentTimeMillis())?.let { result ->
+            replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+            result.shelfRecords.firstOrNull { record -> record.id == shelfId }
+                ?.let { record -> syncCloudShelfChange(record, result.shelfRefs) }
         }
     }
 
@@ -1462,7 +1830,10 @@ internal fun EpistemeDesktopApp(
     fun applyBookMetadataUpdate(updated: BookItem) {
         val result = SharedLibraryEditor.updateBookMetadata(state, shelfRecords, shelfRefs, updated, System.currentTimeMillis())
         replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
-        result.state.rawLibraryBooks.firstOrNull { it.id == updated.id }?.let(::syncBookSidecars)
+        result.state.rawLibraryBooks.firstOrNull { it.id == updated.id }?.let { book ->
+            syncBookSidecars(book)
+            queueCloudBookMetadataSync(book, uploadContent = book.fileContentModifiedTimestamp > 0L)
+        }
     }
 
     fun writeDesktopEpubMetadata(original: BookItem, updated: BookItem): BookItem {
@@ -1525,7 +1896,10 @@ internal fun EpistemeDesktopApp(
         val next = SharedLibraryEditor.markBookOpened(state, bookId, now)
         val openedState = next.reduce(AppAction.BookTabOpened(bookId))
         updateState(openedState)
-        openedState.rawLibraryBooks.firstOrNull { it.id == bookId }?.let(::syncBookSidecars)
+        openedState.rawLibraryBooks.firstOrNull { it.id == bookId }?.let { book ->
+            syncBookSidecars(book)
+            queueCloudBookMetadataSync(book)
+        }
     }
 
     fun scheduleOpenedBookMetadataExtraction(book: BookItem) {
@@ -1545,6 +1919,7 @@ internal fun EpistemeDesktopApp(
                     }
                 )
             )
+            state.rawLibraryBooks.firstOrNull { it.id == book.id }?.let { queueCloudBookMetadataSync(it) }
         }
     }
 
@@ -1812,6 +2187,7 @@ internal fun EpistemeDesktopApp(
             ?.let { nextId -> state.rawLibraryBooks.firstOrNull { it.id == nextId } }
         SharedLibraryEditor.removeFolder(state, shelfRecords, shelfRefs, shelf)?.let {
             replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+            queueFullCloudSyncAfterLocalChange()
             if (wasReadingRemovedBook) {
                 openingReader = null
                 activePdfDocument?.close()
@@ -2039,6 +2415,18 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    LaunchedEffect(state.isSyncEnabled, state.currentUser?.uid, state.isProUser) {
+        if (
+            !initialDesktopCloudSyncDone &&
+            state.isSyncEnabled &&
+            state.currentUser != null &&
+            state.isProUser
+        ) {
+            initialDesktopCloudSyncDone = true
+            syncDesktopCloud(showBanner = false).join()
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (state.syncedFolders.isNotEmpty()) {
             scanSyncedFolders(showBanner = false)
@@ -2107,9 +2495,7 @@ internal fun EpistemeDesktopApp(
                 },
                 onImportFiles = { importFiles(chooseFiles()) },
                 onImportFolder = { chooseFolder()?.let(::importFolder) },
-                onSyncRequested = {
-                    scanSyncedFolders()
-                },
+                onSyncRequested = { syncDesktopLibrary() },
                 onFolderMetadataSyncRequested = { syncFolderMetadata() },
                 onAppThemeModeChange = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
                 onAppContrastOptionChange = { option -> updateState(state.reduce(AppAction.AppContrastChanged(option))) },
@@ -2174,7 +2560,7 @@ internal fun EpistemeDesktopApp(
                                     isSignedIn = state.currentUser != null,
                                     isProUser = state.isProUser,
                                     accountAvailable = featurePolicy.aiAndCloud && !desktopBuildProfile.byokAiAvailable,
-                                    syncAvailable = false,
+                                    syncAvailable = desktopCloudSyncAvailable(),
                                     folderSyncAvailable = true,
                                     aiSettingsAvailable = desktopBuildProfile.byokAiAvailable,
                                     includeLanguage = false,
@@ -2184,6 +2570,7 @@ internal fun EpistemeDesktopApp(
                                     includeReaderTabs = false,
                                     includeHideReaderAi = featurePolicy.aiAndCloud,
                                     isTabsEnabled = state.isTabsEnabled,
+                                    isSyncEnabled = state.isSyncEnabled,
                                     isFolderSyncEnabled = state.isFolderSyncEnabled,
                                     hideReaderAi = effectiveAiSettings().hideReaderAiFeatures
                                 )
@@ -2225,7 +2612,7 @@ internal fun EpistemeDesktopApp(
                                         }
                                         updateState(state.reduce(AppAction.TabsEnabledChanged(!state.isTabsEnabled)))
                                     }
-                                    SharedSettingsAction.FOLDER_SYNC -> updateState(state.reduce(AppAction.FolderSyncEnabledChanged(!state.isFolderSyncEnabled)))
+                                    SharedSettingsAction.FOLDER_SYNC -> setDesktopFolderSyncEnabled(!state.isFolderSyncEnabled)
                                     SharedSettingsAction.AI_SETTINGS -> if (desktopBuildProfile.byokAiAvailable) showAiByokSettingsDialog = true
                                     SharedSettingsAction.SIGN_IN -> signInDesktopAccount()
                                     SharedSettingsAction.SIGN_OUT -> signOutDesktopAccount()
@@ -2246,7 +2633,6 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.EXPORT_LOGS,
                                     SharedSettingsAction.DEBUG_ACTIONS,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
-                                    SharedSettingsAction.CLOUD_SYNC,
                                     SharedSettingsAction.LANGUAGE,
                                     SharedSettingsAction.RECENT_LIMIT,
                                     SharedSettingsAction.STRICT_FILE_FILTER,
@@ -2258,6 +2644,7 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.READER_TOOLBAR,
                                     SharedSettingsAction.TTS_REPLACEMENTS,
                                     SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
+                                    SharedSettingsAction.CLOUD_SYNC -> setDesktopCloudSyncEnabled(!state.isSyncEnabled)
                                 }
                             }
                         )
@@ -2447,7 +2834,10 @@ internal fun EpistemeDesktopApp(
                                     onLocalSidecarsChanged = {
                                         activeReaderBookId
                                             ?.let { bookId -> state.rawLibraryBooks.firstOrNull { it.id == bookId } }
-                                            ?.let(::syncBookSidecars)
+                                            ?.let { book ->
+                                                syncBookSidecars(book)
+                                                queueCloudBookMetadataSync(book)
+                                            }
                                     },
                                     aiByokSettings = effectiveAiSettings(),
                                     aiAdapter = desktopAiAdapter,
