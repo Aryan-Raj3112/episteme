@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,8 +48,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key as keyCode
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -136,10 +145,11 @@ fun ReaderWorkspaceShell(
             .background(MaterialTheme.colorScheme.background)
     ) shellConstraints@ {
         val wide = this@shellConstraints.maxWidth >= 1120.dp
-        val chromeLockedVisible = topSearchBar != null || leftPanelOpen || rightPanelOpen
+        val chromeLockedVisible = topSearchBar != null
         val showChrome = chromeLockedVisible || chromeVisible
-        val showTopChrome = showChrome && topSearchBar == null && !isFullscreen
-        val showBottomChrome = showChrome
+        val chromeSuppressedByPanel = leftPanelOpen || rightPanelOpen
+        val showTopChrome = showChrome && topSearchBar == null && !isFullscreen && !chromeSuppressedByPanel
+        val showBottomChrome = showChrome && !chromeSuppressedByPanel
         LaunchedEffect(wide, leftPanelOpen, rightPanelOpen) {
             if (!wide && leftPanelOpen && rightPanelOpen) {
                 rightPanelOpen = false
@@ -382,41 +392,61 @@ private fun ReaderWorkspacePanelOverlays(
 ) {
     if (!showLeftPanel && !showRightPanel) return
 
-    SharedReaderModalLayer(
-        level = SharedReaderModalLevel.Panel,
-        onDismiss = {
-            if (showLeftPanel) onCloseLeftPanel()
-            if (showRightPanel) onCloseRightPanel()
-        }
-    ) {
-        BoxWithConstraints(Modifier.fillMaxSize()) panelConstraints@ {
-            val availableWidth = this@panelConstraints.maxWidth
-            val leftPanelWidth = if (wide) 340.dp else minOf(320.dp, availableWidth * 0.92f)
-            val rightPanelWidth = if (wide) 380.dp else minOf(360.dp, availableWidth * 0.92f)
-            if (showLeftPanel) {
+    if (showLeftPanel) {
+        SharedReaderModalLayer(
+            level = SharedReaderModalLevel.PanelLeft,
+            onDismiss = onCloseLeftPanel
+        ) {
+            BoxWithConstraints(Modifier.fillMaxSize()) panelConstraints@ {
+                val availableWidth = this@panelConstraints.maxWidth
+                val leftPanelWidth = if (sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelLeft)) {
+                    availableWidth
+                } else if (wide) {
+                    minOf(340.dp, availableWidth)
+                } else {
+                    minOf(320.dp, availableWidth * 0.92f)
+                }
                 ReaderWorkspaceOverlayPanel(
                     title = "Reader",
+                    edge = ReaderWorkspacePanelEdge.Start,
                     onClose = onCloseLeftPanel,
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .width(leftPanelWidth)
+                    modifier = Modifier.align(Alignment.CenterStart).width(leftPanelWidth)
                 ) {
                     leftSidebar(onCloseLeftPanel)
                 }
             }
-            if (showRightPanel) {
+        }
+    }
+    if (showRightPanel) {
+        SharedReaderModalLayer(
+            level = SharedReaderModalLevel.PanelRight,
+            onDismiss = onCloseRightPanel
+        ) {
+            BoxWithConstraints(Modifier.fillMaxSize()) panelConstraints@ {
+                val availableWidth = this@panelConstraints.maxWidth
+                val rightPanelWidth = if (sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelRight)) {
+                    availableWidth
+                } else if (wide) {
+                    minOf(380.dp, availableWidth)
+                } else {
+                    minOf(360.dp, availableWidth * 0.92f)
+                }
                 ReaderWorkspaceOverlayPanel(
                     title = "Tools",
+                    edge = ReaderWorkspacePanelEdge.End,
                     onClose = onCloseRightPanel,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .width(rightPanelWidth)
+                    modifier = Modifier.align(Alignment.CenterEnd).width(rightPanelWidth)
                 ) {
                     rightInspector()
                 }
             }
         }
     }
+}
+
+private enum class ReaderWorkspacePanelEdge {
+    Start,
+    End
 }
 
 @Composable
@@ -652,25 +682,69 @@ private fun ReaderWorkspaceTopBanner(
 @Composable
 private fun ReaderWorkspaceOverlayPanel(
     title: String,
+    edge: ReaderWorkspacePanelEdge,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        runCatching { focusRequester.requestFocus() }
+    }
     Surface(
-        modifier = modifier.fillMaxHeight().padding(vertical = 8.dp),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 8.dp,
-        shadowElevation = 8.dp
-    ) {
-        Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, contentDescription = "Close")
+        modifier = modifier
+            .fillMaxSize()
+            .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.keyCode == Key.Escape) {
+                    onClose()
+                    true
+                } else {
+                    false
                 }
             }
-            content()
+            .focusable(),
+        shape = RoundedCornerShape(0.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 4.dp,
+        shadowElevation = 10.dp
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onClose, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    content()
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .align(
+                        if (edge == ReaderWorkspacePanelEdge.Start) {
+                            Alignment.CenterEnd
+                        } else {
+                            Alignment.CenterStart
+                        }
+                    )
+                    .fillMaxHeight()
+                    .width(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+            )
         }
     }
 }

@@ -17,3 +17,7 @@ internal actual fun SharedReaderModalLayer(
         content()
     }
 }
+
+internal actual fun sharedReaderModalLayerUsesSizedEdgeWindow(level: SharedReaderModalLevel): Boolean {
+    return false
+}

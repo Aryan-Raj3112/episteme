@@ -27,16 +27,25 @@ internal actual fun SharedReaderModalLayer(
     val ownerWindow = remember { currentNonModalOwnerWindow() }
     val dialogSize = with(density) {
         anchor?.let {
-            if (level.isChromeLayer()) {
-                DpSize(
-                    width = it.widthPx.toDp().coerceAtLeast(360.dp),
-                    height = level.chromeLayerHeight().coerceAtMost(it.heightPx.toDp().coerceAtLeast(1.dp))
-                )
-            } else {
-                DpSize(
-                    width = it.widthPx.toDp().coerceAtLeast(360.dp),
-                    height = it.heightPx.toDp().coerceAtLeast(360.dp)
-                )
+            when {
+                level.isChromeLayer() -> {
+                    DpSize(
+                        width = it.widthPx.toDp().coerceAtLeast(360.dp),
+                        height = level.chromeLayerHeight().coerceAtMost(it.heightPx.toDp().coerceAtLeast(1.dp))
+                    )
+                }
+                level.isEdgePanelLayer() -> {
+                    DpSize(
+                        width = level.edgePanelLayerWidth(it.widthPx.toDp()),
+                        height = it.heightPx.toDp().coerceAtLeast(360.dp)
+                    )
+                }
+                else -> {
+                    DpSize(
+                        width = it.widthPx.toDp().coerceAtLeast(360.dp),
+                        height = it.heightPx.toDp().coerceAtLeast(360.dp)
+                    )
+                }
             }
         } ?: DpSize(720.dp, 620.dp)
     }
@@ -49,8 +58,12 @@ internal actual fun SharedReaderModalLayer(
                 SharedReaderModalLevel.ChromeBottom -> anchor.topPx + anchor.heightPx - dialogSize.height.toPx()
                 else -> anchor.topPx
             }
+            val leftPx = when (level) {
+                SharedReaderModalLevel.PanelRight -> anchor.leftPx + anchor.widthPx - dialogSize.width.toPx()
+                else -> anchor.leftPx
+            }
             WindowPosition(
-                (ownerLocation.x + anchor.leftPx).toDp(),
+                (ownerLocation.x + leftPx).toDp(),
                 (ownerLocation.y + topPx).toDp()
             )
         } else {
@@ -60,6 +73,8 @@ internal actual fun SharedReaderModalLayer(
     val state = rememberWindowState(position = dialogPosition, size = dialogSize)
     val windowTitle = when (level) {
         SharedReaderModalLevel.Panel -> "Reader Panel"
+        SharedReaderModalLevel.PanelLeft -> "Reader Navigation"
+        SharedReaderModalLevel.PanelRight -> "Reader Tools"
         SharedReaderModalLevel.Popup -> "Reader Popup"
         SharedReaderModalLevel.ChromeTop -> "Reader Chrome Top"
         SharedReaderModalLevel.ChromeBottom -> "Reader Chrome Bottom"
@@ -93,7 +108,9 @@ internal actual fun SharedReaderModalLayer(
             modalWindow.isAlwaysOnTop = true
             val frontAttempts = when (level) {
                 SharedReaderModalLevel.Popup -> 4
-                SharedReaderModalLevel.Panel -> 3
+                SharedReaderModalLevel.Panel,
+                SharedReaderModalLevel.PanelLeft,
+                SharedReaderModalLevel.PanelRight -> 3
                 SharedReaderModalLevel.ChromeTop,
                 SharedReaderModalLevel.ChromeBottom -> 1
             }
@@ -111,18 +128,48 @@ internal actual fun SharedReaderModalLayer(
     }
 }
 
+internal actual fun sharedReaderModalLayerUsesSizedEdgeWindow(level: SharedReaderModalLevel): Boolean {
+    return level.isEdgePanelLayer()
+}
+
 private const val SharedReaderModalWindowNamePrefix = "shared-reader-modal:"
 private val SharedReaderChromeTopLayerHeight = 104.dp
 private val SharedReaderChromeBottomLayerHeight = 164.dp
+private val SharedReaderLeftPanelWidth = 340.dp
+private val SharedReaderRightPanelWidth = 380.dp
+private val SharedReaderLeftNarrowPanelMaxWidth = 320.dp
+private val SharedReaderRightNarrowPanelMaxWidth = 360.dp
+private val SharedReaderNarrowPanelFraction = 0.92f
+private val SharedReaderWidePanelBreakpoint = 1120.dp
 
 private fun SharedReaderModalLevel.isChromeLayer(): Boolean {
     return this == SharedReaderModalLevel.ChromeTop || this == SharedReaderModalLevel.ChromeBottom
+}
+
+private fun SharedReaderModalLevel.isEdgePanelLayer(): Boolean {
+    return this == SharedReaderModalLevel.PanelLeft || this == SharedReaderModalLevel.PanelRight
 }
 
 private fun SharedReaderModalLevel.chromeLayerHeight() = when (this) {
     SharedReaderModalLevel.ChromeTop -> SharedReaderChromeTopLayerHeight
     SharedReaderModalLevel.ChromeBottom -> SharedReaderChromeBottomLayerHeight
     else -> 0.dp
+}
+
+private fun SharedReaderModalLevel.edgePanelLayerWidth(anchorWidth: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp {
+    val preferredWideWidth = when (this) {
+        SharedReaderModalLevel.PanelRight -> SharedReaderRightPanelWidth
+        else -> SharedReaderLeftPanelWidth
+    }
+    val preferredNarrowWidth = when (this) {
+        SharedReaderModalLevel.PanelRight -> minOf(SharedReaderRightNarrowPanelMaxWidth, anchorWidth * SharedReaderNarrowPanelFraction)
+        else -> minOf(SharedReaderLeftNarrowPanelMaxWidth, anchorWidth * SharedReaderNarrowPanelFraction)
+    }
+    return if (anchorWidth >= SharedReaderWidePanelBreakpoint) {
+        preferredWideWidth.coerceAtMost(anchorWidth)
+    } else {
+        preferredNarrowWidth.coerceAtMost(anchorWidth)
+    }.coerceAtLeast(1.dp)
 }
 
 private fun AwtWindow.restoreFocusAfterSharedReaderModal() {

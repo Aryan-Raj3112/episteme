@@ -16,6 +16,8 @@ internal val LocalSharedReaderModalAnchorBounds = compositionLocalOf<SharedReade
 
 internal enum class SharedReaderModalLevel {
     Panel,
+    PanelLeft,
+    PanelRight,
     Popup,
     ChromeTop,
     ChromeBottom
@@ -43,6 +45,8 @@ internal expect fun SharedReaderModalLayer(
     level: SharedReaderModalLevel = SharedReaderModalLevel.Popup,
     content: @Composable () -> Unit
 )
+
+internal expect fun sharedReaderModalLayerUsesSizedEdgeWindow(level: SharedReaderModalLevel): Boolean
 
 @Composable
 fun SharedReaderPopupLayer(
