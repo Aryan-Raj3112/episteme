@@ -1,0 +1,112 @@
+package com.aryan.reader.desktop
+
+import com.aryan.reader.shared.BookShelfRef
+import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.SharedLibraryProjectionInput
+import com.aryan.reader.shared.SharedLibrarySnapshot
+import com.aryan.reader.shared.SharedLibraryStateProjector
+import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.ShelfRecord
+import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.SharedEpubChapter
+
+internal fun desktopEmptyReaderBook(): SharedEpubBook {
+    return SharedEpubBook(
+        id = "desktop_empty_reader",
+        fileName = "",
+        title = "No book open",
+        chapters = listOf(
+            SharedEpubChapter(
+                id = "empty",
+                title = "No book open",
+                plainText = ""
+            )
+        )
+    )
+}
+
+internal fun SharedLibrarySnapshot.withDesktopDefaults(): SharedLibrarySnapshot {
+    return if (appSeedColor == null) {
+        copy(appSeedColor = DesktopDefaultAppSeedColor)
+    } else {
+        this
+    }
+}
+
+internal fun SharedLibrarySnapshot.toDesktopReaderScreenState(): SharedReaderScreenState {
+    val readableBooks = books.filter { it.type in DesktopReadableFileTypes }
+    return SharedReaderScreenState(
+        rawLibraryBooks = readableBooks,
+        recentFilesLimit = recentFilesLimit,
+        allTags = tags.ifEmpty { readableBooks.collectTags() },
+        syncedFolders = syncedFolders,
+        isTabsEnabled = isTabsEnabled,
+        openTabIds = openTabIds,
+        activeTabBookId = activeTabBookId,
+        pinnedHomeBookIds = pinnedHomeBookIds,
+        pinnedLibraryBookIds = pinnedLibraryBookIds,
+        useStrictFileFilter = useStrictFileFilter,
+        appThemeMode = appThemeMode,
+        appContrastOption = appContrastOption,
+        appTextDimFactorLight = appTextDimFactorLight,
+        appTextDimFactorDark = appTextDimFactorDark,
+        appSeedColor = appSeedColor,
+        customAppThemes = customAppThemes,
+        readerDefaultSettings = readerDefaultSettings,
+        pdfReaderDefaultSettings = pdfReaderDefaultSettings,
+        readerToolbarPreferences = readerToolbarPreferences,
+        readerHighlightPalette = readerHighlightPalette,
+        pdfHighlighterPalette = pdfHighlighterPalette,
+        readerTtsReplacementPreferences = readerTtsReplacementPreferences
+    )
+}
+
+internal fun SharedLibraryStateProjector.projectDesktopLibraryState(
+    state: SharedReaderScreenState,
+    shelfRecords: List<ShelfRecord>,
+    shelfRefs: List<BookShelfRef>
+): SharedReaderScreenState {
+    return project(
+        SharedLibraryProjectionInput(
+            state = state,
+            booksFromStore = state.rawLibraryBooks,
+            shelfRecords = shelfRecords,
+            shelfRefs = shelfRefs,
+            tags = state.allTags.ifEmpty { state.rawLibraryBooks.collectTags() }
+        )
+    )
+}
+
+internal fun SharedReaderScreenState.toDesktopLibrarySnapshot(
+    shelfRecords: List<ShelfRecord>,
+    shelfRefs: List<BookShelfRef>,
+    customFonts: List<CustomFontItem>
+): SharedLibrarySnapshot {
+    return SharedLibrarySnapshot(
+        books = rawLibraryBooks,
+        shelfRecords = shelfRecords,
+        shelfRefs = shelfRefs,
+        tags = allTags,
+        customFonts = customFonts,
+        syncedFolders = syncedFolders,
+        recentFilesLimit = recentFilesLimit,
+        isTabsEnabled = isTabsEnabled,
+        openTabIds = openTabIds,
+        activeTabBookId = activeTabBookId,
+        pinnedHomeBookIds = pinnedHomeBookIds,
+        pinnedLibraryBookIds = pinnedLibraryBookIds,
+        useStrictFileFilter = useStrictFileFilter,
+        appThemeMode = appThemeMode,
+        appContrastOption = appContrastOption,
+        appTextDimFactorLight = appTextDimFactorLight,
+        appTextDimFactorDark = appTextDimFactorDark,
+        appSeedColor = appSeedColor,
+        customAppThemes = customAppThemes,
+        readerDefaultSettings = readerDefaultSettings,
+        pdfReaderDefaultSettings = pdfReaderDefaultSettings,
+        readerToolbarPreferences = readerToolbarPreferences,
+        readerHighlightPalette = readerHighlightPalette,
+        pdfHighlighterPalette = pdfHighlighterPalette,
+        readerTtsReplacementPreferences = readerTtsReplacementPreferences
+    )
+}

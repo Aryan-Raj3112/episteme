@@ -58,6 +58,16 @@ import com.aryan.reader.shared.ui.SharedHsvColorPickerDialog
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
 
+internal val DesktopPdfAnnotationTools = listOf(
+    PdfInkTool.PEN,
+    PdfInkTool.FOUNTAIN_PEN,
+    PdfInkTool.PENCIL,
+    PdfInkTool.HIGHLIGHTER,
+    PdfInkTool.HIGHLIGHTER_ROUND,
+    PdfInkTool.TEXT,
+    PdfInkTool.ERASER
+)
+
 @Composable
 internal fun DesktopPdfAnnotationEditor(
     annotation: SharedPdfAnnotation,
