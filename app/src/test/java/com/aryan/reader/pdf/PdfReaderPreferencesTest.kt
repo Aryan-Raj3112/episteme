@@ -33,7 +33,12 @@ class PdfReaderPreferencesTest {
         assertEquals(PdfReaderTool.entries.toSet(), order.toSet())
         assertEquals(setOf(PdfReaderTool.SEARCH.name, PdfReaderTool.TOC.name), loadPdfBottomTools(context))
         assertEquals(
-            setOf(PdfReaderTool.PRINT.name, PdfReaderTool.SCREEN_ORIENTATION.name, PdfReaderTool.HIGHLIGHT_ALL.name),
+            setOf(
+                PdfReaderTool.PRINT.name,
+                PdfReaderTool.SCREEN_ORIENTATION.name,
+                PdfReaderTool.HIGHLIGHT_ALL.name,
+                PdfReaderTool.BRIGHTNESS.name
+            ),
             loadPdfHiddenTools(context)
         )
     }
@@ -50,6 +55,7 @@ class PdfReaderPreferencesTest {
         assertEquals(setOf(PdfReaderTool.PRINT.name, PdfReaderTool.SHARE.name), loadPdfHiddenTools(context))
         assertFalse(PdfReaderTool.SCREEN_ORIENTATION.name in loadPdfHiddenTools(context))
         assertFalse(PdfReaderTool.HIGHLIGHT_ALL.name in loadPdfHiddenTools(context))
+        assertFalse(PdfReaderTool.BRIGHTNESS.name in loadPdfHiddenTools(context))
         assertEquals(setOf(PdfReaderTool.SEARCH.name), loadPdfBottomTools(context))
         assertEquals(listOf(PdfReaderTool.TOC, PdfReaderTool.SEARCH), loadPdfToolOrder(context).take(2))
     }

@@ -158,6 +158,8 @@ import com.aryan.reader.BuildConfig
 import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.ReaderBrightnessEffect
+import com.aryan.reader.ReaderBrightnessSheet
 import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
@@ -176,6 +178,7 @@ import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
+import com.aryan.reader.loadReaderBrightnessSettings
 import com.aryan.reader.loadReaderScreenOrientationMode
 import com.aryan.reader.loadEpubRightToLeftPagination
 import com.aryan.reader.loadReaderThemeId
@@ -198,6 +201,7 @@ import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
+import com.aryan.reader.saveReaderBrightnessSettings
 import com.aryan.reader.saveReaderScreenOrientationMode
 import com.aryan.reader.saveEpubRightToLeftPagination
 import com.aryan.reader.saveReaderThemeId
@@ -248,7 +252,7 @@ private const val HIDDEN_TOOLS_KEY = "hidden_reader_tools"
 private const val TOOL_ORDER_KEY = "reader_tool_order"
 private const val BOTTOM_TOOLS_KEY = "reader_bottom_tools"
 private const val HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "reader_hidden_tools_defaults_version"
-private const val HIDDEN_TOOLS_DEFAULTS_VERSION = 1
+private const val HIDDEN_TOOLS_DEFAULTS_VERSION = 2
 private const val TTS_LOCATE_REASON_INITIAL_RESTORE = "initial_restore"
 private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
 private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
@@ -315,7 +319,7 @@ private fun loadHiddenTools(context: Context): Set<String> {
     val savedHiddenTools = prefs.getStringSet(HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
     val defaultsVersion = prefs.getInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
     if (defaultsVersion < HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = savedHiddenTools + defaultReaderHiddenTools()
+        val migratedHiddenTools = savedHiddenTools + readerHiddenToolsIntroducedAfter(defaultsVersion)
         prefs.edit {
             putStringSet(HIDDEN_TOOLS_KEY, migratedHiddenTools)
             putInt(HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, HIDDEN_TOOLS_DEFAULTS_VERSION)
@@ -323,6 +327,13 @@ private fun loadHiddenTools(context: Context): Set<String> {
         return migratedHiddenTools
     }
     return savedHiddenTools
+}
+
+private fun readerHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String> {
+    return buildSet {
+        if (defaultsVersion < 1) add(ReaderTool.SCREEN_ORIENTATION.name)
+        if (defaultsVersion < 2) add(ReaderTool.BRIGHTNESS.name)
+    }
 }
 
 private fun saveToolOrder(context: Context, toolOrder: List<ReaderTool>) {
@@ -649,6 +660,15 @@ fun EpubReaderHost(
     val window = (view.context as? Activity)?.window
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
+    var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
+    var showBrightnessSheet by remember { mutableStateOf(false) }
+    ReaderBrightnessEffect(window, readerBrightnessSettings)
+
+    val updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit = { settings ->
+        readerBrightnessSettings = settings
+        saveReaderBrightnessSettings(context, settings)
+    }
+
     fun showBanner(message: String, isError: Boolean = false, isPersistent: Boolean = false) {
         viewModel.showBanner(message, isError, isPersistent)
     }
@@ -5437,6 +5457,7 @@ fun EpubReaderHost(
                     onOpenTtsReplacements = { showTtsReplacementsSheet = true },
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
+                    onOpenBrightness = { showBrightnessSheet = true },
                     onOpenVisualOptions = { showVisualOptionsSheet = true },
                     onOpenScreenOrientation = { showScreenOrientationSheet = true },
                     onOpenAiHub = { showAiHubSheet = true },
@@ -5688,6 +5709,7 @@ fun EpubReaderHost(
                     onOpenAiHub = { showAiHubSheet = true },
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
+                    onOpenBrightness = { showBrightnessSheet = true },
                     onOpenSlider = {
                         when (currentRenderMode) {
                             RenderMode.VERTICAL_SCROLL -> {
@@ -6122,6 +6144,14 @@ fun EpubReaderHost(
                     saveBottomTools(context, newBottomTools)
                 },
                 onDismiss = { showCustomizeToolsSheet = false }
+            )
+        }
+
+        if (showBrightnessSheet) {
+            ReaderBrightnessSheet(
+                settings = readerBrightnessSettings,
+                onSettingsChange = updateReaderBrightness,
+                onDismiss = { showBrightnessSheet = false }
             )
         }
 

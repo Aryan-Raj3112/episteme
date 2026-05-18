@@ -52,11 +52,12 @@ internal const val PDF_PAGE_SPREAD_MODE_KEY = "pdf_page_spread_mode"
 internal const val PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY = "pdf_first_page_standalone_in_spread"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "pdf_hidden_tools_defaults_version"
-private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 2
+private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 3
 
 enum class PdfReaderTool(@StringRes val titleRes: Int, val category: String) {
     DICTIONARY(R.string.tool_external_apps, "Top Bar"),
     THEME(R.string.tooltip_theme_desc, "Top Bar"),
+    BRIGHTNESS(R.string.tool_brightness, "Top Bar"),
     LOCK_PANNING(R.string.tooltip_lock_pan, "Top Bar"),
     VISUAL_OPTIONS(R.string.menu_visual_options, "Overflow Menu"),
     TAP_TO_TURN(R.string.menu_tap_to_turn_pages, "Overflow Menu"),
@@ -86,7 +87,8 @@ enum class PdfReaderTool(@StringRes val titleRes: Int, val category: String) {
 internal fun defaultPdfHiddenTools(): Set<String> {
     return setOf(
         PdfReaderTool.SCREEN_ORIENTATION.name,
-        PdfReaderTool.HIGHLIGHT_ALL.name
+        PdfReaderTool.HIGHLIGHT_ALL.name,
+        PdfReaderTool.BRIGHTNESS.name
     )
 }
 
@@ -103,7 +105,7 @@ internal fun loadPdfHiddenTools(context: Context): Set<String> {
     val savedHiddenTools = prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()).orEmpty()
     val defaultsVersion = prefs.getInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
     if (defaultsVersion < PDF_HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = savedHiddenTools + defaultPdfHiddenTools()
+        val migratedHiddenTools = savedHiddenTools + pdfHiddenToolsIntroducedAfter(defaultsVersion)
         prefs.edit {
             putStringSet(PDF_HIDDEN_TOOLS_KEY, migratedHiddenTools)
             putInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, PDF_HIDDEN_TOOLS_DEFAULTS_VERSION)
@@ -111,6 +113,16 @@ internal fun loadPdfHiddenTools(context: Context): Set<String> {
         return migratedHiddenTools
     }
     return savedHiddenTools
+}
+
+private fun pdfHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String> {
+    return buildSet {
+        if (defaultsVersion < 2) {
+            add(PdfReaderTool.SCREEN_ORIENTATION.name)
+            add(PdfReaderTool.HIGHLIGHT_ALL.name)
+        }
+        if (defaultsVersion < 3) add(PdfReaderTool.BRIGHTNESS.name)
+    }
 }
 
 internal fun savePdfHiddenTools(context: Context, hiddenTools: Set<String>) {

@@ -52,6 +52,7 @@ internal val PdfTabStripHeight = 44.dp
 private val pdfToolbarTools = setOf(
     PdfReaderTool.DICTIONARY,
     PdfReaderTool.THEME,
+    PdfReaderTool.BRIGHTNESS,
     PdfReaderTool.LOCK_PANNING,
     PdfReaderTool.SLIDER,
     PdfReaderTool.TOC,
@@ -99,6 +100,7 @@ internal fun PdfTopBar(
     effectiveFileType: FileType,
     onNavigateBack: () -> Unit,
     onShowThemePanel: () -> Unit,
+    onShowBrightnessControl: () -> Unit,
     onToggleScrollLock: () -> Unit,
     onShowDictionarySettings: () -> Unit,
     onShowPenPlayground: () -> Unit,
@@ -200,6 +202,13 @@ internal fun PdfTopBar(
                                         onClick = onShowThemePanel
                                     ) {
                                         Icon(painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    PdfReaderTool.BRIGHTNESS -> TooltipIconButton(
+                                        text = stringResource(R.string.reader_brightness_title),
+                                        description = stringResource(R.string.reader_brightness_system_desc),
+                                        onClick = onShowBrightnessControl
+                                    ) {
+                                        Icon(painterResource(id = R.drawable.contrast), contentDescription = stringResource(R.string.reader_brightness_title), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     PdfReaderTool.LOCK_PANNING -> TooltipIconButton(
                                         text = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan) else stringResource(R.string.tooltip_lock_pan),
@@ -356,6 +365,7 @@ internal fun PdfTopBar(
                                                     showMoreMenu = false
                                                 },
                                                 onShowThemePanel = onShowThemePanel,
+                                                onShowBrightnessControl = onShowBrightnessControl,
                                                 onToggleScrollLock = onToggleScrollLock,
                                                 onShowDictionarySettings = onShowDictionarySettings,
                                                 onShowSlider = onShowSlider,
@@ -649,6 +659,7 @@ private fun HiddenPdfToolMenuItem(
     isTtsSessionActive: Boolean,
     closeMenu: () -> Unit,
     onShowThemePanel: () -> Unit,
+    onShowBrightnessControl: () -> Unit,
     onToggleScrollLock: () -> Unit,
     onShowDictionarySettings: () -> Unit,
     onShowSlider: () -> Unit,
@@ -673,6 +684,7 @@ private fun HiddenPdfToolMenuItem(
             closeMenu()
             when (tool) {
                 PdfReaderTool.THEME -> onShowThemePanel()
+                PdfReaderTool.BRIGHTNESS -> onShowBrightnessControl()
                 PdfReaderTool.LOCK_PANNING -> onToggleScrollLock()
                 PdfReaderTool.DICTIONARY -> onShowDictionarySettings()
                 PdfReaderTool.SLIDER -> onShowSlider()
@@ -690,6 +702,7 @@ private fun HiddenPdfToolMenuItem(
             when (tool) {
                 PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = null, modifier = Modifier.size(20.dp))
+                PdfReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.LOCK_PANNING -> Icon(Icons.Default.LockOpen, contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -853,6 +866,7 @@ fun PdfBottomBar(
     isTtsSessionActive: Boolean,
     ttsErrorMessage: String?,
     onShowThemePanel: () -> Unit,
+    onShowBrightnessControl: () -> Unit,
     onToggleScrollLock: () -> Unit,
     onShowDictionarySettings: () -> Unit,
     onShowSlider: () -> Unit,
@@ -894,6 +908,13 @@ fun PdfBottomBar(
                                 onClick = onShowThemePanel
                             ) {
                                 Icon(painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            PdfReaderTool.BRIGHTNESS -> TooltipIconButton(
+                                text = stringResource(R.string.reader_brightness_title),
+                                description = stringResource(R.string.reader_brightness_system_desc),
+                                onClick = onShowBrightnessControl
+                            ) {
+                                Icon(painterResource(id = R.drawable.contrast), contentDescription = stringResource(R.string.reader_brightness_title), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             PdfReaderTool.LOCK_PANNING -> TooltipIconButton(
                                 text = stringResource(R.string.tooltip_lock_pan),

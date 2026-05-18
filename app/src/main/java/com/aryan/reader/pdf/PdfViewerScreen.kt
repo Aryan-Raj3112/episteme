@@ -211,6 +211,8 @@ import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.ReaderBrightnessEffect
+import com.aryan.reader.ReaderBrightnessSheet
 import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
@@ -233,6 +235,7 @@ import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
+import com.aryan.reader.loadReaderBrightnessSettings
 import com.aryan.reader.loadReaderScreenOrientationMode
 import com.aryan.reader.loadPdfRightToLeftPagination
 import com.aryan.reader.loadTtsReplacementPreferences
@@ -250,6 +253,7 @@ import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
+import com.aryan.reader.saveReaderBrightnessSettings
 import com.aryan.reader.saveReaderScreenOrientationMode
 import com.aryan.reader.savePdfRightToLeftPagination
 import com.aryan.reader.saveTtsReplacementPreferences
@@ -777,6 +781,14 @@ fun PdfViewerScreen(
 
     val window = (view.context as? Activity)?.window
     val showStandardBars = showBars && !isEditMode
+    var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
+    var showBrightnessSheet by remember { mutableStateOf(false) }
+    ReaderBrightnessEffect(window, readerBrightnessSettings)
+
+    val updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit = { settings ->
+        readerBrightnessSettings = settings
+        saveReaderBrightnessSettings(context, settings)
+    }
 
     DisposableEffect(window, view) {
         onDispose {
@@ -5820,6 +5832,7 @@ fun PdfViewerScreen(
                     effectiveFileType = effectiveFileType,
                     onNavigateBack = { saveStateAndExit() },
                     onShowThemePanel = showPdfThemePanel,
+                    onShowBrightnessControl = { showBrightnessSheet = true },
                     onToggleScrollLock = togglePdfScrollLock,
                     onShowDictionarySettings = showPdfDictionarySettings,
                     onShowPenPlayground = { showPenPlayground = true },
@@ -6204,6 +6217,7 @@ fun PdfViewerScreen(
                     isTtsSessionActive = isTtsSessionActive,
                     ttsErrorMessage = null,
                     onShowThemePanel = showPdfThemePanel,
+                    onShowBrightnessControl = { showBrightnessSheet = true },
                     onToggleScrollLock = togglePdfScrollLock,
                     onShowDictionarySettings = showPdfDictionarySettings,
                     onShowSlider = showPdfSlider,
@@ -7675,6 +7689,14 @@ fun PdfViewerScreen(
                 }
             }
         }
+    }
+
+    if (showBrightnessSheet) {
+        ReaderBrightnessSheet(
+            settings = readerBrightnessSettings,
+            onSettingsChange = updateReaderBrightness,
+            onDismiss = { showBrightnessSheet = false }
+        )
     }
 
     if (showVisualOptionsSheet) {

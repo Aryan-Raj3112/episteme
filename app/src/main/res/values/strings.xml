@@ -861,6 +861,12 @@
     <string name="visual_options_seamless_chapter_desc">Instantly load the next/previous chapter when scrolling past the end, without the pull-to-refresh animation.</string>
     <string name="visual_options_edge_padding">Remove Edge Padding</string>
     <string name="visual_options_edge_padding_desc">Removes the horizontal gap on the left and right edges.</string>
+    <string name="reader_brightness_title">Brightness</string>
+    <string name="reader_brightness_system">Use system brightness</string>
+    <string name="reader_brightness_system_desc">Follows the device brightness setting.</string>
+    <string name="reader_brightness_custom">Custom brightness</string>
+    <string name="reader_brightness_custom_desc">Applies while a reader screen is open.</string>
+    <string name="reader_brightness_percent">%1$d%%</string>
 
     <!-- ExternalDictionaryHelper.kt -->
     <!-- Label for the "Search" app category in the dictionary settings. -->
@@ -1522,6 +1528,7 @@
     <string name="content_desc_drag_to_reorder">Drag to reorder</string>
     <string name="tool_external_apps">External Apps</string>
     <string name="tool_navigation_slider">Navigation Slider</string>
+    <string name="tool_brightness">Brightness</string>
     <string name="tool_sidebar">Sidebar</string>
     <string name="tool_highlight_selectable_text">Highlight selectable text</string>
     <string name="tool_edit_mode">Edit Mode</string>

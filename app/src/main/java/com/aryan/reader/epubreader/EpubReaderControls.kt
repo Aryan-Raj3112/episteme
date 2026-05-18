@@ -157,6 +157,7 @@ import kotlin.math.roundToInt
 enum class ReaderTool(@StringRes val titleRes: Int, val category: String) {
     DICTIONARY(R.string.tool_external_apps, "Top Bar"),
     THEME(R.string.tooltip_theme_desc, "Top Bar"),
+    BRIGHTNESS(R.string.tool_brightness, "Top Bar"),
     SLIDER(R.string.tool_navigation_slider, "Bottom Bar"),
     TOC(R.string.tool_sidebar, "Bottom Bar"),
     FORMAT(R.string.content_desc_text_formatting, "Bottom Bar"),
@@ -259,6 +260,7 @@ class DragDropState(
 private val epubToolbarTools = setOf(
     ReaderTool.DICTIONARY,
     ReaderTool.THEME,
+    ReaderTool.BRIGHTNESS,
     ReaderTool.SLIDER,
     ReaderTool.TOC,
     ReaderTool.FORMAT,
@@ -268,7 +270,10 @@ private val epubToolbarTools = setOf(
     ReaderTool.SCREEN_ORIENTATION
 )
 
-internal fun defaultReaderHiddenTools(): Set<String> = setOf(ReaderTool.SCREEN_ORIENTATION.name)
+internal fun defaultReaderHiddenTools(): Set<String> = setOf(
+    ReaderTool.SCREEN_ORIENTATION.name,
+    ReaderTool.BRIGHTNESS.name
+)
 
 internal fun defaultReaderToolOrder(): List<ReaderTool> = ReaderTool.entries.toList()
 
@@ -340,6 +345,7 @@ fun EpubReaderTopBar(
     onOpenTtsReplacements: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
+    onOpenBrightness: () -> Unit,
     onOpenVisualOptions: () -> Unit,
     onOpenScreenOrientation: () -> Unit,
     onOpenSlider: () -> Unit,
@@ -419,6 +425,13 @@ fun EpubReaderTopBar(
                                     onClick = onOpenThemeSettings
                                 ) {
                                     Icon(painter = painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc))
+                                }
+                                ReaderTool.BRIGHTNESS -> TooltipIconButton(
+                                    text = stringResource(R.string.reader_brightness_title),
+                                    description = stringResource(R.string.reader_brightness_system_desc),
+                                    onClick = onOpenBrightness
+                                ) {
+                                    Icon(painter = painterResource(id = R.drawable.brightness), contentDescription = stringResource(R.string.reader_brightness_title))
                                 }
                                 ReaderTool.SLIDER -> TooltipIconButton(
                                     text = stringResource(R.string.tooltip_slider),
@@ -547,6 +560,7 @@ fun EpubReaderTopBar(
                                             },
                                             onOpenDictionarySettings = onOpenDictionarySettings,
                                             onOpenThemeSettings = onOpenThemeSettings,
+                                            onOpenBrightness = onOpenBrightness,
                                             onOpenSlider = onOpenSlider,
                                             onOpenDrawer = onOpenDrawer,
                                             onToggleFormat = onToggleFormat,
@@ -933,6 +947,7 @@ fun EpubReaderBottomBar(
     onOpenAiHub: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
+    onOpenBrightness: () -> Unit,
     onToggleTts: () -> Unit,
     onOpenScreenOrientation: () -> Unit,
     hiddenTools: Set<String>,
@@ -976,6 +991,16 @@ fun EpubReaderBottomBar(
                                 onClick = onOpenThemeSettings
                             ) {
                                 Icon(painter = painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc))
+                            }
+                            ReaderTool.BRIGHTNESS -> TooltipIconButton(
+                                text = stringResource(R.string.reader_brightness_title),
+                                description = stringResource(R.string.reader_brightness_system_desc),
+                                onClick = onOpenBrightness
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.brightness),
+                                    contentDescription = stringResource(R.string.reader_brightness_title)
+                                )
                             }
                             ReaderTool.SLIDER -> TooltipIconButton(
                                 text = stringResource(R.string.tooltip_slider),
@@ -2063,6 +2088,7 @@ private fun ToolPreviewIcon(tool: ReaderTool) {
     when (tool) {
         ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.brightness), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.FORMAT -> Icon(painterResource(id = R.drawable.format_size), contentDescription = title, modifier = Modifier.size(20.dp))
@@ -2082,6 +2108,7 @@ private fun HiddenEpubToolMenuItem(
     showMoreMenu: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
+    onOpenBrightness: () -> Unit,
     onOpenSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleFormat: () -> Unit,
@@ -2102,6 +2129,7 @@ private fun HiddenEpubToolMenuItem(
             when (tool) {
                 ReaderTool.DICTIONARY -> onOpenDictionarySettings()
                 ReaderTool.THEME -> onOpenThemeSettings()
+                ReaderTool.BRIGHTNESS -> onOpenBrightness()
                 ReaderTool.SLIDER -> onOpenSlider()
                 ReaderTool.TOC -> onOpenDrawer()
                 ReaderTool.FORMAT -> onToggleFormat()

@@ -164,7 +164,11 @@ class PdfReaderSettingsAndSharedModelsTest {
     @Test
     fun `pdf toolbar reset defaults match first-run toolbar defaults`() {
         assertEquals(
-            setOf(PdfReaderTool.SCREEN_ORIENTATION.name, PdfReaderTool.HIGHLIGHT_ALL.name),
+            setOf(
+                PdfReaderTool.SCREEN_ORIENTATION.name,
+                PdfReaderTool.HIGHLIGHT_ALL.name,
+                PdfReaderTool.BRIGHTNESS.name
+            ),
             defaultPdfHiddenTools()
         )
         assertEquals(PdfReaderTool.entries.toList(), defaultPdfToolOrder())
@@ -186,6 +190,10 @@ class PdfReaderSettingsAndSharedModelsTest {
         assertEquals(
             PdfToolbarSection.HIDDEN,
             defaultItems.single { it.tool == PdfReaderTool.HIGHLIGHT_ALL }.section
+        )
+        assertEquals(
+            PdfToolbarSection.HIDDEN,
+            defaultItems.single { it.tool == PdfReaderTool.BRIGHTNESS }.section
         )
         assertEquals(
             PdfToolbarSection.BOTTOM,
