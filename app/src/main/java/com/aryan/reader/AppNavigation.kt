@@ -22,13 +22,21 @@ package com.aryan.reader
 import android.os.Build
 import timber.log.Timber
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +63,9 @@ import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.feedback.SupportProjectScreen
 import com.aryan.reader.pdf.PdfViewerScreen
 import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.tts.ReaderTtsMiniBar
+import com.aryan.reader.tts.readerTtsMiniBarBottomPaddingDp
+import com.aryan.reader.tts.shouldShowReaderTtsMiniBar
 import kotlinx.coroutines.delay
 
 object AppDestinations {
@@ -144,6 +155,17 @@ fun AppNavigation(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStackEntry?.destination?.route
+    val ttsController = viewModel.ttsController
+    val ttsState by ttsController.ttsState.collectAsStateWithLifecycle()
+    val isOnReaderRoute = currentRoute == AppDestinations.PDF_VIEWER_ROUTE ||
+        currentRoute == AppDestinations.EPUB_READER_ROUTE
+    val showTtsMiniBar = shouldShowReaderTtsMiniBar(
+        ttsState = ttsState,
+        isOnReaderRoute = isOnReaderRoute
+    )
+    val miniBarBottomPadding = readerTtsMiniBarBottomPaddingDp(
+        isOnMainRoute = currentRoute == AppDestinations.MAIN_ROUTE
+    ).dp
 
     LaunchedEffect(currentRoute, uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading) {
@@ -172,7 +194,8 @@ fun AppNavigation(
         }
     }
 
-    NavHost(navController = navController, startDestination = AppDestinations.MAIN_ROUTE) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        NavHost(navController = navController, startDestination = AppDestinations.MAIN_ROUTE) {
         composable(AppDestinations.MAIN_ROUTE) {
             Timber.d("Navigating to Main Screen (${AppDestinations.MAIN_ROUTE}).")
             MainScreen(
@@ -374,6 +397,34 @@ fun AppNavigation(
                 viewModel = viewModel,
                 navController = navController,
                 onBackClick = { navController.popBackStackIfReady() }
+            )
+        }
+        }
+
+        AnimatedVisibility(
+            visible = showTtsMiniBar,
+            enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(animationSpec = tween(200)),
+            exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(animationSpec = tween(200)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, bottom = miniBarBottomPadding)
+        ) {
+            ReaderTtsMiniBar(
+                ttsController = ttsController,
+                ttsState = ttsState,
+                onOpenReader = {
+                    ttsState.bookId?.let { bookId ->
+                        viewModel.openTtsNotificationTarget(
+                            bookId = bookId,
+                            sourceCfi = ttsState.sourceCfi,
+                            startOffset = ttsState.startOffsetInSource.takeIf { it >= 0 },
+                            chapterIndex = ttsState.chapterIndex,
+                            pageIndex = ttsState.pageIndex
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
             )
         }
     }

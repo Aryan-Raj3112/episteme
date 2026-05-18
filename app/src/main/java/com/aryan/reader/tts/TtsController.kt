@@ -282,6 +282,7 @@ class TtsController(context: Context) : Player.Listener {
             val customState = controller.customLayout.firstOrNull()?.extras ?: Bundle.EMPTY
             val currentMediaItem = controller.currentMediaItem
             val mediaItemExtras = currentMediaItem?.mediaMetadata?.extras
+            val currentMediaBookTitle = currentMediaItem?.mediaMetadata?.title?.toString()
             val currentTextFromMediaItem = mediaItemExtras?.getString("ttsText")
                 ?: currentMediaItem?.mediaMetadata?.subtitle?.toString()
             val isPlaybackActive = controller.isPlaying || controller.playbackState == Player.STATE_READY || controller.playbackState == Player.STATE_BUFFERING
@@ -325,7 +326,7 @@ class TtsController(context: Context) : Player.Listener {
                     serviceBookId
                 },
                 bookTitle = if (isPlaybackActive) {
-                    currentMediaItem?.mediaMetadata?.artist?.toString() ?: serviceBookTitle
+                    currentMediaBookTitle ?: serviceBookTitle
                 } else {
                     if (isLoading) currentState.bookTitle else serviceBookTitle
                 },

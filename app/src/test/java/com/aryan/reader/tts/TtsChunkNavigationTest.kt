@@ -1,5 +1,6 @@
 package com.aryan.reader.tts
 
+import androidx.media3.common.util.UnstableApi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -57,6 +58,36 @@ class TtsChunkNavigationTest {
         assertEquals(false, shouldStartTtsTransitionPrefetch(currentGeneration = 6, deferredGeneration = 6))
         assertEquals(true, shouldStartTtsTransitionPrefetch(currentGeneration = 6, deferredGeneration = 5))
         assertEquals(true, shouldStartTtsTransitionPrefetch(currentGeneration = 6, deferredGeneration = -1))
+    }
+
+    @androidx.annotation.OptIn(UnstableApi::class)
+    @Test
+    fun `reader tts mini bar is visible only for active reader playback outside reader routes`() {
+        val activeReaderState = TtsPlaybackManager.TtsState(
+            currentText = "Playing text",
+            playbackSource = "READER"
+        )
+
+        assertEquals(true, shouldShowReaderTtsMiniBar(activeReaderState, isOnReaderRoute = false))
+        assertEquals(false, shouldShowReaderTtsMiniBar(activeReaderState, isOnReaderRoute = true))
+        assertEquals(
+            false,
+            shouldShowReaderTtsMiniBar(activeReaderState.copy(playbackSource = "OTHER"), isOnReaderRoute = false)
+        )
+        assertEquals(
+            false,
+            shouldShowReaderTtsMiniBar(activeReaderState.copy(sessionFinished = true), isOnReaderRoute = false)
+        )
+        assertEquals(
+            false,
+            shouldShowReaderTtsMiniBar(activeReaderState.copy(sessionEndedByStop = true), isOnReaderRoute = false)
+        )
+    }
+
+    @Test
+    fun `reader tts mini bar clears main bottom navigation`() {
+        assertEquals(96, readerTtsMiniBarBottomPaddingDp(isOnMainRoute = true))
+        assertEquals(16, readerTtsMiniBarBottomPaddingDp(isOnMainRoute = false))
     }
 
     @Test
