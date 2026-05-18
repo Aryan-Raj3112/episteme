@@ -141,6 +141,7 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.opds.OpdsAcquisition
 import com.aryan.reader.opds.OpdsCatalog
+import com.aryan.reader.opds.OpdsDownloadState
 import com.aryan.reader.opds.OpdsEntry
 import com.aryan.reader.opds.OpdsViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -2358,8 +2359,7 @@ fun OpdsTab(
     opdsViewModel: OpdsViewModel = viewModel()
 ) {
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
-    val downloadingState by opdsViewModel.downloadingState.collectAsStateWithLifecycle()
-    val downloadingEntries by opdsViewModel.downloadingEntries.collectAsStateWithLifecycle()
+    val downloadingState = uiState.downloadingState
     val context = LocalContext.current
     var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
     var showCatalogDialog by remember { mutableStateOf(false) }
@@ -2836,7 +2836,7 @@ fun OpdsNavigationCard(entry: OpdsEntry, onClick: (String) -> Unit) {
 fun OpdsBookCard(
     entry: OpdsEntry,
     localLibraryFiles: List<RecentFileItem>,
-    downloadState: OpdsViewModel.DownloadState?,
+    downloadState: OpdsDownloadState?,
     onDownloadClick: (OpdsAcquisition) -> Unit,
     onReadClick: (RecentFileItem) -> Unit,
     onStreamClick: () -> Unit,
@@ -2967,7 +2967,7 @@ fun OpdsBookCard(
 fun OpdsBookDetailsSheet(
     entry: OpdsEntry,
     localLibraryFiles: List<RecentFileItem>,
-    downloadState: OpdsViewModel.DownloadState?,
+    downloadState: OpdsDownloadState?,
     onDownloadFormat: (OpdsAcquisition) -> Unit,
     onReadClick: (RecentFileItem) -> Unit,
     onStreamClick: () -> Unit,

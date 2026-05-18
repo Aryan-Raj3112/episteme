@@ -2,12 +2,20 @@ package com.aryan.reader.shared.opds
 
 class SharedOpdsController(
     private val repository: SharedOpdsRepository,
+    private val feedLoadErrorMessage: (Throwable) -> String = { error ->
+        "Failed to load feed: ${error.message ?: "unknown error"}"
+    },
+    private val searchErrorMessage: (Throwable) -> String = { error ->
+        "Failed to search catalog: ${error.message ?: "unknown error"}"
+    },
     private val idFactory: () -> String
 ) {
     private val urlStack = mutableListOf<String>()
 
     var state: SharedOpdsScreenState = SharedOpdsScreenState(catalogs = repository.loadCatalogs())
         private set
+
+    fun hasFeedHistory(): Boolean = urlStack.size > 1
 
     fun reloadCatalogs(): SharedOpdsScreenState {
         state = state.copy(catalogs = repository.loadCatalogs())
@@ -100,7 +108,7 @@ class SharedOpdsController(
                 repository.getSearchTemplate(openSearchUrl, catalog?.username, catalog?.password)
             }
         }.getOrElse { error ->
-            state = state.copy(isLoading = false, errorMessage = "Failed to search catalog: ${error.message}")
+            state = state.copy(isLoading = false, errorMessage = searchErrorMessage(error))
             emit(state)
             return
         }
@@ -109,6 +117,11 @@ class SharedOpdsController(
 
     fun clearError(): SharedOpdsScreenState {
         state = state.copy(errorMessage = null)
+        return state
+    }
+
+    fun setErrorMessage(errorMessage: String?): SharedOpdsScreenState {
+        state = state.copy(errorMessage = errorMessage)
         return state
     }
 
@@ -154,7 +167,7 @@ class SharedOpdsController(
         }.onFailure { error ->
             state = state.copy(
                 isLoading = false,
-                errorMessage = "Failed to load feed: ${error.message ?: "unknown error"}"
+                errorMessage = feedLoadErrorMessage(error)
             )
         }
         emit(state)

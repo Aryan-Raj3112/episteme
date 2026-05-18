@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.aryan.reader.shared.opds.SharedOpdsCatalogs
+import com.aryan.reader.shared.opds.SharedOpdsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -12,7 +13,7 @@ import timber.log.Timber
 import java.security.MessageDigest
 import java.util.UUID
 
-class OpdsRepository(context: Context) {
+class OpdsRepository(context: Context) : SharedOpdsRepository {
     private val prefs: SharedPreferences = context.getSharedPreferences("reader_opds_prefs", Context.MODE_PRIVATE)
     private val parser = OpdsParser()
 
@@ -34,7 +35,7 @@ class OpdsRepository(context: Context) {
 
     private val httpClient = sharedHttpClient
 
-    fun getCatalogs(): List<OpdsCatalog> {
+    override fun loadCatalogs(): List<OpdsCatalog> {
         val jsonString = prefs.getString(KEY_CATALOGS_JSON, null)
         val decodedCatalogs = SharedOpdsCatalogs.decode(jsonString)
         val catalogs = decodedCatalogs.ifEmpty {
@@ -46,10 +47,12 @@ class OpdsRepository(context: Context) {
         return catalogs
     }
 
-    suspend fun getSearchTemplate(
+    fun getCatalogs(): List<OpdsCatalog> = loadCatalogs()
+
+    override suspend fun getSearchTemplate(
         openSearchUrl: String,
-        username: String? = null,
-        password: String? = null
+        username: String?,
+        password: String?
     ): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().url(openSearchUrl).build()
@@ -65,7 +68,7 @@ class OpdsRepository(context: Context) {
     fun addCatalog(title: String, url: String, username: String? = null, password: String? = null) {
         saveCatalogs(
             SharedOpdsCatalogs.addCatalog(
-                catalogs = getCatalogs(),
+                catalogs = loadCatalogs(),
                 title = title,
                 url = url,
                 username = username,
@@ -76,14 +79,14 @@ class OpdsRepository(context: Context) {
     }
 
     fun updateCatalog(id: String, title: String, url: String, username: String?, password: String?) {
-        saveCatalogs(SharedOpdsCatalogs.updateCatalog(getCatalogs(), id, title, url, username, password))
+        saveCatalogs(SharedOpdsCatalogs.updateCatalog(loadCatalogs(), id, title, url, username, password))
     }
 
     fun removeCatalog(id: String) {
-        saveCatalogs(SharedOpdsCatalogs.removeCatalog(getCatalogs(), id))
+        saveCatalogs(SharedOpdsCatalogs.removeCatalog(loadCatalogs(), id))
     }
 
-    private fun saveCatalogs(catalogs: List<OpdsCatalog>) {
+    override fun saveCatalogs(catalogs: List<OpdsCatalog>) {
         prefs.edit { putString(KEY_CATALOGS_JSON, SharedOpdsCatalogs.encode(catalogs)) }
     }
 
@@ -166,7 +169,7 @@ class OpdsRepository(context: Context) {
     }
 
 
-    suspend fun fetchFeed(url: String, username: String? = null, password: String? = null): Result<OpdsFeed> = withContext(Dispatchers.IO) {
+    override suspend fun fetchFeed(url: String, username: String?, password: String?): Result<OpdsFeed> = withContext(Dispatchers.IO) {
         Timber.tag("OpdsDebug").d("Starting fetch for URL: $url")
         try {
             val client = getAuthenticatedClient(username, password)
