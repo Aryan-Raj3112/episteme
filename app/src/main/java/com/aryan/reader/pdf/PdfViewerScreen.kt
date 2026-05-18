@@ -48,6 +48,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.splineBasedDecay
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -164,6 +165,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -367,6 +369,9 @@ private fun clampPdfSpreadCameraOffset(
         y = offset.y.coerceIn(-maxOffsetY, maxOffsetY)
     )
 }
+
+private const val PDF_SPREAD_PAN_FLING_MIN_VELOCITY = 600f
+private const val PDF_SPREAD_PAN_FLING_MULTIPLIER = 0.72f
 
 internal fun activePdfCameraAfterLockPreferenceLoad(
     isScrollLocked: Boolean,
@@ -3488,6 +3493,7 @@ fun PdfViewerScreen(
         displayMode,
         isScrollLocked,
         lockedState,
+        totalDisplayPages,
         pdfSpreadSettings.pageSpreadMode,
         pdfSpreadSettings.pdfFirstPageStandaloneInSpread
     ) {
@@ -4202,6 +4208,8 @@ fun PdfViewerScreen(
                                             val useSharedSpreadZoom = spreadPageIndices.size > 1
                                             val latestSpreadScale = rememberUpdatedState(currentActiveScale)
                                             val latestSpreadOffset = rememberUpdatedState(currentActiveOffset)
+                                            val spreadPageGap = if (showVerticalPageGap) 8.dp else 0.dp
+                                            var spreadPanFlingJob by remember { mutableStateOf<Job?>(null) }
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxSize()
@@ -4217,14 +4225,20 @@ fun PdfViewerScreen(
                                                                 ) {
                                                                     if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
                                                                     val touchSlop = viewConfiguration.touchSlop
+                                                                    val decay = splineBasedDecay<Float>(this)
+                                                                    val velocityTracker = VelocityTracker()
 
                                                                     awaitEachGesture {
                                                                         awaitFirstDown(requireUnconsumed = false)
+                                                                        spreadPanFlingJob?.cancel()
+                                                                        spreadPanFlingJob = null
+                                                                        velocityTracker.resetTracking()
 
                                                                         var gestureScale = latestSpreadScale.value
                                                                         var gestureOffset = latestSpreadOffset.value
                                                                         var accumulatedZoom = 1f
                                                                         var accumulatedPan = Offset.Zero
+                                                                        var velocityAccumulator = Offset.Zero
                                                                         var mode = 0
                                                                         var hasConsumedGesture = false
 
@@ -4281,6 +4295,13 @@ fun PdfViewerScreen(
                                                                                         currentActiveOffset = gestureOffset
                                                                                         currentPageScale = gestureScale
                                                                                         hasConsumedGesture = true
+                                                                                        if (mode == 1 && panChange != Offset.Zero && event.changes.isNotEmpty()) {
+                                                                                            velocityAccumulator += panChange
+                                                                                            velocityTracker.addPosition(
+                                                                                                event.changes[0].uptimeMillis,
+                                                                                                velocityAccumulator
+                                                                                            )
+                                                                                        }
                                                                                         event.changes.forEach {
                                                                                             if (it.positionChanged()) it.consume()
                                                                                         }
@@ -4338,6 +4359,58 @@ fun PdfViewerScreen(
                                                                                 currentActiveOffset = Offset.Zero
                                                                                 currentPageScale = 1f
                                                                             }
+                                                                        } else if (hasConsumedGesture && mode == 1 && currentActiveScale > 1f) {
+                                                                            val velocity = velocityTracker.calculateVelocity()
+                                                                            val flingX = if (!isScrollLocked && abs(velocity.x) > PDF_SPREAD_PAN_FLING_MIN_VELOCITY) {
+                                                                                velocity.x * PDF_SPREAD_PAN_FLING_MULTIPLIER
+                                                                            } else {
+                                                                                0f
+                                                                            }
+                                                                            val flingY = if (abs(velocity.y) > PDF_SPREAD_PAN_FLING_MIN_VELOCITY) {
+                                                                                velocity.y * PDF_SPREAD_PAN_FLING_MULTIPLIER
+                                                                            } else {
+                                                                                0f
+                                                                            }
+
+                                                                            if (flingX != 0f || flingY != 0f) {
+                                                                                spreadPanFlingJob = coroutineScope.launch {
+                                                                                    try {
+                                                                                        val startOffset = currentActiveOffset
+                                                                                        var decayedX = startOffset.x
+                                                                                        var decayedY = startOffset.y
+                                                                                        kotlinx.coroutines.coroutineScope {
+                                                                                            launch {
+                                                                                                if (flingX != 0f) {
+                                                                                                    Animatable(startOffset.x).animateDecay(flingX, decay) {
+                                                                                                        decayedX = value
+                                                                                                        currentActiveOffset = clampPdfSpreadCameraOffset(
+                                                                                                            scale = currentActiveScale,
+                                                                                                            offset = Offset(decayedX, decayedY),
+                                                                                                            viewportWidth = size.width.toFloat(),
+                                                                                                            viewportHeight = size.height.toFloat()
+                                                                                                        )
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                            launch {
+                                                                                                if (flingY != 0f) {
+                                                                                                    Animatable(startOffset.y).animateDecay(flingY, decay) {
+                                                                                                        decayedY = value
+                                                                                                        currentActiveOffset = clampPdfSpreadCameraOffset(
+                                                                                                            scale = currentActiveScale,
+                                                                                                            offset = Offset(decayedX, decayedY),
+                                                                                                            viewportWidth = size.width.toFloat(),
+                                                                                                            viewportHeight = size.height.toFloat()
+                                                                                                        )
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    } finally {
+                                                                                        spreadPanFlingJob = null
+                                                                                    }
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -4351,7 +4424,7 @@ fun PdfViewerScreen(
                                                             Modifier
                                                         }
                                                     ),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                                horizontalArrangement = Arrangement.spacedBy(spreadPageGap, Alignment.CenterHorizontally),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 spreadPageIndices.forEach { pageIndex ->
@@ -4537,7 +4610,7 @@ fun PdfViewerScreen(
                                                 activeTheme = activeTheme,
                                                 activeTextureAlpha = 1f - globalTextureTransparency,
                                                 excludeImages = excludeImages,
-                                                isScrollLocked = isScrollLocked,
+                                                isScrollLocked = if (useSharedSpreadZoom) false else isScrollLocked,
                                                 customHighlightColors = customHighlightColors,
                                                 externalScale = if (useSharedSpreadZoom) currentActiveScale else 1f,
                                                 onPaletteClick = {
@@ -4632,7 +4705,7 @@ fun PdfViewerScreen(
                                                 onTts = { pageIdx, charIdx -> startTtsWithPermissionCheck(pageIdx, charIdx) },
                                                 activeToolThickness = currentStrokeWidthState,
                                                 eraserToolThickness = currentEraserStrokeWidthState,
-                                                lockedState = lockedState,
+                                                lockedState = if (useSharedSpreadZoom) null else lockedState,
                                                 onZoomAndPanChanged = { newScale, newOffset ->
                                                     if (isActivePagerPage && !useSharedSpreadZoom) {
                                                         currentActiveScale = newScale
@@ -5635,9 +5708,11 @@ fun PdfViewerScreen(
                 val showPdfThemePanel = { showThemePanel = true }
                 val showPdfDictionarySettings = { showDictionarySettingsSheet = true }
                 val togglePdfScrollLock = {
-                    isScrollLocked = !isScrollLocked
-                    savePdfScrollLocked(context, bookId, isScrollLocked)
-                    if (isScrollLocked) {
+                    val nextLocked = !isScrollLocked
+                    isScrollLocked = nextLocked
+                    savePdfScrollLocked(context, bookId, nextLocked)
+                    if (nextLocked) {
+                        currentPageScale = currentActiveScale
                         savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
                         lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
                     }

@@ -845,7 +845,7 @@
     <string name="visual_options_pdf_first_page_alone">First page alone</string>
     <string name="visual_options_pdf_first_page_alone_desc">Starts facing-page spreads after the cover page.</string>
     <string name="visual_options_remove_page_gap">Remove gap between pages</string>
-    <string name="visual_options_remove_page_gap_desc">Applies to vertical reading mode.</string>
+    <string name="visual_options_remove_page_gap_desc">Applies to vertical reading and two-page spreads.</string>
     <string name="visual_options_hide_page_number_overlay">Hide page number overlay</string>
     <string name="visual_options_hide_page_number_overlay_desc">Removes the small page count label from each page.</string>
     <!-- "Status Bar" and "Navigation Bar" are standard Android UI terms — keep consistent with your OS locale if applicable. -->
