@@ -2,7 +2,7 @@
 package com.aryan.reader.data
 
 import com.aryan.reader.FileType
-import org.json.JSONObject
+import com.aryan.reader.shared.SharedFolderBookMetadata
 
 data class FolderBookMetadata(
     val bookId: String,
@@ -31,65 +31,74 @@ data class FolderBookMetadata(
     val originalDescription: String? = null
 ) {
     fun toJsonString(): String {
-        val json = JSONObject()
-        json.put("bookId", bookId)
-        json.put("displayName", displayName)
-        json.put("type", type)
-        json.put("lastChapterIndex", lastChapterIndex ?: -1)
-        json.put("lastPage", lastPage ?: -1)
-        json.put("lastPositionCfi", lastPositionCfi)
-        json.put("progressPercentage", progressPercentage.toDouble())
-        json.put("isRecent", isRecent)
-        json.put("lastModifiedTimestamp", lastModifiedTimestamp)
-        json.put("bookmarksJson", bookmarksJson)
-        json.put("locatorBlockIndex", locatorBlockIndex ?: -1)
-        json.put("locatorCharOffset", locatorCharOffset ?: -1)
-        json.put("customName", customName)
-        json.put("highlightsJson", highlightsJson)
-        return json.toString()
+        return toSharedFolderBookMetadata().toJsonString()
     }
 
     companion object {
         fun fromJsonString(jsonString: String): FolderBookMetadata {
-            val json = JSONObject(jsonString)
-
-            fun JSONObject.optStringNull(key: String): String? {
-                return if (has(key) && !isNull(key)) getString(key) else null
-            }
-
-            fun JSONObject.optIntNull(key: String): Int? {
-                val value = optInt(key, -1)
-                return if (value == -1) null else value
-            }
-
-            return FolderBookMetadata(
-                bookId = json.getString("bookId"),
-                title = null,
-                author = null,
-                displayName = json.optString("displayName", "Unknown"),
-                type = json.optString("type", "PDF"),
-                lastChapterIndex = json.optIntNull("lastChapterIndex"),
-                lastPage = json.optIntNull("lastPage"),
-                lastPositionCfi = json.optStringNull("lastPositionCfi"),
-                progressPercentage = json.optDouble("progressPercentage", 0.0).toFloat(),
-                isRecent = json.optBoolean("isRecent", true),
-                lastModifiedTimestamp = json.optLong("lastModifiedTimestamp", 0L),
-                bookmarksJson = json.optStringNull("bookmarksJson"),
-                locatorBlockIndex = json.optIntNull("locatorBlockIndex"),
-                locatorCharOffset = json.optIntNull("locatorCharOffset"),
-                customName = json.optStringNull("customName"),
-                highlightsJson = json.optStringNull("highlightsJson"),
-                seriesName = null,
-                seriesIndex = null,
-                description = null,
-                originalTitle = null,
-                originalAuthor = null,
-                originalSeriesName = null,
-                originalSeriesIndex = null,
-                originalDescription = null
-            )
+            return SharedFolderBookMetadata.fromJsonString(jsonString)
+                ?.toFolderBookMetadata()
+                ?: error("Invalid folder metadata JSON")
         }
     }
+}
+
+fun FolderBookMetadata.toSharedFolderBookMetadata(): SharedFolderBookMetadata {
+    return SharedFolderBookMetadata(
+        bookId = bookId,
+        title = title,
+        author = author,
+        displayName = displayName,
+        type = type,
+        lastChapterIndex = lastChapterIndex,
+        lastPage = lastPage,
+        lastPositionCfi = lastPositionCfi,
+        progressPercentage = progressPercentage,
+        isRecent = isRecent,
+        lastModifiedTimestamp = lastModifiedTimestamp,
+        bookmarksJson = bookmarksJson,
+        locatorBlockIndex = locatorBlockIndex,
+        locatorCharOffset = locatorCharOffset,
+        customName = customName,
+        highlightsJson = highlightsJson,
+        seriesName = seriesName,
+        seriesIndex = seriesIndex,
+        description = description,
+        originalTitle = originalTitle,
+        originalAuthor = originalAuthor,
+        originalSeriesName = originalSeriesName,
+        originalSeriesIndex = originalSeriesIndex,
+        originalDescription = originalDescription
+    )
+}
+
+fun SharedFolderBookMetadata.toFolderBookMetadata(): FolderBookMetadata {
+    return FolderBookMetadata(
+        bookId = bookId,
+        title = title,
+        author = author,
+        displayName = displayName,
+        type = type,
+        lastChapterIndex = lastChapterIndex,
+        lastPage = lastPage,
+        lastPositionCfi = lastPositionCfi,
+        progressPercentage = progressPercentage,
+        isRecent = isRecent,
+        lastModifiedTimestamp = lastModifiedTimestamp,
+        bookmarksJson = bookmarksJson,
+        locatorBlockIndex = locatorBlockIndex,
+        locatorCharOffset = locatorCharOffset,
+        customName = customName,
+        highlightsJson = highlightsJson,
+        seriesName = seriesName,
+        seriesIndex = seriesIndex,
+        description = description,
+        originalTitle = originalTitle,
+        originalAuthor = originalAuthor,
+        originalSeriesName = originalSeriesName,
+        originalSeriesIndex = originalSeriesIndex,
+        originalDescription = originalDescription
+    )
 }
 
 fun FolderBookMetadata.toRecentFileItem(uriString: String?, coverPath: String?, sourceFolderUri: String?): RecentFileItem {

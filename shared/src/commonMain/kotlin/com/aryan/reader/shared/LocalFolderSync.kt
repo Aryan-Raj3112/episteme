@@ -301,6 +301,10 @@ object LocalFolderSyncEngine {
                 .filter { it.sourceFolder == folderRoot && !it.path.isNullOrBlank() }
                 .associateBy { it.path.orEmpty() }
                 .toMutableMap()
+            val scannedFilesByPath = files
+                .asSequence()
+                .filter { it.type in allowedTypes && it.path.isNotBlank() }
+                .associateBy { it.path }
             val legacyItemsByName = booksById.values
                 .asSequence()
                 .filter { it.sourceFolder == folderRoot }
@@ -317,6 +321,28 @@ object LocalFolderSyncEngine {
                     val stableId = file.stableBookId
                     foundBookIds += stableId
                     var existing = booksById[stableId]?.takeIf { it.sourceFolder == folderRoot }
+
+                    if (existing != null && existing.path != file.path) {
+                        val collidedFile = existing.path?.let(scannedFilesByPath::get)
+                        val collidedStableId = collidedFile?.stableBookId
+                        if (
+                            collidedFile != null &&
+                            collidedStableId != null &&
+                            collidedStableId != stableId &&
+                            collidedStableId != existing.id &&
+                            collidedStableId !in booksById
+                        ) {
+                            val oldId = existing.id
+                            val migratedBook = existing.copy(id = collidedStableId).withScannedFile(collidedFile)
+                            booksById.remove(oldId)
+                            booksById[collidedStableId] = migratedBook
+                            folderBooksByPath[collidedFile.path] = migratedBook
+                            idMigrations[oldId] = collidedStableId
+                            legacyItemsByName[existing.displayName]?.remove(existing)
+                            existing = booksById[stableId]?.takeIf { it.sourceFolder == folderRoot }
+                            stats = stats.copy(migratedBooks = stats.migratedBooks + 1)
+                        }
+                    }
 
                     if (existing == null) {
                         val migrated = folderBooksByPath[file.path]?.takeIf { it.id != stableId }

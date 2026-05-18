@@ -431,7 +431,7 @@ fun EpubReaderTopBar(
                                     description = stringResource(R.string.reader_brightness_system_desc),
                                     onClick = onOpenBrightness
                                 ) {
-                                    Icon(painter = painterResource(id = R.drawable.brightness), contentDescription = stringResource(R.string.reader_brightness_title))
+                                    Icon(painter = painterResource(id = R.drawable.contrast), contentDescription = stringResource(R.string.reader_brightness_title))
                                 }
                                 ReaderTool.SLIDER -> TooltipIconButton(
                                     text = stringResource(R.string.tooltip_slider),
@@ -998,7 +998,7 @@ fun EpubReaderBottomBar(
                                 onClick = onOpenBrightness
                             ) {
                                 Icon(
-                                    painter = painterResource(id = R.drawable.brightness),
+                                    painter = painterResource(id = R.drawable.contrast),
                                     contentDescription = stringResource(R.string.reader_brightness_title)
                                 )
                             }
@@ -2088,7 +2088,7 @@ private fun ToolPreviewIcon(tool: ReaderTool) {
     when (tool) {
         ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
-        ReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.brightness), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.FORMAT -> Icon(painterResource(id = R.drawable.format_size), contentDescription = title, modifier = Modifier.size(20.dp))

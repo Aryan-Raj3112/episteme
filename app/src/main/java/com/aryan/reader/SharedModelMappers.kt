@@ -8,10 +8,25 @@ import com.aryan.reader.data.TagEntity
 import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.BookShelfRef as SharedBookShelfRef
 import com.aryan.reader.shared.EpubAnnotationSerializer
+import com.aryan.reader.shared.FileType as SharedFileType
+import com.aryan.reader.shared.LibraryFilters as SharedLibraryFilters
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfRecord
+import com.aryan.reader.shared.SyncedFolder as SharedSyncedFolder
 import com.aryan.reader.shared.Tag as SharedTag
+
+fun FileType.toSharedFileType(): SharedFileType = this
+
+fun SharedFileType.toAndroidFileType(): FileType = this
+
+fun LibraryFilters.toSharedLibraryFilters(): SharedLibraryFilters = this
+
+fun SharedLibraryFilters.toAndroidLibraryFilters(): LibraryFilters = this
+
+fun SyncedFolder.toSharedSyncedFolder(): SharedSyncedFolder = this
+
+fun SharedSyncedFolder.toAndroidSyncedFolder(): SyncedFolder = this
 
 fun RecentFileItem.toSharedBookItem(): SharedBookItem {
     return SharedBookItem(

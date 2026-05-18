@@ -38,6 +38,16 @@ import kotlinx.coroutines.withContext
 import androidx.core.content.edit
 import com.aryan.reader.data.LocalSyncUtils
 import com.aryan.reader.data.FolderBookMetadata
+import com.aryan.reader.data.toSharedFolderBookMetadata
+import com.aryan.reader.shared.BookItem as SharedBookItem
+import com.aryan.reader.shared.EpubAnnotationSerializer
+import com.aryan.reader.shared.EpubBookmark
+import com.aryan.reader.shared.LOCAL_FOLDER_SYNC_DATA_DIR
+import com.aryan.reader.shared.LocalFolderSyncEngine
+import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.SharedFolderScannedFile
+import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.reader.ReaderBookmark
 import java.io.File
 import android.provider.DocumentsContract
 
@@ -53,7 +63,6 @@ class FolderSyncWorker(
         const val WORK_NAME_ONETIME = "FolderSyncWorker_OneTime"
         const val KEY_METADATA_ONLY = "key_metadata_only"
         const val KEY_TARGET_FOLDER_URI = "key_target_folder_uri"
-        private const val SCAN_DB_BATCH_SIZE = 600
         private val syncMutex = Mutex()
     }
 
@@ -151,11 +160,7 @@ class FolderSyncWorker(
         var dirsScanned = 0
         var filesSeen = 0
         var supportedBooksSeen = 0
-        var newBooks = 0
-        var updatedBooks = 0
-        var unchangedBooks = 0
         var dbFlushes = 0
-        var scanDbFlushes = 0
         var sidecarsImported = 0
         var stoppedForUnlinkedFolder = false
 
@@ -179,7 +184,7 @@ class FolderSyncWorker(
                 return false
             }
 
-            ReaderPerfLog.d("FolderSync phase legacy-sidecar-migration skipped")
+            ReaderPerfLog.d("FolderSync phase legacy-sidecar-migration mapped-to-shared")
 
             val folderMetadataMap = ReaderPerfLog.measureSuspend(
                 name = "FolderSync phase metadata-sidecars",
@@ -192,324 +197,148 @@ class FolderSyncWorker(
                 "FolderSync metadata-sidecars records=${folderMetadataMap.size} metadataOnly=$metadataOnly folder=$folderUriString"
             )
 
-            val preloadedSidecars = mutableMapOf<String, Pair<Long, String>>()
             val existingFolderBooks = ReaderPerfLog.measureSuspend(
                 name = "FolderSync phase load-existing-db",
                 minLogMs = 25L
             ) {
                 recentFilesRepository.getFilesBySourceFolder(folderUriString)
             }
-            val existingFolderBooksById = existingFolderBooks.associateBy { it.bookId }
-            val remoteMetadataUpdates = mutableListOf<RecentFileItem>()
+            val existingItemsMap = existingFolderBooks.associateBy { it.bookId }.toMutableMap()
 
-            folderMetadataMap.forEach { (bookId, remoteMeta) ->
-                val existingItem = existingFolderBooksById[bookId]
+            val scanResult = if (metadataOnly) {
+                AndroidFolderScanResult()
+            } else {
+                ReaderPerfLog.measureSuspend(
+                    name = "FolderSync phase scan-folder",
+                    minLogMs = 25L
+                ) {
+                    scanFolderFiles(
+                        folderUri = folderUri,
+                        folderUriString = folderUriString,
+                        allowedFileTypes = allowedFileTypes
+                    )
+                }
+            }
+            dirsScanned = scanResult.dirsScanned
+            filesSeen = scanResult.filesSeen
+            supportedBooksSeen = scanResult.files.size
+            stoppedForUnlinkedFolder = scanResult.stoppedForUnlinkedFolder
 
-                if (existingItem != null) {
-                    if (remoteMeta.lastModifiedTimestamp > existingItem.lastModifiedTimestamp) {
-                        Timber.tag("PdfPositionDebug").w("FolderSyncWorker applies remote progress for $bookId | Local Page: ${existingItem.lastPage} -> Remote Page: ${remoteMeta.lastPage}")
-                        val itemToUpdate = existingItem.copy(
-                            lastChapterIndex = remoteMeta.lastChapterIndex,
-                            lastPage = remoteMeta.lastPage,
-                            lastPositionCfi = remoteMeta.lastPositionCfi,
-                            progressPercentage = remoteMeta.progressPercentage,
-                            bookmarksJson = remoteMeta.bookmarksJson,
-                            highlightsJson = remoteMeta.highlightsJson,
-                            customName = remoteMeta.customName,
-                            locatorBlockIndex = remoteMeta.locatorBlockIndex,
-                            locatorCharOffset = remoteMeta.locatorCharOffset,
-                            lastModifiedTimestamp = remoteMeta.lastModifiedTimestamp,
-                            isRecent = remoteMeta.isRecent || existingItem.isRecent,
-                            timestamp = if (remoteMeta.isRecent) remoteMeta.lastModifiedTimestamp else existingItem.timestamp
-                        )
-                        remoteMetadataUpdates.add(itemToUpdate)
-                    } else {
-                        Timber.tag("PdfPositionDebug").d("FolderSyncWorker: Local meta is newer/equal for $bookId. Ignoring remote. Local Page: ${existingItem.lastPage}")
-                    }
+            if (isStopped || stoppedForUnlinkedFolder) {
+                ReaderPerfLog.w(
+                    "FolderSync folder aborted before shared engine stopped=$isStopped " +
+                        "unlinkedAbort=$stoppedForUnlinkedFolder folder=$folderUriString"
+                )
+                return true
+            }
+
+            val nowMillis = System.currentTimeMillis()
+            val folder = SyncedFolder(
+                uriString = folderUriString,
+                name = documentTree.name ?: "Local Folder",
+                lastScanTime = nowMillis,
+                allowedFileTypes = allowedFileTypes
+            )
+            val sharedState = SharedReaderScreenState(
+                rawLibraryBooks = existingFolderBooks.map { it.toFolderSyncSharedBookItem() },
+                syncedFolders = listOf(folder)
+            )
+            val syncResult = LocalFolderSyncEngine.syncFolder(
+                state = sharedState,
+                folder = folder,
+                files = scanResult.files,
+                remoteMetadata = folderMetadataMap.mapValues { it.value.toSharedFolderBookMetadata() },
+                nowMillis = nowMillis,
+                metadataOnly = metadataOnly
+            )
+
+            if (syncResult.idMigrations.isNotEmpty()) {
+                val preloadedSidecars = ReaderPerfLog.measureSuspend(
+                    name = "FolderSync phase migration-sidecars",
+                    minLogMs = 25L
+                ) {
+                    LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri).toMutableMap()
+                }
+                syncResult.idMigrations.forEach { (oldId, newId) ->
+                    Timber.tag("FolderSync").i("Migrating folder book ID via shared engine $oldId -> $newId")
+                    migrateFolderBookId(
+                        folderUriString = folderUriString,
+                        oldId = oldId,
+                        newId = newId,
+                        folderMetadataMap = folderMetadataMap,
+                        preloadedSidecars = preloadedSidecars,
+                        existingItemsMap = existingItemsMap
+                    )
                 }
             }
 
-            if (remoteMetadataUpdates.isNotEmpty()) {
-                recentFilesRepository.addRecentFiles(remoteMetadataUpdates)
+            if (!isFolderStillLinked(folderUriString)) {
+                ReaderPerfLog.w("FolderSync folder abort: folder unlinked before DB write folder=$folderUriString")
+                stoppedForUnlinkedFolder = true
+                return true
+            }
+
+            val scannedFilesById = scanResult.files.associateBy { it.stableBookId }
+            val syncedItems = syncResult.state.rawLibraryBooks.map { book ->
+                val existing = existingItemsMap[book.id]
+                val metadata = appliedMetadataFor(
+                    book = book,
+                    existing = existing,
+                    metadata = folderMetadataMap[book.id]
+                )
+                book.toFolderSyncRecentFileItem(
+                    existing = existing,
+                    appliedMetadata = metadata,
+                    scannedFile = scannedFilesById[book.id],
+                    nowMillis = nowMillis
+                )
+            }
+            val changedItems = syncedItems.filter { item -> existingItemsMap[item.bookId] != item }
+
+            changedItems
+                .filter { item ->
+                    val previous = existingItemsMap[item.bookId]
+                    previous != null && folderFileContentChanged(previous, item)
+                }
+                .forEach { item ->
+                    Timber.tag("FolderSync").i("File content changed for ${item.displayName}; refreshing extracted metadata.")
+                    recentFilesRepository.clearLocalCachesForBook(item.bookId)
+                }
+
+            if (changedItems.isNotEmpty()) {
+                recentFilesRepository.addRecentFiles(changedItems)
                 dbFlushes++
-                ReaderPerfLog.d(
-                    "FolderSync applied remote metadata updates count=${remoteMetadataUpdates.size} folder=$folderUriString"
-                )
             }
 
-            if (metadataOnly) {
-                sidecarsImported += importAnnotationSidecarsForBooks(
-                    folderUri = folderUri,
-                    folderUriString = folderUriString,
-                    books = existingFolderBooks,
-                    phase = "metadata-only"
-                )
+            if (!metadataOnly && syncResult.removedBookIds.isNotEmpty()) {
+                Timber.tag("FolderSync").i("Cleaning up ${syncResult.removedBookIds.size} missing folder books.")
+                recentFilesRepository.deleteFilePermanently(syncResult.removedBookIds.toList())
             }
 
-            if (!metadataOnly) {
-                Timber.tag("FolderSync").d("Phase 2: Scanning physical files using raw ContentResolver...")
-                val contentResolver = appContext.contentResolver
-                val foundBookIds = mutableSetOf<String>()
-                val newOrUpdatedItems = mutableListOf<RecentFileItem>()
-                val existingItemsMap = existingFolderBooksById.toMutableMap()
-                val existingItemsByUri = existingFolderBooks
-                    .mapNotNull { item -> item.uriString?.let { uri -> uri to item } }
-                    .toMap()
-                val legacyItemsByName = existingFolderBooks
-                    .asSequence()
-                    .filter { it.bookId.startsWith("local_${it.displayName}_") }
-                    .groupBy { it.displayName }
-                    .mapValues { entry ->
-                        ArrayDeque<RecentFileItem>().apply { addAll(entry.value) }
-                    }
-
-                val rootDocId = DocumentsContract.getTreeDocumentId(folderUri)
-                val dirQueue = ArrayDeque<String>()
-                dirQueue.add(rootDocId)
-
-                val projection = arrayOf(
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                    DocumentsContract.Document.COLUMN_MIME_TYPE,
-                    DocumentsContract.Document.COLUMN_SIZE,
-                    DocumentsContract.Document.COLUMN_LAST_MODIFIED
-                )
-
-                while (dirQueue.isNotEmpty()) {
-                    if (isStopped) break
-                    if (!isFolderStillLinked(folderUriString)) {
-                        ReaderPerfLog.w("FolderSync folder abort: folder unlinked during scan folder=$folderUriString")
-                        stoppedForUnlinkedFolder = true
-                        break
-                    }
-                    val currentDocId = dirQueue.removeFirst()
-                    dirsScanned++
-                    val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(folderUri, currentDocId)
-
-                    try {
-                        contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
-                            val idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                            val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                            val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
-                            val sizeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
-                            val modCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-
-                            while (cursor.moveToNext() && !isStopped && !stoppedForUnlinkedFolder) {
-                                val docId = cursor.getString(idCol)
-                                val name = cursor.getString(nameCol) ?: ""
-                                val mimeType = cursor.getString(mimeCol)
-                                filesSeen++
-
-                                if (filesSeen % 100 == 0 && !isFolderStillLinked(folderUriString)) {
-                                    ReaderPerfLog.w("FolderSync folder abort: folder unlinked after entries=$filesSeen folder=$folderUriString")
-                                    stoppedForUnlinkedFolder = true
-                                    break
-                                }
-
-                                if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                                    if (!name.startsWith(".") && name != "EpistemeSyncData") {
-                                        dirQueue.add(docId)
-                                    }
-                                } else {
-                                    val size = if (!cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else 0L
-                                    val lastModified = if (!cursor.isNull(modCol)) cursor.getLong(modCol) else 0L
-
-                                    val type = getFileType(name, mimeType)
-                                    if (
-                                        type != null &&
-                                        type in allowedFileTypes &&
-                                        isLocalFolderSyncEligibleFile(name, mimeType) &&
-                                        !name.endsWith(".json") &&
-                                        !name.startsWith(".")
-                                    ) {
-                                        supportedBooksSeen++
-                                        val stableId = buildStableBookId(name, rootDocId, docId)
-                                        foundBookIds.add(stableId)
-
-                                        val docUri = DocumentsContract.buildDocumentUriUsingTree(folderUri, docId)
-                                        val docUriString = docUri.toString()
-                                        var existingItem = existingItemsMap[stableId]
-
-                                        if (existingItem != null && existingItem.uriString != docUriString) {
-                                            val collidedItem = existingItem
-                                            val collidedStableId = computeStableIdForStoredItem(collidedItem, rootDocId)
-                                            if (!collidedStableId.isNullOrBlank() && collidedStableId != stableId && collidedStableId != collidedItem.bookId) {
-                                                Timber.tag("FolderSync").i("Resolving folder ID collision for ${collidedItem.displayName}: ${collidedItem.bookId} -> $collidedStableId")
-                                                migrateFolderBookId(
-                                                    folderUriString = folderUriString,
-                                                    oldId = collidedItem.bookId,
-                                                    newId = collidedStableId,
-                                                    folderMetadataMap = folderMetadataMap,
-                                                    preloadedSidecars = preloadedSidecars,
-                                                    existingItemsMap = existingItemsMap
-                                                )
-                                                existingItem = existingItemsMap[stableId]
-                                            }
-                                        }
-
-                                        if (existingItem == null) {
-                                            val oldItem = existingItemsByUri[docUriString]?.takeIf { it.bookId != stableId }
-                                                ?: legacyItemsByName[name]?.firstOrNull {
-                                                    it.bookId != stableId
-                                                }
-                                            if (oldItem != null) {
-                                                val oldId = oldItem.bookId
-                                                Timber.tag("FolderSync").i("Migrating book ID for $name from $oldId to $stableId")
-
-                                                migrateFolderBookId(
-                                                    folderUriString = folderUriString,
-                                                    oldId = oldId,
-                                                    newId = stableId,
-                                                    folderMetadataMap = folderMetadataMap,
-                                                    preloadedSidecars = preloadedSidecars,
-                                                    existingItemsMap = existingItemsMap
-                                                )
-                                                legacyItemsByName[name]?.remove(oldItem)
-                                                existingItem = existingItemsMap[stableId]
-                                            }
-                                        }
-
-                                        if (existingItem == null) {
-                                            val remoteMeta = folderMetadataMap[stableId]
-
-                                            val newItem = RecentFileItem(
-                                                bookId = stableId,
-                                                uriString = docUri.toString(),
-                                                type = type,
-                                                displayName = name,
-                                                timestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
-                                                lastModifiedTimestamp = remoteMeta?.lastModifiedTimestamp ?: System.currentTimeMillis(),
-                                                coverImagePath = null,
-                                                title = name.substringBeforeLast('.', name),
-                                                author = remoteMeta?.author,
-                                                isAvailable = true,
-                                                isDeleted = false,
-                                                isRecent = remoteMeta?.isRecent ?: false,
-                                                sourceFolderUri = folderUriString,
-                                                lastChapterIndex = remoteMeta?.lastChapterIndex,
-                                                lastPage = remoteMeta?.lastPage,
-                                                lastPositionCfi = remoteMeta?.lastPositionCfi,
-                                                progressPercentage = remoteMeta?.progressPercentage,
-                                                bookmarksJson = remoteMeta?.bookmarksJson,
-                                                highlightsJson = remoteMeta?.highlightsJson,
-                                                customName = remoteMeta?.customName,
-                                                locatorBlockIndex = remoteMeta?.locatorBlockIndex,
-                                                locatorCharOffset = remoteMeta?.locatorCharOffset,
-                                                fileSize = size,
-                                                fileContentModifiedTimestamp = lastModified
-                                            )
-                                            newOrUpdatedItems.add(newItem)
-                                            newBooks++
-                                        } else {
-                                            var needsUpdate = false
-                                            var updatedItem = existingItem
-
-                                            val modifiedChanged = lastModified > 0L &&
-                                                existingItem.fileContentModifiedTimestamp != lastModified
-                                            if ((size > 0L && existingItem.fileSize != size) || modifiedChanged) {
-                                                Timber.tag("FolderSync").i("File content changed for $name; refreshing extracted metadata.")
-                                                recentFilesRepository.clearLocalCachesForBook(stableId)
-                                                updatedItem = updatedItem.copy(
-                                                    fileSize = size,
-                                                    fileContentModifiedTimestamp = lastModified,
-                                                    lastModifiedTimestamp = lastModified,
-                                                    coverImagePath = null,
-                                                    title = name.substringBeforeLast('.', name),
-                                                    author = null,
-                                                    seriesName = null,
-                                                    seriesIndex = null,
-                                                    description = null,
-                                                    originalTitle = null,
-                                                    originalAuthor = null,
-                                                    originalSeriesName = null,
-                                                    originalSeriesIndex = null,
-                                                    originalDescription = null,
-                                                    folderTextMetadataParsed = false,
-                                                    folderCoverMetadataParsed = false
-                                                )
-                                                needsUpdate = true
-                                            }
-
-                                            if (updatedItem.isDeleted || !updatedItem.isAvailable) {
-                                                updatedItem = updatedItem.copy(isDeleted = false, isAvailable = true)
-                                                needsUpdate = true
-                                            }
-
-                                            if (updatedItem.uriString != docUri.toString()) {
-                                                updatedItem = updatedItem.copy(uriString = docUri.toString())
-                                                needsUpdate = true
-                                            }
-
-                                            if (needsUpdate) {
-                                                newOrUpdatedItems.add(updatedItem)
-                                                updatedBooks++
-                                            } else {
-                                                unchangedBooks++
-                                            }
-                                        }
-
-                                        val batchLimit = if (scanDbFlushes == 0) 40 else SCAN_DB_BATCH_SIZE
-                                        if (newOrUpdatedItems.size >= batchLimit) {
-                                            if (!isFolderStillLinked(folderUriString)) {
-                                                ReaderPerfLog.w("FolderSync batch dropped: folder unlinked pending=${newOrUpdatedItems.size} folder=$folderUriString")
-                                                newOrUpdatedItems.clear()
-                                                stoppedForUnlinkedFolder = true
-                                                break
-                                            }
-                                            recentFilesRepository.addRecentFiles(newOrUpdatedItems)
-                                            dbFlushes++
-                                            scanDbFlushes++
-                                            newOrUpdatedItems.clear()
-                                        }
-
-                                    }
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Timber.tag("FolderSync").e(e, "Failed to query children for docId: $currentDocId")
-                    }
-
-                    if (stoppedForUnlinkedFolder) break
-                }
-
-                if (!stoppedForUnlinkedFolder && newOrUpdatedItems.isNotEmpty()) {
-                    recentFilesRepository.addRecentFiles(newOrUpdatedItems)
-                    dbFlushes++
-                    scanDbFlushes++
-                    newOrUpdatedItems.clear()
-                }
-
-                if (!isStopped && !stoppedForUnlinkedFolder) {
-                    val idsToRemove = existingItemsMap.keys.filter { it !in foundBookIds }
-
-                    if (idsToRemove.isNotEmpty()) {
-                        Timber.tag("FolderSync").i("Cleaning up ${idsToRemove.size} missing folder books.")
-                        recentFilesRepository.deleteFilePermanently(idsToRemove)
-                    }
-                }
-            }
-
-            if (!metadataOnly && !isStopped && !stoppedForUnlinkedFolder) {
-                val booksForAnnotationSync = ReaderPerfLog.measureSuspend(
+            val booksForAnnotationSync = if (metadataOnly) {
+                syncedItems
+            } else {
+                ReaderPerfLog.measureSuspend(
                     name = "FolderSync phase load-post-scan-db",
                     minLogMs = 25L
                 ) {
                     recentFilesRepository.getFilesBySourceFolder(folderUriString)
                 }
-                sidecarsImported += importAnnotationSidecarsForBooks(
-                    folderUri = folderUri,
-                    folderUriString = folderUriString,
-                    books = booksForAnnotationSync,
-                    phase = "post-scan"
-                )
             }
+            sidecarsImported += importAnnotationSidecarsForBooks(
+                folderUri = folderUri,
+                folderUriString = folderUriString,
+                books = booksForAnnotationSync,
+                phase = if (metadataOnly) "metadata-only" else "post-scan"
+            )
 
             val elapsed = ReaderPerfLog.elapsedMs(folderStart)
             ReaderPerfLog.i(
                 "FolderSync folder finished metadataOnly=$metadataOnly elapsed=${elapsed}ms " +
                     "dirs=$dirsScanned entries=$filesSeen supported=$supportedBooksSeen " +
-                    "new=$newBooks updated=$updatedBooks unchanged=$unchangedBooks " +
+                    "new=${syncResult.stats.newBooks} updated=${syncResult.stats.updatedBooks} " +
+                    "remoteUpdates=${syncResult.stats.remoteMetadataUpdates} unchanged=${syncResult.stats.unchangedBooks} " +
+                    "removed=${syncResult.stats.removedBooks} migrated=${syncResult.stats.migratedBooks} " +
                     "dbFlushes=$dbFlushes sidecarsImported=$sidecarsImported " +
                     "unlinkedAbort=$stoppedForUnlinkedFolder folder=$folderUriString"
             )
@@ -601,6 +430,294 @@ class FolderSyncWorker(
         return imported
     }
 
+    private data class AndroidFolderScanResult(
+        val files: List<SharedFolderScannedFile> = emptyList(),
+        val dirsScanned: Int = 0,
+        val filesSeen: Int = 0,
+        val stoppedForUnlinkedFolder: Boolean = false
+    )
+
+    private fun scanFolderFiles(
+        folderUri: android.net.Uri,
+        folderUriString: String,
+        allowedFileTypes: Set<FileType>
+    ): AndroidFolderScanResult {
+        Timber.tag("FolderSync").d("Phase 2: Scanning physical files using raw ContentResolver...")
+        val contentResolver = appContext.contentResolver
+        val rootDocId = DocumentsContract.getTreeDocumentId(folderUri)
+        val dirQueue = ArrayDeque<String>()
+        val scannedFiles = mutableListOf<SharedFolderScannedFile>()
+        var dirsScanned = 0
+        var filesSeen = 0
+        var stoppedForUnlinkedFolder = false
+        dirQueue.add(rootDocId)
+
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED
+        )
+
+        while (dirQueue.isNotEmpty()) {
+            if (isStopped) break
+            if (!isFolderStillLinked(folderUriString)) {
+                ReaderPerfLog.w("FolderSync folder abort: folder unlinked during scan folder=$folderUriString")
+                stoppedForUnlinkedFolder = true
+                break
+            }
+            val currentDocId = dirQueue.removeFirst()
+            dirsScanned++
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(folderUri, currentDocId)
+
+            try {
+                contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                    val nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    val mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                    val sizeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
+                    val modCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+
+                    while (cursor.moveToNext() && !isStopped && !stoppedForUnlinkedFolder) {
+                        val docId = cursor.getString(idCol)
+                        val name = cursor.getString(nameCol) ?: ""
+                        val mimeType = cursor.getString(mimeCol)
+                        filesSeen++
+
+                        if (filesSeen % 100 == 0 && !isFolderStillLinked(folderUriString)) {
+                            ReaderPerfLog.w("FolderSync folder abort: folder unlinked after entries=$filesSeen folder=$folderUriString")
+                            stoppedForUnlinkedFolder = true
+                            break
+                        }
+
+                        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            if (!name.startsWith(".") && name != LOCAL_FOLDER_SYNC_DATA_DIR) {
+                                dirQueue.add(docId)
+                            }
+                            continue
+                        }
+
+                        val type = getFileType(name, mimeType)
+                        if (
+                            type == null ||
+                            type !in allowedFileTypes ||
+                            !isLocalFolderSyncEligibleFile(name, mimeType) ||
+                            name.endsWith(".json") ||
+                            name.startsWith(".")
+                        ) {
+                            continue
+                        }
+
+                        val docUri = DocumentsContract.buildDocumentUriUsingTree(folderUri, docId)
+                        val relativePath = buildRelativePath(rootDocId, docId, name)
+                        scannedFiles += SharedFolderScannedFile(
+                            name = name,
+                            path = docUri.toString(),
+                            sourceFolder = folderUriString,
+                            relativePath = relativePath,
+                            type = type,
+                            size = if (!cursor.isNull(sizeCol)) cursor.getLong(sizeCol) else 0L,
+                            lastModified = if (!cursor.isNull(modCol)) cursor.getLong(modCol) else 0L
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.tag("FolderSync").e(e, "Failed to query children for docId: $currentDocId")
+            }
+
+            if (stoppedForUnlinkedFolder) break
+        }
+
+        return AndroidFolderScanResult(
+            files = scannedFiles,
+            dirsScanned = dirsScanned,
+            filesSeen = filesSeen,
+            stoppedForUnlinkedFolder = stoppedForUnlinkedFolder
+        )
+    }
+
+    private fun RecentFileItem.toFolderSyncSharedBookItem(): SharedBookItem {
+        return SharedBookItem(
+            id = bookId,
+            path = uriString,
+            type = type,
+            displayName = displayName,
+            timestamp = lastModifiedTimestamp,
+            coverImagePath = coverImagePath,
+            title = title,
+            author = author,
+            description = description,
+            originalTitle = originalTitle,
+            originalAuthor = originalAuthor,
+            originalSeriesName = originalSeriesName,
+            originalSeriesIndex = originalSeriesIndex,
+            originalDescription = originalDescription,
+            progressPercentage = progressPercentage,
+            isRecent = isRecent,
+            fileSize = fileSize,
+            fileContentModifiedTimestamp = fileContentModifiedTimestamp,
+            sourceFolder = sourceFolderUri,
+            folderTextMetadataParsed = folderTextMetadataParsed,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex,
+            lastPageIndex = lastPage,
+            readerPosition = readerPositionOrNull(),
+            readerBookmarks = parseReaderBookmarks(),
+            readerHighlights = EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
+        )
+    }
+
+    private fun SharedBookItem.toFolderSyncRecentFileItem(
+        existing: RecentFileItem?,
+        appliedMetadata: FolderBookMetadata?,
+        scannedFile: SharedFolderScannedFile?,
+        nowMillis: Long
+    ): RecentFileItem {
+        val contentChanged = existing != null && folderFileContentChanged(existing, this)
+        val localModifiedTimestamp = when {
+            appliedMetadata != null -> appliedMetadata.lastModifiedTimestamp
+            contentChanged && fileContentModifiedTimestamp > 0L -> fileContentModifiedTimestamp
+            timestamp > 0L -> timestamp
+            else -> nowMillis
+        }
+        val legacyPosition = readerPosition
+        val mappedBookmarksJson = readerBookmarks.toAndroidBookmarksJson(id)
+        val mappedHighlightsJson = readerHighlights
+            .takeIf { it.isNotEmpty() }
+            ?.let(EpubAnnotationSerializer::highlightsToJson)
+        val bookmarksJson = if (appliedMetadata != null || existing == null) {
+            mappedBookmarksJson ?: appliedMetadata?.bookmarksJson ?: existing?.bookmarksJson
+        } else {
+            existing.bookmarksJson
+        }
+        val highlightsJson = if (appliedMetadata != null || existing == null) {
+            mappedHighlightsJson ?: appliedMetadata?.highlightsJson ?: existing?.highlightsJson
+        } else {
+            existing.highlightsJson
+        }
+
+        return RecentFileItem(
+            bookId = id,
+            uriString = path,
+            type = type,
+            displayName = scannedFile?.name ?: existing?.displayName ?: displayName,
+            timestamp = when {
+                existing == null -> timestamp.takeIf { it > 0L } ?: localModifiedTimestamp
+                appliedMetadata?.isRecent == true -> appliedMetadata.lastModifiedTimestamp
+                else -> existing.timestamp
+            },
+            coverImagePath = coverImagePath,
+            title = title,
+            author = author,
+            lastChapterIndex = legacyPosition?.chapterIndex ?: appliedMetadata?.lastChapterIndex ?: existing?.lastChapterIndex,
+            lastPage = legacyPosition?.pageIndex ?: lastPageIndex ?: appliedMetadata?.lastPage ?: existing?.lastPage,
+            lastPositionCfi = legacyPosition?.cfi ?: appliedMetadata?.lastPositionCfi ?: existing?.lastPositionCfi,
+            locatorBlockIndex = appliedMetadata?.locatorBlockIndex ?: existing?.locatorBlockIndex,
+            locatorCharOffset = appliedMetadata?.locatorCharOffset ?: existing?.locatorCharOffset,
+            progressPercentage = progressPercentage,
+            isRecent = isRecent,
+            isAvailable = true,
+            lastModifiedTimestamp = localModifiedTimestamp,
+            isDeleted = false,
+            bookmarksJson = bookmarksJson,
+            sourceFolderUri = sourceFolder,
+            isReflowPreferred = existing?.isReflowPreferred ?: false,
+            customName = appliedMetadata?.customName ?: existing?.customName,
+            highlightsJson = highlightsJson,
+            fileSize = fileSize,
+            fileContentModifiedTimestamp = fileContentModifiedTimestamp,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex,
+            description = description,
+            originalTitle = originalTitle,
+            originalAuthor = originalAuthor,
+            originalSeriesName = originalSeriesName,
+            originalSeriesIndex = originalSeriesIndex,
+            originalDescription = originalDescription,
+            folderTextMetadataParsed = folderTextMetadataParsed,
+            folderCoverMetadataParsed = if (contentChanged) false else existing?.folderCoverMetadataParsed ?: false,
+            tags = existing?.tags.orEmpty()
+        )
+    }
+
+    private fun appliedMetadataFor(
+        book: SharedBookItem,
+        existing: RecentFileItem?,
+        metadata: FolderBookMetadata?
+    ): FolderBookMetadata? {
+        if (metadata == null) return null
+        val existingModified = existing?.lastModifiedTimestamp ?: Long.MIN_VALUE
+        return metadata.takeIf { existing == null || it.lastModifiedTimestamp > existingModified }
+    }
+
+    private fun RecentFileItem.readerPositionOrNull(): ReaderLocator? {
+        if (lastChapterIndex == null && lastPage == null && lastPositionCfi.isNullOrBlank()) return null
+        return ReaderLocator.fromLegacy(
+            chapterIndex = lastChapterIndex,
+            cfi = lastPositionCfi,
+            pageIndex = lastPage
+        )
+    }
+
+    private fun RecentFileItem.parseReaderBookmarks(): List<ReaderBookmark> {
+        return EpubAnnotationSerializer.parseBookmarksJson(bookmarksJson)
+            .mapIndexed { index, bookmark ->
+                val locator = bookmark.locator.withFallbacks(
+                    chapterIndex = bookmark.chapterIndex,
+                    cfi = bookmark.cfi,
+                    pageIndex = bookmark.pageInChapter?.minus(1),
+                    textQuote = bookmark.snippet
+                )
+                val pageIndex = locator.pageIndex ?: bookmark.pageInChapter?.minus(1) ?: 0
+                ReaderBookmark(
+                    id = "bookmark_${bookId}_$index",
+                    pageIndex = pageIndex.coerceAtLeast(0),
+                    chapterTitle = bookmark.chapterTitle,
+                    preview = bookmark.snippet,
+                    locator = locator
+                )
+            }
+    }
+
+    private fun List<ReaderBookmark>.toAndroidBookmarksJson(bookId: String): String? {
+        val bookmarks = mapIndexed { index, bookmark ->
+            val locator = bookmark.locator
+            val chapterIndex = locator.chapterIndex ?: 0
+            val cfi = locator.cfi ?: "android:$bookId:$index:${bookmark.pageIndex}"
+            EpubBookmark(
+                cfi = cfi,
+                chapterTitle = bookmark.chapterTitle,
+                label = null,
+                snippet = bookmark.preview,
+                pageInChapter = bookmark.pageIndex + 1,
+                totalPagesInChapter = null,
+                chapterIndex = chapterIndex,
+                locator = locator.withFallbacks(
+                    chapterIndex = chapterIndex,
+                    cfi = cfi,
+                    pageIndex = bookmark.pageIndex,
+                    textQuote = bookmark.preview
+                )
+            )
+        }
+        return bookmarks.takeIf { it.isNotEmpty() }?.let(EpubAnnotationSerializer::bookmarksToJson)
+    }
+
+    private fun folderFileContentChanged(previous: RecentFileItem, next: RecentFileItem): Boolean {
+        val sizeChanged = previous.fileSize > 0L && next.fileSize > 0L && previous.fileSize != next.fileSize
+        val modifiedChanged = next.fileContentModifiedTimestamp > 0L &&
+            previous.fileContentModifiedTimestamp != next.fileContentModifiedTimestamp
+        return sizeChanged || modifiedChanged
+    }
+
+    private fun folderFileContentChanged(previous: RecentFileItem, next: SharedBookItem): Boolean {
+        val sizeChanged = previous.fileSize > 0L && next.fileSize > 0L && previous.fileSize != next.fileSize
+        val modifiedChanged = next.fileContentModifiedTimestamp > 0L &&
+            previous.fileContentModifiedTimestamp != next.fileContentModifiedTimestamp
+        return sizeChanged || modifiedChanged
+    }
+
     private fun isFolderStillLinked(folderUriString: String): Boolean {
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
         val jsonString = prefs.getString("synced_folders_list_json", null)
@@ -621,11 +738,6 @@ class FolderSyncWorker(
         return resolveFileTypeFromMetadata(name, mimeType)
     }
 
-    private fun buildStableBookId(name: String, rootDocId: String, docId: String): String {
-        val relativePath = buildRelativePath(rootDocId, docId, name)
-        return com.aryan.reader.shared.LocalFolderSyncEngine.buildStableBookId(name, relativePath)
-    }
-
     private fun buildRelativePath(rootDocId: String, docId: String, fallbackName: String): String {
         val rootPath = rootDocId.substringAfter(':', "")
         val docPath = docId.substringAfter(':', "")
@@ -636,16 +748,6 @@ class FolderSyncWorker(
             docPath.substringAfterLast('/', fallbackName)
         }
         return relative.ifBlank { fallbackName }
-    }
-
-    private fun computeStableIdForStoredItem(item: RecentFileItem, rootDocId: String): String? {
-        val uriString = item.uriString ?: return null
-        return try {
-            val docId = DocumentsContract.getDocumentId(uriString.toUri())
-            buildStableBookId(item.displayName, rootDocId, docId)
-        } catch (_: Exception) {
-            null
-        }
     }
 
     private suspend fun migrateFolderBookId(

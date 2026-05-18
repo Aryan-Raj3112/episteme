@@ -179,6 +179,43 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `sync resolves legacy root id collision before migrating subfolder book`() {
+        val oldId = "local_Book.pdf"
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(
+                book(
+                    id = oldId,
+                    path = "C:/Library/Series/Book.pdf",
+                    displayName = "Book.pdf",
+                    sourceFolder = "C:/Library"
+                )
+            ),
+            selectedBookIds = setOf(oldId)
+        )
+
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = state,
+            folder = syncedFolder(),
+            files = listOf(
+                scannedFile("Book.pdf", "Book.pdf"),
+                scannedFile("Book.pdf", "Series/Book.pdf")
+            ),
+            remoteMetadata = emptyMap(),
+            nowMillis = 1_000L
+        )
+        val migratedId = "local_Book.pdf_488206341973"
+
+        assertEquals(
+            listOf("local_Book.pdf", migratedId),
+            result.state.rawLibraryBooks.map { it.id }.sorted()
+        )
+        assertEquals(setOf(migratedId), result.state.selectedBookIds)
+        assertEquals(mapOf(oldId to migratedId), result.idMigrations)
+        assertEquals(1, result.stats.newBooks)
+        assertEquals(1, result.stats.migratedBooks)
+    }
+
+    @Test
     fun `sync removes missing books from linked folder only`() {
         val missing = book(id = "local_Missing.pdf", path = "C:/Library/Missing.pdf")
         val keptExternal = book(
