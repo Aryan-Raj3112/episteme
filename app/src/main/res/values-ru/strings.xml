@@ -807,7 +807,7 @@
     <string name="ai_generate_story_recap">Сгенерировать пересказ сюжета</string>
     <string name="ai_story_recap">Пересказ сюжета</string>
     <string name="ai_cache_hit_free">Загружено из кэша (Бесплатно)</string>
-    <string name="ai_generated_free_remaining">Сгенерировано • Бесплатно (1%$d/10)</string>
+    <string name="ai_generated_free_remaining">Сгенерировано • Бесплатно (%1$d/10)</string>
     <string name="ai_generated_cost">Сгенерировано • Стоимость: %1$s кредитов</string>
     <string name="ai_generating_cost_calculating">Расчет стоимости...</string>
     <string name="ai_output_title">Результат ИИ</string>
@@ -816,7 +816,7 @@
     <string name="credits_tab">Кредиты</string>
     <string name="credits_title">Баланс кредитов</string>
     <string name="credits_available">Доступно кредитов</string>
-    <string name="credits_count">%1$ кредитов</string>
+    <string name="credits_count">%1$d кредитов</string>
     <string name="credits_estimated_cost_breakdown">Примерный расчет стоимости</string>
     <string name="credits_cloud_tts_title">Облачный синтез речи (TTS)</string>
     <string name="credits_cloud_tts_desc">Стоимость: ~3-4 кредита за минуту сгенерированного аудио.\n\nЧтобы включить : Читатель экрана&gt; Дополнительно &gt; Настройки голоса TTS.</string>

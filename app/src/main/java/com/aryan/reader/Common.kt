@@ -3836,11 +3836,11 @@ fun AiResultContentView(
                             stringResource(R.string.ai_cache_hit_free)
                         } else if (cost != null) {
                             if (isFreeGeneratedResult) {
-                                stringResource(R.string.ai_generated_free_remaining,
+                                safeStringResource(R.string.ai_generated_free_remaining,
                                     freeRemaining
                                 )
                             } else {
-                                stringResource(R.string.ai_generated_cost, cost.toString())
+                                safeStringResource(R.string.ai_generated_cost, cost.toString())
                             }
                         } else {
                             stringResource(R.string.ai_generating_cost_calculating)
