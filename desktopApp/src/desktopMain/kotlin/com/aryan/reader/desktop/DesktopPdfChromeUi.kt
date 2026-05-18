@@ -63,6 +63,9 @@ import kotlinx.coroutines.delay
 internal fun DesktopPdfFullscreenBottomChrome(
     pageIndex: Int,
     pageCount: Int,
+    pageLabel: String = "Page ${pageIndex + 1} of $pageCount",
+    canGoPrevious: Boolean = pageIndex > 0,
+    canGoNext: Boolean = pageIndex < pageCount - 1,
     showJumpHistory: Boolean,
     jumpBackPage: Int?,
     jumpForwardPage: Int?,
@@ -109,8 +112,6 @@ internal fun DesktopPdfFullscreenBottomChrome(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val canGoPrevious = pageIndex > 0
-                val canGoNext = pageIndex < pageCount - 1
                 IconButton(onClick = onPrevious, enabled = canGoPrevious) {
                     Icon(
                         Icons.AutoMirrored.Filled.NavigateBefore,
@@ -118,6 +119,11 @@ internal fun DesktopPdfFullscreenBottomChrome(
                         tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
                     )
                 }
+                Text(
+                    pageLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = chromeContent.copy(alpha = 0.72f)
+                )
                 ReaderMinimalSlider(
                     value = pageIndex.toFloat(),
                     onValueChange = onPageScrub,
@@ -145,6 +151,7 @@ internal fun DesktopPdfFullscreenBottomChrome(
 internal fun DesktopPdfBottomChrome(
     pageIndex: Int,
     pageCount: Int,
+    pageLabel: String = "Page ${pageIndex + 1} of $pageCount",
     progressPercent: Float,
     canGoPrevious: Boolean,
     canGoNext: Boolean,
@@ -199,7 +206,7 @@ internal fun DesktopPdfBottomChrome(
                     )
                 }
                 Text(
-                    "Page ${pageIndex + 1} of $pageCount",
+                    pageLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = chromeContent.copy(alpha = 0.72f)
                 )

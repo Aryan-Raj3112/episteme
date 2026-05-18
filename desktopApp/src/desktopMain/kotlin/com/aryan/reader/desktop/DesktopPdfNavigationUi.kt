@@ -762,7 +762,8 @@ internal fun DesktopPdfThumbnailTile(
 @Composable
 internal fun DesktopPdfPageScrubOverlay(
     pageIndex: Int?,
-    pageCount: Int
+    pageCount: Int,
+    pageLabel: String? = pageIndex?.let { "Page ${it + 1} of $pageCount" }
 ) {
     if (pageIndex == null || pageCount <= 0) return
     Box(
@@ -776,7 +777,7 @@ internal fun DesktopPdfPageScrubOverlay(
             shadowElevation = 8.dp
         ) {
             Text(
-                text = "Page ${pageIndex + 1} of $pageCount",
+                text = pageLabel ?: "Page ${pageIndex + 1} of $pageCount",
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)

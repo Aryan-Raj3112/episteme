@@ -47,12 +47,14 @@ import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.currentSharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.updateCurrentSharedPdfTextStyle
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
@@ -308,12 +310,55 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                     label = { Text("Scroll") }
                                 )
                             }
+                            if (displayMode == PdfDisplayMode.PAGINATION) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    FilterChip(
+                                        selected = pdfReaderSettings.pageSpreadMode == ReaderPageSpreadMode.SINGLE,
+                                        onClick = {
+                                            onReaderSettingsChange(
+                                                pdfReaderSettings.copy(pageSpreadMode = ReaderPageSpreadMode.SINGLE)
+                                            )
+                                        },
+                                        label = { Text("Single page") }
+                                    )
+                                    FilterChip(
+                                        selected = pdfReaderSettings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE,
+                                        onClick = {
+                                            onReaderSettingsChange(
+                                                pdfReaderSettings.copy(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+                                            )
+                                        },
+                                        label = { Text("Two pages") }
+                                    )
+                                }
+                                if (pdfReaderSettings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE) {
+                                    DesktopPdfVisualOptionSwitch(
+                                        title = "First page alone",
+                                        description = "Starts facing-page spreads after the cover page.",
+                                        checked = pdfReaderSettings.pdfFirstPageStandaloneInSpread,
+                                        onCheckedChange = { enabled ->
+                                            onReaderSettingsChange(
+                                                pdfReaderSettings.copy(pdfFirstPageStandaloneInSpread = enabled)
+                                            )
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                     item {
                         DesktopPdfInspectorSection("Position") {
+                            val pageRange = if (displayMode == PdfDisplayMode.PAGINATION) {
+                                PdfSpreadLayout.pageRangeLabel(pageIndex, document.pageCount, pdfReaderSettings)
+                            } else {
+                                "${pageIndex + 1}"
+                            }
                             Text(
-                                "Page ${pageIndex + 1} of ${document.pageCount}",
+                                if ('-' in pageRange) {
+                                    "Pages $pageRange of ${document.pageCount}"
+                                } else {
+                                    "Page $pageRange of ${document.pageCount}"
+                                },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             if (document.pageCount > 1) {

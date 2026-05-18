@@ -76,6 +76,7 @@ class SharedLibrarySnapshotJsonTest {
                         pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
                         pdfVerticalPageGapVisible = false,
                         pdfPageNumberOverlayVisible = false,
+                        pdfFirstPageStandaloneInSpread = true,
                         seamlessChapterNavigation = false,
                         chapterTurnDragMultiplier = 1.6f
                     ),
