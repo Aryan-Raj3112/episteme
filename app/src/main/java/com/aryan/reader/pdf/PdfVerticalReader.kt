@@ -116,6 +116,7 @@ import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.shared.pdf.calculatePdfVerticalPageLayoutPx
 import com.aryan.reader.shared.pdf.pdfVerticalPageGapDp
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -128,6 +129,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val SCROLL_BOUNDS_TAG = "PdfScrollBounds"
+private const val VERTICAL_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 
 @Stable
 class VerticalPdfReaderState {
@@ -374,6 +376,22 @@ internal fun PdfVerticalReader(
         var isFastFlinging by remember { mutableStateOf(false) }
         var isInteracting by remember { mutableStateOf(false) }
         var isDragging by remember { mutableStateOf(false) }
+        var isTileRenderIdleCooldownActive by remember { mutableStateOf(false) }
+
+        LaunchedEffect(isInteracting, isFlinging) {
+            if (isInteracting || isFlinging) {
+                if (!isTileRenderIdleCooldownActive) {
+                    PdfVerticalPerfLog.d("tile-render-cooldown active=true reason=busy")
+                }
+                isTileRenderIdleCooldownActive = true
+            } else if (isTileRenderIdleCooldownActive) {
+                delay(VERTICAL_TILE_RENDER_IDLE_COOLDOWN_MS)
+                PdfVerticalPerfLog.d(
+                    "tile-render-cooldown active=false idleFor=${VERTICAL_TILE_RENDER_IDLE_COOLDOWN_MS}ms"
+                )
+                isTileRenderIdleCooldownActive = false
+            }
+        }
 
         val layoutState = remember(ratios, constraints.maxWidth, constraints.maxHeight, density, showPageGap, dividerHeightPxInt) {
             data class LayoutResult(val pages: List<PdfPageLayout>, val totalHeight: Float)
@@ -417,9 +435,40 @@ internal fun PdfVerticalReader(
             }
         }
 
+        LaunchedEffect(layoutInfo, totalDocHeight, screenWidth, screenHeight, fitZoom, headerHeightPx, footerHeightPx) {
+            PdfVerticalPerfLog.i(
+                "layout-ready pages=${layoutInfo.size} totalH=${PdfVerticalPerfLog.f(totalDocHeight)} " +
+                    "screen=${PdfVerticalPerfLog.xy(screenWidth, screenHeight)} chrome=${PdfVerticalPerfLog.xy(headerHeightPx, footerHeightPx)} " +
+                    "fitZoom=${PdfVerticalPerfLog.f(fitZoom)} firstPageH=${PdfVerticalPerfLog.f(layoutInfo.firstOrNull()?.height ?: 0f)}"
+            )
+        }
+
         val zoomAnimatable = remember { Animatable(fitZoom) }
         val panXAnimatable = remember { Animatable(if ((screenWidth * fitZoom) < screenWidth) (screenWidth - (screenWidth * fitZoom)) / 2f else 0f) }
         val panYAnimatable = remember { Animatable(0f) }
+        val dragCameraUpdates = remember {
+            Channel<Triple<Float, Float, Float>>(Channel.CONFLATED)
+        }
+
+        DisposableEffect(dragCameraUpdates) {
+            onDispose {
+                dragCameraUpdates.close()
+            }
+        }
+
+        LaunchedEffect(dragCameraUpdates) {
+            for ((targetZoom, targetPanX, targetPanY) in dragCameraUpdates) {
+                if (zoomAnimatable.value != targetZoom) {
+                    zoomAnimatable.snapTo(targetZoom)
+                }
+                if (panXAnimatable.value != targetPanX) {
+                    panXAnimatable.snapTo(targetPanX)
+                }
+                if (panYAnimatable.value != targetPanY) {
+                    panYAnimatable.snapTo(targetPanY)
+                }
+            }
+        }
 
         LaunchedEffect(zoomAnimatable.value, panXAnimatable.value, panYAnimatable.value) {
             onZoomAndPanChanged?.invoke(zoomAnimatable.value, Offset(panXAnimatable.value, panYAnimatable.value))
@@ -864,16 +913,28 @@ internal fun PdfVerticalReader(
 
         LaunchedEffect(isInteracting) {
             Timber.tag("PdfTouchDebug").i("VerticalReader: isInteracting changed to $isInteracting")
+            PdfVerticalPerfLog.i(
+                "interaction-state interacting=$isInteracting dragging=$isDragging flinging=$isFlinging " +
+                    "zoom=${PdfVerticalPerfLog.f(zoomAnimatable.value)} pan=${PdfVerticalPerfLog.xy(panXAnimatable.value, panYAnimatable.value)}"
+            )
         }
 
         LaunchedEffect(highResScale) {
             Timber.tag("PdfPerformance").i("VerticalReader HighResScale changed to: $highResScale")
+            PdfVerticalPerfLog.i(
+                "high-res-scale scale=${PdfVerticalPerfLog.f(highResScale)} zoom=${PdfVerticalPerfLog.f(zoomAnimatable.value)} " +
+                    "interacting=$isInteracting flinging=$isFlinging fastFlinging=$isFastFlinging"
+            )
         }
 
         LaunchedEffect(Unit) {
-            snapshotFlow { isInteracting || (isFlinging && isFastFlinging) }.collectLatest { isBusy ->
+            snapshotFlow { isInteracting || isFlinging }.collectLatest { isBusy ->
                 Timber.tag("PdfDrawPerf").d(
                     "VerticalReader Interaction State: isBusy=$isBusy (Interacting=$isInteracting, Flinging=$isFlinging, Fast=$isFastFlinging)"
+                )
+                PdfVerticalPerfLog.d(
+                    "render-resolution-gate busy=$isBusy interacting=$isInteracting flinging=$isFlinging " +
+                        "fastFlinging=$isFastFlinging highRes=${PdfVerticalPerfLog.f(highResScale)} zoom=${PdfVerticalPerfLog.f(zoomAnimatable.value)}"
                 )
 
                 if (!isBusy) {
@@ -881,6 +942,10 @@ internal fun PdfVerticalReader(
                     val target = zoomAnimatable.value
                     if (highResScale != target) {
                         Timber.tag("PdfDrawPerf").v("VerticalReader: Updating highResScale to $target")
+                        PdfVerticalPerfLog.i(
+                            "high-res-scale-update from=${PdfVerticalPerfLog.f(highResScale)} to=${PdfVerticalPerfLog.f(target)} " +
+                                "pan=${PdfVerticalPerfLog.xy(panXAnimatable.value, panYAnimatable.value)}"
+                        )
                         highResScale = target
                     }
                 }
@@ -893,7 +958,7 @@ internal fun PdfVerticalReader(
         }
 
         LaunchedEffect(zoomAnimatable.value) {
-            if (!isInteracting && !(isFlinging && isFastFlinging)) {
+            if (!isInteracting && !isFlinging) {
                 if (highResScale != zoomAnimatable.value) {
                     highResScale = zoomAnimatable.value
                 }
@@ -1226,6 +1291,19 @@ internal fun PdfVerticalReader(
                         val down = awaitFirstDown(requireUnconsumed = false)
                         isInteracting = true
                         isDragging = false
+                        val gestureStartNanos = PdfVerticalPerfLog.nowNanos()
+                        var gestureLastSampleMs = System.currentTimeMillis()
+                        var gestureEventCount = 0
+                        var gestureConsumedEventCount = 0
+                        var gestureCanceledEventCount = 0
+                        var gestureZoomEventCount = 0
+                        var gestureMaxPanDelta = 0f
+                        PdfVerticalPerfLog.i(
+                            "gesture-start type=${down.type} scrollLocked=$isScrollLocked edit=$isEditMode tool=$selectedTool " +
+                                "zoom=${PdfVerticalPerfLog.f(zoomAnimatable.value)} highRes=${PdfVerticalPerfLog.f(highResScale)} " +
+                                "pan=${PdfVerticalPerfLog.xy(panXAnimatable.value, panYAnimatable.value)} currentPage=${state.currentPage} " +
+                                "visible=${state.firstVisiblePage}-${state.lastVisiblePage}"
+                        )
 
                         Timber.tag("PointerTypeDebug").d("VerticalReader: Input Type detected: ${down.type}")
 
@@ -1282,10 +1360,12 @@ internal fun PdfVerticalReader(
 
                         do {
                             val event = awaitPointerEvent()
+                            gestureEventCount++
                             val isMultiTouch = event.changes.size > 1
                             val canceled = event.changes.any { it.isConsumed } && !isMultiTouch
 
                             if (canceled) {
+                                gestureCanceledEventCount++
                                 Timber.tag("PdfTouchDebug").v(
                                     "VerticalReader: Event Canceled (Child consumed?)."
                                 )
@@ -1311,7 +1391,11 @@ internal fun PdfVerticalReader(
                                 )
 
                                 totalPanDistance += panMagnitude
+                                gestureMaxPanDelta = max(gestureMaxPanDelta, panMagnitude)
                                 gestureZoomAccumulator *= zoomChange
+                                if (abs(zoomChange - 1f) > 0.001f) {
+                                    gestureZoomEventCount++
+                                }
 
                                 val isZoomPastSlop = abs(gestureZoomAccumulator - 1f) > 0.05f
                                 val isPanPastSlop = totalPanDistance > touchSlop
@@ -1379,14 +1463,28 @@ internal fun PdfVerticalReader(
                                             onZoomChange(accumulatedZoom)
                                         }
 
-                                        scope.launch {
-                                            zoomAnimatable.snapTo(accumulatedZoom)
-                                            panXAnimatable.snapTo(accumulatedPanX)
-                                            panYAnimatable.snapTo(accumulatedPanY)
-                                        }
+                                        dragCameraUpdates.trySend(
+                                            Triple(accumulatedZoom, accumulatedPanX, accumulatedPanY)
+                                        )
 
+                                        val consumedChanges = event.changes.count { it.positionChanged() }
                                         event.changes.forEach {
                                             if (it.positionChanged()) it.consume()
+                                        }
+                                        if (consumedChanges > 0) {
+                                            gestureConsumedEventCount++
+                                        }
+
+                                        val nowMs = System.currentTimeMillis()
+                                        if (nowMs - gestureLastSampleMs >= PdfVerticalPerfLog.SAMPLE_INTERVAL_MS) {
+                                            gestureLastSampleMs = nowMs
+                                            PdfVerticalPerfLog.d(
+                                                "gesture-drag-sample events=$gestureEventCount consumed=$gestureConsumedEventCount " +
+                                                    "mode=$gestureDisambiguationMode multi=$isMultiTouch panDelta=${PdfVerticalPerfLog.f(panMagnitude)} " +
+                                                    "totalPan=${PdfVerticalPerfLog.f(totalPanDistance)} zoomChange=${PdfVerticalPerfLog.f(zoomChange)} " +
+                                                    "zoom=${PdfVerticalPerfLog.f(accumulatedZoom)} pan=${PdfVerticalPerfLog.xy(accumulatedPanX, accumulatedPanY)} " +
+                                                    "highRes=${PdfVerticalPerfLog.f(highResScale)}"
+                                            )
                                         }
 
                                         if (event.changes.isNotEmpty()) {
@@ -1405,75 +1503,102 @@ internal fun PdfVerticalReader(
                         }
                         isDragging = false
 
-                        val validFlingCondition = panLocked
+                        val gestureDurationMs = PdfVerticalPerfLog.elapsedMs(gestureStartNanos)
 
-                        if (validFlingCondition) {
+                        if (panLocked) {
                             val velocity = tracker.calculateVelocity()
                             val flingSensitivity = 2.0f
                             val minFlingVelocity = 250f
                             val (finalZoom, finalX, finalY) = clampCamera(
                                 accumulatedZoom, accumulatedPanX, accumulatedPanY
                             )
+                            val zoomedDocWidth = screenWidth * finalZoom
+                            val zoomedDocHeight = totalDocHeight * finalZoom
 
-                            scope.launch {
-                                isFlinging = true
-                                try {
-                                    if (accumulatedZoom !in fitZoom..5f) {
-                                        zoomAnimatable.animateTo(
-                                            finalZoom, animationSpec = tween(300)
-                                        )
-                                    }
-                                    onZoomChange(zoomAnimatable.targetValue)
-                                    val zoomedDocWidth = screenWidth * finalZoom
-                                    val zoomedDocHeight = totalDocHeight * finalZoom
-
-                                    val flingMinX: Float
-                                    val flingMaxX: Float
-                                    if (zoomedDocWidth < screenWidth) {
-                                        val centeredX = (screenWidth - zoomedDocWidth) / 2f
-                                        flingMinX = centeredX
-                                        flingMaxX = centeredX
-                                    } else {
-                                        flingMinX = -(zoomedDocWidth - screenWidth)
-                                        flingMaxX = 0f
-                                    }
-
-                                    val minPanY =
-                                        (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(
-                                            headerHeightPx
-                                        )
-                                    Timber.tag(SCROLL_BOUNDS_TAG).i("Fling Logic:")
-                                    Timber.tag(SCROLL_BOUNDS_TAG)
-                                        .d("- totalDocHeight: $totalDocHeight, zoom: $finalZoom -> zoomedDocHeight: $zoomedDocHeight")
-                                    Timber.tag(SCROLL_BOUNDS_TAG)
-                                        .d("- Fling bounds set to Y:[$minPanY, $headerHeightPx]")
-                                    panXAnimatable.updateBounds(flingMinX, flingMaxX)
-                                    panYAnimatable.updateBounds(minPanY, headerHeightPx)
-
-                                    coroutineScope {
-                                        launch {
-                                            val rawX = velocity.x * flingSensitivity
-                                            val flingX = if (abs(rawX) > minFlingVelocity && !isScrollLocked) rawX
-                                            else 0f
-
-                                            if (flingX != 0f) panXAnimatable.animateDecay(
-                                                flingX, decay
-                                            )
-                                        }
-                                        launch {
-                                            val rawY = velocity.y * flingSensitivity
-                                            val flingY = if (abs(rawY) > minFlingVelocity) rawY
-                                            else 0f
-
-                                            if (flingY != 0f) panYAnimatable.animateDecay(
-                                                flingY, decay
-                                            )
-                                        }
-                                    }
-                                } finally {
-                                    isFlinging = false
-                                }
+                            val flingMinX: Float
+                            val flingMaxX: Float
+                            if (zoomedDocWidth < screenWidth) {
+                                val centeredX = (screenWidth - zoomedDocWidth) / 2f
+                                flingMinX = centeredX
+                                flingMaxX = centeredX
+                            } else {
+                                flingMinX = -(zoomedDocWidth - screenWidth)
+                                flingMaxX = 0f
                             }
+
+                            val minPanY =
+                                (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(
+                                    headerHeightPx
+                                )
+                            val rawX = velocity.x * flingSensitivity
+                            val rawY = velocity.y * flingSensitivity
+                            val flingX = if (abs(rawX) > minFlingVelocity && !isScrollLocked) rawX else 0f
+                            val flingY = if (abs(rawY) > minFlingVelocity) rawY else 0f
+                            val shouldRunFling = flingX != 0f || flingY != 0f || accumulatedZoom !in fitZoom..5f
+                            PdfVerticalPerfLog.i(
+                                "gesture-end duration=${gestureDurationMs}ms events=$gestureEventCount consumed=$gestureConsumedEventCount " +
+                                    "canceled=$gestureCanceledEventCount zoomEvents=$gestureZoomEventCount maxPanDelta=${PdfVerticalPerfLog.f(gestureMaxPanDelta)} " +
+                                    "totalPan=${PdfVerticalPerfLog.f(totalPanDistance)} mode=$gestureDisambiguationMode panLocked=$panLocked shouldRunFling=$shouldRunFling " +
+                                    "velocity=${PdfVerticalPerfLog.xy(velocity.x, velocity.y)} fling=${PdfVerticalPerfLog.xy(flingX, flingY)} " +
+                                    "zoom=${PdfVerticalPerfLog.f(finalZoom)} pan=${PdfVerticalPerfLog.xy(finalX, finalY)}"
+                            )
+
+                            if (shouldRunFling) {
+                                scope.launch {
+                                    isFlinging = true
+                                    val flingStartNanos = PdfVerticalPerfLog.nowNanos()
+                                    PdfVerticalPerfLog.i(
+                                        "fling-start fling=${PdfVerticalPerfLog.xy(flingX, flingY)} " +
+                                            "boundsX=${PdfVerticalPerfLog.xy(flingMinX, flingMaxX)} boundsY=${PdfVerticalPerfLog.xy(minPanY, headerHeightPx)} " +
+                                            "zoomedDocH=${PdfVerticalPerfLog.f(zoomedDocHeight)} highRes=${PdfVerticalPerfLog.f(highResScale)}"
+                                    )
+                                    try {
+                                        if (accumulatedZoom !in fitZoom..5f) {
+                                            zoomAnimatable.animateTo(
+                                                finalZoom, animationSpec = tween(300)
+                                            )
+                                        }
+                                        onZoomChange(zoomAnimatable.targetValue)
+                                        Timber.tag(SCROLL_BOUNDS_TAG).i("Fling Logic:")
+                                        Timber.tag(SCROLL_BOUNDS_TAG)
+                                            .d("- totalDocHeight: $totalDocHeight, zoom: $finalZoom -> zoomedDocHeight: $zoomedDocHeight")
+                                        Timber.tag(SCROLL_BOUNDS_TAG)
+                                            .d("- Fling bounds set to Y:[$minPanY, $headerHeightPx]")
+                                        panXAnimatable.updateBounds(flingMinX, flingMaxX)
+                                        panYAnimatable.updateBounds(minPanY, headerHeightPx)
+
+                                        coroutineScope {
+                                            launch {
+                                                if (flingX != 0f) panXAnimatable.animateDecay(
+                                                    flingX, decay
+                                                )
+                                            }
+                                            launch {
+                                                if (flingY != 0f) panYAnimatable.animateDecay(
+                                                    flingY, decay
+                                                )
+                                            }
+                                        }
+                                    } finally {
+                                        PdfVerticalPerfLog.i(
+                                            "fling-end duration=${PdfVerticalPerfLog.elapsedMs(flingStartNanos)}ms " +
+                                                "zoom=${PdfVerticalPerfLog.f(zoomAnimatable.value)} pan=${PdfVerticalPerfLog.xy(panXAnimatable.value, panYAnimatable.value)} " +
+                                                "velocity=${PdfVerticalPerfLog.xy(panXAnimatable.velocity, panYAnimatable.velocity)}"
+                                        )
+                                        isFlinging = false
+                                    }
+                                }
+                            } else {
+                                panXAnimatable.updateBounds(flingMinX, flingMaxX)
+                                panYAnimatable.updateBounds(minPanY, headerHeightPx)
+                            }
+                        } else {
+                            PdfVerticalPerfLog.i(
+                                "gesture-end duration=${gestureDurationMs}ms events=$gestureEventCount consumed=$gestureConsumedEventCount " +
+                                    "canceled=$gestureCanceledEventCount zoomEvents=$gestureZoomEventCount maxPanDelta=${PdfVerticalPerfLog.f(gestureMaxPanDelta)} " +
+                                    "totalPan=${PdfVerticalPerfLog.f(totalPanDistance)} mode=$gestureDisambiguationMode panLocked=false no-fling " +
+                                    "zoom=${PdfVerticalPerfLog.f(accumulatedZoom)} pan=${PdfVerticalPerfLog.xy(accumulatedPanX, accumulatedPanY)}"
+                            )
                         }
                     }
                 }) {
@@ -1543,6 +1668,11 @@ internal fun PdfVerticalReader(
                         Timber.tag("PdfDrawPerf").d(
                             "Vertical Visible Pages Changed: ${finalPages.map { it.index }} (Dragging: ${draggedBox != null})"
                         )
+                        PdfVerticalPerfLog.d(
+                            "visible-pages pages=${finalPages.map { it.index }} base=${baseVisiblePages.map { it.index }} " +
+                                "draggingBox=${draggedBox != null} zoom=${PdfVerticalPerfLog.f(zoom)} panY=${PdfVerticalPerfLog.f(panY)} " +
+                                "viewport=${PdfVerticalPerfLog.xy(viewportTop, viewportBottom)} buffered=${PdfVerticalPerfLog.xy(searchTop, searchBottom)}"
+                        )
                         finalPages
                     } else {
                         cached
@@ -1569,6 +1699,10 @@ internal fun PdfVerticalReader(
 
                         if (mostVisible != null && mostVisible.index != state.currentPage) {
                             Timber.tag("PdfPositionDebug").v("VerticalReader: Page changed to ${mostVisible.index} (PanY: $panY)")
+                            PdfVerticalPerfLog.d(
+                                "current-page-change from=${state.currentPage} to=${mostVisible.index} " +
+                                    "viewport=${PdfVerticalPerfLog.xy(realViewportTop, realViewportBottom)} panY=${PdfVerticalPerfLog.f(panY)} zoom=${PdfVerticalPerfLog.f(zoom)}"
+                            )
                             state.currentPage = mostVisible.index
                         }
                     }
@@ -1792,7 +1926,10 @@ internal fun PdfVerticalReader(
                                     onOcrStateChange = onOcrStateChange,
                                     onBookmarkClick = { onBookmarkClick(page.index) },
                                     isZoomEnabled = false,
-                                    isScrolling = isDragging || (isFlinging && isFastFlinging),
+                                    isScrolling = isInteracting ||
+                                        isDragging ||
+                                        isFlinging ||
+                                        isTileRenderIdleCooldownActive,
                                     isVerticalScroll = true,
                                     showPageNumberOverlay = showPageNumberOverlay,
                                     isScrollLocked = isScrollLocked,
@@ -1992,6 +2129,11 @@ internal fun PdfVerticalReader(
                 if (layoutTime > 2f) {
                     Timber.tag("PdfPerformance").d(
                         "VerticalReader Layout Measure/Place took ${layoutTime}ms for ${measurables.size} items"
+                    )
+                    PdfVerticalPerfLog.d(
+                        "compose-layout-slow duration=${PdfVerticalPerfLog.f(layoutTime)}ms items=${measurables.size} " +
+                            "visible=${visiblePages.map { it.index }} zoom=${PdfVerticalPerfLog.f(zoomAnimatable.value)} " +
+                            "pan=${PdfVerticalPerfLog.xy(panXAnimatable.value, panYAnimatable.value)}"
                     )
                 }
                 measureResult
