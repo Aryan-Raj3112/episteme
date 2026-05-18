@@ -30,10 +30,16 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.IconCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.CommandButton
+import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aryan.reader.R
@@ -61,6 +67,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.google.common.collect.ImmutableList
 
 data class WordTimingInfo(val word: String, val startTime: Double)
 
@@ -242,6 +249,227 @@ private const val TTS_FOREGROUND_CHANNEL_ID = "tts_playback"
 // Keep this aligned with Media3's default notification ID so playback updates replace the fallback.
 private const val TTS_FOREGROUND_NOTIFICATION_ID = 1001
 private const val TTS_FOREGROUND_IDLE_GRACE_MS = 15_000L
+private const val ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK = "com.aryan.reader.tts.NOTIFICATION_PREVIOUS_CHUNK"
+private const val ACTION_TTS_NOTIFICATION_NEXT_CHUNK = "com.aryan.reader.tts.NOTIFICATION_NEXT_CHUNK"
+private const val TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE = 4208
+private const val TTS_NOTIFICATION_NEXT_REQUEST_CODE = 4209
+
+@UnstableApi
+private class TtsMediaNotificationProvider(
+    context: android.content.Context
+) : DefaultMediaNotificationProvider(
+    context,
+    { _ -> TTS_FOREGROUND_NOTIFICATION_ID },
+    TTS_FOREGROUND_CHANNEL_ID,
+    R.string.tts_notification_channel_name
+) {
+    private val appContext = context.applicationContext
+
+    override fun addNotificationActions(
+        mediaSession: MediaSession,
+        mediaButtons: ImmutableList<CommandButton>,
+        builder: NotificationCompat.Builder,
+        actionFactory: MediaNotification.ActionFactory
+    ): IntArray {
+        return super.addNotificationActions(
+            mediaSession,
+            mediaButtons,
+            builder,
+            TtsNotificationActionFactory(appContext, actionFactory)
+        )
+    }
+}
+
+@UnstableApi
+private class TtsNotificationActionFactory(
+    private val context: android.content.Context,
+    private val delegate: MediaNotification.ActionFactory
+) : MediaNotification.ActionFactory {
+    override fun createMediaAction(
+        mediaSession: MediaSession,
+        icon: IconCompat,
+        title: CharSequence,
+        command: Int
+    ): NotificationCompat.Action {
+        return when (command) {
+            Player.COMMAND_SEEK_TO_PREVIOUS,
+            Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> createChunkSkipAction(
+                iconResId = R.drawable.skip_previous,
+                title = title,
+                action = ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK,
+                requestCode = TTS_NOTIFICATION_PREVIOUS_REQUEST_CODE
+            )
+            Player.COMMAND_SEEK_TO_NEXT,
+            Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> createChunkSkipAction(
+                iconResId = R.drawable.skip_next,
+                title = title,
+                action = ACTION_TTS_NOTIFICATION_NEXT_CHUNK,
+                requestCode = TTS_NOTIFICATION_NEXT_REQUEST_CODE
+            )
+            else -> delegate.createMediaAction(mediaSession, icon, title, command)
+        }
+    }
+
+    override fun createCustomAction(
+        mediaSession: MediaSession,
+        icon: IconCompat,
+        title: CharSequence,
+        customAction: String,
+        extras: android.os.Bundle
+    ): NotificationCompat.Action {
+        return delegate.createCustomAction(mediaSession, icon, title, customAction, extras)
+    }
+
+    override fun createCustomActionFromCustomCommandButton(
+        mediaSession: MediaSession,
+        customCommandButton: CommandButton
+    ): NotificationCompat.Action {
+        return delegate.createCustomActionFromCustomCommandButton(mediaSession, customCommandButton)
+    }
+
+    override fun createMediaActionPendingIntent(mediaSession: MediaSession, command: Long): PendingIntent {
+        return delegate.createMediaActionPendingIntent(mediaSession, command)
+    }
+
+    override fun createNotificationDismissalIntent(mediaSession: MediaSession): PendingIntent {
+        return delegate.createNotificationDismissalIntent(mediaSession)
+    }
+
+    private fun createChunkSkipAction(
+        iconResId: Int,
+        title: CharSequence,
+        action: String,
+        requestCode: Int
+    ): NotificationCompat.Action {
+        val intent = Intent(context, TtsService::class.java).apply {
+            this.action = action
+            setPackage(context.packageName)
+        }
+        val pendingIntent = PendingIntent.getService(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Action.Builder(
+            IconCompat.createWithResource(context, iconResId),
+            title,
+            pendingIntent
+        )
+            .setShowsUserInterface(false)
+            .build()
+    }
+}
+
+@UnstableApi
+private class TtsSessionPlayer(
+    player: Player,
+    private val canSkipToPreviousChunk: () -> Boolean,
+    private val canSkipToNextChunk: () -> Boolean,
+    private val skipToPreviousChunk: () -> Unit,
+    private val skipToNextChunk: () -> Unit,
+    private val isCurrentChunkStreaming: () -> Boolean,
+    private val currentChunkDurationForNotification: (Long) -> Long
+) : ForwardingPlayer(player) {
+    override fun getAvailableCommands(): Player.Commands {
+        val builder = super.getAvailableCommands().buildUpon()
+        if (canSkipToPreviousChunk()) {
+            builder
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+        } else {
+            builder
+                .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
+                .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+        }
+        if (canSkipToNextChunk()) {
+            builder
+                .add(Player.COMMAND_SEEK_TO_NEXT)
+                .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+        } else {
+            builder
+                .remove(Player.COMMAND_SEEK_TO_NEXT)
+                .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+        }
+        return builder.build()
+    }
+
+    override fun isCommandAvailable(command: Int): Boolean {
+        return getAvailableCommands().contains(command)
+    }
+
+    override fun hasPreviousMediaItem(): Boolean {
+        return canSkipToPreviousChunk() || super.hasPreviousMediaItem()
+    }
+
+    override fun hasNextMediaItem(): Boolean {
+        return canSkipToNextChunk() || super.hasNextMediaItem()
+    }
+
+    override fun seekToPrevious() {
+        skipToPreviousChunk()
+    }
+
+    override fun seekToPreviousMediaItem() {
+        skipToPreviousChunk()
+    }
+
+    override fun seekToNext() {
+        skipToNextChunk()
+    }
+
+    override fun seekToNextMediaItem() {
+        skipToNextChunk()
+    }
+
+    override fun getDuration(): Long {
+        return notificationDurationMs().takeIf { it != C.TIME_UNSET } ?: super.getDuration()
+    }
+
+    override fun getContentDuration(): Long {
+        return getDuration()
+    }
+
+    override fun getBufferedPosition(): Long {
+        return adjustedStreamingBufferedPosition(super.getBufferedPosition())
+    }
+
+    override fun getContentBufferedPosition(): Long {
+        return getBufferedPosition()
+    }
+
+    override fun getBufferedPercentage(): Int {
+        val duration = notificationDurationMs()
+        if (!isCurrentChunkStreaming() || duration == C.TIME_UNSET || duration <= 0L) {
+            return super.getBufferedPercentage()
+        }
+        val bufferedPosition = getBufferedPosition().coerceIn(0L, duration)
+        return ((bufferedPosition * 100L) / duration).toInt().coerceIn(0, 100)
+    }
+
+    override fun isCurrentMediaItemDynamic(): Boolean {
+        return if (isCurrentChunkStreaming()) false else super.isCurrentMediaItemDynamic()
+    }
+
+    private fun notificationDurationMs(): Long {
+        val currentPositionMs = super.getCurrentPosition().coerceAtLeast(0L)
+        return currentChunkDurationForNotification(currentPositionMs)
+    }
+
+    private fun adjustedStreamingBufferedPosition(delegatePositionMs: Long): Long {
+        val duration = notificationDurationMs()
+        if (!isCurrentChunkStreaming() || duration == C.TIME_UNSET || duration <= 0L) {
+            return delegatePositionMs
+        }
+        val currentPositionMs = super.getCurrentPosition().coerceAtLeast(0L)
+        val bufferedPositionMs = if (delegatePositionMs == C.TIME_UNSET || delegatePositionMs < currentPositionMs) {
+            currentPositionMs
+        } else {
+            delegatePositionMs
+        }
+        return bufferedPositionMs.coerceIn(0L, duration)
+    }
+}
 
 @UnstableApi
 class TtsService : MediaSessionService() {
@@ -258,6 +486,29 @@ class TtsService : MediaSessionService() {
     private var foregroundChapterTitle: String? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_TTS_NOTIFICATION_PREVIOUS_CHUNK -> {
+                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Notification previous chunk action received.")
+                Timber.tag(TTS_CHUNK_NAV_DIAG_TAG).i(
+                    "serviceAction=notification-previous hasPlaybackManager=${::playbackManager.isInitialized} playerInitialized=${::player.isInitialized}"
+                )
+                if (::playbackManager.isInitialized) {
+                    playbackManager.skipToPreviousChunkFromTransport()
+                }
+                return START_STICKY
+            }
+            ACTION_TTS_NOTIFICATION_NEXT_CHUNK -> {
+                Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Notification next chunk action received.")
+                Timber.tag(TTS_CHUNK_NAV_DIAG_TAG).i(
+                    "serviceAction=notification-next hasPlaybackManager=${::playbackManager.isInitialized} playerInitialized=${::player.isInitialized}"
+                )
+                if (::playbackManager.isInitialized) {
+                    playbackManager.skipToNextChunkFromTransport()
+                }
+                return START_STICKY
+            }
+        }
+
         val result = super.onStartCommand(intent, flags, startId)
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onStartCommand. action=${intent?.action}, startId=$startId, result=$result"
@@ -747,6 +998,7 @@ class TtsService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         Timber.d("TtsService created.")
+        setMediaNotificationProvider(TtsMediaNotificationProvider(this))
         val hasNotificationPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
@@ -818,7 +1070,17 @@ class TtsService : MediaSessionService() {
             onPlaybackSessionStopped = ::onPlaybackSessionStopped
         )
 
-        mediaSession = MediaSession.Builder(this, player)
+        val sessionPlayer = TtsSessionPlayer(
+            player = player,
+            canSkipToPreviousChunk = playbackManager::canSkipToPreviousChunk,
+            canSkipToNextChunk = playbackManager::canSkipToNextChunk,
+            skipToPreviousChunk = playbackManager::skipToPreviousChunkFromTransport,
+            skipToNextChunk = playbackManager::skipToNextChunkFromTransport,
+            isCurrentChunkStreaming = playbackManager::isCurrentChunkStreaming,
+            currentChunkDurationForNotification = playbackManager::currentChunkDurationForNotification
+        )
+
+        mediaSession = MediaSession.Builder(this, sessionPlayer)
             .setCallback(playbackManager)
             .build()
 
