@@ -123,6 +123,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -246,6 +247,9 @@ import com.aryan.reader.savePdfRightToLeftPagination
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
+import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
@@ -308,6 +312,38 @@ internal fun currentPageScaleAfterPdfPageChange(
         lockedState?.first ?: currentActiveScale
     } else {
         1f
+    }
+}
+
+private fun pdfPageRangeText(
+    pageIndex: Int,
+    pageCount: Int,
+    displayMode: DisplayMode,
+    settings: ReaderSettings
+): String {
+    val pageRange = if (displayMode == DisplayMode.PAGINATION) {
+        PdfSpreadLayout.pageRangeLabel(pageIndex, pageCount, settings)
+    } else {
+        "${pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) + 1}"
+    }
+    return "$pageRange / $pageCount"
+}
+
+private fun pdfPageRangeLabel(
+    pageIndex: Int,
+    pageCount: Int,
+    displayMode: DisplayMode,
+    settings: ReaderSettings
+): String {
+    val pageRange = if (displayMode == DisplayMode.PAGINATION) {
+        PdfSpreadLayout.pageRangeLabel(pageIndex, pageCount, settings)
+    } else {
+        "${pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) + 1}"
+    }
+    return if ('-' in pageRange) {
+        "Pages $pageRange of $pageCount"
+    } else {
+        "Page $pageRange of $pageCount"
     }
 }
 
@@ -375,6 +411,9 @@ fun PdfViewerScreen(
     var showPageNumberOverlay by remember { mutableStateOf(loadPdfPageNumberOverlayVisible(context)) }
     var showTopTabStrip by remember { mutableStateOf(loadPdfTopTabStripVisible(context)) }
     var showVisualOptionsSheet by remember { mutableStateOf(false) }
+    var pdfPageSpreadMode by remember { mutableStateOf(loadPdfPageSpreadMode(context)) }
+    var pdfFirstPageStandaloneInSpread by remember { mutableStateOf(loadPdfFirstPageStandaloneInSpread(context)) }
+    var pendingPaginationSpreadRestorePage by remember { mutableStateOf<Int?>(null) }
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
     var rightToLeftPagination by remember { mutableStateOf(loadPdfRightToLeftPagination(context)) }
     var showScreenOrientationSheet by remember { mutableStateOf(false) }
@@ -941,14 +980,92 @@ fun PdfViewerScreen(
     val totalDisplayPages by remember(virtualPages, totalPages) {
         derivedStateOf { if (virtualPages.isNotEmpty()) virtualPages.size else totalPages }
     }
-    val pagerState = rememberPagerState(initialPage = 0, pageCount = { totalDisplayPages })
-    val currentPage by remember {
+    val pdfSpreadSettings = remember(pdfPageSpreadMode, pdfFirstPageStandaloneInSpread) {
+        ReaderSettings(
+            pageSpreadMode = pdfPageSpreadMode,
+            pdfFirstPageStandaloneInSpread = pdfFirstPageStandaloneInSpread
+        )
+    }
+    val paginationSpreadStarts = remember(
+        totalDisplayPages,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+    ) {
+        PdfSpreadLayout.spreadStartPageIndices(totalDisplayPages, pdfSpreadSettings)
+    }
+    val paginationPagerPageCount by remember(
+        displayMode,
+        totalDisplayPages,
+        paginationSpreadStarts,
+        pdfSpreadSettings.pageSpreadMode
+    ) {
+        derivedStateOf {
+            if (displayMode == DisplayMode.PAGINATION && PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
+                paginationSpreadStarts.size.coerceAtLeast(1)
+            } else {
+                totalDisplayPages
+            }
+        }
+    }
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { paginationPagerPageCount })
+
+    fun paginationDisplayPageForPagerPage(pagerPage: Int): Int {
+        if (!PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
+            return pagerPage.coerceIn(0, (totalDisplayPages - 1).coerceAtLeast(0))
+        }
+        return paginationSpreadStarts
+            .getOrElse(pagerPage.coerceIn(0, (paginationSpreadStarts.size - 1).coerceAtLeast(0))) { 0 }
+    }
+
+    fun paginationPagerPageForDisplayPage(displayPage: Int): Int {
+        if (!PdfSpreadLayout.isTwoPageSpreadEnabled(pdfSpreadSettings)) {
+            return displayPage.coerceIn(0, (paginationPagerPageCount - 1).coerceAtLeast(0))
+        }
+        val normalizedPage = PdfSpreadLayout.normalizePageIndex(displayPage, totalDisplayPages, pdfSpreadSettings)
+        val spreadIndex = paginationSpreadStarts.indexOf(normalizedPage)
+        return spreadIndex.coerceAtLeast(0).coerceIn(0, (paginationPagerPageCount - 1).coerceAtLeast(0))
+    }
+
+    suspend fun scrollPaginationToDisplayPage(displayPage: Int) {
+        pagerState.scrollToPage(paginationPagerPageForDisplayPage(displayPage))
+    }
+
+    suspend fun animatePaginationToDisplayPage(displayPage: Int) {
+        pagerState.animateScrollToPage(paginationPagerPageForDisplayPage(displayPage))
+    }
+
+    fun currentPaginationDisplayPage(): Int {
+        return paginationDisplayPageForPagerPage(pagerState.currentPage)
+    }
+
+    val currentPage by remember(
+        displayMode,
+        totalDisplayPages,
+        paginationPagerPageCount,
+        paginationSpreadStarts,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+    ) {
         derivedStateOf {
             when (displayMode) {
-                DisplayMode.PAGINATION -> pagerState.currentPage
+                DisplayMode.PAGINATION -> currentPaginationDisplayPage()
                 DisplayMode.VERTICAL_SCROLL -> verticalReaderState.currentPage
             }
         }
+    }
+
+    LaunchedEffect(
+        pendingPaginationSpreadRestorePage,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread,
+        totalDisplayPages,
+        displayMode
+    ) {
+        val targetPage = pendingPaginationSpreadRestorePage ?: return@LaunchedEffect
+        if (displayMode == DisplayMode.PAGINATION && totalDisplayPages > 0) {
+            scrollPaginationToDisplayPage(targetPage)
+        }
+        pendingPaginationSpreadRestorePage = null
     }
     var isDocumentReady by remember { mutableStateOf(false) }
 
@@ -1449,9 +1566,9 @@ fun PdfViewerScreen(
         if (isEditMode && targetPage >= 0 && targetPage < totalDisplayPages) {
 
             if (displayMode == DisplayMode.PAGINATION) {
-                if (pagerState.currentPage != targetPage) {
+                if (currentPaginationDisplayPage() != targetPage) {
                     Timber.tag("CursorNav").d("Cursor moved to Page $targetPage. Auto-paging.")
-                    pagerState.animateScrollToPage(targetPage)
+                    animatePaginationToDisplayPage(targetPage)
                 }
             }
         }
@@ -1766,7 +1883,7 @@ fun PdfViewerScreen(
                 val newMax = (virtualPages.size - 1).coerceAtLeast(0)
                 if (currentPage > newMax) {
                     if (displayMode == DisplayMode.PAGINATION) {
-                        pagerState.scrollToPage(newMax)
+                        scrollPaginationToDisplayPage(newMax)
                     } else {
                         verticalReaderState.scrollToPage(newMax)
                     }
@@ -1776,7 +1893,7 @@ fun PdfViewerScreen(
     }
 
     val onInsertTextBox = {
-        val currentP = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+        val currentP = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
         Timber.tag("PdfTextBoxDebug").d("Viewer: onInsertTextBox triggered. Target Page: $currentP, DisplayMode: $displayMode")
 
@@ -1964,8 +2081,8 @@ fun PdfViewerScreen(
             try {
                 when (displayMode) {
                     DisplayMode.PAGINATION -> {
-                        if (pagerState.currentPage != targetPage) {
-                            pagerState.scrollToPage(targetPage)
+                        if (currentPaginationDisplayPage() != targetPage) {
+                            scrollPaginationToDisplayPage(targetPage)
                         }
                     }
                     DisplayMode.VERTICAL_SCROLL -> {
@@ -2008,7 +2125,7 @@ fun PdfViewerScreen(
             if (initialPage != null && initialPage >= totalPages && initialPage < layout.size) {
                 Timber.d("Restoring position to added page: $initialPage")
                 if (displayMode == DisplayMode.PAGINATION) {
-                    pagerState.scrollToPage(initialPage)
+                    scrollPaginationToDisplayPage(initialPage)
                 } else {
                     verticalReaderState.scrollToPage(initialPage)
                 }
@@ -2023,7 +2140,7 @@ fun PdfViewerScreen(
     LaunchedEffect(displayMode) {
         if (initialScrollDone) {
             if (displayMode == DisplayMode.VERTICAL_SCROLL) {
-                val pageToScroll = pagerState.currentPage
+                val pageToScroll = currentPaginationDisplayPage()
 
                 var attempts = 0
                 while (verticalReaderState.snapToPageHandler == null && attempts < 50) {
@@ -2033,17 +2150,17 @@ fun PdfViewerScreen(
                 verticalReaderState.snapToPage(pageToScroll)
             } else {
                 val pageToScroll = verticalReaderState.currentPage
-                pagerState.scrollToPage(pageToScroll)
+                scrollPaginationToDisplayPage(pageToScroll)
             }
         }
     }
 
     val isBookmarked by remember(
-        bookmarks, pagerState.currentPage, verticalReaderState.currentPage, displayMode
+        bookmarks, currentPage, verticalReaderState.currentPage, displayMode
     ) {
         derivedStateOf {
             val currentPage = if (displayMode == DisplayMode.PAGINATION) {
-                pagerState.currentPage
+                currentPaginationDisplayPage()
             } else {
                 verticalReaderState.currentPage
             }
@@ -2160,7 +2277,7 @@ fun PdfViewerScreen(
 
     val onBookmarkClick: () -> Unit = {
         val currentPage = if (displayMode == DisplayMode.PAGINATION) {
-            pagerState.currentPage
+            currentPaginationDisplayPage()
         } else {
             verticalReaderState.currentPage
         }
@@ -2499,14 +2616,14 @@ fun PdfViewerScreen(
         { targetPage: Int ->
             coroutineScope.launch {
                 if (targetPage in 0 until totalPages) {
-                    val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                    val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
                     if (current != targetPage) {
                         recordJumpHistory(current, targetPage)
                     }
 
                     if (displayMode == DisplayMode.PAGINATION) {
-                        pagerState.animateScrollToPage(targetPage)
+                        animatePaginationToDisplayPage(targetPage)
                     } else {
                         verticalReaderState.scrollToPage(targetPage)
                     }
@@ -3344,7 +3461,7 @@ fun PdfViewerScreen(
         summarizationResult = null
     }
 
-    LaunchedEffect(pagerState.currentPage, displayMode, isScrollLocked, lockedState) {
+    LaunchedEffect(currentPage, displayMode, isScrollLocked, lockedState) {
         val nextPageScale = currentPageScaleAfterPdfPageChange(
             displayMode = displayMode,
             isScrollLocked = isScrollLocked,
@@ -3643,14 +3760,14 @@ fun PdfViewerScreen(
     val onInternalLinkNav: (Int) -> Unit = { targetPage ->
         coroutineScope.launch {
             if (targetPage in 0 until totalPages) {
-                val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
                 if (current != targetPage) {
                     recordJumpHistory(current, targetPage)
                 }
 
                 if (displayMode == DisplayMode.PAGINATION) {
-                    pagerState.animateScrollToPage(targetPage)
+                    animatePaginationToDisplayPage(targetPage)
                 } else {
                     verticalReaderState.scrollToPage(targetPage)
                 }
@@ -3665,10 +3782,11 @@ fun PdfViewerScreen(
 
     val dynamicBeyondViewportPageCount = remember(
         paginationDraggingOriginPage,
-        pagerState.currentPage
+        currentPaginationDisplayPage()
     ) {
         if (paginationDraggingOriginPage != null) {
-            val distance = abs(pagerState.currentPage - paginationDraggingOriginPage)
+            val originPagerPage = paginationPagerPageForDisplayPage(paginationDraggingOriginPage)
+            val distance = abs(pagerState.currentPage - originPagerPage)
             (distance + 1).coerceAtLeast(1)
         } else {
             1
@@ -3681,15 +3799,15 @@ fun PdfViewerScreen(
 
         coroutineScope.launch {
             val targetPage = result.locationInSource
-            val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+            val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
             if (current != targetPage) {
                 recordJumpHistory(current, targetPage)
             }
 
             if (displayMode == DisplayMode.PAGINATION) {
-                if (pagerState.currentPage != targetPage) {
-                    pagerState.scrollToPage(targetPage)
+                if (currentPaginationDisplayPage() != targetPage) {
+                    scrollPaginationToDisplayPage(targetPage)
                 }
             } else {
                 verticalReaderState.scrollToPage(targetPage)
@@ -3776,14 +3894,14 @@ fun PdfViewerScreen(
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
                         coroutineScope.launch {
-                            val current = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                            val current = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
                             if (current != targetPage) {
                                 recordJumpHistory(current, targetPage)
                             }
 
                             if (displayMode == DisplayMode.PAGINATION) {
-                                pagerState.scrollToPage(targetPage)
+                                scrollPaginationToDisplayPage(targetPage)
                             } else {
                                 verticalReaderState.scrollToPage(targetPage)
                             }
@@ -3987,7 +4105,9 @@ fun PdfViewerScreen(
                                         HorizontalPager(
                                             state = pagerState,
                                             modifier = Modifier.fillMaxSize(),
-                                            key = { page -> "$activeDocumentRenderKey:$page" },
+                                            key = { page ->
+                                                "$activeDocumentRenderKey:${pdfSpreadSettings.pageSpreadMode}:${pdfSpreadSettings.pdfFirstPageStandaloneInSpread}:$page:${paginationDisplayPageForPagerPage(page)}"
+                                            },
                                             beyondViewportPageCount = dynamicBeyondViewportPageCount,
                                             reverseLayout = rightToLeftPagination,
                                             userScrollEnabled = run {
@@ -3996,10 +4116,30 @@ fun PdfViewerScreen(
                                                     !isPageSliderVisible &&
                                                     paginationDraggingBoxId == null
                                             }
-                                        ) { pageIndex ->
-                                            val isVisiblePage = remember(pagerState.currentPage, pageIndex) {
-                                                abs(pagerState.currentPage - pageIndex) <= 1
+                                        ) { pagerPageIndex ->
+                                            val spreadPageIndices = remember(
+                                                pagerPageIndex,
+                                                totalDisplayPages,
+                                                pdfSpreadSettings.pageSpreadMode,
+                                                pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+                                            ) {
+                                                PdfSpreadLayout.visiblePageIndices(
+                                                    pageIndex = paginationDisplayPageForPagerPage(pagerPageIndex),
+                                                    pageCount = totalDisplayPages,
+                                                    settings = pdfSpreadSettings
+                                                )
                                             }
+                                            val isVisiblePage = remember(pagerState.currentPage, pagerPageIndex) {
+                                                abs(pagerState.currentPage - pagerPageIndex) <= 1
+                                            }
+                                            val isActivePagerPage = pagerState.currentPage == pagerPageIndex
+                                            Row(
+                                                modifier = Modifier.fillMaxSize(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                spreadPageIndices.forEach { pageIndex ->
+                                                    key(pageIndex) {
                                             val isPageBookmarked by remember(bookmarks, pageIndex) {
                                                 derivedStateOf {
                                                     bookmarks.any { it.pageIndex == pageIndex }
@@ -4188,16 +4328,22 @@ fun PdfViewerScreen(
                                                     showHighlightColorPicker = true
                                                 },
                                                 onScaleChanged = { newScale ->
-                                                    if (pagerState.currentPage == pageIndex) {
+                                                    if (isActivePagerPage) {
                                                         currentPageScale = newScale
                                                     }
                                                 },
                                                 ttsHighlightData = if (ttsDisplayPageIndex == pageIndex) ttsHighlightData else null,
                                                 searchQuery = searchState.searchQuery,
                                                 searchHighlightMode = searchHighlightMode,
-                                                searchResultToHighlight = if (pagerState.currentPage == pageIndex) searchHighlightTarget else null,
+                                                searchResultToHighlight = if (isActivePagerPage) searchHighlightTarget else null,
                                                 ocrHoverHighlights = stableOcrRects,
-                                                modifier = Modifier.fillMaxSize(),
+                                                modifier = if (spreadPageIndices.size > 1) {
+                                                    Modifier
+                                                        .weight(1f)
+                                                        .fillMaxHeight()
+                                                } else {
+                                                    Modifier.fillMaxSize()
+                                                },
                                                 showAllTextHighlights = showAllTextHighlights,
                                                 onHighlightLoading = { /* no-op for paginated mode */ },
                                                 onPreSingleTap = onPaginationPreSingleTap,
@@ -4266,7 +4412,7 @@ fun PdfViewerScreen(
                                                 eraserToolThickness = currentEraserStrokeWidthState,
                                                 lockedState = lockedState,
                                                 onZoomAndPanChanged = { newScale, newOffset ->
-                                                    if (pagerState.currentPage == pageIndex) {
+                                                    if (isActivePagerPage) {
                                                         currentActiveScale = newScale
                                                         currentActiveOffset = newOffset
                                                     }
@@ -4284,13 +4430,13 @@ fun PdfViewerScreen(
                                                 },
                                                 onTwoFingerSwipe = { direction ->
                                                     coroutineScope.launch {
-                                                        val targetPage =
-                                                            pagerState.currentPage + direction
-                                                        if (targetPage in 0 until totalDisplayPages) {
-                                                            pagerState.animateScrollToPage(
-                                                                targetPage
-                                                            )
+                                                        val current = currentPaginationDisplayPage()
+                                                        val targetPage = if (direction > 0) {
+                                                            PdfSpreadLayout.nextPageIndex(current, totalDisplayPages, pdfSpreadSettings)
+                                                        } else {
+                                                            PdfSpreadLayout.previousPageIndex(current, totalDisplayPages, pdfSpreadSettings)
                                                         }
+                                                        animatePaginationToDisplayPage(targetPage)
                                                     }
                                                 },
                                                 richTextController = richTextController,
@@ -4366,7 +4512,7 @@ fun PdfViewerScreen(
                                                         }
                                                     } else if (paginationDraggingOffset.x + paginationDraggingSize.width > screenWidth - edgeThreshold && isMovingRight) {
                                                         coroutineScope.launch {
-                                                            if (pagerState.currentPage < totalDisplayPages - 1 && !pagerState.isScrollInProgress) {
+                                                            if (pagerState.currentPage < pagerState.pageCount - 1 && !pagerState.isScrollInProgress) {
                                                                 pagerState.animateScrollToPage(pagerState.currentPage + 1)
                                                             }
                                                         }
@@ -4377,7 +4523,16 @@ fun PdfViewerScreen(
                                                     val boxId = paginationDraggingBoxId
                                                     if (boxId != null) {
                                                         coroutineScope.launch {
-                                                            val targetPage = pagerState.currentPage
+                                                            val currentSpreadPageIndices = PdfSpreadLayout.visiblePageIndices(
+                                                                pageIndex = currentPaginationDisplayPage(),
+                                                                pageCount = totalDisplayPages,
+                                                                settings = pdfSpreadSettings
+                                                            )
+                                                            val targetPage = if (pageIndex in currentSpreadPageIndices) {
+                                                                pageIndex
+                                                            } else {
+                                                                currentSpreadPageIndices.firstOrNull() ?: currentPaginationDisplayPage()
+                                                            }
                                                             val targetVirtualPage = virtualPages.getOrNull(targetPage)
                                                             val pageAspectRatio = if (targetVirtualPage is VirtualPage.BlankPage) {
                                                                 if (targetVirtualPage.height > 0) targetVirtualPage.width.toFloat() / targetVirtualPage.height.toFloat() else 1f
@@ -4455,17 +4610,23 @@ fun PdfViewerScreen(
                                                 },
                                                 onDragPageTurn = { direction ->
                                                     coroutineScope.launch {
-                                                        val targetPage = pagerState.currentPage + direction
-                                                        if (targetPage in 0 until totalDisplayPages) {
-                                                            pagerState.animateScrollToPage(targetPage)
+                                                        val current = currentPaginationDisplayPage()
+                                                        val targetPage = if (direction > 0) {
+                                                            PdfSpreadLayout.nextPageIndex(current, totalDisplayPages, pdfSpreadSettings)
+                                                        } else {
+                                                            PdfSpreadLayout.previousPageIndex(current, totalDisplayPages, pdfSpreadSettings)
                                                         }
+                                                        animatePaginationToDisplayPage(targetPage)
                                                     }
                                                 },
                                                 isBubbleZoomModeActive = isBubbleZoomModeActive,
                                                 isVisible = isVisiblePage,
-                                                isActivePage = pagerState.currentPage == pageIndex,
+                                                isActivePage = isActivePagerPage,
                                                 isScrolling = pagerState.isScrollInProgress
                                             )
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         if (paginationDraggingBoxId != null) {
@@ -5055,8 +5216,12 @@ fun PdfViewerScreen(
 
                         if (isFastScrubbing) {
                             PageScrubbingAnimation(
-                                currentPage = sliderCurrentPage.roundToInt() + 1,
-                                totalPages = totalPages
+                                pageLabel = pdfPageRangeLabel(
+                                    pageIndex = sliderCurrentPage.roundToInt(),
+                                    pageCount = totalDisplayPages,
+                                    displayMode = displayMode,
+                                    settings = pdfSpreadSettings
+                                )
                             )
                         }
 
@@ -5112,9 +5277,7 @@ fun PdfViewerScreen(
                                                         recordJumpHistory(sliderStartPage, targetPage)
                                                     }
                                                     if (displayMode == DisplayMode.PAGINATION) {
-                                                        pagerState.scrollToPage(
-                                                            newValue.roundToInt()
-                                                        )
+                                                        scrollPaginationToDisplayPage(newValue.roundToInt())
                                                     } else {
                                                         verticalReaderState.scrollToPage(
                                                             newValue.roundToInt()
@@ -5124,9 +5287,9 @@ fun PdfViewerScreen(
                                                 }
                                             }
                                         },
-                                        valueRange = 0f..(totalPages - 1).toFloat()
+                                        valueRange = 0f..(totalDisplayPages - 1).toFloat()
                                             .coerceAtLeast(0f),
-                                        steps = if (totalPages > 2) totalPages - 2 else 0,
+                                        steps = if (totalDisplayPages > 2) totalDisplayPages - 2 else 0,
                                         modifier = Modifier.fillMaxWidth(),
                                         thumb = {
                                             Surface(
@@ -5172,8 +5335,8 @@ fun PdfViewerScreen(
                                             }
                                         })
 
-                                    val startPageOffsetFraction = if (totalPages > 1) {
-                                        sliderStartPage.toFloat() / (totalPages - 1)
+                                    val startPageOffsetFraction = if (totalDisplayPages > 1) {
+                                        sliderStartPage.toFloat() / (totalDisplayPages - 1)
                                     } else {
                                         0f
                                     }
@@ -5217,7 +5380,7 @@ fun PdfViewerScreen(
                                                 sliderCurrentPage = sliderStartPage.toFloat()
                                                 coroutineScope.launch {
                                                     if (displayMode == DisplayMode.PAGINATION) {
-                                                        pagerState.scrollToPage(sliderStartPage)
+                                                        scrollPaginationToDisplayPage(sliderStartPage)
                                                     } else {
                                                         verticalReaderState.scrollToPage(
                                                             sliderStartPage
@@ -5230,7 +5393,12 @@ fun PdfViewerScreen(
 
                                 // Page number text
                                 Text(
-                                    text = "${sliderCurrentPage.roundToInt() + 1} / $totalPages",
+                                    text = pdfPageRangeText(
+                                        pageIndex = sliderCurrentPage.roundToInt(),
+                                        pageCount = totalDisplayPages,
+                                        displayMode = displayMode,
+                                        settings = pdfSpreadSettings
+                                    ),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = if (displayMode == DisplayMode.VERTICAL_SCROLL) Color.Black
                                     else MaterialTheme.colorScheme.onSurface,
@@ -5253,7 +5421,7 @@ fun PdfViewerScreen(
                     }
                 }
                 val showPdfSlider = {
-                    val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                    val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
                     sliderStartPage = currentPageForSlider
                     sliderCurrentPage = currentPageForSlider.toFloat()
                     isPageSliderVisible = true
@@ -5323,10 +5491,16 @@ fun PdfViewerScreen(
                     isLoadingDocument = isLoadingDocument,
                     errorMessage = errorMessage,
                     currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
-                        pagerState.currentPage
+                        currentPaginationDisplayPage()
                     } else {
                         verticalReaderState.currentPage
                     },
+                    currentPageLabel = pdfPageRangeLabel(
+                        pageIndex = currentPage,
+                        pageCount = totalDisplayPages,
+                        displayMode = displayMode,
+                        settings = pdfSpreadSettings
+                    ),
                     totalPages = totalPages,
                     pagerStatePageCount = pagerState.pageCount,
                     hiddenTools = hiddenTools,
@@ -5353,7 +5527,7 @@ fun PdfViewerScreen(
                     onShowDictionarySettings = showPdfDictionarySettings,
                     onShowPenPlayground = { showPenPlayground = true },
                     onImportSvg = {
-                        val page = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                        val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
 
                         coroutineScope.launch(Dispatchers.IO) {
                             val svgAnnotations = SvgToAnnotationConverter.importSvgFromAssets(
@@ -5472,7 +5646,7 @@ fun PdfViewerScreen(
                     },
                     onNewTabClick = { showNewTabSheet = true },
                     onGenerateDemoAnnotations = {
-                        val page = if (displayMode == DisplayMode.PAGINATION) pagerState.currentPage else verticalReaderState.currentPage
+                        val page = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
                         val demoAnnots = DemoAnnotationGenerator.generateDemoAnnotations(page)
 
                         if (demoAnnots.isNotEmpty()) {
@@ -6489,7 +6663,7 @@ fun PdfViewerScreen(
 
     if (showAiHubSheet) {
         val currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
-            pagerState.currentPage
+            currentPaginationDisplayPage()
         } else {
             verticalReaderState.currentPage
         }
@@ -7208,9 +7382,22 @@ fun PdfViewerScreen(
 
     if (showVisualOptionsSheet) {
         PdfVisualOptionsSheet(
+            displayMode = displayMode,
             systemUiMode = systemUiMode,
+            pageSpreadMode = pdfPageSpreadMode,
+            firstPageStandaloneInSpread = pdfFirstPageStandaloneInSpread,
             showVerticalPageGap = showVerticalPageGap,
             showPageNumberOverlay = showPageNumberOverlay,
+            onPageSpreadModeChange = { mode ->
+                pendingPaginationSpreadRestorePage = currentPage
+                pdfPageSpreadMode = mode
+                savePdfPageSpreadMode(context, mode)
+            },
+            onFirstPageStandaloneInSpreadChange = { enabled ->
+                pendingPaginationSpreadRestorePage = currentPage
+                pdfFirstPageStandaloneInSpread = enabled
+                savePdfFirstPageStandaloneInSpread(context, enabled)
+            },
             onSystemUiModeChange = { mode ->
                 systemUiMode = mode
                 savePdfSystemUiMode(context, mode)

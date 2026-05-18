@@ -76,6 +76,7 @@ internal fun PdfTopBar(
     isLoadingDocument: Boolean,
     errorMessage: String?,
     currentPageForDisplay: Int,
+    currentPageLabel: String? = null,
     totalPages: Int,
     pagerStatePageCount: Int,
     hiddenTools: Set<String>,
@@ -176,7 +177,8 @@ internal fun PdfTopBar(
                         val titleText = when {
                             isLoadingDocument -> stringResource(R.string.loading_pdf)
                             errorMessage != null -> stringResource(R.string.error_loading_pdf)
-                            totalPages > 0 && pagerStatePageCount > 0 -> stringResource(R.string.page_of_pages, currentPageForDisplay + 1, totalPages)
+                            totalPages > 0 && pagerStatePageCount > 0 -> currentPageLabel
+                                ?: stringResource(R.string.page_of_pages, currentPageForDisplay + 1, totalPages)
                             totalPages > 0 && pagerStatePageCount == 0 -> stringResource(R.string.loading_page)
                             else -> stringResource(R.string.pdf_viewer)
                         }

@@ -10,6 +10,7 @@ import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 
 internal const val VERTICAL_SCROLL_TAG = "PdfVerticalScroll"
 internal const val SETTINGS_PREFS_NAME = "epub_reader_settings"
@@ -47,6 +48,8 @@ internal const val PDF_SYSTEM_UI_MODE_KEY = "pdf_system_ui_mode"
 internal const val PDF_VERTICAL_PAGE_GAP_VISIBLE_KEY = "pdf_vertical_page_gap_visible"
 internal const val PDF_PAGE_NUMBER_OVERLAY_VISIBLE_KEY = "pdf_page_number_overlay_visible"
 internal const val PDF_TOP_TAB_STRIP_VISIBLE_KEY = "pdf_top_tab_strip_visible"
+internal const val PDF_PAGE_SPREAD_MODE_KEY = "pdf_page_spread_mode"
+internal const val PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY = "pdf_first_page_standalone_in_spread"
 internal const val PDF_LAYOUT_DEBUG_TAG = "PdfLayoutDebug"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "pdf_hidden_tools_defaults_version"
 private const val PDF_HIDDEN_TOOLS_DEFAULTS_VERSION = 2
@@ -201,6 +204,28 @@ internal fun savePdfPageNumberOverlayVisible(context: Context, isVisible: Boolea
 internal fun loadPdfPageNumberOverlayVisible(context: Context): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PDF_PAGE_NUMBER_OVERLAY_VISIBLE_KEY, true)
+}
+
+internal fun savePdfPageSpreadMode(context: Context, mode: ReaderPageSpreadMode) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PDF_PAGE_SPREAD_MODE_KEY, mode.name) }
+}
+
+internal fun loadPdfPageSpreadMode(context: Context): ReaderPageSpreadMode {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val modeName = prefs.getString(PDF_PAGE_SPREAD_MODE_KEY, ReaderPageSpreadMode.SINGLE.name)
+    return runCatching { ReaderPageSpreadMode.valueOf(modeName ?: ReaderPageSpreadMode.SINGLE.name) }
+        .getOrDefault(ReaderPageSpreadMode.SINGLE)
+}
+
+internal fun savePdfFirstPageStandaloneInSpread(context: Context, isEnabled: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY, isEnabled) }
+}
+
+internal fun loadPdfFirstPageStandaloneInSpread(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_FIRST_PAGE_STANDALONE_IN_SPREAD_KEY, false)
 }
 
 internal fun savePdfTopTabStripVisible(context: Context, isVisible: Boolean) {

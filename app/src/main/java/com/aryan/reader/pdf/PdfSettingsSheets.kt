@@ -73,6 +73,7 @@ import com.aryan.reader.R
 import com.aryan.reader.epubreader.OptionSegmentedControl
 import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.epubreader.titleRes
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 
 
 enum class PdfFlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
@@ -557,9 +558,14 @@ private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
 
 @Composable
 fun PdfVisualOptionsSheet(
+    displayMode: DisplayMode,
     systemUiMode: SystemUiMode,
+    pageSpreadMode: ReaderPageSpreadMode,
+    firstPageStandaloneInSpread: Boolean,
     showVerticalPageGap: Boolean,
     showPageNumberOverlay: Boolean,
+    onPageSpreadModeChange: (ReaderPageSpreadMode) -> Unit,
+    onFirstPageStandaloneInSpreadChange: (Boolean) -> Unit,
     onSystemUiModeChange: (SystemUiMode) -> Unit,
     onShowVerticalPageGapChange: (Boolean) -> Unit,
     onShowPageNumberOverlayChange: (Boolean) -> Unit,
@@ -607,6 +613,35 @@ fun PdfVisualOptionsSheet(
 
             Text(stringResource(R.string.visual_options_page_layout), style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(4.dp))
+            if (displayMode == DisplayMode.PAGINATION) {
+                Text(
+                    stringResource(R.string.visual_options_pdf_page_spread),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OptionSegmentedControl(
+                    options = ReaderPageSpreadMode.entries,
+                    selectedOption = pageSpreadMode,
+                    onOptionSelected = onPageSpreadModeChange,
+                    getLabel = {
+                        when (it) {
+                            ReaderPageSpreadMode.SINGLE -> stringResource(R.string.visual_options_pdf_spread_single)
+                            ReaderPageSpreadMode.TWO_PAGE -> stringResource(R.string.visual_options_pdf_spread_two)
+                        }
+                    }
+                )
+                if (pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    PdfVisualOptionSwitchRow(
+                        title = stringResource(R.string.visual_options_pdf_first_page_alone),
+                        description = stringResource(R.string.visual_options_pdf_first_page_alone_desc),
+                        checked = firstPageStandaloneInSpread,
+                        onCheckedChange = onFirstPageStandaloneInSpreadChange
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
             PdfVisualOptionSwitchRow(
                 title = stringResource(R.string.visual_options_remove_page_gap),
                 description = stringResource(R.string.visual_options_remove_page_gap_desc),

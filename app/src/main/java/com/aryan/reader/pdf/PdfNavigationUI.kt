@@ -154,6 +154,15 @@ fun VerticalScrollbar(
 
 @Composable
 internal fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
+    PageScrubbingAnimation(
+        pageLabel = "Page $currentPage of $totalPages"
+    )
+}
+
+@Composable
+internal fun PageScrubbingAnimation(
+    pageLabel: String
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -178,7 +187,7 @@ internal fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "Page $currentPage of $totalPages",
+                text = pageLabel,
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onSurface
             )

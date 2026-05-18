@@ -839,6 +839,11 @@
     <string name="no_imported_fonts_yet">No imported fonts yet.</string>
     <string name="visual_options_title">Visual Options</string>
     <string name="visual_options_page_layout">Page layout</string>
+    <string name="visual_options_pdf_page_spread">PDF page spread</string>
+    <string name="visual_options_pdf_spread_single">Single page</string>
+    <string name="visual_options_pdf_spread_two">Two pages</string>
+    <string name="visual_options_pdf_first_page_alone">First page alone</string>
+    <string name="visual_options_pdf_first_page_alone_desc">Starts facing-page spreads after the cover page.</string>
     <string name="visual_options_remove_page_gap">Remove gap between pages</string>
     <string name="visual_options_remove_page_gap_desc">Applies to vertical reading mode.</string>
     <string name="visual_options_hide_page_number_overlay">Hide page number overlay</string>

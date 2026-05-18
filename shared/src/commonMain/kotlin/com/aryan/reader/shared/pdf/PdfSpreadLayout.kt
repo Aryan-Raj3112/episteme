@@ -36,6 +36,23 @@ object PdfSpreadLayout {
         return listOf(start, start + 1).filter { it in 0 until pageCount }
     }
 
+    fun spreadStartPageIndices(
+        pageCount: Int,
+        settings: ReaderSettings
+    ): List<Int> {
+        if (pageCount <= 0) return emptyList()
+        if (!isTwoPageSpreadEnabled(settings)) return (0 until pageCount).toList()
+        val starts = mutableListOf<Int>()
+        var current = 0
+        while (current in 0 until pageCount && current !in starts) {
+            starts += current
+            val next = nextPageIndex(current, pageCount, settings)
+            if (next <= current) break
+            current = next
+        }
+        return starts
+    }
+
     fun canGoPrevious(
         pageIndex: Int,
         pageCount: Int,

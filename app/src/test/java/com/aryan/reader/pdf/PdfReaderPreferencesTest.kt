@@ -6,6 +6,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.epubreader.SystemUiMode
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -61,7 +62,8 @@ class PdfReaderPreferencesTest {
             DOCK_OFFSET_X_KEY to 12.5f,
             DOCK_OFFSET_Y_KEY to -7.25f,
             OCR_LANGUAGE_KEY to "UNKNOWN",
-            PDF_SYSTEM_UI_MODE_KEY to Int.MIN_VALUE
+            PDF_SYSTEM_UI_MODE_KEY to Int.MIN_VALUE,
+            PDF_PAGE_SPREAD_MODE_KEY to "SIDEWAYS"
         )
         val context = contextWithPrefs(prefs)
 
@@ -69,6 +71,7 @@ class PdfReaderPreferencesTest {
         assertEquals(DockLocation.BOTTOM to Offset(12.5f, -7.25f), loadDockState(context))
         assertEquals(OcrLanguage.LATIN, loadOcrLanguage(context))
         assertEquals(SystemUiMode.SYNC, loadPdfSystemUiMode(context))
+        assertEquals(ReaderPageSpreadMode.SINGLE, loadPdfPageSpreadMode(context))
         assertFalse(hasUserSelectedOcrLanguage(context))
     }
 
@@ -81,12 +84,16 @@ class PdfReaderPreferencesTest {
         saveDockState(context, DockLocation.FLOATING, Offset(3f, 4f))
         saveOcrLanguage(context, OcrLanguage.JAPANESE)
         savePdfSystemUiMode(context, SystemUiMode.HIDDEN)
+        savePdfPageSpreadMode(context, ReaderPageSpreadMode.TWO_PAGE)
+        savePdfFirstPageStandaloneInSpread(context, true)
 
         assertEquals(DisplayMode.PAGINATION, loadDisplayMode(context))
         assertEquals(DockLocation.FLOATING to Offset(3f, 4f), loadDockState(context))
         assertEquals(OcrLanguage.JAPANESE, loadOcrLanguage(context))
         assertTrue(hasUserSelectedOcrLanguage(context))
         assertEquals(SystemUiMode.HIDDEN, loadPdfSystemUiMode(context))
+        assertEquals(ReaderPageSpreadMode.TWO_PAGE, loadPdfPageSpreadMode(context))
+        assertTrue(loadPdfFirstPageStandaloneInSpread(context))
     }
 
     @Test

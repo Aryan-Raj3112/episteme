@@ -27,6 +27,7 @@ class PdfSpreadLayoutTest {
         assertEquals("3-4", PdfSpreadLayout.pageRangeLabel(3, pageCount = 10, settings = settings))
         assertEquals(listOf(4), PdfSpreadLayout.visiblePageIndices(4, pageCount = 5, settings = settings))
         assertEquals("5", PdfSpreadLayout.pageRangeLabel(4, pageCount = 5, settings = settings))
+        assertEquals(listOf(0, 2, 4), PdfSpreadLayout.spreadStartPageIndices(pageCount = 5, settings = settings))
     }
 
     @Test
@@ -40,6 +41,7 @@ class PdfSpreadLayoutTest {
         assertEquals(listOf(1, 2), PdfSpreadLayout.visiblePageIndices(2, pageCount = 6, settings = settings))
         assertEquals(listOf(3, 4), PdfSpreadLayout.visiblePageIndices(4, pageCount = 6, settings = settings))
         assertEquals(listOf(5), PdfSpreadLayout.visiblePageIndices(5, pageCount = 6, settings = settings))
+        assertEquals(listOf(0, 1, 3, 5), PdfSpreadLayout.spreadStartPageIndices(pageCount = 6, settings = settings))
     }
 
     @Test
