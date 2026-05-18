@@ -25,4 +25,12 @@ class TtsChunkNavigationTest {
         assertNull(resolveTtsChunkSkipTarget(currentChunkIndex = 0, totalChunks = 5, direction = 0))
         assertNull(resolveTtsChunkSkipTarget(currentChunkIndex = 0, totalChunks = 5, direction = 2))
     }
+
+    @Test
+    fun `start chunk index is clamped to available chunks`() {
+        assertEquals(2, resolveTtsStartChunkIndex(requestedChunkIndex = 2, totalChunks = 5))
+        assertEquals(0, resolveTtsStartChunkIndex(requestedChunkIndex = -1, totalChunks = 5))
+        assertEquals(4, resolveTtsStartChunkIndex(requestedChunkIndex = 7, totalChunks = 5))
+        assertEquals(0, resolveTtsStartChunkIndex(requestedChunkIndex = 2, totalChunks = 0))
+    }
 }

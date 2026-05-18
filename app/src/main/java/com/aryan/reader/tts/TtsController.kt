@@ -157,6 +157,7 @@ class TtsController(context: Context) : Player.Listener {
         chapterIndex: Int? = null,
         totalChapters: Int? = null,
         pageIndex: Int? = null,
+        startChunkIndex: Int = 0,
         continueSession: Boolean = false,
         ttsMode: TtsPlaybackManager.TtsMode,
         playbackSource: String = "READER",
@@ -190,6 +191,7 @@ class TtsController(context: Context) : Player.Listener {
             chapterIndex?.let { putInt(KEY_CHAPTER_INDEX, it) }
             totalChapters?.let { putInt(KEY_TOTAL_CHAPTERS, it) }
             pageIndex?.let { putInt(KEY_PAGE_INDEX, it) }
+            putInt(KEY_START_CHUNK_INDEX, startChunkIndex)
             putBoolean(KEY_CONTINUE_SESSION, continueSession)
             putString(KEY_TTS_MODE, ttsMode.name)
             putString(KEY_PLAYBACK_SOURCE, playbackSource)

@@ -332,16 +332,17 @@ private fun handleVerticalAutoAdvance(
                 val resumeIdx = nativeChunks.indexOfLast { it.sourceCfi.split(":")[0] == lastCfiPath }
 
                 if (resumeIdx != -1 && resumeIdx + 1 < nativeChunks.size) {
-                    val remainingChunks = nativeChunks.subList(resumeIdx + 1, nativeChunks.size)
+                    val startChunkIndex = resumeIdx + 1
                     val token = getAuthToken()
                     ttsController.start(
-                        chunks = remainingChunks.withTtsReplacements(ttsReplacementPreferences, ttsReplacementBookId),
+                        chunks = nativeChunks.withTtsReplacements(ttsReplacementPreferences, ttsReplacementBookId),
                         bookTitle = epubBookTitle,
                         chapterTitle = chapters.getOrNull(currentTtsChapterIndex)?.title,
                         coverImageUri = coverImagePath?.let { android.net.Uri.fromFile(File(it)).toString() },
                         bookId = ttsReplacementBookId,
                         chapterIndex = currentTtsChapterIndex,
                         totalChapters = chapters.size,
+                        startChunkIndex = startChunkIndex,
                         continueSession = true,
                         ttsMode = currentTtsMode,
                         playbackSource = "READER",

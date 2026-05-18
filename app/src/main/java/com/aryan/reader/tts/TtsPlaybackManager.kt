@@ -84,6 +84,7 @@ const val KEY_TOTAL_CHAPTERS = "KEY_TOTAL_CHAPTERS"
 const val KEY_CONTINUE_SESSION = "KEY_CONTINUE_SESSION"
 const val KEY_BOOK_ID = "KEY_BOOK_ID"
 const val KEY_PAGE_INDEX = "KEY_PAGE_INDEX"
+const val KEY_START_CHUNK_INDEX = "KEY_START_CHUNK_INDEX"
 
 private const val PREFETCH_LOOKAHEAD = 3
 private const val TTS_SESSION_ACTIVITY_REQUEST_CODE = 4207
@@ -98,6 +99,14 @@ internal fun resolveTtsChunkSkipTarget(
     if (direction != -1 && direction != 1) return null
     val targetIndex = currentChunkIndex + direction
     return targetIndex.takeIf { it in 0 until totalChunks }
+}
+
+internal fun resolveTtsStartChunkIndex(
+    requestedChunkIndex: Int,
+    totalChunks: Int
+): Int {
+    if (totalChunks <= 0) return 0
+    return requestedChunkIndex.coerceIn(0, totalChunks - 1)
 }
 
 @UnstableApi
@@ -251,6 +260,7 @@ class TtsPlaybackManager(
                 val totalChapters = args.getInt(KEY_TOTAL_CHAPTERS, -1).takeIf { it > 0 }
                 val bookId = args.getString(KEY_BOOK_ID)
                 val pageIndex = args.getInt(KEY_PAGE_INDEX, -1).takeIf { it >= 0 }
+                val startChunkIndex = args.getInt(KEY_START_CHUNK_INDEX, 0)
                 val ttsModeName = args.getString(KEY_TTS_MODE, TtsMode.CLOUD.name)
                 val playbackSource = args.getString(KEY_PLAYBACK_SOURCE)
                 val ttsMode = try { TtsMode.valueOf(ttsModeName ?: TtsMode.CLOUD.name) } catch (_: Exception) { TtsMode.CLOUD }
@@ -279,7 +289,7 @@ class TtsPlaybackManager(
 
                 val authToken = args.getString(KEY_AUTH_TOKEN)
                 Timber.tag("TTS_CLOUD_DIAG").d("TtsPlaybackManager received START. Token present: ${!authToken.isNullOrBlank()}")
-                handleStartTts(richChunks, speakerId, bookId, bookTitle, chapterTitle, coverImageUri, chapterIndex, totalChapters, pageIndex, ttsMode, playbackSource, args)
+                handleStartTts(richChunks, speakerId, bookId, bookTitle, chapterTitle, coverImageUri, chapterIndex, totalChapters, pageIndex, startChunkIndex, ttsMode, playbackSource, args)
             }
             STOP_TTS_COMMAND -> {
                 Timber.d("Received STOP command.")
@@ -479,6 +489,7 @@ class TtsPlaybackManager(
         chapterIndex: Int?,
         totalChapters: Int?,
         pageIndex: Int?,
+        startChunkIndex: Int,
         ttsMode: TtsMode,
         playbackSource: String?,
         args: Bundle // Added this parameter
@@ -505,7 +516,7 @@ class TtsPlaybackManager(
 
         Timber.tag("TTS_CLOUD_DIAG").d("TtsPlaybackManager received START. Token present: ${!authToken.isNullOrBlank()}")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
-            "handleStartTts. continueSession=$continueSession, chunks=${chunks.size}, book='${bookTitle.orEmpty().take(60)}', chapter='${chapterTitle.orEmpty().take(60)}', chapterIndex=$chapterIndex, totalChapters=$totalChapters, mode=$ttsMode, playbackSource=$playbackSource"
+            "handleStartTts. continueSession=$continueSession, chunks=${chunks.size}, startChunkIndex=$startChunkIndex, book='${bookTitle.orEmpty().take(60)}', chapter='${chapterTitle.orEmpty().take(60)}', chapterIndex=$chapterIndex, totalChapters=$totalChapters, mode=$ttsMode, playbackSource=$playbackSource"
         )
 
         if (!continueSession) {
@@ -562,8 +573,9 @@ class TtsPlaybackManager(
         }
 
         currentAuthToken = authToken
+        val resolvedStartChunkIndex = resolveTtsStartChunkIndex(startChunkIndex, chunks.size)
         preparationJob = scope.launch {
-            prepareAndPlayFirstChunk()
+            prepareAndPlayFirstChunk(startAtIndex = resolvedStartChunkIndex)
         }
     }
 

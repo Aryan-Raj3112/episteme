@@ -270,6 +270,50 @@ private fun epubHighlightDiagSnippet(text: String, maxLength: Int = 80): String 
         .take(maxLength)
 }
 
+private fun sameTtsChunkSource(first: String, second: String): Boolean {
+    if (first.isBlank() || second.isBlank()) return first == second
+    return CfiUtils.getPath(first) == CfiUtils.getPath(second)
+}
+
+private fun findTtsChunkStartIndex(
+    chunks: List<TtsChunk>,
+    target: TtsChunk?
+): Int? {
+    if (target == null) return null
+
+    val exactIndex = chunks.indexOfFirst {
+        sameTtsChunkSource(it.sourceCfi, target.sourceCfi) &&
+            it.startOffsetInSource == target.startOffsetInSource &&
+            it.text == target.text
+    }
+    if (exactIndex >= 0) return exactIndex
+
+    return chunks.indexOfFirst {
+        sameTtsChunkSource(it.sourceCfi, target.sourceCfi) &&
+            target.startOffsetInSource >= it.startOffsetInSource &&
+            target.startOffsetInSource < it.startOffsetInSource + it.text.length
+    }.takeIf { it >= 0 }
+}
+
+private fun List<TtsChunk>.withInitialChunkOverride(
+    startChunkIndex: Int,
+    initialChunk: TtsChunk?
+): List<TtsChunk> {
+    if (initialChunk == null || startChunkIndex !in indices) return this
+    val existing = this[startChunkIndex]
+    if (
+        existing.text == initialChunk.text &&
+        existing.sourceCfi == initialChunk.sourceCfi &&
+        existing.startOffsetInSource == initialChunk.startOffsetInSource
+    ) {
+        return this
+    }
+
+    return toMutableList().also { chunks ->
+        chunks[startChunkIndex] = initialChunk
+    }
+}
+
 private fun View.bottomRoundedCornerRadiusPx(): Int {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return 0
 
@@ -1602,23 +1646,31 @@ fun EpubReaderHost(
                         val chapterStartPage = bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0
                         val pageInChapter = currentPage - chapterStartPage
 
-                        val ttsChunks = bookPaginator.getTtsChunksForChapter(
-                            chapterIndex = chapterIndex,
-                            startingFromPageInChapter = pageInChapter
-                        )
+                        val allTtsChunks = bookPaginator.getTtsChunksForChapter(chapterIndex)
+                        val firstChunkOnPage = if (pageInChapter > 0) {
+                            bookPaginator.getTtsChunksForChapter(
+                                chapterIndex = chapterIndex,
+                                startingFromPageInChapter = pageInChapter
+                            )?.firstOrNull()
+                        } else {
+                            allTtsChunks?.firstOrNull()
+                        }
+                        val startChunkIndex = findTtsChunkStartIndex(allTtsChunks.orEmpty(), firstChunkOnPage) ?: 0
 
-                        if (!ttsChunks.isNullOrEmpty()) {
+                        if (!allTtsChunks.isNullOrEmpty() && firstChunkOnPage != null) {
                             val chapterTitle = chapters.getOrNull(chapterIndex)?.title
                             val coverUriString = coverImagePath?.let { Uri.fromFile(File(it)).toString() }
                             ttsChapterIndex = chapterIndex
                             ttsController.start(
-                                chunks = ttsChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
+                                chunks = allTtsChunks.withInitialChunkOverride(startChunkIndex, firstChunkOnPage)
+                                    .withTtsReplacements(ttsReplacementPreferences, bookId),
                                 bookTitle = epubBook.title,
                                 chapterTitle = chapterTitle,
                                 coverImageUri = coverUriString,
                                 bookId = bookId,
                                 chapterIndex = chapterIndex,
                                 totalChapters = chapters.size,
+                                startChunkIndex = startChunkIndex,
                                 ttsMode = currentTtsMode,
                                 playbackSource = "READER",
                                 authToken = token
@@ -1699,22 +1751,24 @@ fun EpubReaderHost(
                         spokenText = slicedText,
                     )
 
-                    val remainingChunks = mutableListOf(newChunk)
-                    remainingChunks.addAll(chunks.subList(foundIdx + 1, chunks.size))
+                    val sessionChunks = chunks.toMutableList().also {
+                        it[foundIdx] = newChunk
+                    }
 
-                    if (remainingChunks.isNotEmpty()) {
+                    if (sessionChunks.isNotEmpty()) {
                         ttsShouldStartOnChapterLoad = false
                         ttsChapterIndex = chapterIndex
                         val chapterTitle = chapters.getOrNull(chapterIndex)?.title
                         val coverUriString = coverImagePath?.let { Uri.fromFile(File(it)).toString() }
                         ttsController.start(
-                            chunks = remainingChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
+                            chunks = sessionChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
                             bookTitle = epubBook.title,
                             chapterTitle = chapterTitle,
                             coverImageUri = coverUriString,
                             bookId = bookId,
                             chapterIndex = chapterIndex,
                             totalChapters = chapters.size,
+                            startChunkIndex = foundIdx,
                             ttsMode = currentTtsMode,
                             playbackSource = "READER",
                             authToken = token
@@ -4307,15 +4361,27 @@ fun EpubReaderHost(
                                                             Uri.fromFile(File(it)).toString()
                                                         }
                                                         ttsChapterIndex = targetChapterIndex
+                                                        val nativeChapterChunks = locatorConverter
+                                                            .getTtsChunksForChapter(epubBook, targetChapterIndex, bookId)
+                                                            .orEmpty()
+                                                        val extractedStartChunk = ttsChunks.firstOrNull()
+                                                        val nativeStartChunkIndex = findTtsChunkStartIndex(nativeChapterChunks, extractedStartChunk)
+                                                        val sessionChunks = if (nativeChapterChunks.isNotEmpty() && nativeStartChunkIndex != null) {
+                                                            nativeChapterChunks.withInitialChunkOverride(nativeStartChunkIndex, extractedStartChunk)
+                                                        } else {
+                                                            ttsChunks
+                                                        }
+                                                        val startChunkIndex = nativeStartChunkIndex ?: 0
 
                                                         ttsController.start(
-                                                            chunks = ttsChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
+                                                            chunks = sessionChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
                                                             bookTitle = epubBook.title,
                                                             chapterTitle = chapterTitle,
                                                             coverImageUri = coverUriString,
                                                             bookId = bookId,
                                                             chapterIndex = targetChapterIndex,
                                                             totalChapters = chapters.size,
+                                                            startChunkIndex = startChunkIndex,
                                                             ttsMode = currentTtsMode,
                                                             playbackSource = "READER",
                                                             authToken = token

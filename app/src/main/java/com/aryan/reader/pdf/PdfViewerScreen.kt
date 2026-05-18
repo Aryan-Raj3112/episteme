@@ -3020,20 +3020,49 @@ fun PdfViewerScreen(
                 ttsDisplayPageIndex = displayPageForTts
 
                 val cleanStartIndex = if (startCharIndex != null && startCharIndex >= 0) {
-                    processedText.indexMap.indexOfFirst { it >= startCharIndex }.coerceAtLeast(0)
+                    val mappedIndex = processedText.indexMap.indexOfFirst { it >= startCharIndex }
+                    if (mappedIndex >= 0) mappedIndex else processedText.cleanText.lastIndex.coerceAtLeast(0)
                 } else {
                     0
                 }
 
-                val textToChunk = processedText.cleanText.substring(cleanStartIndex)
-
-                val chunks = splitTextIntoChunks(textToChunk)
+                val chunks = splitTextIntoChunks(processedText.cleanText)
+                val chunkStartOffsets = mutableListOf<Int>()
+                var searchIndex = 0
+                chunks.forEach { chunk ->
+                    val foundIndex = processedText.cleanText.indexOf(chunk, searchIndex)
+                        .takeIf { it >= 0 }
+                        ?: searchIndex
+                    chunkStartOffsets.add(foundIndex)
+                    searchIndex = foundIndex + chunk.length
+                }
+                var startChunkIndex = 0
+                for (index in chunks.indices) {
+                    val chunkStart = chunkStartOffsets.getOrNull(index) ?: 0
+                    val chunkEnd = chunkStart + chunks[index].length
+                    if (cleanStartIndex >= chunkStart && cleanStartIndex < chunkEnd) {
+                        startChunkIndex = index
+                        break
+                    }
+                    if (cleanStartIndex < chunkStart) {
+                        startChunkIndex = index
+                        break
+                    }
+                }
 
                 val bookTitle = (pdfDocument as? PdfDocumentWrapper)?.pdfDocument?.getDocumentMeta()?.title?.takeIf { it.isNotBlank() }
                     ?: effectivePdfUri.lastPathSegment ?: context.getString(R.string.default_document_title)
                 val pageTitle = context.getString(R.string.pdf_page_short, pageToRead + 1)
 
-                val ttsChunks = chunks.mapIndexed { index, text -> TtsChunk(text, "", index) }
+                val ttsChunks = chunks.mapIndexed { index, text ->
+                    val chunkStart = chunkStartOffsets.getOrNull(index) ?: 0
+                    val textForChunk = if (index == startChunkIndex && cleanStartIndex > chunkStart) {
+                        text.substring((cleanStartIndex - chunkStart).coerceIn(0, text.length))
+                    } else {
+                        text
+                    }
+                    TtsChunk(textForChunk, "", index)
+                }
 
                 ttsController.start(
                     chunks = ttsChunks.withTtsReplacements(ttsReplacementPreferences, bookId),
@@ -3042,6 +3071,7 @@ fun PdfViewerScreen(
                     coverImageUri = null,
                     bookId = bookId,
                     pageIndex = displayPageForTts,
+                    startChunkIndex = startChunkIndex,
                     continueSession = continueSession,
                     ttsMode = currentTtsMode,
                     playbackSource = "READER",
