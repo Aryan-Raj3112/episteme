@@ -254,6 +254,16 @@ class TtsController(context: Context) : Player.Listener {
         mediaController?.sendCustomCommand(SLICE_CURRENT_AND_RELOAD_COMMAND, Bundle.EMPTY)
     }
 
+    fun skipToPreviousChunk() {
+        Timber.d("UI sending SKIP_TO_PREVIOUS_TTS_CHUNK command.")
+        mediaController?.sendCustomCommand(SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND, Bundle.EMPTY)
+    }
+
+    fun skipToNextChunk() {
+        Timber.d("UI sending SKIP_TO_NEXT_TTS_CHUNK command.")
+        mediaController?.sendCustomCommand(SKIP_TO_NEXT_TTS_CHUNK_COMMAND, Bundle.EMPTY)
+    }
+
     override fun onEvents(player: Player, events: Player.Events) {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "Controller onEvents. playbackState=${player.playbackState}, isPlaying=${player.isPlaying}, playWhenReady=${player.playWhenReady}, mediaItems=${player.mediaItemCount}, currentIndex=${player.currentMediaItemIndex}, events=$events"

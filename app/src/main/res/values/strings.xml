@@ -734,6 +734,10 @@
     <string name="content_desc_pause_tts">Pause TTS</string>
     <!-- TTS = Text-to-Speech. Accessibility label. -->
     <string name="content_desc_resume_tts">Resume TTS</string>
+    <!-- TTS = Text-to-Speech. Accessibility label. -->
+    <string name="content_desc_tts_previous_chunk">Previous TTS chunk</string>
+    <!-- TTS = Text-to-Speech. Accessibility label. -->
+    <string name="content_desc_tts_next_chunk">Next TTS chunk</string>
     <string name="content_desc_exit_slider">Exit slider navigation</string>
     <string name="content_desc_start_page_thumbnail">Start page thumbnail</string>
     <string name="content_desc_expand">Expand</string>

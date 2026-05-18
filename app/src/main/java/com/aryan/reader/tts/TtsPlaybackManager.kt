@@ -59,6 +59,8 @@ private val STATE_UPDATE_COMMAND = SessionCommand("com.aryan.reader.tts.STATE_UP
 val CHANGE_TTS_MODE_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_MODE", Bundle.EMPTY)
 val SLICE_CURRENT_AND_RELOAD_COMMAND = SessionCommand("com.aryan.reader.tts.SLICE_AND_RELOAD", Bundle.EMPTY)
 val SET_PLAYBACK_PARAMS_COMMAND = SessionCommand("com.aryan.reader.tts.SET_PLAYBACK_PARAMS", Bundle.EMPTY)
+val SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND = SessionCommand("com.aryan.reader.tts.SKIP_TO_PREVIOUS_CHUNK", Bundle.EMPTY)
+val SKIP_TO_NEXT_TTS_CHUNK_COMMAND = SessionCommand("com.aryan.reader.tts.SKIP_TO_NEXT_CHUNK", Bundle.EMPTY)
 const val TTS_NOTIFICATION_DIAG_TAG = "TTS_NOTIFICATION_DIAG"
 
 const val KEY_TEXT_CHUNKS = "KEY_TEXT_CHUNKS"
@@ -79,6 +81,18 @@ const val KEY_TOTAL_CHAPTERS = "KEY_TOTAL_CHAPTERS"
 const val KEY_CONTINUE_SESSION = "KEY_CONTINUE_SESSION"
 
 private const val PREFETCH_LOOKAHEAD = 3
+
+internal fun resolveTtsChunkSkipTarget(
+    currentChunkIndex: Int,
+    totalChunks: Int,
+    direction: Int
+): Int? {
+    if (totalChunks <= 0) return null
+    if (currentChunkIndex !in 0 until totalChunks) return null
+    if (direction != -1 && direction != 1) return null
+    val targetIndex = currentChunkIndex + direction
+    return targetIndex.takeIf { it in 0 until totalChunks }
+}
 
 @UnstableApi
 class TtsPlaybackManager(
@@ -187,6 +201,8 @@ class TtsPlaybackManager(
             .add(FLUSH_PREFETCH_COMMAND)
             .add(SLICE_CURRENT_AND_RELOAD_COMMAND)
             .add(SET_PLAYBACK_PARAMS_COMMAND)
+            .add(SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND)
+            .add(SKIP_TO_NEXT_TTS_CHUNK_COMMAND)
             .build()
         val availablePlayerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
             .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
@@ -326,8 +342,66 @@ class TtsPlaybackManager(
                     }
                 }
             }
+            SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND -> {
+                handleSkipTtsChunk(direction = -1)
+            }
+            SKIP_TO_NEXT_TTS_CHUNK_COMMAND -> {
+                handleSkipTtsChunk(direction = 1)
+            }
         }
         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+    }
+
+    private fun handleSkipTtsChunk(direction: Int) {
+        val currentIndex = currentChunkIndexFromPlayer()
+            .takeIf { it != C.INDEX_UNSET }
+            ?: _ttsState.value.currentChunkIndex
+        val targetIndex = resolveTtsChunkSkipTarget(currentIndex, textChunks.size, direction)
+
+        if (targetIndex == null) {
+            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+                "Ignoring chunk skip. direction=$direction, current=$currentIndex, total=${textChunks.size}"
+            )
+            return
+        }
+
+        val shouldResumePlayback = player.playWhenReady || _ttsState.value.isPlaying
+        val targetChunk = textChunks[targetIndex]
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "Skipping TTS chunk. direction=$direction, from=$currentIndex, to=$targetIndex, playWhenReady=$shouldResumePlayback"
+        )
+
+        onResetContext()
+        preparationJob?.cancel()
+        wordTrackingJob?.cancel()
+        prefetchLoopJob?.cancel()
+        prefetchingJobs.values.forEach { it.cancel() }
+        prefetchingJobs.clear()
+        lastPrefetchIndex = -1
+
+        _ttsState.value = _ttsState.value.copy(
+            isLoading = true,
+            isPlaying = false,
+            currentText = targetChunk.text,
+            errorMessage = null,
+            currentChunkIndex = targetIndex,
+            totalChunks = textChunks.size,
+            bookProgressPercent = calculateBookProgressPercent(targetIndex),
+            sourceCfi = targetChunk.sourceCfi,
+            startOffsetInSource = targetChunk.startOffsetInSource,
+            currentWordSourceCfi = null,
+            currentWordStartOffset = -1,
+            sessionFinished = false
+        )
+
+        player.pause()
+        player.stop()
+        player.clearMediaItems()
+
+        preparationJob = scope.launch {
+            clearAudioFiles()
+            prepareAndPlayFirstChunk(startAtIndex = targetIndex, playWhenReady = shouldResumePlayback)
+        }
     }
 
     private fun handleSliceAndReload() {

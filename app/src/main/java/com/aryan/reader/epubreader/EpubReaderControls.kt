@@ -92,6 +92,8 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
@@ -2198,6 +2200,12 @@ fun TtsOverlayControls(
             null
         }
     }
+    val canSkipPreviousChunk = !ttsState.isLoading &&
+        ttsState.currentChunkIndex > 0 &&
+        ttsState.totalChunks > 0
+    val canSkipNextChunk = !ttsState.isLoading &&
+        ttsState.currentChunkIndex >= 0 &&
+        ttsState.currentChunkIndex < ttsState.totalChunks - 1
 
     val saveAndApply = {
         saveTtsSpeechRate(context, rate)
@@ -2209,11 +2217,9 @@ fun TtsOverlayControls(
         }
     }
 
-    val backgroundAlpha = 0.6f
-
     Surface(
         shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = backgroundAlpha),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
@@ -2267,7 +2273,7 @@ fun TtsOverlayControls(
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Surface(
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                                color = MaterialTheme.colorScheme.primaryContainer,
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text(
@@ -2283,7 +2289,7 @@ fun TtsOverlayControls(
                             }
 
                             Surface(
-                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 val voiceName = if (activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
@@ -2302,7 +2308,7 @@ fun TtsOverlayControls(
 
                             if (BuildConfig.FLAVOR != "oss" && activeMode == com.aryan.reader.tts.TtsPlaybackManager.TtsMode.CLOUD) {
                                 Surface(
-                                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f),
+                                    color = MaterialTheme.colorScheme.tertiaryContainer,
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Text(
@@ -2367,30 +2373,59 @@ fun TtsOverlayControls(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Giant Play/Pause
-                        Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
-                            FilledIconButton(
-                                onClick = { if (ttsState.isPlaying) ttsController.pause() else ttsController.resume() },
-                                modifier = Modifier.size(56.dp),
-                                colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                enabled = canSkipPreviousChunk,
+                                onClick = { ttsController.skipToPreviousChunk() },
+                                modifier = Modifier.size(40.dp)
                             ) {
                                 Icon(
-                                    painterResource(if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
-                                    stringResource(R.string.content_desc_play_pause),
-                                    modifier = Modifier.size(28.dp)
+                                    imageVector = Icons.Default.SkipPrevious,
+                                    contentDescription = stringResource(R.string.content_desc_tts_previous_chunk),
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
-                            if (ttsState.isLoading) CircularProgressIndicator(
-                                modifier = Modifier.size(56.dp),
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                strokeWidth = 3.dp
-                            )
+
+                            // Giant Play/Pause
+                            Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                                FilledIconButton(
+                                    onClick = { if (ttsState.isPlaying) ttsController.pause() else ttsController.resume() },
+                                    modifier = Modifier.size(56.dp),
+                                    colors = IconButtonDefaults.filledIconButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    )
+                                ) {
+                                    Icon(
+                                        painterResource(if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
+                                        stringResource(R.string.content_desc_play_pause),
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                                if (ttsState.isLoading) CircularProgressIndicator(
+                                    modifier = Modifier.size(56.dp),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    strokeWidth = 3.dp
+                                )
+                            }
+
+                            IconButton(
+                                enabled = canSkipNextChunk,
+                                onClick = { ttsController.skipToNextChunk() },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SkipNext,
+                                    contentDescription = stringResource(R.string.content_desc_tts_next_chunk),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
 
-                        Spacer(Modifier.width(16.dp))
+                        Spacer(Modifier.width(12.dp))
 
                         // Unified Sliders Block
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
