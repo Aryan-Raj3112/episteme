@@ -19,7 +19,9 @@
  */
 package com.aryan.reader.tts
 
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import timber.log.Timber
@@ -32,6 +34,7 @@ import androidx.media3.session.CommandButton
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
+import com.aryan.reader.MainActivity
 import com.aryan.reader.R
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -79,8 +82,11 @@ const val KEY_AUTH_TOKEN = "KEY_AUTH_TOKEN"
 const val KEY_CHAPTER_INDEX = "KEY_CHAPTER_INDEX"
 const val KEY_TOTAL_CHAPTERS = "KEY_TOTAL_CHAPTERS"
 const val KEY_CONTINUE_SESSION = "KEY_CONTINUE_SESSION"
+const val KEY_BOOK_ID = "KEY_BOOK_ID"
+const val KEY_PAGE_INDEX = "KEY_PAGE_INDEX"
 
 private const val PREFETCH_LOOKAHEAD = 3
+private const val TTS_SESSION_ACTIVITY_REQUEST_CODE = 4207
 
 internal fun resolveTtsChunkSkipTarget(
     currentChunkIndex: Int,
@@ -125,10 +131,12 @@ class TtsPlaybackManager(
         val isLoading: Boolean = false,
         val currentText: String? = null,
         val errorMessage: String? = null,
+        val bookId: String? = null,
         val bookTitle: String? = null,
         val chapterTitle: String? = null,
         val chapterIndex: Int? = null,
         val totalChapters: Int? = null,
+        val pageIndex: Int? = null,
         val currentChunkIndex: Int = -1,
         val totalChunks: Int = 0,
         val bookProgressPercent: Int? = null,
@@ -156,34 +164,25 @@ class TtsPlaybackManager(
     private var textChunks: List<TtsChunk> = emptyList()
     private val audioFiles = java.util.concurrent.ConcurrentHashMap<Int, File>()
     private var currentSpeakerId = initialSpeakerId
+    private var bookId: String? = null
     private var bookTitle: String? = null
     private var chapterTitle: String? = null
     private var coverImageUri: String? = null
     private var currentTtsMode = initialTtsMode
     private var chapterIndex: Int? = null
     private var totalChapters: Int? = null
+    private var pageIndex: Int? = null
 
     init {
         player.addListener(this)
         _ttsState.onEach { newState ->
-            mediaSession?.let { session ->
-                val layout = listOf(
-                    createStateButton(newState),
-                    createStopCommandButton()
-                )
-                session.setCustomLayout(layout)
-            }
+            updateSessionControls(newState)
         }.launchIn(scope)
     }
 
     fun setMediaSession(session: MediaSession) {
         this.mediaSession = session
-        session.setCustomLayout(
-            listOf(
-                createStateButton(_ttsState.value),
-                createStopCommandButton()
-            )
-        )
+        updateSessionControls(_ttsState.value)
     }
 
     override fun onConnect(
@@ -214,6 +213,9 @@ class TtsPlaybackManager(
         return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
             .setAvailableSessionCommands(availableSessionCommands)
             .setAvailablePlayerCommands(availablePlayerCommands)
+            .setCustomLayout(createCustomLayout(_ttsState.value))
+            .setMediaButtonPreferences(createNotificationButtons(_ttsState.value))
+            .setSessionActivity(createSessionActivity(_ttsState.value))
             .build()
     }
 
@@ -247,6 +249,8 @@ class TtsPlaybackManager(
                 val coverImageUri = args.getString(KEY_COVER_IMAGE_URI)
                 val chapterIndex = args.getInt(KEY_CHAPTER_INDEX, -1).takeIf { it >= 0 }
                 val totalChapters = args.getInt(KEY_TOTAL_CHAPTERS, -1).takeIf { it > 0 }
+                val bookId = args.getString(KEY_BOOK_ID)
+                val pageIndex = args.getInt(KEY_PAGE_INDEX, -1).takeIf { it >= 0 }
                 val ttsModeName = args.getString(KEY_TTS_MODE, TtsMode.CLOUD.name)
                 val playbackSource = args.getString(KEY_PLAYBACK_SOURCE)
                 val ttsMode = try { TtsMode.valueOf(ttsModeName ?: TtsMode.CLOUD.name) } catch (_: Exception) { TtsMode.CLOUD }
@@ -275,7 +279,7 @@ class TtsPlaybackManager(
 
                 val authToken = args.getString(KEY_AUTH_TOKEN)
                 Timber.tag("TTS_CLOUD_DIAG").d("TtsPlaybackManager received START. Token present: ${!authToken.isNullOrBlank()}")
-                handleStartTts(richChunks, speakerId, bookTitle, chapterTitle, coverImageUri, chapterIndex, totalChapters, ttsMode, playbackSource, args)
+                handleStartTts(richChunks, speakerId, bookId, bookTitle, chapterTitle, coverImageUri, chapterIndex, totalChapters, pageIndex, ttsMode, playbackSource, args)
             }
             STOP_TTS_COMMAND -> {
                 Timber.d("Received STOP command.")
@@ -468,11 +472,13 @@ class TtsPlaybackManager(
     private fun handleStartTts(
         chunks: List<TtsChunk>,
         speakerId: String,
+        bookId: String?,
         bookTitle: String?,
         chapterTitle: String?,
         coverImageUri: String?,
         chapterIndex: Int?,
         totalChapters: Int?,
+        pageIndex: Int?,
         ttsMode: TtsMode,
         playbackSource: String?,
         args: Bundle // Added this parameter
@@ -514,21 +520,25 @@ class TtsPlaybackManager(
         textChunks = chunks
         currentSpeakerId = effectiveSpeakerId
         currentTtsMode = ttsMode
+        this.bookId = bookId
         this.bookTitle = bookTitle
         this.chapterTitle = chapterTitle
         this.coverImageUri = coverImageUri
         this.chapterIndex = chapterIndex
         this.totalChapters = totalChapters
+        this.pageIndex = pageIndex
 
         loadedChunks.clear()
         lastPrefetchIndex = -1
 
         _ttsState.value = TtsState(
             isLoading = true,
+            bookId = bookId,
             bookTitle = bookTitle,
             chapterTitle = chapterTitle,
             chapterIndex = chapterIndex,
             totalChapters = totalChapters,
+            pageIndex = pageIndex,
             currentChunkIndex = -1,
             totalChunks = chunks.size,
             bookProgressPercent = calculateBookProgressPercent(-1),
@@ -778,23 +788,19 @@ class TtsPlaybackManager(
                 ttsMode = currentTtsMode.name
             )
             _ttsState.value = finalState
-            mediaSession?.let { session ->
-                val layout = listOf(
-                    createStateButton(finalState),
-                    createStopCommandButton()
-                )
-                session.setCustomLayout(layout)
-            }
+            updateSessionControls(finalState)
         }
 
         player.stop()
         player.clearMediaItems()
         textChunks = emptyList()
+        bookId = null
         bookTitle = null
         chapterTitle = null
         coverImageUri = null
         chapterIndex = null
         totalChapters = null
+        pageIndex = null
         lastPrefetchIndex = -1
         prefetchLoopJob?.cancel()
         prefetchingJobs.values.forEach { it.cancel() }
@@ -1142,6 +1148,8 @@ class TtsPlaybackManager(
             putString("ttsText", text)
             putString("sourceCfi", chunk.sourceCfi)
             putInt("startOffset", chunk.startOffsetInSource)
+            putString("bookId", bookId)
+            putInt("pageIndex", pageIndex ?: -1)
             if (chunk.timedWords.isNotEmpty()) {
                 val timestamps = chunk.timedWords.map { it.startTime }.toDoubleArray()
                 val offsets = chunk.timedWords.map { it.startOffset }.toIntArray()
@@ -1189,19 +1197,107 @@ class TtsPlaybackManager(
         }
     }
 
+    private fun updateSessionControls(state: TtsState) {
+        mediaSession?.let { session ->
+            session.setCustomLayout(createCustomLayout(state))
+            session.setMediaButtonPreferences(createNotificationButtons(state))
+            session.setSessionActivity(createSessionActivity(state))
+        }
+    }
+
+    private fun createCustomLayout(state: TtsState): List<CommandButton> {
+        return listOf(
+            createStateButton(state),
+            createPreviousChunkCommandButton(state),
+            createNextChunkCommandButton(state),
+            createStopCommandButton()
+        )
+    }
+
+    private fun createNotificationButtons(state: TtsState): List<CommandButton> {
+        return listOf(
+            createPreviousChunkCommandButton(state),
+            createNextChunkCommandButton(state),
+            createStopCommandButton()
+        )
+    }
+
+    @Suppress("Deprecation")
+    private fun createPreviousChunkCommandButton(state: TtsState): CommandButton {
+        val canSkip = resolveTtsChunkSkipTarget(
+            currentChunkIndex = state.currentChunkIndex,
+            totalChunks = state.totalChunks,
+            direction = -1
+        ) != null
+        return CommandButton.Builder(CommandButton.ICON_PREVIOUS)
+            .setDisplayName(appContext.getString(R.string.content_desc_tts_previous_chunk))
+            .setSessionCommand(SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND)
+            .setIconResId(R.drawable.skip_previous)
+            .setEnabled(canSkip)
+            .build()
+    }
+
+    @Suppress("Deprecation")
+    private fun createNextChunkCommandButton(state: TtsState): CommandButton {
+        val canSkip = resolveTtsChunkSkipTarget(
+            currentChunkIndex = state.currentChunkIndex,
+            totalChunks = state.totalChunks,
+            direction = 1
+        ) != null
+        return CommandButton.Builder(CommandButton.ICON_NEXT)
+            .setDisplayName(appContext.getString(R.string.content_desc_tts_next_chunk))
+            .setSessionCommand(SKIP_TO_NEXT_TTS_CHUNK_COMMAND)
+            .setIconResId(R.drawable.skip_next)
+            .setEnabled(canSkip)
+            .build()
+    }
+
+    private fun createSessionActivity(state: TtsState): PendingIntent {
+        val targetCfi = state.currentWordSourceCfi?.takeIf { it.isNotBlank() }
+            ?: state.sourceCfi?.takeIf { it.isNotBlank() }
+        val targetOffset = state.currentWordStartOffset.takeIf { it >= 0 }
+            ?: state.startOffsetInSource.takeIf { it >= 0 }
+
+        val intent = Intent(appContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (!state.bookId.isNullOrBlank()) {
+                action = ACTION_OPEN_TTS_SESSION
+                putExtra(EXTRA_TTS_BOOK_ID, state.bookId)
+                state.chapterIndex?.let { putExtra(EXTRA_TTS_CHAPTER_INDEX, it) }
+                state.pageIndex?.let { putExtra(EXTRA_TTS_PAGE_INDEX, it) }
+                targetCfi?.let { putExtra(EXTRA_TTS_SOURCE_CFI, it) }
+                targetOffset?.let { putExtra(EXTRA_TTS_START_OFFSET, it) }
+            } else {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+            }
+        }
+
+        return PendingIntent.getActivity(
+            appContext,
+            TTS_SESSION_ACTIVITY_REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     @Suppress("Deprecation")
     private fun createStateButton(state: TtsState): CommandButton {
         val bundle = Bundle().apply {
             putBoolean("isLoading", state.isLoading)
             putString("errorMessage", state.errorMessage)
+            putString("bookId", state.bookId)
             putString("bookTitle", state.bookTitle)
             putString("chapterTitle", state.chapterTitle)
             putInt("chapterIndex", state.chapterIndex ?: -1)
             putInt("totalChapters", state.totalChapters ?: -1)
+            putInt("pageIndex", state.pageIndex ?: -1)
             putInt("currentChunkIndex", state.currentChunkIndex)
             putInt("totalChunks", state.totalChunks)
             putInt("bookProgressPercent", state.bookProgressPercent ?: -1)
             putString("speakerId", state.speakerId)
+            putString("sourceCfi", state.sourceCfi)
+            putInt("startOffset", state.startOffsetInSource)
             putBoolean("sessionEndedByStop", state.sessionEndedByStop)
             putString("currentWordSourceCfi", state.currentWordSourceCfi)
             putInt("currentWordStartOffset", state.currentWordStartOffset)
@@ -1218,7 +1314,7 @@ class TtsPlaybackManager(
 
     @Suppress("Deprecation")
     private fun createStopCommandButton(): CommandButton {
-        return CommandButton.Builder()
+        return CommandButton.Builder(CommandButton.ICON_STOP)
             .setDisplayName("Stop TTS")
             .setSessionCommand(STOP_TTS_COMMAND)
             .setIconResId(R.drawable.close)

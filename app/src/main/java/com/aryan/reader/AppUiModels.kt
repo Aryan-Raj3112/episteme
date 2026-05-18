@@ -50,6 +50,8 @@ data class ReaderScreenState(
     val initialBookmarksJson: String? = null,
     val initialHighlightsJson: String? = null,
     val initialPageInBook: Int? = null,
+    val initialPageInBookIsExplicit: Boolean = false,
+    val isOpeningFromTtsNotification: Boolean = false,
     val shelves: List<Shelf> = emptyList(),
     val viewingShelfId: String? = null,
     val isAddingBooksToShelf: Boolean = false,

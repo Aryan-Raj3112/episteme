@@ -1356,7 +1356,8 @@ fun EpubReaderHost(
                 !ttsState.currentWordSourceCfi.isNullOrBlank() ||
                 !ttsState.sourceCfi.isNullOrBlank() ||
                 !ttsState.currentText.isNullOrBlank()
-        val isSameBook = ttsState.bookTitle == null || ttsState.bookTitle == epubBook.title
+        val isSameBook = ttsState.bookId?.let { it == bookId }
+            ?: (ttsState.bookTitle == null || ttsState.bookTitle == epubBook.title)
         return isReaderSession && hasReaderSessionState && isSameBook
     }
 
@@ -1615,6 +1616,7 @@ fun EpubReaderHost(
                                 bookTitle = epubBook.title,
                                 chapterTitle = chapterTitle,
                                 coverImageUri = coverUriString,
+                                bookId = bookId,
                                 chapterIndex = chapterIndex,
                                 totalChapters = chapters.size,
                                 ttsMode = currentTtsMode,
@@ -1710,6 +1712,7 @@ fun EpubReaderHost(
                             bookTitle = epubBook.title,
                             chapterTitle = chapterTitle,
                             coverImageUri = coverUriString,
+                            bookId = bookId,
                             chapterIndex = chapterIndex,
                             totalChapters = chapters.size,
                             ttsMode = currentTtsMode,
@@ -4310,6 +4313,7 @@ fun EpubReaderHost(
                                                             bookTitle = epubBook.title,
                                                             chapterTitle = chapterTitle,
                                                             coverImageUri = coverUriString,
+                                                            bookId = bookId,
                                                             chapterIndex = targetChapterIndex,
                                                             totalChapters = chapters.size,
                                                             ttsMode = currentTtsMode,

@@ -49,6 +49,12 @@ import androidx.compose.runtime.getValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
+import com.aryan.reader.tts.ACTION_OPEN_TTS_SESSION
+import com.aryan.reader.tts.EXTRA_TTS_BOOK_ID
+import com.aryan.reader.tts.EXTRA_TTS_CHAPTER_INDEX
+import com.aryan.reader.tts.EXTRA_TTS_PAGE_INDEX
+import com.aryan.reader.tts.EXTRA_TTS_SOURCE_CFI
+import com.aryan.reader.tts.EXTRA_TTS_START_OFFSET
 
 @UnstableApi
 class MainActivity : AppCompatActivity() {
@@ -125,10 +131,26 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_TTS_SESSION) {
+            val bookId = intent.getStringExtra(EXTRA_TTS_BOOK_ID)
+            if (!bookId.isNullOrBlank()) {
+                Timber.d("Received TTS notification intent for bookId=$bookId")
+                viewModel.openTtsNotificationTarget(
+                    bookId = bookId,
+                    sourceCfi = intent.getStringExtra(EXTRA_TTS_SOURCE_CFI),
+                    startOffset = intent.getIntExtra(EXTRA_TTS_START_OFFSET, -1).takeIf { it >= 0 },
+                    chapterIndex = intent.getIntExtra(EXTRA_TTS_CHAPTER_INDEX, -1).takeIf { it >= 0 },
+                    pageIndex = intent.getIntExtra(EXTRA_TTS_PAGE_INDEX, -1).takeIf { it >= 0 }
+                )
+            }
+            return
+        }
+
         if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
             Timber.d("Received VIEW intent with URI: ${intent.data}")
             val uri = intent.data!!

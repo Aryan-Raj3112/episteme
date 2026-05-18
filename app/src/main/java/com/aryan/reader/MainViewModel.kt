@@ -719,6 +719,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     selectedBookId = bookId,
                     selectedFileType = item.type,
                     initialPageInBook = item.lastPage,
+                    initialPageInBookIsExplicit = false,
+                    isOpeningFromTtsNotification = false,
                     initialBookmarksJson = item.bookmarksJson,
                     isLoading = false,
                     errorMessage = null
@@ -1326,7 +1328,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 initialCfi = null,
                                 initialBookmarksJson = item.bookmarksJson,
                                 initialHighlightsJson = null,
-                                initialPageInBook = item.lastPage
+                                initialPageInBook = item.lastPage,
+                                initialPageInBookIsExplicit = false,
+                                isOpeningFromTtsNotification = false
                             )
                         }
                     }
@@ -1361,7 +1365,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 initialCfi = item.lastPositionCfi,
                                 initialBookmarksJson = item.bookmarksJson,
                                 initialHighlightsJson = item.highlightsJson,
-                                initialPageInBook = null
+                                initialPageInBook = null,
+                                initialPageInBookIsExplicit = false,
+                                isOpeningFromTtsNotification = false
                             )
                         }
                     }
@@ -2265,7 +2271,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 isLoading = false,
                 errorMessage = null,
                 initialLocator = null,
-                initialPageInBook = null
+                initialPageInBook = null,
+                initialPageInBookIsExplicit = false,
+                isOpeningFromTtsNotification = false
             )
         }
         clearPersistedReaderSession()
@@ -2352,7 +2360,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             bookTitle = book.title,
                             chapterTitle = book.chapters.getOrNull(nextIdx)?.title,
                             coverImageUri = backgroundTtsCoverPath?.let { Uri.fromFile(File(it)).toString() },
+                            bookId = bookId,
                             chapterIndex = nextIdx,
+                            totalChapters = totalChapters,
                             ttsMode = mode,
                             playbackSource = "READER",
                             authToken = token
@@ -3902,6 +3912,52 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun openTtsNotificationTarget(
+        bookId: String,
+        sourceCfi: String?,
+        startOffset: Int?,
+        chapterIndex: Int?,
+        pageIndex: Int?
+    ) {
+        viewModelScope.launch {
+            val item = recentFilesRepository.getFileByBookId(bookId)
+            if (item == null) {
+                _internalState.update {
+                    it.copy(errorMessage = appContext.getString(R.string.error_recent_item_not_found))
+                }
+                return@launch
+            }
+
+            val uri = item.getUri()
+            if (uri == null) {
+                _internalState.update {
+                    it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found))
+                }
+                return@launch
+            }
+
+            val initialLocator = chapterIndex?.let {
+                Locator(
+                    chapterIndex = it,
+                    blockIndex = 0,
+                    charOffset = startOffset ?: 0
+                )
+            }
+
+            openBook(
+                uri = uri,
+                bookId = item.bookId,
+                type = item.type,
+                originalDisplayName = item.displayName,
+                initialPageOverride = pageIndex,
+                isInitialPageExplicit = pageIndex != null,
+                initialLocatorOverride = initialLocator,
+                initialCfiOverride = sourceCfi?.takeIf { it.isNotBlank() },
+                preserveTtsOnOpen = true
+            )
+        }
+    }
+
     private fun importExternalFile(externalUri: Uri, isExternalIntent: Boolean = false) {
         _internalState.update {
             it.copy(isLoading = true, errorMessage = null, contextualActionItems = emptySet())
@@ -4012,6 +4068,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         selectedBookId = bookId,
                         selectedPdfUri = uri,
                         initialPageInBook = syncPosition,
+                        initialPageInBookIsExplicit = true,
+                        isOpeningFromTtsNotification = false,
                         initialBookmarksJson = item.bookmarksJson,
                         isLoading = false
                     )
@@ -4202,7 +4260,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun openBook(
-        uri: Uri, bookId: String, type: FileType, originalDisplayName: String? = null, suppressNavigation: Boolean = false, bundleResult: CalibreBundleResult? = null
+        uri: Uri,
+        bookId: String,
+        type: FileType,
+        originalDisplayName: String? = null,
+        suppressNavigation: Boolean = false,
+        bundleResult: CalibreBundleResult? = null,
+        initialPageOverride: Int? = null,
+        isInitialPageExplicit: Boolean = false,
+        initialLocatorOverride: Locator? = null,
+        initialCfiOverride: String? = null,
+        preserveTtsOnOpen: Boolean = false
     ) {
         val openBookStartTime = System.currentTimeMillis()
         ReaderPerfLog.d("FileOpen start bookId=$bookId type=$type")
@@ -4271,8 +4339,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     selectedFileType = type,
                     isLoading = true,
                     errorMessage = null,
-                    initialLocator = null,
-                    initialPageInBook = null
+                    initialLocator = initialLocatorOverride,
+                    initialCfi = initialCfiOverride,
+                    initialPageInBook = initialPageOverride,
+                    initialPageInBookIsExplicit = isInitialPageExplicit,
+                    isOpeningFromTtsNotification = preserveTtsOnOpen
                 )
             }
 
@@ -4285,7 +4356,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     _internalState.update {
                         it.copy(
                             selectedPdfUri = uri,
-                            initialPageInBook = recentItem?.lastPage,
+                            initialPageInBook = initialPageOverride ?: recentItem?.lastPage,
+                            initialPageInBookIsExplicit = isInitialPageExplicit,
+                            isOpeningFromTtsNotification = preserveTtsOnOpen,
                             initialBookmarksJson = recentItem?.bookmarksJson,
                             isLoading = false
                         )
@@ -4314,8 +4387,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
                     Timber.tag("FileOpenPerf")
                         .d("[$bookId] Branch: ${type.name} | elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
-                    val locator =
-                        if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
+                    val locator = initialLocatorOverride
+                        ?: if (recentItem?.lastChapterIndex != null && recentItem.locatorBlockIndex != null && recentItem.locatorCharOffset != null) {
                             Locator(
                                 chapterIndex = recentItem.lastChapterIndex,
                                 blockIndex = recentItem.locatorBlockIndex,
@@ -4329,7 +4402,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         it.copy(
                             selectedEpubUri = uri,
                             initialLocator = locator,
-                            initialCfi = recentItem?.lastPositionCfi,
+                            initialCfi = initialCfiOverride ?: recentItem?.lastPositionCfi,
                             initialBookmarksJson = recentItem?.bookmarksJson,
                             initialHighlightsJson = recentItem?.highlightsJson,
                         )
@@ -4373,7 +4446,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         selectedFileType = null,
                         selectedBookId = null,
                         isLoading = false,
-                        errorMessage = appContext.getString(R.string.error_unsupported_file_type)
+                        errorMessage = appContext.getString(R.string.error_unsupported_file_type),
+                        initialPageInBookIsExplicit = false,
+                        isOpeningFromTtsNotification = false
                     )
                 }
             }

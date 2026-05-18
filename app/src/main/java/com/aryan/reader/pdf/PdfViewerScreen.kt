@@ -3040,6 +3040,8 @@ fun PdfViewerScreen(
                     bookTitle = bookTitle,
                     chapterTitle = pageTitle,
                     coverImageUri = null,
+                    bookId = bookId,
+                    pageIndex = displayPageForTts,
                     continueSession = continueSession,
                     ttsMode = currentTtsMode,
                     playbackSource = "READER",
@@ -3249,12 +3251,22 @@ fun PdfViewerScreen(
 
         if (showPasswordDialog) isPasswordError = false
 
-        ttsController.stop()
         ocrUsedForCurrentPageTts = false
         flatTableOfContents = emptyList()
 
         val fastId = getFastFileId(context, effectivePdfUri)
         val selectedId = uiState.selectedBookId
+        val shouldPreserveCurrentTtsSession =
+            uiState.isOpeningFromTtsNotification ||
+                (
+                    ttsState.playbackSource == "READER" &&
+                        !ttsState.bookId.isNullOrBlank() &&
+                        ttsState.bookId == selectedId
+                    )
+
+        if (!shouldPreserveCurrentTtsSession) {
+            ttsController.stop()
+        }
 
         if (selectedId != null && selectedId != fastId) {
             Timber.tag("FolderAnnotationSync").i("Detected ID mismatch. Legacy: $fastId, Selected: $selectedId. Initiating migration.")
@@ -3275,9 +3287,14 @@ fun PdfViewerScreen(
 
             val mapPage = tabStateMap[currentBookId!!]
             val uiPage = uiState.initialPageInBook
+            val restorePage = if (uiState.initialPageInBookIsExplicit) {
+                uiPage ?: mapPage ?: initialPage
+            } else {
+                mapPage ?: uiPage ?: initialPage
+            }
             Timber.tag("PdfTabSync").d("UI: Restoring position | tabStateMap=$mapPage, uiState=$uiPage, initialPage=$initialPage")
 
-            pendingRestorePage = mapPage ?: uiPage ?: initialPage
+            pendingRestorePage = restorePage
             initialScrollDone = false
             isDocumentReady = true
             isLoadingDocument = false
@@ -3286,8 +3303,13 @@ fun PdfViewerScreen(
 
         val mapPageInit = tabStateMap[currentBookId!!]
         val uiPageInit = uiState.initialPageInBook
+        val restorePageInit = if (uiState.initialPageInBookIsExplicit) {
+            uiPageInit ?: mapPageInit ?: initialPage
+        } else {
+            mapPageInit ?: uiPageInit ?: initialPage
+        }
         Timber.tag("PdfTabSync").d("UI: Initial position | tabStateMap=$mapPageInit, uiState=$uiPageInit, initialPage=$initialPage")
-        pendingRestorePage = mapPageInit ?: uiPageInit ?: initialPage
+        pendingRestorePage = restorePageInit
         initialScrollDone = false
 
         pdfDocument = null
