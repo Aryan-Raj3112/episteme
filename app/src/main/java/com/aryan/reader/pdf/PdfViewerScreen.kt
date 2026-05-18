@@ -58,6 +58,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -140,6 +143,7 @@ import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -159,6 +163,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -167,6 +172,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -345,6 +351,21 @@ private fun pdfPageRangeLabel(
     } else {
         "Page $pageRange of $pageCount"
     }
+}
+
+private fun clampPdfSpreadCameraOffset(
+    scale: Float,
+    offset: Offset,
+    viewportWidth: Float,
+    viewportHeight: Float
+): Offset {
+    if (viewportWidth <= 0f || viewportHeight <= 0f || scale <= 1f) return Offset.Zero
+    val maxOffsetX = ((viewportWidth * scale) - viewportWidth).coerceAtLeast(0f) / 2f
+    val maxOffsetY = ((viewportHeight * scale) - viewportHeight).coerceAtLeast(0f) / 2f
+    return Offset(
+        x = offset.x.coerceIn(-maxOffsetX, maxOffsetX),
+        y = offset.y.coerceIn(-maxOffsetY, maxOffsetY)
+    )
 }
 
 internal fun activePdfCameraAfterLockPreferenceLoad(
@@ -788,6 +809,7 @@ fun PdfViewerScreen(
     val dockHeight = 64.dp
     val dockHeightPx = with(LocalDensity.current) { dockHeight.toPx() }
     val density = LocalDensity.current
+    val viewConfiguration = LocalViewConfiguration.current
 
     val statusBarHeightDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
     val dummySearcher: suspend (String) -> List<SearchResult> = { emptyList() }
@@ -3461,7 +3483,14 @@ fun PdfViewerScreen(
         summarizationResult = null
     }
 
-    LaunchedEffect(currentPage, displayMode, isScrollLocked, lockedState) {
+    LaunchedEffect(
+        currentPage,
+        displayMode,
+        isScrollLocked,
+        lockedState,
+        pdfSpreadSettings.pageSpreadMode,
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+    ) {
         val nextPageScale = currentPageScaleAfterPdfPageChange(
             displayMode = displayMode,
             isScrollLocked = isScrollLocked,
@@ -3469,7 +3498,44 @@ fun PdfViewerScreen(
             currentActiveScale = currentActiveScale
         )
         currentPageScale = nextPageScale
+        val isCurrentTwoPageSpread =
+            displayMode == DisplayMode.PAGINATION &&
+                PdfSpreadLayout.visiblePageIndices(currentPage, totalDisplayPages, pdfSpreadSettings).size > 1
+        if (isCurrentTwoPageSpread) {
+            val currentLockedState = lockedState
+            val nextPageOffset = if (isScrollLocked && currentLockedState != null) {
+                Offset(currentLockedState.second, currentLockedState.third)
+            } else {
+                Offset.Zero
+            }
+            currentActiveScale = nextPageScale
+            currentActiveOffset = nextPageOffset
+        } else if (displayMode == DisplayMode.PAGINATION && !isScrollLocked) {
+            currentActiveScale = 1f
+            currentActiveOffset = Offset.Zero
+        }
         ocrUsedForCurrentPageTts = false
+    }
+
+    LaunchedEffect(resetZoomTrigger) {
+        if (
+            resetZoomTrigger != 0L &&
+            displayMode == DisplayMode.PAGINATION &&
+            PdfSpreadLayout.visiblePageIndices(currentPage, totalDisplayPages, pdfSpreadSettings).size > 1 &&
+            currentActiveScale > 1f &&
+            !isScrollLocked
+        ) {
+            val startScale = currentActiveScale
+            val startOffset = currentActiveOffset
+            Animatable(0f).animateTo(1f, animationSpec = tween(durationMillis = 300)) {
+                currentActiveScale = androidx.compose.ui.util.lerp(startScale, 1f, value)
+                currentActiveOffset = androidx.compose.ui.geometry.lerp(startOffset, Offset.Zero, value)
+                currentPageScale = currentActiveScale
+            }
+            currentActiveScale = 1f
+            currentActiveOffset = Offset.Zero
+            currentPageScale = 1f
+        }
     }
 
     DisposableEffect(Unit) {
@@ -4101,10 +4167,10 @@ fun PdfViewerScreen(
                                         }
                                     }
 
-                                    Box(modifier = Modifier.fillMaxSize()) {
+                                    Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
                                         HorizontalPager(
                                             state = pagerState,
-                                            modifier = Modifier.fillMaxSize(),
+                                            modifier = Modifier.fillMaxSize().clipToBounds(),
                                             key = { page ->
                                                 "$activeDocumentRenderKey:${pdfSpreadSettings.pageSpreadMode}:${pdfSpreadSettings.pdfFirstPageStandaloneInSpread}:$page:${paginationDisplayPageForPagerPage(page)}"
                                             },
@@ -4133,8 +4199,158 @@ fun PdfViewerScreen(
                                                 abs(pagerState.currentPage - pagerPageIndex) <= 1
                                             }
                                             val isActivePagerPage = pagerState.currentPage == pagerPageIndex
+                                            val useSharedSpreadZoom = spreadPageIndices.size > 1
+                                            val latestSpreadScale = rememberUpdatedState(currentActiveScale)
+                                            val latestSpreadOffset = rememberUpdatedState(currentActiveOffset)
                                             Row(
-                                                modifier = Modifier.fillMaxSize(),
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clipToBounds()
+                                                    .then(
+                                                        if (useSharedSpreadZoom) {
+                                                            Modifier
+                                                                .pointerInput(
+                                                                    useSharedSpreadZoom,
+                                                                    isDrawingActive,
+                                                                    isScrollLocked,
+                                                                    totalDisplayPages
+                                                                ) {
+                                                                    if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
+                                                                    val touchSlop = viewConfiguration.touchSlop
+
+                                                                    awaitEachGesture {
+                                                                        awaitFirstDown(requireUnconsumed = false)
+
+                                                                        var gestureScale = latestSpreadScale.value
+                                                                        var gestureOffset = latestSpreadOffset.value
+                                                                        var accumulatedZoom = 1f
+                                                                        var accumulatedPan = Offset.Zero
+                                                                        var mode = 0
+                                                                        var hasConsumedGesture = false
+
+                                                                        do {
+                                                                            val event = awaitPointerEvent()
+                                                                            val canceled = event.changes.any { it.isConsumed }
+                                                                            if (!canceled) {
+                                                                                val pointerCount = event.changes.count { it.pressed }
+                                                                                val rawPanChange = event.calculatePan()
+                                                                                val panChange = if (isScrollLocked && pointerCount == 1) {
+                                                                                    Offset.Zero
+                                                                                } else {
+                                                                                    rawPanChange
+                                                                                }
+                                                                                val zoomChange = event.calculateZoom()
+                                                                                accumulatedZoom *= zoomChange
+                                                                                accumulatedPan += panChange
+
+                                                                                if (gestureScale > 1f) {
+                                                                                    if (mode == 0) {
+                                                                                        mode = if (pointerCount > 1 && abs(accumulatedZoom - 1f) > 0.025f) {
+                                                                                            2
+                                                                                        } else if (accumulatedPan.getDistance() > touchSlop) {
+                                                                                            1
+                                                                                        } else {
+                                                                                            0
+                                                                                        }
+                                                                                    }
+
+                                                                                    if (mode == 1 || mode == 2) {
+                                                                                        val oldScale = gestureScale
+                                                                                        val nextScale = if (mode == 2 && pointerCount > 1) {
+                                                                                            (gestureScale * zoomChange).coerceIn(1f, 4f)
+                                                                                        } else {
+                                                                                            gestureScale
+                                                                                        }
+                                                                                        val ratio = if (oldScale == 0f) 1f else nextScale / oldScale
+                                                                                        val previousCentroid = event.calculateCentroid(useCurrent = false)
+                                                                                        val viewportCenter = Offset(size.width / 2f, size.height / 2f)
+                                                                                        val nextOffset = if (mode == 2 && pointerCount > 1 && previousCentroid != Offset.Unspecified) {
+                                                                                            gestureOffset * ratio + (previousCentroid - viewportCenter) * (1 - ratio) + panChange
+                                                                                        } else {
+                                                                                            gestureOffset + panChange
+                                                                                        }
+
+                                                                                        gestureScale = nextScale
+                                                                                        gestureOffset = clampPdfSpreadCameraOffset(
+                                                                                            scale = gestureScale,
+                                                                                            offset = nextOffset,
+                                                                                            viewportWidth = size.width.toFloat(),
+                                                                                            viewportHeight = size.height.toFloat()
+                                                                                        )
+                                                                                        currentActiveScale = gestureScale
+                                                                                        currentActiveOffset = gestureOffset
+                                                                                        currentPageScale = gestureScale
+                                                                                        hasConsumedGesture = true
+                                                                                        event.changes.forEach {
+                                                                                            if (it.positionChanged()) it.consume()
+                                                                                        }
+                                                                                    }
+                                                                                } else if (pointerCount > 1) {
+                                                                                    if (mode == 0) {
+                                                                                        mode = if (abs(accumulatedZoom - 1f) > 0.025f) {
+                                                                                            2
+                                                                                        } else {
+                                                                                            0
+                                                                                        }
+                                                                                    }
+
+                                                                                    if (mode == 2) {
+                                                                                        val oldScale = gestureScale
+                                                                                        val nextScale = (gestureScale * zoomChange).coerceIn(1f, 4f)
+                                                                                        val ratio = if (oldScale == 0f) 1f else nextScale / oldScale
+                                                                                        val previousCentroid = event.calculateCentroid(useCurrent = false)
+                                                                                        val viewportCenter = Offset(size.width / 2f, size.height / 2f)
+                                                                                        val nextOffset = if (previousCentroid != Offset.Unspecified) {
+                                                                                            gestureOffset * ratio + (previousCentroid - viewportCenter) * (1 - ratio) + panChange
+                                                                                        } else {
+                                                                                            gestureOffset + panChange
+                                                                                        }
+                                                                                        gestureScale = nextScale
+                                                                                        gestureOffset = clampPdfSpreadCameraOffset(
+                                                                                            scale = gestureScale,
+                                                                                            offset = nextOffset,
+                                                                                            viewportWidth = size.width.toFloat(),
+                                                                                            viewportHeight = size.height.toFloat()
+                                                                                        )
+                                                                                        currentActiveScale = gestureScale
+                                                                                        currentActiveOffset = gestureOffset
+                                                                                        currentPageScale = gestureScale
+                                                                                        hasConsumedGesture = true
+                                                                                        event.changes.forEach {
+                                                                                            if (it.positionChanged()) it.consume()
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        } while (!canceled && event.changes.any { it.pressed })
+
+                                                                        if (hasConsumedGesture && currentActiveScale > 1f && currentActiveScale < 1.05f) {
+                                                                            coroutineScope.launch {
+                                                                                val startScale = currentActiveScale
+                                                                                val startOffset = currentActiveOffset
+                                                                                Animatable(0f).animateTo(1f, animationSpec = tween(durationMillis = 180)) {
+                                                                                    currentActiveScale = androidx.compose.ui.util.lerp(startScale, 1f, value)
+                                                                                    currentActiveOffset =
+                                                                                        lerp(startOffset, Offset.Zero, value)
+                                                                                    currentPageScale = currentActiveScale
+                                                                                }
+                                                                                currentActiveScale = 1f
+                                                                                currentActiveOffset = Offset.Zero
+                                                                                currentPageScale = 1f
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                .graphicsLayer {
+                                                                    scaleX = currentActiveScale
+                                                                    scaleY = currentActiveScale
+                                                                    translationX = currentActiveOffset.x
+                                                                    translationY = currentActiveOffset.y
+                                                                }
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    ),
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
@@ -4323,12 +4539,13 @@ fun PdfViewerScreen(
                                                 excludeImages = excludeImages,
                                                 isScrollLocked = isScrollLocked,
                                                 customHighlightColors = customHighlightColors,
+                                                externalScale = if (useSharedSpreadZoom) currentActiveScale else 1f,
                                                 onPaletteClick = {
                                                     highlightColorPickerInitialSlot = PdfHighlightColor.YELLOW
                                                     showHighlightColorPicker = true
                                                 },
                                                 onScaleChanged = { newScale ->
-                                                    if (isActivePagerPage) {
+                                                    if (isActivePagerPage && !useSharedSpreadZoom) {
                                                         currentPageScale = newScale
                                                     }
                                                 },
@@ -4362,10 +4579,15 @@ fun PdfViewerScreen(
                                                 onInternalLinkClicked = onInternalLinkNav,
                                                 isBookmarked = isPageBookmarked,
                                                 onBookmarkClick = { onToggleBookmark(pageIndex) },
-                                                isZoomEnabled = true,
+                                                isZoomEnabled = !useSharedSpreadZoom,
                                                 showPageNumberOverlay = showPageNumberOverlay,
+                                                visualScaleProvider = if (useSharedSpreadZoom) {
+                                                    { currentActiveScale }
+                                                } else {
+                                                    { 1f }
+                                                },
                                                 clearSelectionTrigger = selectionClearTrigger,
-                                                resetZoomTrigger = resetZoomTrigger,
+                                                resetZoomTrigger = if (useSharedSpreadZoom) 0L else resetZoomTrigger,
                                                 pageAnnotations = pageAnnotationsProvider,
                                                 drawingState = drawingState,
                                                 onDrawStart = onDrawStartPagination,
@@ -4412,7 +4634,7 @@ fun PdfViewerScreen(
                                                 eraserToolThickness = currentEraserStrokeWidthState,
                                                 lockedState = lockedState,
                                                 onZoomAndPanChanged = { newScale, newOffset ->
-                                                    if (isActivePagerPage) {
+                                                    if (isActivePagerPage && !useSharedSpreadZoom) {
                                                         currentActiveScale = newScale
                                                         currentActiveOffset = newOffset
                                                     }
