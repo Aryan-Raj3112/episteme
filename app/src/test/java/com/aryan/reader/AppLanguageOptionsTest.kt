@@ -6,6 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.w3c.dom.Element
 
 class AppLanguageOptionsTest {
 
@@ -79,6 +80,25 @@ class AppLanguageOptionsTest {
         assertEquals(readLocaleConfigTags(), supportedAppLanguageOptions.map { it.tag })
     }
 
+    @Test
+    fun `android manifest enables AppCompat language persistence`() {
+        val manifest = readAndroidManifest()
+        val service = manifest.getElementsByTagName("service").asElements()
+            .singleOrNull {
+                it.androidAttribute("name") == "androidx.appcompat.app.AppLocalesMetadataHolderService"
+            }
+
+        assertTrue(service != null)
+        assertEquals("false", service!!.androidAttribute("enabled"))
+        assertEquals("false", service.androidAttribute("exported"))
+
+        val autoStoreLocales = service.getElementsByTagName("meta-data").asElements()
+            .singleOrNull { it.androidAttribute("name") == "autoStoreLocales" }
+
+        assertTrue(autoStoreLocales != null)
+        assertEquals("true", autoStoreLocales!!.androidAttribute("value"))
+    }
+
     private fun readLocaleConfigTags(): List<String> {
         val localeConfig = listOf(
             File("src/main/res/xml/locales_config.xml"),
@@ -101,4 +121,28 @@ class AppLanguageOptionsTest {
             }
         }
     }
+
+    private fun readAndroidManifest(): org.w3c.dom.Document {
+        val manifest = listOf(
+            File("src/main/AndroidManifest.xml"),
+            File("app/src/main/AndroidManifest.xml")
+        ).first { it.isFile }
+        return DocumentBuilderFactory.newInstance()
+            .apply { isNamespaceAware = true }
+            .newDocumentBuilder()
+            .parse(manifest)
+    }
+
+    private fun org.w3c.dom.NodeList.asElements(): List<Element> =
+        buildList {
+            for (index in 0 until length) {
+                val element = item(index) as? Element
+                if (element != null) add(element)
+            }
+        }
+
+    private fun Element.androidAttribute(name: String): String? =
+        attributes
+            ?.getNamedItemNS("http://schemas.android.com/apk/res/android", name)
+            ?.nodeValue
 }

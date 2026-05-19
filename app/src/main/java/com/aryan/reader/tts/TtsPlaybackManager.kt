@@ -55,16 +55,26 @@ import com.aryan.reader.paginatedreader.TtsChunk
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
-val START_TTS_COMMAND = SessionCommand("com.aryan.reader.tts.START", Bundle.EMPTY)
-val STOP_TTS_COMMAND = SessionCommand("com.aryan.reader.tts.STOP", Bundle.EMPTY)
-val CHANGE_SPEAKER_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_SPEAKER", Bundle.EMPTY)
-val FLUSH_PREFETCH_COMMAND = SessionCommand("com.aryan.reader.tts.FLUSH_PREFETCH", Bundle.EMPTY)
-private val STATE_UPDATE_COMMAND = SessionCommand("com.aryan.reader.tts.STATE_UPDATE", Bundle.EMPTY)
-val CHANGE_TTS_MODE_COMMAND = SessionCommand("com.aryan.reader.tts.CHANGE_MODE", Bundle.EMPTY)
-val SLICE_CURRENT_AND_RELOAD_COMMAND = SessionCommand("com.aryan.reader.tts.SLICE_AND_RELOAD", Bundle.EMPTY)
-val SET_PLAYBACK_PARAMS_COMMAND = SessionCommand("com.aryan.reader.tts.SET_PLAYBACK_PARAMS", Bundle.EMPTY)
-val SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND = SessionCommand("com.aryan.reader.tts.SKIP_TO_PREVIOUS_CHUNK", Bundle.EMPTY)
-val SKIP_TO_NEXT_TTS_CHUNK_COMMAND = SessionCommand("com.aryan.reader.tts.SKIP_TO_NEXT_CHUNK", Bundle.EMPTY)
+val START_TTS_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.START")
+val STOP_TTS_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.STOP")
+val CHANGE_SPEAKER_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.CHANGE_SPEAKER")
+val FLUSH_PREFETCH_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.FLUSH_PREFETCH")
+private val STATE_UPDATE_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.STATE_UPDATE")
+val CHANGE_TTS_MODE_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.CHANGE_MODE")
+val SLICE_CURRENT_AND_RELOAD_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.SLICE_AND_RELOAD")
+val SET_PLAYBACK_PARAMS_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.SET_PLAYBACK_PARAMS")
+val SKIP_TO_PREVIOUS_TTS_CHUNK_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.SKIP_TO_PREVIOUS_CHUNK")
+val SKIP_TO_NEXT_TTS_CHUNK_COMMAND: SessionCommand
+    get() = ttsSessionCommand("com.aryan.reader.tts.SKIP_TO_NEXT_CHUNK")
 const val TTS_NOTIFICATION_DIAG_TAG = "TTS_NOTIFICATION_DIAG"
 const val TTS_CHUNK_NAV_DIAG_TAG = "TTS_CHUNK_NAV_DIAG"
 
@@ -98,6 +108,10 @@ private const val TTS_NOTIFICATION_AVERAGE_WORD_MS = 550L
 private const val TTS_NOTIFICATION_PUNCTUATION_PAUSE_MS = 120L
 private const val NO_DEFERRED_TRANSITION_PREFETCH_GENERATION = -1
 private val TTS_NOTIFICATION_WORD_PATTERN = Regex("""\S+""")
+
+private fun ttsSessionCommand(action: String): SessionCommand {
+    return SessionCommand(action, Bundle.EMPTY)
+}
 
 internal fun resolveTtsChunkSkipTarget(
     currentChunkIndex: Int,
@@ -156,10 +170,12 @@ internal fun estimateTtsNotificationDurationMs(
     val punctuationPauses = text.count { it == '.' || it == '?' || it == '!' || it == ';' || it == ':' }
     val estimatedDurationMs = words * TTS_NOTIFICATION_AVERAGE_WORD_MS +
         punctuationPauses * TTS_NOTIFICATION_PUNCTUATION_PAUSE_MS
-    val minimumDurationMs = maxOf(
-        TTS_NOTIFICATION_MIN_DURATION_MS,
-        currentPositionMs.coerceAtLeast(0L) + TTS_NOTIFICATION_TRAILING_BUFFER_MS
-    )
+    val playbackPositionMinimumMs = if (currentPositionMs > 0L) {
+        currentPositionMs + TTS_NOTIFICATION_TRAILING_BUFFER_MS
+    } else {
+        TTS_NOTIFICATION_MIN_DURATION_MS
+    }
+    val minimumDurationMs = maxOf(TTS_NOTIFICATION_MIN_DURATION_MS, playbackPositionMinimumMs)
     return estimatedDurationMs.coerceAtLeast(minimumDurationMs)
 }
 

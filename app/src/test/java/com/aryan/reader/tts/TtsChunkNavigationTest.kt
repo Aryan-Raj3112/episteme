@@ -92,15 +92,15 @@ class TtsChunkNavigationTest {
 
     @Test
     fun `stream pcm duration uses cloud tts audio format`() {
-        assertEquals(1_000, resolveTtsStreamPcmDurationMs(totalBytes = 44L + 48_000L))
+        assertEquals(1_000L, resolveTtsStreamPcmDurationMs(totalBytes = 44L + 48_000L))
         assertNull(resolveTtsStreamPcmDurationMs(totalBytes = 44L))
         assertNull(resolveTtsStreamPcmDurationMs(totalBytes = 0L))
     }
 
     @Test
     fun `notification duration estimate stays ahead of playback position`() {
-        assertEquals(1_500, estimateTtsNotificationDurationMs(text = "one two"))
-        assertEquals(5_000, estimateTtsNotificationDurationMs(text = "one", currentPositionMs = 3_000L))
+        assertEquals(1_500L, estimateTtsNotificationDurationMs(text = "one two"))
+        assertEquals(5_000L, estimateTtsNotificationDurationMs(text = "one", currentPositionMs = 3_000L))
         assertNull(estimateTtsNotificationDurationMs(text = "   "))
     }
 
@@ -109,7 +109,7 @@ class TtsChunkNavigationTest {
         val file = createTempWavFile(pcmBytes = 48_000)
 
         try {
-            assertEquals(1_000, resolveWavFileDurationMs(file))
+            assertEquals(1_000L, resolveWavFileDurationMs(file))
         } finally {
             file.delete()
         }

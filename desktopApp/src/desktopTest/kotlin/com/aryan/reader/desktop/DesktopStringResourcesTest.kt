@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import java.io.ByteArrayInputStream
+import java.nio.file.Files
 import java.util.Locale
 
 class DesktopStringResourcesTest {
@@ -106,5 +107,30 @@ class DesktopStringResourcesTest {
 
         assertEquals("pt-BR", option.normalizedTag)
         assertEquals("language_portuguese_brazilian", option.labelKey)
+    }
+
+    @Test
+    fun desktopLanguageSettingsStorePersistsLanguageAcrossInstances() {
+        val tempDirectory = Files.createTempDirectory("episteme-desktop-language-test")
+        val settingsFile = tempDirectory.resolve("language.properties").toFile()
+
+        try {
+            DesktopLanguageSettingsStore(settingsFile).save(DesktopLanguageSettings("pt_br"))
+
+            assertEquals(
+                "pt-BR",
+                DesktopLanguageSettingsStore(settingsFile).load().languageTag
+            )
+
+            DesktopLanguageSettingsStore(settingsFile).save(DesktopLanguageSettings(null))
+
+            assertEquals(
+                null,
+                DesktopLanguageSettingsStore(settingsFile).load().languageTag
+            )
+        } finally {
+            settingsFile.delete()
+            tempDirectory.toFile().delete()
+        }
     }
 }
