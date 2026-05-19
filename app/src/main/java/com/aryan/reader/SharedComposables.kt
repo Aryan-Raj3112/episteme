@@ -1452,7 +1452,12 @@ fun AutoSizeText(
 }
 
 @Composable
-fun FileTypeBadge(type: FileType, modifier: Modifier = Modifier, overlay: Boolean = false) {
+fun FileTypeBadge(
+    type: FileType,
+    modifier: Modifier = Modifier,
+    overlay: Boolean = false,
+    compact: Boolean = false
+) {
     val containerColor = if (overlay) Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.secondaryContainer
     val contentColor = if (overlay) Color.White else MaterialTheme.colorScheme.onSecondaryContainer
 
@@ -1465,9 +1470,17 @@ fun FileTypeBadge(type: FileType, modifier: Modifier = Modifier, overlay: Boolea
     ) {
         Text(
             text = if (type == FileType.UNKNOWN) "FILE" else type.name.uppercase(),
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+            style = if (compact) {
+                MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, letterSpacing = 0.sp)
+            } else {
+                MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp)
+            },
             fontWeight = FontWeight.ExtraBold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            maxLines = 1,
+            modifier = Modifier.padding(
+                horizontal = if (compact) 6.dp else 10.dp,
+                vertical = if (compact) 3.dp else 4.dp
+            )
         )
     }
 }

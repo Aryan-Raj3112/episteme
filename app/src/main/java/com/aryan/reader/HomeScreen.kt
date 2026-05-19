@@ -37,6 +37,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -822,11 +823,14 @@ fun RecentFileCard(
         )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(0.74f)
             ) {
+                val useCompactCoverBadges = maxWidth < 128.dp
+                val coverBadgePadding = if (useCompactCoverBadges) 5.dp else 8.dp
+
                 ThemedBookCover(
                     item = item,
                     contentDescription = item.displayName,
@@ -894,30 +898,25 @@ fun RecentFileCard(
                     }
                 }
 
-                Box(modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
-                    FileTypeBadge(type = item.type, overlay = true)
-                }
-
-                progressPercent?.let { percent ->
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(8.dp),
-                        shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            Color.White.copy(alpha = 0.14f)
-                        )
-                    ) {
-                        Text(
-                            text = "$percent%",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(coverBadgePadding),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    progressPercent?.let { percent ->
+                        CoverProgressBadge(
+                            percent = percent,
+                            compact = useCompactCoverBadges
                         )
                     }
+                    Spacer(modifier = Modifier.weight(1f))
+                    FileTypeBadge(
+                        type = item.type,
+                        overlay = true,
+                        compact = useCompactCoverBadges
+                    )
                 }
             }
 
@@ -1005,6 +1004,39 @@ fun RecentFileCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CoverProgressBadge(
+    percent: Int,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            Color.White.copy(alpha = 0.14f)
+        )
+    ) {
+        Text(
+            text = "$percent%",
+            style = if (compact) {
+                MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp)
+            } else {
+                MaterialTheme.typography.labelSmall
+            },
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            modifier = Modifier.padding(
+                horizontal = if (compact) 6.dp else 10.dp,
+                vertical = if (compact) 3.dp else 4.dp
+            )
+        )
     }
 }
 
