@@ -121,6 +121,27 @@ class SingleFileImporterTest {
     }
 
     @Test
+    fun `html import chunks very long lines into bounded chapters`() = runTest {
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("html-long-line-cache")))
+        val longParagraph = "word ".repeat(260_000)
+        val html = "<html><body><p>$longParagraph</p></body></html>"
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(html.toByteArray()),
+            type = FileType.HTML,
+            originalBookNameHint = "long.html",
+            bookId = "long-html-book"
+        )
+
+        assertTrue(book.chapters.size > 1)
+        book.chapters.forEach { chapter ->
+            val chapterFile = File(book.extractionBasePath, chapter.htmlFilePath)
+            assertTrue(chapterFile.isFile)
+            assertTrue(chapterFile.length() < 1_200_000L)
+        }
+    }
+
+    @Test
     fun `csv txt wrapper imports as html table`() = runTest {
         val importer = SingleFileImporter(contextWithCache(temp.newFolder("csv-cache")))
 

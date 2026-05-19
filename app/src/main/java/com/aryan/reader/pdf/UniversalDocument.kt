@@ -64,6 +64,19 @@ interface ReaderTextPage : AutoCloseable {
 data class ReaderLink(val uri: String?, val destPageIdx: Int?, val bounds: RectF)
 data class ReaderTextRect(val rect: RectF)
 
+internal data class PdfNativePageOverlayExtraction(
+    val embeddedAnnotations: List<EmbeddedAnnotation> = emptyList(),
+    val annotationScreenRects: List<Pair<EmbeddedAnnotation, Rect>> = emptyList(),
+    val imageScreenRects: List<Rect> = emptyList(),
+    val resolvedNativePointer: Boolean = true
+)
+
+internal data class PdfNativeTapResult(
+    val linkInfo: String? = null,
+    val clickHandled: Boolean = false,
+    val resolvedNativePointer: Boolean = true
+)
+
 interface ReaderWebLinks : AutoCloseable {
     suspend fun countWebLinks(): Int
     suspend fun getURL(linkIndex: Int, maxLength: Int): String?
@@ -134,11 +147,23 @@ class PdfDocumentWrapper(val pdfDocument: PdfDocumentKt) : ReaderDocument {
         val page = PdfiumEngineProvider.withPdfium {
             if (isClosed.get()) null else pdfDocument.openPage(pageIndex)
         } ?: return null
-        return PdfPageWrapper(page)
+        return PdfPageWrapper(page, isClosed)
     }
 
     override suspend fun getTableOfContents() = PdfiumEngineProvider.withPdfium {
         pdfDocument.getFixedTableOfContents()
+    }
+
+    internal fun getNativeDocumentPointerForLockedAccess(): Long {
+        if (isClosed.get()) return 0L
+        return try {
+            val documentField = pdfDocument.javaClass.getDeclaredField("document").apply { isAccessible = true }
+            val docUInstance = documentField.get(pdfDocument) ?: return 0L
+            val ptrField = docUInstance.javaClass.getDeclaredField("mNativeDocPtr").apply { isAccessible = true }
+            ptrField.get(docUInstance) as? Long ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
     }
 
     override fun close() {
@@ -149,24 +174,28 @@ class PdfDocumentWrapper(val pdfDocument: PdfDocumentKt) : ReaderDocument {
     }
 }
 
-class PdfPageWrapper(val pdfPage: PdfPageKt) : ReaderPage {
+class PdfPageWrapper(
+    val pdfPage: PdfPageKt,
+    private val ownerClosed: AtomicBoolean = AtomicBoolean(false)
+) : ReaderPage {
     private val isClosed = AtomicBoolean(false)
+    private fun isUnavailable(): Boolean = isClosed.get() || ownerClosed.get()
 
     override suspend fun getPageWidthPoint() = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) 0 else pdfPage.getPageWidthPoint()
+        if (isUnavailable()) 0 else pdfPage.getPageWidthPoint()
     }
 
     override suspend fun getPageHeightPoint() = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) 0 else pdfPage.getPageHeightPoint()
+        if (isUnavailable()) 0 else pdfPage.getPageHeightPoint()
     }
 
     override suspend fun getPageRotation() = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) 0 else pdfPage.getPageRotation()
+        if (isUnavailable()) 0 else pdfPage.getPageRotation()
     }
 
     override suspend fun renderPageBitmap(bitmap: Bitmap, startX: Int, startY: Int, drawSizeX: Int, drawSizeY: Int, renderAnnot: Boolean) {
         PdfiumEngineProvider.withPdfium {
-            if (!isClosed.get()) {
+            if (!isUnavailable()) {
                 pdfPage.renderPageBitmap(bitmap, startX, startY, drawSizeX, drawSizeY, renderAnnot)
             }
         }
@@ -174,21 +203,21 @@ class PdfPageWrapper(val pdfPage: PdfPageKt) : ReaderPage {
 
     override suspend fun mapRectToDevice(startX: Int, startY: Int, sizeX: Int, sizeY: Int, rotate: Int, coords: RectF) =
         PdfiumEngineProvider.withPdfium {
-            if (isClosed.get()) Rect() else pdfPage.mapRectToDevice(startX, startY, sizeX, sizeY, rotate, coords)
+            if (isUnavailable()) Rect() else pdfPage.mapRectToDevice(startX, startY, sizeX, sizeY, rotate, coords)
         }
 
     override suspend fun mapDeviceCoordsToPage(startX: Int, startY: Int, sizeX: Int, sizeY: Int, rotate: Int, deviceX: Int, deviceY: Int) =
         PdfiumEngineProvider.withPdfium {
-            if (isClosed.get()) PointF() else pdfPage.mapDeviceCoordsToPage(startX, startY, sizeX, sizeY, rotate, deviceX, deviceY)
+            if (isUnavailable()) PointF() else pdfPage.mapDeviceCoordsToPage(startX, startY, sizeX, sizeY, rotate, deviceX, deviceY)
         }
 
     override suspend fun openTextPage(): ReaderTextPage = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) DummyTextPage() else PdfTextPageWrapper(pdfPage.openTextPage())
+        if (isUnavailable()) DummyTextPage() else PdfTextPageWrapper(pdfPage.openTextPage(), ownerClosed, isClosed)
     }
 
     override suspend fun getLinks(): List<ReaderLink> {
         return PdfiumEngineProvider.withPdfium {
-            if (isClosed.get()) {
+            if (isUnavailable()) {
                 emptyList()
             } else {
                 pdfPage.getPageLinks().map { ReaderLink(it.uri, it.destPageIdx, it.bounds) }
@@ -197,7 +226,189 @@ class PdfPageWrapper(val pdfPage: PdfPageKt) : ReaderPage {
     }
 
     override fun getNativePointer(): Long {
+        if (isUnavailable()) return 0L
         return extractNativePointer(pdfPage)
+    }
+
+    internal suspend fun extractNativePageOverlays(
+        bitmapWidthPx: Int,
+        bitmapHeightPx: Int,
+        pageRotation: Int,
+        pageIndex: Int,
+        linkAnnotationSubtype: Int
+    ): PdfNativePageOverlayExtraction = PdfiumEngineProvider.withPdfium {
+        if (isUnavailable() || bitmapWidthPx <= 0 || bitmapHeightPx <= 0) {
+            return@withPdfium PdfNativePageOverlayExtraction()
+        }
+
+        val pagePtr = extractNativePointer(pdfPage)
+        if (pagePtr == 0L) {
+            return@withPdfium PdfNativePageOverlayExtraction(resolvedNativePointer = false)
+        }
+
+        val imageRects = extractImageScreenRectsLocked(pagePtr, bitmapWidthPx, bitmapHeightPx, pageRotation)
+        val embeddedAnnotations = extractEmbeddedAnnotationsLocked(pagePtr, pageIndex, linkAnnotationSubtype)
+        val mappedAnnots = embeddedAnnotations.mapNotNull { annotation ->
+            val screenRect = pdfPage.mapRectToDevice(
+                0,
+                0,
+                bitmapWidthPx,
+                bitmapHeightPx,
+                pageRotation,
+                annotation.rect
+            )
+            if (screenRect.width() > 0 && screenRect.height() > 0) {
+                annotation to screenRect
+            } else {
+                null
+            }
+        }
+
+        PdfNativePageOverlayExtraction(
+            embeddedAnnotations = embeddedAnnotations,
+            annotationScreenRects = mappedAnnots,
+            imageScreenRects = imageRects
+        )
+    }
+
+    internal suspend fun resolveNativeTap(
+        documentWrapper: PdfDocumentWrapper?,
+        bitmapWidthPx: Int,
+        bitmapHeightPx: Int,
+        pageRotation: Int,
+        deviceX: Int,
+        deviceY: Int
+    ): PdfNativeTapResult = PdfiumEngineProvider.withPdfium {
+        if (isUnavailable() || bitmapWidthPx <= 0 || bitmapHeightPx <= 0) {
+            return@withPdfium PdfNativeTapResult()
+        }
+
+        val pagePtr = extractNativePointer(pdfPage)
+        if (pagePtr == 0L) {
+            return@withPdfium PdfNativeTapResult(resolvedNativePointer = false)
+        }
+
+        val pdfCoords = pdfPage.mapDeviceCoordsToPage(
+            0,
+            0,
+            bitmapWidthPx,
+            bitmapHeightPx,
+            pageRotation,
+            deviceX,
+            deviceY
+        )
+        val docPtr = documentWrapper?.getNativeDocumentPointerForLockedAccess() ?: 0L
+
+        Timber.tag("PdfLinkDiagnostic").i("Extracted docPtr: $docPtr | pagePtr: $pagePtr")
+
+        val linkInfo = NativePdfiumBridge.getLinkInfoAtPoint(
+            docPtr,
+            pagePtr,
+            pdfCoords.x.toDouble(),
+            pdfCoords.y.toDouble()
+        )
+        if (linkInfo != null) {
+            return@withPdfium PdfNativeTapResult(linkInfo = linkInfo)
+        }
+
+        PdfNativeTapResult(
+            clickHandled = NativePdfiumBridge.performClick(
+                pagePtr,
+                pdfCoords.x.toDouble(),
+                pdfCoords.y.toDouble()
+            )
+        )
+    }
+
+    private suspend fun extractImageScreenRectsLocked(
+        pagePtr: Long,
+        bitmapWidthPx: Int,
+        bitmapHeightPx: Int,
+        pageRotation: Int
+    ): List<Rect> {
+        return try {
+            val objectCount = NativePdfiumBridge.getPageObjectCount(pagePtr)
+            if (objectCount <= 0) return emptyList()
+
+            val rects = mutableListOf<Rect>()
+            val outRect = FloatArray(4)
+            for (index in 0 until objectCount) {
+                if (NativePdfiumBridge.getPageObjectType(pagePtr, index) != 3) continue
+                if (!NativePdfiumBridge.getPageObjectBoundingBox(pagePtr, index, outRect)) continue
+
+                val pdfRect = RectF(
+                    minOf(outRect[0], outRect[2]),
+                    maxOf(outRect[1], outRect[3]),
+                    maxOf(outRect[0], outRect[2]),
+                    minOf(outRect[1], outRect[3])
+                )
+                val deviceRect = pdfPage.mapRectToDevice(
+                    0,
+                    0,
+                    bitmapWidthPx,
+                    bitmapHeightPx,
+                    pageRotation,
+                    pdfRect
+                )
+                if (deviceRect.width() > 0 && deviceRect.height() > 0) {
+                    rects += Rect(deviceRect.left, deviceRect.top, deviceRect.right, deviceRect.bottom)
+                }
+            }
+            rects
+        } catch (e: Exception) {
+            Timber.tag("PdfImageDebug").e(e, "Error extracting image rects")
+            emptyList()
+        }
+    }
+
+    private fun extractEmbeddedAnnotationsLocked(
+        pagePtr: Long,
+        pageIndex: Int,
+        linkAnnotationSubtype: Int
+    ): List<EmbeddedAnnotation> {
+        return try {
+            val count = NativePdfiumBridge.getAnnotCount(pagePtr)
+            Timber.tag("PdfCommentDebug").d("Page $pageIndex: Total Annotations found = $count")
+            if (count <= 0) return emptyList()
+
+            val annotations = mutableListOf<EmbeddedAnnotation>()
+            for (index in 0 until count) {
+                val subtype = NativePdfiumBridge.getAnnotSubtype(pagePtr, index)
+                if (subtype == linkAnnotationSubtype) continue
+
+                var contents = NativePdfiumBridge.getAnnotString(pagePtr, index, "Contents")
+                if (contents.isNullOrBlank()) {
+                    contents = NativePdfiumBridge.getAnnotString(pagePtr, index, "RC")
+                }
+
+                val pdfRectArray = NativePdfiumBridge.getAnnotRect(pagePtr, index)
+                val pdfRect = if (pdfRectArray != null) {
+                    RectF(
+                        minOf(pdfRectArray[0], pdfRectArray[2]),
+                        maxOf(pdfRectArray[1], pdfRectArray[3]),
+                        maxOf(pdfRectArray[0], pdfRectArray[2]),
+                        minOf(pdfRectArray[1], pdfRectArray[3])
+                    )
+                } else {
+                    RectF()
+                }
+
+                annotations += EmbeddedAnnotation(
+                    index = index,
+                    subtype = subtype,
+                    rect = pdfRect,
+                    contents = contents,
+                    author = NativePdfiumBridge.getAnnotString(pagePtr, index, "T"),
+                    name = NativePdfiumBridge.getAnnotString(pagePtr, index, "NM"),
+                    inReplyTo = NativePdfiumBridge.getAnnotString(pagePtr, index, "IRT")
+                )
+            }
+
+            groupEmbeddedAnnotationsForDisplay(annotations)
+        } catch (e: Exception) {
+            Timber.tag("PdfCommentDebug").e(e, "Error extracting annotations")
+            emptyList()
+        }
     }
 
     private fun extractNativePointer(obj: Any): Long {
@@ -231,66 +442,74 @@ class PdfPageWrapper(val pdfPage: PdfPageKt) : ReaderPage {
 
     override fun close() {
         if (!isClosed.compareAndSet(false, true)) return
+        if (ownerClosed.get()) return
         PdfiumEngineProvider.withPdfiumBlocking {
             closePdfiumResource("PdfPageWrapper") { pdfPage.close() }
         }
     }
 }
 
-class PdfTextPageWrapper(private val textPage: PdfTextPageKt) : ReaderTextPage {
+class PdfTextPageWrapper(
+    private val textPage: PdfTextPageKt,
+    private val ownerClosed: AtomicBoolean = AtomicBoolean(false),
+    private val pageClosed: AtomicBoolean = AtomicBoolean(false)
+) : ReaderTextPage {
     private val isClosed = AtomicBoolean(false)
+    private fun isUnavailable(): Boolean = isClosed.get() || ownerClosed.get() || pageClosed.get()
 
     override suspend fun textPageCountChars() = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) 0 else textPage.textPageCountChars()
+        if (isUnavailable()) 0 else textPage.textPageCountChars()
     }
 
     override suspend fun textPageGetText(startIndex: Int, count: Int) = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) null else textPage.textPageGetText(startIndex, count)
+        if (isUnavailable()) null else textPage.textPageGetText(startIndex, count)
     }
 
     override suspend fun textPageGetRectsForRanges(ranges: IntArray) = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) null else textPage.textPageGetRectsForRanges(ranges)?.map { ReaderTextRect(it.rect) }
+        if (isUnavailable()) null else textPage.textPageGetRectsForRanges(ranges)?.map { ReaderTextRect(it.rect) }
     }
 
     override suspend fun textPageGetCharIndexAtPos(x: Double, y: Double, xTolerance: Double, yTolerance: Double) = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) -1 else textPage.textPageGetCharIndexAtPos(x, y, xTolerance, yTolerance)
+        if (isUnavailable()) -1 else textPage.textPageGetCharIndexAtPos(x, y, xTolerance, yTolerance)
     }
 
     override suspend fun textPageGetCharBox(index: Int) = PdfiumEngineProvider.withPdfium {
-        if (isClosed.get()) null else textPage.textPageGetCharBox(index)
+        if (isUnavailable()) null else textPage.textPageGetCharBox(index)
     }
 
     override suspend fun textPageGetUnicode(index: Int): Int {
         return PdfiumEngineProvider.withPdfium {
-            if (isClosed.get()) 0 else textPage.textPageGetUnicode(index).code
+            if (isUnavailable()) 0 else textPage.textPageGetUnicode(index).code
         }
     }
 
     override suspend fun loadWebLink(): ReaderWebLinks? {
         val links = PdfiumEngineProvider.withPdfium {
-            if (isClosed.get()) null else textPage.loadWebLink()
+            if (isUnavailable()) null else textPage.loadWebLink()
         } ?: return null
         return object : ReaderWebLinks {
             private val isClosed = AtomicBoolean(false)
+            private fun isUnavailable(): Boolean = isClosed.get() || ownerClosed.get() || pageClosed.get()
 
             override suspend fun countWebLinks() = PdfiumEngineProvider.withPdfium {
-                if (isClosed.get()) 0 else links.countWebLinks()
+                if (isUnavailable()) 0 else links.countWebLinks()
             }
 
             override suspend fun getURL(linkIndex: Int, maxLength: Int) = PdfiumEngineProvider.withPdfium {
-                if (isClosed.get()) null else links.getURL(linkIndex, maxLength)
+                if (isUnavailable()) null else links.getURL(linkIndex, maxLength)
             }
 
             override suspend fun countRects(linkIndex: Int) = PdfiumEngineProvider.withPdfium {
-                if (isClosed.get()) 0 else links.countRects(linkIndex)
+                if (isUnavailable()) 0 else links.countRects(linkIndex)
             }
 
             override suspend fun getRect(linkIndex: Int, rectIndex: Int) = PdfiumEngineProvider.withPdfium {
-                if (isClosed.get()) RectF() else links.getRect(linkIndex, rectIndex)
+                if (isUnavailable()) RectF() else links.getRect(linkIndex, rectIndex)
             }
 
             override fun close() {
                 if (!isClosed.compareAndSet(false, true)) return
+                if (ownerClosed.get() || pageClosed.get()) return
                 PdfiumEngineProvider.withPdfiumBlocking {
                     closePdfiumResource("PdfWebLinksWrapper") { links.close() }
                 }
@@ -299,6 +518,7 @@ class PdfTextPageWrapper(private val textPage: PdfTextPageKt) : ReaderTextPage {
     }
     override fun close() {
         if (!isClosed.compareAndSet(false, true)) return
+        if (ownerClosed.get() || pageClosed.get()) return
         PdfiumEngineProvider.withPdfiumBlocking {
             closePdfiumResource("PdfTextPageWrapper") { textPage.close() }
         }

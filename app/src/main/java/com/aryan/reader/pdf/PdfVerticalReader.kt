@@ -88,6 +88,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -130,6 +131,17 @@ import kotlin.math.roundToInt
 
 private const val SCROLL_BOUNDS_TAG = "PdfScrollBounds"
 private const val VERTICAL_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
+
+internal fun resolvePdfVerticalPageBackgroundColor(
+    activeTheme: com.aryan.reader.ReaderTheme
+): Color {
+    val resolved = when (activeTheme.id) {
+        "no_theme", "system" -> Color.White
+        "reverse" -> Color.Black
+        else -> activeTheme.backgroundColor
+    }
+    return if (resolved.isSpecified) resolved else Color.White
+}
 
 @Stable
 class VerticalPdfReaderState {
@@ -335,11 +347,7 @@ internal fun PdfVerticalReader(
     var isStylusEraserOverride by remember { mutableStateOf(false) }
     val isDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     val verticalPageBackgroundColor = remember(activeTheme) {
-        when (activeTheme.id) {
-            "no_theme", "system" -> Color.White
-            "reverse" -> Color.Black
-            else -> activeTheme.backgroundColor
-        }
+        resolvePdfVerticalPageBackgroundColor(activeTheme)
     }
     BoxWithConstraints(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
         val imeInsets = WindowInsets.ime

@@ -52,6 +52,11 @@ class SingleFileImporter(private val context: Context) {
     companion object {
         private const val MAX_DOCX_ARCHIVE_BYTES = 64L * 1024L * 1024L
         private const val MAX_DOCX_XML_BYTES = 48L * 1024L * 1024L
+        private const val MAX_HTML_CHAPTER_CHARS = 1_000_000
+        private const val MAX_HTML_BUFFERED_LINE_CHARS = 128_000
+        private const val MAX_HTML_HEAD_SCAN_CHARS = 256_000
+        private const val MAX_HTML_INLINE_CSS_CHARS = 256_000
+        private const val PAGE_BREAK_MARKER = "<page-break></page-break>"
     }
 
     private val htmlSafelist = Safelist.relaxed()
@@ -519,57 +524,140 @@ class SingleFileImporter(private val context: Context) {
             var pageNum = 1
             val headBuilder = java.lang.StringBuilder()
             val currentChapterBuilder = java.lang.StringBuilder()
+            var titleFound = false
+            var authorFound = false
 
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                val trimmed = line!!.trim()
+            fun appendCss(style: String) {
+                if (style.isBlank() || cssBuilder.length >= MAX_HTML_INLINE_CSS_CHARS) return
+                val remaining = MAX_HTML_INLINE_CSS_CHARS - cssBuilder.length
+                cssBuilder.append(style, 0, minOf(style.length, remaining)).append('\n')
+            }
+
+            fun appendHeadSample(sample: String) {
+                if (headBuilder.length >= MAX_HTML_HEAD_SCAN_CHARS) return
+                val remaining = MAX_HTML_HEAD_SCAN_CHARS - headBuilder.length
+                headBuilder.append(sample, 0, minOf(sample.length, remaining)).append('\n')
+            }
+
+            fun flushChapter() {
+                if (currentChapterBuilder.isBlank()) {
+                    currentChapterBuilder.clear()
+                    return
+                }
+                chapters.add(
+                    writeHtmlChapter(
+                        extractionDir,
+                        bookId,
+                        pageNum++,
+                        title,
+                        cssBuilder.toString(),
+                        currentChapterBuilder.toString()
+                    )
+                )
+                currentChapterBuilder.clear()
+            }
+
+            fun appendBodySegment(segment: String, startIndex: Int = 0, endIndex: Int = segment.length, addNewline: Boolean = true) {
+                var start = startIndex
+                while (start < endIndex) {
+                    val remainingCapacity = (MAX_HTML_CHAPTER_CHARS - currentChapterBuilder.length).coerceAtLeast(1)
+                    val requestedEnd = minOf(endIndex, start + remainingCapacity)
+                    val chunkEnd = findHtmlChunkEnd(segment, start, requestedEnd, endIndex)
+                    currentChapterBuilder.append(segment, start, chunkEnd)
+                    start = chunkEnd
+                    if (currentChapterBuilder.length >= MAX_HTML_CHAPTER_CHARS) {
+                        flushChapter()
+                    }
+                }
+                if (addNewline) {
+                    currentChapterBuilder.append('\n')
+                    if (currentChapterBuilder.length >= MAX_HTML_CHAPTER_CHARS) {
+                        flushChapter()
+                    }
+                }
+            }
+
+            fun appendBodyLine(line: String) {
+                var start = 0
+                var markerIndex = line.indexOf(PAGE_BREAK_MARKER, start, ignoreCase = true)
+                while (markerIndex >= 0) {
+                    appendBodySegment(line, start, markerIndex)
+                    flushChapter()
+                    start = markerIndex + PAGE_BREAK_MARKER.length
+                    markerIndex = line.indexOf(PAGE_BREAK_MARKER, start, ignoreCase = true)
+                }
+                appendBodySegment(line, start, line.length)
+            }
+
+            reader.forEachBoundedLine(MAX_HTML_BUFFERED_LINE_CHARS) { line ->
+                val trimmed = line.trim()
 
                 if (inScript) {
                     if (trimmed.contains("</script", ignoreCase = true)) {
                         inScript = false
                     }
-                    continue
+                    return@forEachBoundedLine
                 }
                 if (trimmed.startsWith("<script", ignoreCase = true)) {
                     if (!trimmed.contains("</script", ignoreCase = true)) {
                         inScript = true
                     }
-                    continue
+                    return@forEachBoundedLine
                 }
 
                 if (!inBody) {
-                    headBuilder.append(line).append('\n')
-                    extractHtmlTitle(headBuilder.toString())?.let { title = it }
-                    extractHtmlAuthor(headBuilder.toString())?.let { author = it }
+                    appendHeadSample(line)
+                    if (!titleFound) {
+                        (extractHtmlTitle(line) ?: extractHtmlTitle(headBuilder.toString()))?.let {
+                            title = it
+                            titleFound = true
+                        }
+                    }
+                    if (!authorFound) {
+                        (extractHtmlAuthor(line) ?: extractHtmlAuthor(headBuilder.toString()))?.let {
+                            author = it
+                            authorFound = true
+                        }
+                    }
 
                     if (trimmed.startsWith("<style", ignoreCase = true)) {
                         inStyle = true
                         val styleContent = line.substringAfter(">").substringBefore("</style>")
-                        if (styleContent.isNotBlank()) cssBuilder.append(styleContent).append("\n")
+                        appendCss(styleContent)
                         if (trimmed.contains("</style>")) {
                             inStyle = false
                         }
-                        continue
+                        return@forEachBoundedLine
                     }
                     if (inStyle) {
                         if (trimmed.contains("</style>")) {
-                            cssBuilder.append(line.substringBefore("</style>")).append("\n")
+                            appendCss(line.substringBefore("</style>"))
                             inStyle = false
                         } else {
-                            cssBuilder.append(line).append("\n")
+                            appendCss(line)
                         }
-                        continue
+                        return@forEachBoundedLine
                     }
 
                     if (trimmed.equals("<body>", ignoreCase = true)) {
                         inBody = true
-                        continue
+                        return@forEachBoundedLine
                     }
                     if (trimmed.startsWith("<body ", ignoreCase = true)) {
                         inBody = true
                         val afterBody = line.substringAfter(">", "")
-                        if (afterBody.isNotBlank()) currentChapterBuilder.append(afterBody).append("\n")
-                        continue
+                        if (afterBody.isNotBlank()) appendBodyLine(afterBody)
+                        return@forEachBoundedLine
+                    }
+                    val embeddedBodyIndex = line.indexOf("<body", ignoreCase = true)
+                    if (embeddedBodyIndex >= 0) {
+                        val bodyContentIndex = line.indexOf('>', startIndex = embeddedBodyIndex)
+                        if (bodyContentIndex >= 0) {
+                            inBody = true
+                            val afterBody = line.substring(bodyContentIndex + 1)
+                            if (afterBody.isNotBlank()) appendBodyLine(afterBody)
+                            return@forEachBoundedLine
+                        }
                     }
 
                     if (trimmed.startsWith("<p") || trimmed.startsWith("<div") ||
@@ -577,41 +665,18 @@ class SingleFileImporter(private val context: Context) {
                         trimmed.contains("<page-break>") ||
                         (trimmed.isNotBlank() && !trimmed.startsWith("<") && !trimmed.startsWith("<!"))) {
                         inBody = true
-                        currentChapterBuilder.append(line).append("\n")
+                        appendBodyLine(line)
                     }
                 } else {
                     if (trimmed.equals("</body>", ignoreCase = true) || trimmed.equals("</html>", ignoreCase = true)) {
-                        continue
+                        return@forEachBoundedLine
                     }
 
-                    if (line.contains("<page-break></page-break>")) {
-                        val parts = line.split("<page-break></page-break>")
-                        for (i in parts.indices) {
-                            currentChapterBuilder.append(parts[i]).append("\n")
-                            if (i < parts.size - 1) {
-                                val chapterHtml = currentChapterBuilder.toString()
-                                if (chapterHtml.isNotBlank()) {
-                                    chapters.add(writeHtmlChapter(extractionDir, bookId, pageNum++, title, cssBuilder.toString(), chapterHtml))
-                                }
-                                currentChapterBuilder.clear() // Clean memory allocation
-                            }
-                        }
-                        continue
-                    }
-
-                    currentChapterBuilder.append(line).append("\n")
-
-                    if (currentChapterBuilder.length > 2_000_000) {
-                        chapters.add(writeHtmlChapter(extractionDir, bookId, pageNum++, title, cssBuilder.toString(), currentChapterBuilder.toString()))
-                        currentChapterBuilder.clear()
-                    }
+                    appendBodyLine(line)
                 }
             }
 
-            val finalChapterHtml = currentChapterBuilder.toString()
-            if (finalChapterHtml.isNotBlank()) {
-                chapters.add(writeHtmlChapter(extractionDir, bookId, pageNum++, title, cssBuilder.toString(), finalChapterHtml))
-            }
+            flushChapter()
         }
 
         if (chapters.isEmpty()) {
@@ -761,7 +826,7 @@ class SingleFileImporter(private val context: Context) {
             FileOutputStream(tempFile).bufferedWriter().use { writer ->
                 val title = originalBookNameHint.substringBeforeLast(".")
                 writer.write("<!DOCTYPE html>\n<html>\n<head>\n<title>$title</title>\n</head>\n<body>\n")
-                writer.write(htmlContent)
+                writeHtmlBodyContentChunked(writer, htmlContent)
                 writer.write("\n</body>\n</html>")
             }
 
@@ -816,12 +881,19 @@ class SingleFileImporter(private val context: Context) {
         val fileName = "page_$pageNum.html"
         val file = File(extractionDir, fileName)
         val sanitizedBodyContent = sanitizeHtmlFragment(bodyContent)
+        val escapedTitle = title.replace("\"", "&quot;")
 
-        val fullHtml = "<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head>\n<title>${title.replace("\"", "&quot;")}</title>\n<style>${cssStyle}</style>\n</head>\n<body>\n${sanitizedBodyContent.trim()}\n</body>\n</html>"
+        file.bufferedWriter().use { writer ->
+            writer.write("<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head>\n<title>")
+            writer.write(escapedTitle)
+            writer.write("</title>\n<style>")
+            writer.write(cssStyle)
+            writer.write("</style>\n</head>\n<body>\n")
+            writer.write(sanitizedBodyContent.trim())
+            writer.write("\n</body>\n</html>")
+        }
 
-        file.writeText(fullHtml)
-
-        val plainText = Jsoup.parse(fullHtml).text()
+        val plainText = Jsoup.parse(sanitizedBodyContent).text()
 
         return EpubChapter(
             chapterId = "${bookId}_$pageNum",
@@ -833,5 +905,71 @@ class SingleFileImporter(private val context: Context) {
             depth = 0,
             isInToc = true
         )
+    }
+
+    private fun java.io.BufferedReader.forEachBoundedLine(
+        maxLineChars: Int,
+        onLine: (String) -> Unit
+    ) {
+        val buffer = CharArray(16_384)
+        val currentLine = StringBuilder()
+        while (true) {
+            val read = read(buffer)
+            if (read == -1) break
+
+            var start = 0
+            var index = 0
+            while (index < read) {
+                val char = buffer[index]
+                val reachesLimit = currentLine.length + (index - start + 1) >= maxLineChars
+                if (char == '\n' || reachesLimit) {
+                    val count = index - start + if (char == '\n') 0 else 1
+                    if (count > 0) {
+                        currentLine.append(buffer, start, count)
+                    }
+                    onLine(currentLine.toString().trimEnd('\r'))
+                    currentLine.clear()
+                    start = index + 1
+                }
+                index++
+            }
+
+            if (start < read) {
+                currentLine.append(buffer, start, read - start)
+            }
+        }
+
+        if (currentLine.isNotEmpty()) {
+            onLine(currentLine.toString().trimEnd('\r'))
+        }
+    }
+
+    private fun findHtmlChunkEnd(
+        source: String,
+        start: Int,
+        requestedEnd: Int,
+        absoluteEnd: Int
+    ): Int {
+        if (requestedEnd >= absoluteEnd) return absoluteEnd
+
+        val tagStart = source.lastIndexOf('<', requestedEnd - 1)
+        val tagEnd = source.lastIndexOf('>', requestedEnd - 1)
+        if (tagStart > start && tagStart > tagEnd && requestedEnd - tagStart <= 4096) {
+            return tagStart
+        }
+
+        return requestedEnd
+    }
+
+    private fun writeHtmlBodyContentChunked(writer: java.io.Writer, htmlContent: String) {
+        var charsSinceBreak = 0
+        for (char in htmlContent) {
+            writer.write(char.code)
+            charsSinceBreak++
+            if (char == '>' || charsSinceBreak >= MAX_HTML_BUFFERED_LINE_CHARS) {
+                writer.write('\n'.code)
+                charsSinceBreak = 0
+            }
+        }
     }
 }
