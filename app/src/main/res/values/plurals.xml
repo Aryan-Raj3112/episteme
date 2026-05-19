@@ -65,10 +65,100 @@
         <item quantity="other">%1$d folders</item>
     </plurals>
 
+    <!-- File count label. %1$d = number of files. Use a full count phrase, not a reusable standalone noun. -->
+    <plurals name="file_count">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
+
+    <!-- Desktop drag-and-drop overlay title. %1$d = number of importable files currently dragged over the app. -->
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">Drop to import %1$d file</item>
+        <item quantity="other">Drop to import %1$d files</item>
+    </plurals>
+
+    <!-- Desktop drag-and-drop overlay detail. %1$d = number of unsupported dragged files that will not be imported. -->
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d unsupported file will be skipped.</item>
+        <item quantity="other">%1$d unsupported files will be skipped.</item>
+    </plurals>
+
+    <!-- Desktop import progress banner. %1$d = number of files being imported. -->
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">Importing %1$d file…</item>
+        <item quantity="other">Importing %1$d files…</item>
+    </plurals>
+
+    <!-- Desktop import result banner sentence. %1$d = number of files successfully imported. -->
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">Imported %1$d file.</item>
+        <item quantity="other">Imported %1$d files.</item>
+    </plurals>
+
+    <!-- Desktop import result banner sentence. %1$d = number of files that could not be imported. -->
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">Could not import %1$d file.</item>
+        <item quantity="other">Could not import %1$d files.</item>
+    </plurals>
+
+    <!-- Desktop import result banner sentence. %1$d = number of files skipped during import. -->
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">Skipped %1$d file.</item>
+        <item quantity="other">Skipped %1$d files.</item>
+    </plurals>
+
+    <!-- Desktop remove-folder confirmation body. %1$s = folder name; %2$d = number of books from that folder. -->
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">Remove "%1$s" and its %2$d book from the app? Files on disk will not be deleted.</item>
+        <item quantity="other">Remove "%1$s" and its %2$d books from the app? Files on disk will not be deleted.</item>
+    </plurals>
+
+    <!-- Desktop folder-sync result banner. %1$d = number of linked folders whose sync failed. -->
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">Folder sync failed for %1$d folder.</item>
+        <item quantity="other">Folder sync failed for %1$d folders.</item>
+    </plurals>
+
+    <!-- Desktop folder-sync result banner. %1$d = number of linked folders skipped after a partial sync. -->
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Folder sync finished with %1$d folder skipped.</item>
+        <item quantity="other">Folder sync finished with %1$d folders skipped.</item>
+    </plurals>
+
+    <!-- Desktop OPDS catalog removal banner. %1$d = number of streamed OPDS books removed with the catalog. -->
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">Removed %1$d streamed OPDS book from that catalog.</item>
+        <item quantity="other">Removed %1$d streamed OPDS books from that catalog.</item>
+    </plurals>
+
     <!-- Word count for tags shown in filter chips. %1$d = number of tags. -->
     <plurals name="tag_count">
         <item quantity="one">%1$d tag</item>
         <item quantity="other">%1$d tags</item>
+    </plurals>
+
+    <!-- Desktop library tab label with count. %1$d = number of visible books in the tab. -->
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">All Books %1$d</item>
+        <item quantity="other">All Books %1$d</item>
+    </plurals>
+
+    <!-- Desktop library tab label with count. %1$d = number of manual/series shelf groups. -->
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Shelves %1$d</item>
+        <item quantity="other">Shelves %1$d</item>
+    </plurals>
+
+    <!-- Desktop library tab label with count. %1$d = number of tag groups. -->
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Tags %1$d</item>
+        <item quantity="other">Tags %1$d</item>
+    </plurals>
+
+    <!-- Desktop library tab label with count. %1$d = number of source folder groups. -->
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Folders %1$d</item>
+        <item quantity="other">Folders %1$d</item>
     </plurals>
 
     <!-- Parenthetical cache chunk count in TTS cache entries. %1$d = number of cached audio chunks. -->

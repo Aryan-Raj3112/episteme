@@ -23,6 +23,7 @@ import androidx.compose.ui.zIndex
 import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.ui.readerQuantityString
 import com.aryan.reader.shared.ui.readerString
 import java.awt.Component
 import java.awt.Container
@@ -172,14 +173,26 @@ internal fun DesktopDropImportOverlay(state: DesktopDropImportState) {
 
     val hasSupportedFiles = state.supportedCount > 0
     val title = when {
-        hasSupportedFiles -> readerString("desktop_drop_to_import_files", "Drop to import %1\$d file(s)", state.supportedCount)
+        hasSupportedFiles -> readerQuantityString(
+            "desktop_drop_import_file_count",
+            state.supportedCount,
+            "Drop to import %1\$d file",
+            "Drop to import %1\$d files",
+            state.supportedCount
+        )
         state.hasFilePayload -> readerString("desktop_drop_supported_files_to_import", "Drop supported files to import")
         else -> readerString("desktop_drop_files_to_import", "Drop files to import")
     }
     val body = if (hasSupportedFiles) {
         val skipped = state.totalFileCount - state.supportedCount
         if (skipped > 0) {
-            readerString("desktop_unsupported_files_skipped", "%1\$d unsupported file(s) will be skipped.", skipped)
+            readerQuantityString(
+                "desktop_unsupported_import_file_count",
+                skipped,
+                "%1\$d unsupported file will be skipped.",
+                "%1\$d unsupported files will be skipped.",
+                skipped
+            )
         } else {
             readerString("desktop_release_add_library", "Release to add to your library.")
         }

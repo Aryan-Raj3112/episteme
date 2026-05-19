@@ -506,6 +506,7 @@ val prepareDesktopStringResources by tasks.registering(Sync::class) {
     // Reuse Android string resources as the localization source for desktop.
     from(rootProject.layout.projectDirectory.dir("app/src/main/res")) {
         include("values*/strings.xml")
+        include("values*/plurals.xml")
         into("desktop-android-res")
     }
     into(generatedDesktopStringResourcesDir)

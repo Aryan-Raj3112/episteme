@@ -1623,14 +1623,11 @@
     <string name="desktop_disabled">Disabled</string>
     <string name="desktop_drop_files_to_import">Drop files to import</string>
     <string name="desktop_drop_supported_files_to_import">Drop supported files to import</string>
-    <!-- %1$d = number of files that can be imported. -->
-    <string name="desktop_drop_to_import_files">Drop to import %1$d file(s)</string>
     <string name="desktop_email_support_desc">Contact us directly by email for anything else.</string>
     <string name="desktop_equals">Equals</string>
     <string name="desktop_extras">Extras</string>
     <string name="desktop_feedback">Feedback</string>
     <string name="desktop_field">Field</string>
-    <string name="desktop_folder">Folder</string>
     <string name="desktop_folder_path">Folder path</string>
     <string name="desktop_from_here">From here</string>
     <string name="desktop_full_scan">Full scan</string>
@@ -1685,8 +1682,6 @@
     <string name="desktop_reader">Reader</string>
     <string name="desktop_refresh">Refresh</string>
     <string name="desktop_release_add_library">Release to add to your library.</string>
-    <!-- %1$s = folder name; %2$d = number of books. -->
-    <string name="desktop_remove_folder_desc">Remove \"%1$s\" and its %2$d book(s) from the app? Files on disk will not be deleted.</string>
     <string name="desktop_secure_key_storage_unavailable">Secure key storage is unavailable on this operating system. Keys entered here will be used for this session but will not be persisted.</string>
     <string name="desktop_settings_hub">Settings hub</string>
     <string name="desktop_show_ai_in_reader_desc">Matches the Android hide toggle for smart dictionary, summaries, and recaps.</string>
@@ -1706,8 +1701,6 @@
     <string name="desktop_tools">Tools</string>
     <string name="desktop_tools_desc">Import, sync, and app settings</string>
     <string name="desktop_type_example_pdf">Type, e.g. PDF</string>
-    <!-- %1$d = number of unsupported files. -->
-    <string name="desktop_unsupported_files_skipped">%1$d unsupported file(s) will be skipped.</string>
     <string name="desktop_view">View</string>
     <string name="desktop_voice_cache">Voice cache</string>
     <string name="desktop_webview_preparing">Preparing embedded webview…</string>
@@ -1718,6 +1711,7 @@
     <string name="desktop_webview_start_error">Embedded webview could not start: %1$s</string>
     <string name="desktop_working">Working…</string>
     <string name="desktop_workspace">Workspace</string>
+    <!-- Desktop action/dialog title for adding selected books to a manual shelf. -->
     <string name="desktop_add_to_shelf">Add to shelf</string>
     <string name="desktop_create_shelf_first">Create a shelf first, then add selected books to it.</string>
     <string name="desktop_create_theme">Create theme</string>
@@ -1849,9 +1843,9 @@
     <string name="desktop_authors">Authors</string>
     <string name="desktop_back_to_library">Back to library</string>
     <string name="desktop_book_actions">Book actions</string>
+    <!-- Small badge shown on a book card when the book comes from a synced/local folder. -->
+    <string name="desktop_book_badge_folder">Folder</string>
     <string name="desktop_browse">Browse</string>
-    <!-- %1$d = number of books. -->
-    <string name="desktop_book_count_format">%1$d book(s)</string>
     <string name="desktop_categories">Categories</string>
     <!-- %1$d = 1-indexed chapter number. -->
     <string name="desktop_chapter_short_format">Ch. %1$d</string>
@@ -1875,8 +1869,7 @@
     <string name="desktop_enter_full_screen">Enter full screen</string>
     <string name="desktop_exit_full_screen">Exit full screen</string>
     <string name="desktop_external_lookup">External lookup</string>
-    <!-- %1$d = number of files. -->
-    <string name="desktop_file_count_format">%1$d file(s)</string>
+    <!-- Standalone file-type filter group label for book formats such as EPUB and MOBI. Do not reuse for counts or sentences. -->
     <string name="desktop_file_type_group_books">Books</string>
     <string name="desktop_file_type_group_comics">Comics</string>
     <string name="desktop_file_type_group_documents">Documents</string>
@@ -1884,8 +1877,6 @@
     <string name="desktop_file_type_group_text_web">Text and web</string>
     <string name="desktop_fill">Fill</string>
     <string name="desktop_fixed_layout_appearance">Fixed-layout appearance</string>
-    <!-- %1$d = number of folders. -->
-    <string name="desktop_folder_count_format">%1$d folder(s)</string>
     <string name="desktop_folder_empty">Folder is empty</string>
     <string name="desktop_folder_empty_desc">No supported files or subfolders are available here.</string>
     <!-- %1$s = first label; %2$s = second label. -->
@@ -1897,14 +1888,22 @@
     <string name="desktop_import_books">Import books</string>
     <string name="desktop_import_folder">Import folder</string>
     <string name="desktop_imported_fonts">Imported fonts</string>
+    <!-- Desktop import banner that joins two complete status sentences. %1$s = imported-count sentence; %2$s = skipped-count sentence. -->
+    <string name="desktop_import_result_pair">%1$s %2$s</string>
     <!-- %1$s = setting label. -->
     <string name="desktop_increase_format">Increase %1$s</string>
     <string name="desktop_jump_history">Jump history</string>
-    <!-- %1$s = label; %2$d = count. -->
-    <string name="desktop_label_count_format">%1$s %2$d</string>
     <string name="desktop_layout_spacing">Layout and Spacing</string>
     <string name="desktop_library_empty_desc">Import files into app storage or add a folder to read files in place.</string>
     <string name="desktop_library_subtitle">Browse your collection</string>
+    <!-- Desktop library tab label with count. %1$d = number of smart shelves. Keep as a full tab phrase, not a reusable noun. -->
+    <string name="desktop_library_tab_smart_shelves_count">Smart %1$d</string>
+    <!-- Desktop library tab label with count. %1$d = number of unread books. Keep as a full tab phrase. -->
+    <string name="desktop_library_tab_unread_count">Unread %1$d</string>
+    <!-- Desktop library tab label with count. %1$d = number of in-progress books. Keep as a full tab phrase. -->
+    <string name="desktop_library_tab_in_progress_count">In progress %1$d</string>
+    <!-- Desktop library tab label with count. %1$d = number of completed books. Keep as a full tab phrase. -->
+    <string name="desktop_library_tab_completed_count">Complete %1$d</string>
     <string name="desktop_list_view">List</string>
     <string name="desktop_navigation">Navigation</string>
     <string name="desktop_no_book_open">No book open</string>
@@ -1950,9 +1949,12 @@
     <string name="desktop_selection">Selection</string>
     <string name="desktop_selection_end_handle">Selection end handle</string>
     <string name="desktop_selection_start_handle">Selection start handle</string>
-    <string name="desktop_shelf">Shelf</string>
+    <!-- Empty-state body for the top-level shelves screen that includes shelves, tags, and folder metadata. -->
+    <string name="desktop_shelves_overview_empty_desc">Add shelves, tags, or folder metadata to organize your library.</string>
     <string name="desktop_shelves_subtitle">Collections, series, tags, and folders</string>
     <string name="desktop_show_reader_tools">Show reader tools</string>
+    <!-- Desktop smart-shelf rule field label for matching a source folder path. -->
+    <string name="desktop_smart_field_folder">Folder</string>
     <string name="desktop_smart_shelves">Smart</string>
     <string name="desktop_solid">Solid</string>
     <string name="desktop_speed">Speed</string>

@@ -21,6 +21,19 @@ class DesktopStringResourcesTest {
     }
 
     @Test
+    fun buildsAndroidPluralResourcePathsForRegionalLocale() {
+        val paths = desktopAndroidPluralResourcePaths(Locale("pt", "BR"))
+
+        assertEquals(
+            listOf(
+                "desktop-android-res/values-pt-rBR/plurals.xml",
+                "desktop-android-res/values-pt/plurals.xml"
+            ),
+            paths
+        )
+    }
+
+    @Test
     fun parsesAndroidStringXmlAndDecodesEscapes() {
         val xml = """
             <resources>
@@ -34,6 +47,49 @@ class DesktopStringResourcesTest {
         assertEquals("One\nTwo", parsed["line"])
         assertEquals("Don't stop", parsed["quote"])
         assertTrue(parsed.containsKey("line"))
+    }
+
+    @Test
+    fun parsesAndroidPluralXmlAndDecodesEscapes() {
+        val xml = """
+            <resources>
+                <plurals name="book_count">
+                    <item quantity="one">%1${'$'}d book</item>
+                    <item quantity="other">%1${'$'}d books</item>
+                </plurals>
+                <plurals name="quoted_count">
+                    <item quantity="one">Don\'t skip %1${'$'}d file</item>
+                    <item quantity="other">Don\'t skip %1${'$'}d files</item>
+                </plurals>
+            </resources>
+        """.trimIndent()
+
+        val parsed = parseAndroidPluralXml(ByteArrayInputStream(xml.toByteArray()))
+
+        assertEquals("%1${'$'}d book", parsed["book_count"]?.get("one"))
+        assertEquals("%1${'$'}d books", parsed["book_count"]?.get("other"))
+        assertEquals("Don't skip %1${'$'}d file", parsed["quoted_count"]?.get("one"))
+    }
+
+    @Test
+    fun choosesDesktopPluralQuantityForSupportedLanguages() {
+        val slavicQuantities = setOf("one", "few", "many", "other")
+        val arabicQuantities = setOf("zero", "one", "two", "few", "many", "other")
+
+        assertEquals("one", desktopAndroidPluralQuantity(Locale("ru"), 21, slavicQuantities))
+        assertEquals("few", desktopAndroidPluralQuantity(Locale("ru"), 22, slavicQuantities))
+        assertEquals("many", desktopAndroidPluralQuantity(Locale("ru"), 25, slavicQuantities))
+        assertEquals("few", desktopAndroidPluralQuantity(Locale("pl"), 2, slavicQuantities))
+        assertEquals("one", desktopAndroidPluralQuantity(Locale("fr"), 0, setOf("one", "other")))
+        assertEquals("zero", desktopAndroidPluralQuantity(Locale("ar"), 0, arabicQuantities))
+        assertEquals("other", desktopAndroidPluralQuantity(Locale("ja"), 1, setOf("other")))
+    }
+
+    @Test
+    fun fallsBackToOtherPluralQuantityWhenPreferredIsUnavailable() {
+        val selected = desktopAndroidPluralQuantity(Locale("ru"), 2, setOf("one", "other"))
+
+        assertEquals("other", selected)
     }
 
     @Test

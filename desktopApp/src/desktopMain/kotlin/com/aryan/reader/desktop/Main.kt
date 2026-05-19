@@ -160,6 +160,15 @@ internal fun EpistemeDesktopApp(
     fun desktopString(name: String, fallback: String, vararg args: Any?): String {
         return desktopStringResolver.string(name, fallback, *args)
     }
+    fun desktopQuantityString(
+        name: String,
+        quantity: Int,
+        fallbackOne: String,
+        fallbackOther: String,
+        vararg args: Any?
+    ): String {
+        return desktopStringResolver.quantityString(name, quantity, fallbackOne, fallbackOther, *args)
+    }
     val featurePolicy = desktopBuildProfile.featurePolicy
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
@@ -1824,7 +1833,18 @@ internal fun EpistemeDesktopApp(
             failedCount = failedCount
         )
         if (files.isEmpty() && failedCount > 0) {
-            updateState(state.withBanner("Could not import $failedCount file(s).", isError = true))
+            updateState(
+                state.withBanner(
+                    desktopQuantityString(
+                        "desktop_import_failed_file_count",
+                        failedCount,
+                        "Could not import %1\$d file.",
+                        "Could not import %1\$d files.",
+                        failedCount
+                    ),
+                    isError = true
+                )
+            )
             return
         }
         if (importPlan.supportedFiles.isEmpty() && files.isNotEmpty()) {
@@ -1842,11 +1862,49 @@ internal fun EpistemeDesktopApp(
                 when {
                     counts.addedCount > 0 && (counts.unsupportedCount > 0 || counts.failedCount > 0) -> {
                         val skippedCount = counts.unsupportedCount + counts.failedCount
-                        it.withBanner("Imported ${counts.addedCount} file(s). Skipped $skippedCount file(s).")
+                        val importedMessage = desktopQuantityString(
+                            "desktop_imported_file_count",
+                            counts.addedCount,
+                            "Imported %1\$d file.",
+                            "Imported %1\$d files.",
+                            counts.addedCount
+                        )
+                        val skippedMessage = desktopQuantityString(
+                            "desktop_skipped_file_count",
+                            skippedCount,
+                            "Skipped %1\$d file.",
+                            "Skipped %1\$d files.",
+                            skippedCount
+                        )
+                        it.withBanner(
+                            desktopString(
+                                "desktop_import_result_pair",
+                                "%1\$s %2\$s",
+                                importedMessage,
+                                skippedMessage
+                            )
+                        )
                     }
-                    counts.addedCount > 0 -> it.withBanner("Imported ${counts.addedCount} file(s).")
+                    counts.addedCount > 0 -> it.withBanner(
+                        desktopQuantityString(
+                            "desktop_imported_file_count",
+                            counts.addedCount,
+                            "Imported %1\$d file.",
+                            "Imported %1\$d files.",
+                            counts.addedCount
+                        )
+                    )
                     counts.duplicateCount > 0 -> it.withBanner("Those files are already in the library.")
-                    counts.failedCount > 0 -> it.withBanner("Could not import ${counts.failedCount} file(s).", isError = true)
+                    counts.failedCount > 0 -> it.withBanner(
+                        desktopQuantityString(
+                            "desktop_import_failed_file_count",
+                            counts.failedCount,
+                            "Could not import %1\$d file.",
+                            "Could not import %1\$d files.",
+                            counts.failedCount
+                        ),
+                        isError = true
+                    )
                     else -> it
                 }
             }
@@ -1892,7 +1950,17 @@ internal fun EpistemeDesktopApp(
 
     fun importFiles(files: List<ImportedBookFile>, onImported: (List<BookItem>) -> Unit = {}) {
         if (files.isEmpty()) return
-        updateState(state.withBanner("Importing ${files.size} file(s)..."))
+        updateState(
+            state.withBanner(
+                desktopQuantityString(
+                    "desktop_importing_file_count",
+                    files.size,
+                    "Importing %1\$d file...",
+                    "Importing %1\$d files...",
+                    files.size
+                )
+            )
+        )
         scope.launch {
             val preparedImport = withContext(Dispatchers.IO) {
                 desktopBookImporter.prepareImports(files)
@@ -1946,9 +2014,21 @@ internal fun EpistemeDesktopApp(
             val metadataStats = result.metadataStats
             val message = when {
                 failedCount > 0 && stats.supportedFiles == 0 ->
-                    "Folder sync failed for $failedCount folder(s)."
+                    desktopQuantityString(
+                        "desktop_folder_sync_failed_folder_count",
+                        failedCount,
+                        "Folder sync failed for %1\$d folder.",
+                        "Folder sync failed for %1\$d folders.",
+                        failedCount
+                    )
                 failedCount > 0 ->
-                    "Folder sync finished with $failedCount folder(s) skipped."
+                    desktopQuantityString(
+                        "desktop_folder_sync_skipped_folder_count",
+                        failedCount,
+                        "Folder sync finished with %1\$d folder skipped.",
+                        "Folder sync finished with %1\$d folders skipped.",
+                        failedCount
+                    )
                 metadataOnly ->
                     "Folder metadata sync complete."
                 else ->
@@ -2677,7 +2757,15 @@ internal fun EpistemeDesktopApp(
                     rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in streamBookIds },
                     openTabIds = state.openTabIds.filterNot { it in streamBookIds },
                     activeTabBookId = state.activeTabBookId?.takeUnless { it in streamBookIds }
-                ).withBanner("Removed ${streamBookIds.size} streamed OPDS book(s) from that catalog.")
+                ).withBanner(
+                    desktopQuantityString(
+                        "desktop_opds_removed_stream_book_count",
+                        streamBookIds.size,
+                        "Removed %1\$d streamed OPDS book from that catalog.",
+                        "Removed %1\$d streamed OPDS books from that catalog.",
+                        streamBookIds.size
+                    )
+                )
             )
         }
     }
@@ -3615,9 +3703,11 @@ internal fun EpistemeDesktopApp(
         folderToRemove?.let { folder ->
             SharedConfirmDialog(
                 title = readerString("menu_remove_folder", "Remove folder"),
-                body = readerString(
-                    "desktop_remove_folder_desc",
-                    "Remove \"%1\$s\" and its %2\$d book(s) from the app? Files on disk will not be deleted.",
+                body = desktopQuantityString(
+                    "desktop_remove_folder_desc_with_book_count",
+                    folder.bookCount,
+                    "Remove \"%1\$s\" and its %2\$d book from the app? Files on disk will not be deleted.",
+                    "Remove \"%1\$s\" and its %2\$d books from the app? Files on disk will not be deleted.",
                     folder.name,
                     folder.bookCount
                 ),

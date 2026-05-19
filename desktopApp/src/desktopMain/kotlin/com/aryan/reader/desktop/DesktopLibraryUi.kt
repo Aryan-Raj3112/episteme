@@ -439,7 +439,7 @@ private fun SmartField.localizedLabel(): String {
         SmartField.AUTHOR -> readerString("author", "Author")
         SmartField.PROGRESS -> readerString("desktop_progress", "Progress")
         SmartField.FILE_TYPE -> readerString("filter_file_type", "File type")
-        SmartField.FOLDER -> readerString("desktop_folder", "Folder")
+        SmartField.FOLDER -> readerString("desktop_smart_field_folder", "Folder")
         SmartField.TAG -> readerString("content_desc_tag", "Tag")
     }
 }

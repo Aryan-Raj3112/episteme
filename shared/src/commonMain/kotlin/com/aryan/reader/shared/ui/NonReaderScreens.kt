@@ -508,7 +508,7 @@ fun SharedShelvesScreen(
                 Button(onClick = onCreateShelf) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(readerString("desktop_shelf", "Shelf"))
+                    Text(readerString("fab_new_shelf", "New shelf"))
                 }
             }
         }
@@ -526,7 +526,10 @@ fun SharedShelvesScreen(
             onDeleteShelf = onDeleteShelf,
             onRemoveFolder = onRemoveFolder,
             emptyTitle = readerString("desktop_no_shelves_yet", "No shelves yet"),
-            emptyBody = "Add shelves, tags, or folder metadata to organize your library.",
+            emptyBody = readerString(
+                "desktop_shelves_overview_empty_desc",
+                "Add shelves, tags, or folder metadata to organize your library."
+            ),
             modifier = Modifier.weight(1f)
         )
     }
@@ -700,7 +703,7 @@ private fun SelectionToolbar(
                 TextButton(onClick = onAddToShelf) {
                     Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text(readerString("desktop_shelf", "Shelf"))
+                    Text(readerString("desktop_add_to_shelf", "Add to shelf"))
                 }
                 onSelectAll?.let { selectAll ->
                     TextButton(onClick = selectAll) {
@@ -865,7 +868,7 @@ private fun LibraryTabStrip(
                 selected = selectedTab == tab,
                 onClick = { onTabSelected(tab) },
                 leadingIcon = { Icon(tab.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                label = { Text(readerString("desktop_label_count_format", "%1\$s %2\$d", tab.label(), tab.count(organization))) }
+                label = { Text(tab.labelWithCount(organization)) }
             )
         }
     }
@@ -959,7 +962,7 @@ private fun LibraryToolbar(
             OutlinedButton(onClick = onCreateShelf) {
                 Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(readerString("desktop_shelf", "Shelf"))
+                Text(readerString("fab_new_shelf", "New shelf"))
             }
             OutlinedButton(onClick = onImportFolder) {
                 Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -1501,7 +1504,7 @@ private fun BookTile(
                         OverlayBadge(Icons.Default.PushPin, readerString("pinned", "Pinned"))
                     }
                     if (book.sourceFolder != null) {
-                        OverlayBadge(Icons.Default.Folder, readerString("desktop_folder", "Folder"))
+                        OverlayBadge(Icons.Default.Folder, readerString("desktop_book_badge_folder", "Folder"))
                     }
                     if (book.isOpdsStream()) {
                         OverlayBadge(Icons.Default.Cloud, readerString("action_stream", "Stream"))
@@ -1578,7 +1581,7 @@ private fun BookListItem(
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     TypeBadge(book.type)
                     if (pinned) StatusBadge(Icons.Default.PushPin, readerString("pinned", "Pinned"))
-                    if (book.sourceFolder != null) StatusBadge(Icons.Default.Folder, readerString("desktop_folder", "Folder"))
+                    if (book.sourceFolder != null) StatusBadge(Icons.Default.Folder, readerString("desktop_book_badge_folder", "Folder"))
                     if (book.isOpdsStream()) StatusBadge(Icons.Default.Cloud, readerString("action_stream", "Stream"))
                 }
                 ProgressSection(book.progressPercentage)
@@ -2081,17 +2084,17 @@ private fun Shelf.subtitleLabel(): String {
 
 @Composable
 private fun bookCountLabel(count: Int): String {
-    return readerString("desktop_book_count_format", "%1\$d book(s)", count)
+    return readerQuantityString("book_count", count, "%1\$d book", "%1\$d books", count)
 }
 
 @Composable
 private fun folderCountLabel(count: Int): String {
-    return readerString("desktop_folder_count_format", "%1\$d folder(s)", count)
+    return readerQuantityString("folder_count", count, "%1\$d folder", "%1\$d folders", count)
 }
 
 @Composable
 private fun fileCountLabel(count: Int): String {
-    return readerString("desktop_file_count_format", "%1\$d file(s)", count)
+    return readerQuantityString("file_count", count, "%1\$d file", "%1\$d files", count)
 }
 
 @Composable
@@ -2293,7 +2296,7 @@ private fun SharedEmptyState(
 @Composable
 private fun NonReaderLibraryTab.label(): String {
     return when (this) {
-        NonReaderLibraryTab.BOOKS -> readerString("tab_all_books", "Books")
+        NonReaderLibraryTab.BOOKS -> readerString("tab_all_books", "All Books")
         NonReaderLibraryTab.SHELVES -> readerString("tab_shelves", "Shelves")
         NonReaderLibraryTab.SMART_SHELVES -> readerString("desktop_smart_shelves", "Smart")
         NonReaderLibraryTab.TAGS -> readerString("section_tags", "Tags")
@@ -2326,6 +2329,45 @@ private fun NonReaderLibraryTab.count(organization: NonReaderLibraryOrganization
         NonReaderLibraryTab.UNREAD -> organization.unreadCount
         NonReaderLibraryTab.IN_PROGRESS -> organization.inProgressCount
         NonReaderLibraryTab.COMPLETED -> organization.completedCount
+    }
+}
+
+@Composable
+private fun NonReaderLibraryTab.labelWithCount(organization: NonReaderLibraryOrganizationModel): String {
+    val count = count(organization)
+    return when (this) {
+        NonReaderLibraryTab.BOOKS -> readerQuantityString(
+            "desktop_library_tab_books_count",
+            count,
+            "All Books %1\$d",
+            "All Books %1\$d",
+            count
+        )
+        NonReaderLibraryTab.SHELVES -> readerQuantityString(
+            "desktop_library_tab_shelves_count",
+            count,
+            "Shelves %1\$d",
+            "Shelves %1\$d",
+            count
+        )
+        NonReaderLibraryTab.SMART_SHELVES -> readerString("desktop_library_tab_smart_shelves_count", "Smart %1\$d", count)
+        NonReaderLibraryTab.TAGS -> readerQuantityString(
+            "desktop_library_tab_tags_count",
+            count,
+            "Tags %1\$d",
+            "Tags %1\$d",
+            count
+        )
+        NonReaderLibraryTab.FOLDERS -> readerQuantityString(
+            "desktop_library_tab_folders_count",
+            count,
+            "Folders %1\$d",
+            "Folders %1\$d",
+            count
+        )
+        NonReaderLibraryTab.UNREAD -> readerString("desktop_library_tab_unread_count", "Unread %1\$d", count)
+        NonReaderLibraryTab.IN_PROGRESS -> readerString("desktop_library_tab_in_progress_count", "In progress %1\$d", count)
+        NonReaderLibraryTab.COMPLETED -> readerString("desktop_library_tab_completed_count", "Complete %1\$d", count)
     }
 }
 
