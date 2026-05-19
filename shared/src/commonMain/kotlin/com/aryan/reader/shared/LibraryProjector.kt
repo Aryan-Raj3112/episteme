@@ -33,13 +33,27 @@ class LibraryProjector {
             existingBookIds = state.books.mapTo(mutableSetOf()) { it.id },
             platform = ReaderPlatform.DESKTOP
         )
+        val messageText = when {
+            plan.importedCount > 0 -> SharedText.quantity(
+                "desktop_imported_file_count_reader_support_later",
+                plan.importedCount,
+                "Imported %1\$d file. Reader support comes later.",
+                "Imported %1\$d files. Reader support comes later.",
+                plan.importedCount
+            )
+            plan.unsupportedCount > 0 -> SharedText.string(
+                "desktop_no_supported_files_imported",
+                "No supported files were imported."
+            )
+            else -> SharedText.string(
+                "banner_duplicate_files_already_in_library",
+                "Those files are already in the desktop library."
+            )
+        }
         return state.copy(
             books = plan.importedBooks + state.books,
-            message = when {
-                plan.importedCount > 0 -> "Imported ${plan.importedCount} file(s). Reader support comes later."
-                plan.unsupportedCount > 0 -> "No supported files were imported."
-                else -> "Those files are already in the desktop library."
-            }
+            message = messageText.fallbackMessage(),
+            messageText = messageText
         )
     }
 

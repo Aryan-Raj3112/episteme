@@ -47,7 +47,8 @@ class SharedLibraryEditorTest {
         assertEquals(listOf("keep"), result.state.rawLibraryBooks.ids())
         assertTrue(result.state.selectedBookIds.isEmpty())
         assertEquals(listOf("keep"), result.shelfRefs.map { it.bookId })
-        assertEquals("Removed 1 book(s) from the library.", result.state.bannerMessage?.message)
+        assertEquals("1 book removed from library.", result.state.bannerMessage?.message)
+        assertEquals("banner_books_removed_library", result.state.bannerMessage?.text?.name)
     }
 
     @Test
@@ -72,7 +73,8 @@ class SharedLibraryEditorTest {
             ),
             result.shelfRefs
         )
-        assertEquals("Added 1 book(s) to shelf.", result.state.bannerMessage?.message)
+        assertEquals("1 book added to shelf.", result.state.bannerMessage?.message)
+        assertEquals("banner_books_added_to_shelf", result.state.bannerMessage?.text?.name)
     }
 
     @Test
@@ -99,6 +101,7 @@ class SharedLibraryEditorTest {
         assertEquals(ShelfRecord("smart_7", "Smart Picks", isSmart = true, smartRulesJson = shelf.smartRulesJson), shelf)
         assertEquals(listOf(SmartRule(SmartField.TITLE, SmartOperator.CONTAINS, "dune")), decoded?.rules)
         assertEquals("Created smart shelf \"Smart Picks\".", result.state.bannerMessage?.message)
+        assertEquals("banner_smart_shelf_created", result.state.bannerMessage?.text?.name)
         assertNull(
             SharedLibraryEditor.createSmartShelf(
                 state = SharedReaderScreenState(),
@@ -192,6 +195,8 @@ class SharedLibraryEditorTest {
         assertTrue(result.state.syncedFolders.isEmpty())
         assertTrue(result.state.libraryFilters.sourceFolders.isEmpty())
         assertEquals(listOf("other"), result.shelfRefs.map { it.bookId })
+        assertEquals("Removed folder \"Books\" and 1 book from the app.", result.state.bannerMessage?.message)
+        assertEquals("banner_folder_removed_with_book_count", result.state.bannerMessage?.text?.name)
     }
 
     @Test

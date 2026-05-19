@@ -2076,10 +2076,17 @@ private fun FolderShelfListItem(
 @Composable
 private fun Shelf.subtitleLabel(): String {
     if (type != ShelfType.FOLDER) return bookCountLabel(bookCount)
-    val parts = mutableListOf<String>()
-    if (childShelfCount > 0) parts += folderCountLabel(childShelfCount)
-    if (directBookCount > 0) parts += fileCountLabel(directBookCount)
-    return if (parts.isEmpty()) bookCountLabel(bookCount) else parts.joinToString(", ")
+    return when {
+        childShelfCount > 0 && directBookCount > 0 -> readerString(
+            "desktop_folder_subtitle_folder_file_counts",
+            "%1\$s, %2\$s",
+            folderCountLabel(childShelfCount),
+            fileCountLabel(directBookCount)
+        )
+        childShelfCount > 0 -> folderCountLabel(childShelfCount)
+        directBookCount > 0 -> fileCountLabel(directBookCount)
+        else -> bookCountLabel(bookCount)
+    }
 }
 
 @Composable

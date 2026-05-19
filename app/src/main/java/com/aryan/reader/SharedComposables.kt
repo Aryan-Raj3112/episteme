@@ -144,6 +144,7 @@ import androidx.core.net.toUri
 import androidx.core.text.HtmlCompat
 import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.SharedText
 import com.aryan.reader.shared.ui.SharedMarkdownText
 import timber.log.Timber
 import java.text.SimpleDateFormat
@@ -239,7 +240,8 @@ fun rememberFilePickerLauncher(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
         onResult = { uris: List<Uri> ->
             if (uris.isNotEmpty()) {
-                Timber.d("${uris.size} file(s) selected.")
+                val fileLabel = if (uris.size == 1) "file" else "files"
+                Timber.d("${uris.size} $fileLabel selected.")
                 onFilesSelected(uris)
             } else {
                 Timber.d("File selection cancelled.")
@@ -1120,6 +1122,8 @@ private fun Double.formatMetadataNumber(): String {
 
 @Composable
 fun CustomTopBanner(bannerMessage: BannerMessage?) {
+    val context = LocalContext.current
+    val bannerText = bannerMessage?.localizedMessage(context).orEmpty()
     AnimatedVisibility(
         visible = bannerMessage != null,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -1138,7 +1142,7 @@ fun CustomTopBanner(bannerMessage: BannerMessage?) {
                 shadowElevation = 8.dp
             ) {
                 Text(
-                    text = bannerMessage?.message ?: "",
+                    text = bannerText,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                     color = if (bannerMessage?.isError == true) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                     style = MaterialTheme.typography.bodyMedium,
@@ -1147,6 +1151,25 @@ fun CustomTopBanner(bannerMessage: BannerMessage?) {
             }
         }
     }
+}
+
+private fun BannerMessage.localizedMessage(context: Context): String {
+    return text?.resolveAndroidText(context) ?: message
+}
+
+private fun SharedText.resolveAndroidText(context: Context): String {
+    val resources = context.resources
+    val packageName = context.packageName
+    val formatArgs = args.toTypedArray()
+    val quantityValue = quantity
+    val resolved = if (quantityValue == null) {
+        val id = resources.getIdentifier(name, "string", packageName)
+        if (id == 0) null else runCatching { resources.getString(id, *formatArgs) }.getOrNull()
+    } else {
+        val id = resources.getIdentifier(name, "plurals", packageName)
+        if (id == 0) null else runCatching { resources.getQuantityString(id, quantityValue, *formatArgs) }.getOrNull()
+    }
+    return resolved ?: fallbackMessage()
 }
 
 @Suppress("KotlinConstantConditions")

@@ -898,6 +898,20 @@
     <string name="about_licenses_desc">Open source libraries used.</string>
     <!-- %1$d = number of books being imported. -->
     <string name="banner_importing_multiple">Importing %1$d books… They will appear in your Library shortly.</string>
+    <!-- Shared library mutation banner. %1$s = shelf name. -->
+    <string name="banner_shelf_created">Created shelf &quot;%1$s&quot;.</string>
+    <!-- Shared library mutation banner. %1$s = smart shelf name. -->
+    <string name="banner_smart_shelf_created">Created smart shelf &quot;%1$s&quot;.</string>
+    <!-- Shared library mutation banner. %1$s = new shelf name. -->
+    <string name="banner_shelf_renamed">Renamed shelf to &quot;%1$s&quot;.</string>
+    <!-- Shared library mutation banner. %1$s = shelf name. -->
+    <string name="banner_shelf_deleted">Deleted shelf &quot;%1$s&quot;.</string>
+    <!-- Shared library mutation banner. %1$s = book title. -->
+    <string name="banner_book_updated">Updated &quot;%1$s&quot;.</string>
+    <!-- Shared import result banner shown when selected files already exist in the library. -->
+    <string name="banner_duplicate_files_already_in_library">Those files are already in the library.</string>
+    <!-- Folder shelf subtitle that joins already-localized count phrases. %1$s = folder count phrase; %2$s = book count phrase. -->
+    <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
 
     <!-- General / Dialogs -->
     <string name="dialog_external_link_title">External Link</string>
@@ -1879,6 +1893,8 @@
     <string name="desktop_fixed_layout_appearance">Fixed-layout appearance</string>
     <string name="desktop_folder_empty">Folder is empty</string>
     <string name="desktop_folder_empty_desc">No supported files or subfolders are available here.</string>
+    <!-- Desktop folder shelf subtitle that joins already-localized count phrases. %1$s = folder count phrase; %2$s = file count phrase. -->
+    <string name="desktop_folder_subtitle_folder_file_counts">%1$s, %2$s</string>
     <!-- %1$s = first label; %2$s = second label. -->
     <string name="desktop_label_pair_format">%1$s - %2$s</string>
     <string name="desktop_hide_filters">Hide filters</string>
@@ -1918,6 +1934,8 @@
     <string name="desktop_no_smart_shelves_yet">No smart shelves yet</string>
     <string name="desktop_no_tags_desc">Tags added to books will appear here.</string>
     <string name="desktop_no_tags_yet">No tags yet</string>
+    <!-- Desktop import result banner shown when every selected file is unsupported. -->
+    <string name="desktop_no_supported_files_imported">No supported files were imported.</string>
     <string name="desktop_opds_catalog">Catalog</string>
     <!-- %1$s = catalog title. -->
     <string name="desktop_opds_delete_catalog_desc">Delete &quot;%1$s&quot;? Streamed books from this catalog may stop opening if credentials change later.</string>

@@ -85,7 +85,8 @@ class SharedLibraryProjectorTest {
         assertEquals("C:/books", result.books[0].sourceFolder)
         assertFalse(result.books[0].isRecent)
         assertTrue(projector.home(result).recentBooks.isEmpty())
-        assertEquals("Imported 1 file(s). Reader support comes later.", result.message)
+        assertEquals("Imported 1 file. Reader support comes later.", result.message)
+        assertEquals("desktop_imported_file_count_reader_support_later", result.messageText?.name)
 
         val unsupportedOnly = projector.withImportedFiles(
             state,
@@ -297,7 +298,8 @@ class SharedLibraryProjectorTest {
             )
         )
         assertTrue(projected.recentBooks.isEmpty())
-        assertEquals("Imported 1 file(s).", imported.bannerMessage?.message)
+        assertEquals("Imported 1 file.", imported.bannerMessage?.message)
+        assertEquals("desktop_imported_file_count", imported.bannerMessage?.text?.name)
         assertEquals("Those files are already in the library.", duplicateOnly.bannerMessage?.message)
         assertEquals(imported.rawLibraryBooks.ids(), unsupportedOnly.rawLibraryBooks.ids())
         assertEquals("No supported files were imported.", unsupportedOnly.bannerMessage?.message)

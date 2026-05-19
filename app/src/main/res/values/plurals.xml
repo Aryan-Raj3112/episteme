@@ -59,6 +59,36 @@
         <item quantity="other">%1$d books removed from library.</item>
     </plurals>
 
+    <!-- Android bulk import progress banner. %1$d = number of selected books being imported. -->
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">Importing %1$d book… It will appear in your Library shortly.</item>
+        <item quantity="other">Importing %1$d books… They will appear in your Library shortly.</item>
+    </plurals>
+
+    <!-- Android bulk import result banner. %1$d = number of books imported into the Library tab. -->
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">Imported %1$d book. You can find it in the Library tab.</item>
+        <item quantity="other">Imported %1$d books. You can find them in the Library tab.</item>
+    </plurals>
+
+    <!-- Shared library mutation banner. %1$d = number of selected books added to a shelf. -->
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d book added to shelf.</item>
+        <item quantity="other">%1$d books added to shelf.</item>
+    </plurals>
+
+    <!-- Shared library mutation banner. %1$d = number of selected books; %2$s = tag name. -->
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d book tagged with &quot;%2$s&quot;.</item>
+        <item quantity="other">%1$d books tagged with &quot;%2$s&quot;.</item>
+    </plurals>
+
+    <!-- Shared library mutation banner. %1$s = folder name; %2$d = number of books removed with the folder. -->
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">Removed folder &quot;%1$s&quot; and %2$d book from the app.</item>
+        <item quantity="other">Removed folder &quot;%1$s&quot; and %2$d books from the app.</item>
+    </plurals>
+
     <!-- Word count for folders shown in shelf subtitles. %1$d = number of folders. -->
     <plurals name="folder_count">
         <item quantity="one">%1$d folder</item>
@@ -93,6 +123,12 @@
     <plurals name="desktop_imported_file_count">
         <item quantity="one">Imported %1$d file.</item>
         <item quantity="other">Imported %1$d files.</item>
+    </plurals>
+
+    <!-- Legacy desktop import model message. %1$d = number of files imported before reader support is available. -->
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">Imported %1$d file. Reader support comes later.</item>
+        <item quantity="other">Imported %1$d files. Reader support comes later.</item>
     </plurals>
 
     <!-- Desktop import result banner sentence. %1$d = number of files that could not be imported. -->

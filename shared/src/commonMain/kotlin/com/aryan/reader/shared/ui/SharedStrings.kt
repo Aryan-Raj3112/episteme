@@ -3,6 +3,8 @@ package com.aryan.reader.shared.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.aryan.reader.shared.BannerMessage
+import com.aryan.reader.shared.SharedText
 
 @Immutable
 class SharedStringResolver(
@@ -25,6 +27,15 @@ class SharedStringResolver(
         val template = resolveQuantity(name, quantity).takeUnless { it.isNullOrBlank() } ?: fallback
         return formatAndroidString(template, args.toList())
     }
+
+    fun sharedText(text: SharedText): String {
+        val quantity = text.quantity
+        return if (quantity == null) {
+            string(text.name, text.fallback, *text.args.toTypedArray())
+        } else {
+            quantityString(text.name, quantity, text.fallback, text.fallbackOther, *text.args.toTypedArray())
+        }
+    }
 }
 
 val LocalSharedStringResolver = staticCompositionLocalOf { SharedStringResolver() }
@@ -43,6 +54,17 @@ fun readerQuantityString(
     vararg args: Any?
 ): String {
     return LocalSharedStringResolver.current.quantityString(name, quantity, fallbackOne, fallbackOther, *args)
+}
+
+@Composable
+fun readerSharedText(text: SharedText): String {
+    return LocalSharedStringResolver.current.sharedText(text)
+}
+
+@Composable
+fun readerBannerMessage(message: BannerMessage?): String {
+    val text = message?.text ?: return message?.message.orEmpty()
+    return readerSharedText(text)
 }
 
 internal fun formatAndroidString(template: String, args: List<Any?>): String {

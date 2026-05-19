@@ -1163,7 +1163,11 @@ private fun ShelfDetailScreen(
                             Text(
                                 text = when {
                                     isFolderShelf && shelf.childShelfCount > 0 && shelf.directBookCount > 0 ->
-                                        "${pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)} • ${getBookCountString(shelf.directBookCount)}"
+                                        stringResource(
+                                            R.string.folder_subtitle_folder_book_counts,
+                                            pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount),
+                                            getBookCountString(shelf.directBookCount)
+                                        )
                                     isFolderShelf && shelf.childShelfCount > 0 ->
                                         pluralStringResource(R.plurals.folder_count, shelf.childShelfCount, shelf.childShelfCount)
                                     isFolderShelf -> getBookCountString(shelf.directBookCount)

@@ -139,7 +139,8 @@ data class LibraryState(
     val filters: LibraryFilters = LibraryFilters(),
     val selectedBookIds: Set<String> = emptySet(),
     val recentLimit: Int = 12,
-    val message: String? = null
+    val message: String? = null,
+    val messageText: SharedText? = null
 )
 
 data class HomeScreenModel(

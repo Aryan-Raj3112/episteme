@@ -3825,7 +3825,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             _internalState.update {
                 it.copy(
                     bannerMessage = BannerMessage(
-                        message = appContext.getString(R.string.banner_importing_multiple, uris.size),
+                        message = appContext.resources.getQuantityString(
+                            R.plurals.banner_importing_books_count,
+                            uris.size,
+                            uris.size
+                        ),
                         isPersistent = true
                     ),
                     contextualActionItems = emptySet()
@@ -3877,8 +3881,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         unsupportedCount = unsupportedCount,
                         failedCount = failedCount
                     ),
-                    importedMessage = "Imported $importedCount books. You can find them in the Library tab.",
-                    duplicateMessage = "Those files are already in the library.",
+                    importedMessage = appContext.resources.getQuantityString(
+                        R.plurals.banner_books_imported_library_tab,
+                        importedCount,
+                        importedCount
+                    ),
+                    duplicateMessage = appContext.getString(R.string.banner_duplicate_files_already_in_library),
                     unsupportedMessage = appContext.getString(R.string.error_unsupported_file_type),
                     failedMessage = appContext.getString(R.string.error_import_file_failed)
                 )

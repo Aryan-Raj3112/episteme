@@ -65,7 +65,13 @@ object SharedLibraryEditor {
             state = state.copy(
                 rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in selected },
                 selectedBookIds = emptySet(),
-                bannerMessage = BannerMessage("Removed ${selected.size} book(s) from the library.")
+                bannerMessage = BannerMessage.quantity(
+                    "banner_books_removed_library",
+                    selected.size,
+                    "%1\$d book removed from library.",
+                    "%1\$d books removed from library.",
+                    selected.size
+                )
             ),
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs.filterNot { it.bookId in selected }
@@ -81,7 +87,13 @@ object SharedLibraryEditor {
     ): SharedLibraryMutationResult? {
         val trimmed = cleanShelfName(name) ?: return null
         return SharedLibraryMutationResult(
-            state = state.copy(bannerMessage = BannerMessage("Created shelf \"$trimmed\".")),
+            state = state.copy(
+                bannerMessage = BannerMessage.string(
+                    "banner_shelf_created",
+                    "Created shelf \"%1\$s\".",
+                    trimmed
+                )
+            ),
             shelfRecords = shelfRecords + ShelfRecord(id = "shelf_$nowMillis", name = trimmed),
             shelfRefs = shelfRefs
         )
@@ -102,7 +114,13 @@ object SharedLibraryEditor {
         if (cleanedRules.isEmpty()) return null
         val cleanedDefinition = definition.copy(rules = cleanedRules)
         return SharedLibraryMutationResult(
-            state = state.copy(bannerMessage = BannerMessage("Created smart shelf \"$trimmed\".")),
+            state = state.copy(
+                bannerMessage = BannerMessage.string(
+                    "banner_smart_shelf_created",
+                    "Created smart shelf \"%1\$s\".",
+                    trimmed
+                )
+            ),
             shelfRecords = shelfRecords + ShelfRecord(
                 id = "smart_$nowMillis",
                 name = trimmed,
@@ -122,7 +140,13 @@ object SharedLibraryEditor {
     ): SharedLibraryMutationResult? {
         val trimmed = cleanShelfName(name) ?: return null
         return SharedLibraryMutationResult(
-            state = state.copy(bannerMessage = BannerMessage("Renamed shelf to \"$trimmed\".")),
+            state = state.copy(
+                bannerMessage = BannerMessage.string(
+                    "banner_shelf_renamed",
+                    "Renamed shelf to \"%1\$s\".",
+                    trimmed
+                )
+            ),
             shelfRecords = shelfRecords.map { if (it.id == shelf.id) it.copy(name = trimmed) else it },
             shelfRefs = shelfRefs
         )
@@ -135,7 +159,13 @@ object SharedLibraryEditor {
         shelf: Shelf
     ): SharedLibraryMutationResult {
         return SharedLibraryMutationResult(
-            state = state.copy(bannerMessage = BannerMessage("Deleted shelf \"${shelf.name}\".")),
+            state = state.copy(
+                bannerMessage = BannerMessage.string(
+                    "banner_shelf_deleted",
+                    "Deleted shelf \"%1\$s\".",
+                    shelf.name
+                )
+            ),
             shelfRecords = shelfRecords.filterNot { it.id == shelf.id },
             shelfRefs = shelfRefs.filterNot { it.shelfId == shelf.id }
         )
@@ -170,7 +200,14 @@ object SharedLibraryEditor {
                 } else {
                     state.libraryFilters
                 },
-                bannerMessage = BannerMessage("Removed folder \"${folder.name}\" and ${folderBookIds.size} book(s) from the app.")
+                bannerMessage = BannerMessage.quantity(
+                    "banner_folder_removed_with_book_count",
+                    folderBookIds.size,
+                    "Removed folder \"%1\$s\" and %2\$d book from the app.",
+                    "Removed folder \"%1\$s\" and %2\$d books from the app.",
+                    folder.name,
+                    folderBookIds.size
+                )
             ),
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs.filterNot { it.bookId in folderBookIds }
@@ -211,7 +248,13 @@ object SharedLibraryEditor {
         return SharedLibraryMutationResult(
             state = state.copy(
                 selectedBookIds = emptySet(),
-                bannerMessage = BannerMessage("Added ${additions.size} book(s) to shelf.")
+                bannerMessage = BannerMessage.quantity(
+                    "banner_books_added_to_shelf",
+                    additions.size,
+                    "%1\$d book added to shelf.",
+                    "%1\$d books added to shelf.",
+                    additions.size
+                )
             ),
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs + additions
@@ -247,7 +290,14 @@ object SharedLibraryEditor {
                 rawLibraryBooks = books,
                 allTags = allTags,
                 selectedBookIds = emptySet(),
-                bannerMessage = BannerMessage("Tagged ${selected.size} book(s) with \"${tag.name}\".")
+                bannerMessage = BannerMessage.quantity(
+                    "banner_books_tagged_with_tag",
+                    selected.size,
+                    "%1\$d book tagged with \"%2\$s\".",
+                    "%1\$d books tagged with \"%2\$s\".",
+                    selected.size,
+                    tag.name
+                )
             ),
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs
@@ -265,7 +315,11 @@ object SharedLibraryEditor {
             state = state.copy(
                 rawLibraryBooks = state.rawLibraryBooks.map { if (it.id == updated.id) updated.copy(timestamp = nowMillis) else it },
                 allTags = (state.allTags + updated.tags).distinctBy { it.id }.sortedBy { it.name.lowercase() },
-                bannerMessage = BannerMessage("Updated \"${updated.cardTitle()}\".")
+                bannerMessage = BannerMessage.string(
+                    "banner_book_updated",
+                    "Updated \"%1\$s\".",
+                    updated.cardTitle()
+                )
             ),
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs

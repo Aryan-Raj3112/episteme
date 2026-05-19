@@ -2882,7 +2882,7 @@ internal fun EpistemeDesktopApp(
 
     LaunchedEffect(state.bannerMessage) {
         state.bannerMessage?.let { banner ->
-            snackbarHostState.showSnackbar(banner.message)
+            snackbarHostState.showSnackbar(banner.text?.let(desktopStringResolver::sharedText) ?: banner.message)
             updateState(state.reduce(AppAction.BannerDismissed))
         }
     }

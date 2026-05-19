@@ -326,15 +326,26 @@ fun SharedReaderScreenState.withImportedFiles(
         platform = ReaderPlatform.DESKTOP,
         nowMillis = now
     )
+    val banner = when {
+        plan.importedCount > 0 -> BannerMessage.quantity(
+            "desktop_imported_file_count",
+            plan.importedCount,
+            "Imported %1\$d file.",
+            "Imported %1\$d files.",
+            plan.importedCount
+        )
+        plan.unsupportedCount > 0 -> BannerMessage.string(
+            "desktop_no_supported_files_imported",
+            "No supported files were imported."
+        )
+        else -> BannerMessage.string(
+            "banner_duplicate_files_already_in_library",
+            "Those files are already in the library."
+        )
+    }
     return copy(
         rawLibraryBooks = plan.importedBooks + rawLibraryBooks,
-        bannerMessage = BannerMessage(
-            when {
-                plan.importedCount > 0 -> "Imported ${plan.importedCount} file(s)."
-                plan.unsupportedCount > 0 -> "No supported files were imported."
-                else -> "Those files are already in the library."
-            }
-        )
+        bannerMessage = banner
     )
 }
 

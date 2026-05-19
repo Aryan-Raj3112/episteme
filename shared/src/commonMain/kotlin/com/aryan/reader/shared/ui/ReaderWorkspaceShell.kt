@@ -898,6 +898,7 @@ private fun ReaderWorkspaceTopBanner(
     bannerMessage: BannerMessage?,
     modifier: Modifier = Modifier
 ) {
+    val bannerText = readerBannerMessage(bannerMessage)
     AnimatedVisibility(
         visible = bannerMessage != null,
         enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
@@ -919,7 +920,7 @@ private fun ReaderWorkspaceTopBanner(
                 shadowElevation = 8.dp
             ) {
                 Text(
-                    text = bannerMessage?.message.orEmpty(),
+                    text = bannerText,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                     color = if (bannerMessage?.isError == true) {
                         MaterialTheme.colorScheme.onErrorContainer
