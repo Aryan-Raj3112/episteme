@@ -13,12 +13,6 @@ internal data class DesktopReaderOpening(
     val password: String? = null
 )
 
-internal data class DesktopPdfPasswordRequest(
-    val opening: DesktopReaderOpening,
-    val book: BookItem,
-    val attemptedPassword: Boolean
-)
-
 internal sealed interface DesktopReaderOpenResult {
     val opening: DesktopReaderOpening
     val book: BookItem

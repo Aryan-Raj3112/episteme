@@ -95,7 +95,9 @@ internal fun DesktopReaderScreen(
     webViewRuntimeState: DesktopWebViewRuntimeState,
     webViewNetworkAccessEnabled: Boolean,
     epubPaginationCache: SharedEpubPaginationCache,
-    epubPaginationCacheGeneration: Int
+    epubPaginationCacheGeneration: Int,
+    useDetachedChromeLayer: Boolean = true,
+    useDetachedPanelLayer: Boolean = true
 ) {
     val clipboardManager = LocalClipboardManager.current
     val density = LocalDensity.current
@@ -369,7 +371,9 @@ internal fun DesktopReaderScreen(
         readerTextureDataUri = readerTextureDataUri,
         readerCustomTextureIds = readerCustomTextureIds,
         onImportReaderTexture = onImportReaderTexture,
-        bottomChromeExtraContent = bottomChromeExtraContent
+        bottomChromeExtraContent = bottomChromeExtraContent,
+        useDetachedChromeLayer = useDetachedChromeLayer,
+        useDetachedPanelLayer = useDetachedPanelLayer
     ) { renderPlan, onVisiblePageChanged, onHighlightSelected, onChromeActivity ->
         Surface(
             color = renderPlan.background,

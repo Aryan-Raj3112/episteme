@@ -116,8 +116,7 @@ internal fun resolvedDesktopReaderSettings(
 
 @Composable
 internal fun DesktopReaderOpeningScreen(
-    opening: DesktopReaderOpening,
-    onReturnToLibrary: () -> Unit
+    opening: DesktopReaderOpening
 ) {
     Box(
         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -140,9 +139,6 @@ internal fun DesktopReaderOpeningScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
-            TextButton(onClick = onReturnToLibrary) {
-                Text("Return to library")
-            }
         }
     }
 }

@@ -429,7 +429,7 @@ private fun SharedToolsPanel(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text("Active reader tabs", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Text("Open readers", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                                 Text(if (isTabsEnabled) "Enabled" else "Disabled", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(

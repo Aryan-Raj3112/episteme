@@ -223,6 +223,8 @@ fun SharedReaderScreen(
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     bottomChromeExtraContent: @Composable ColumnScope.() -> Unit = {},
+    useDetachedChromeLayer: Boolean = true,
+    useDetachedPanelLayer: Boolean = true,
     readerContent: @Composable ColumnScope.(
         renderPlan: ReaderContentRenderPlan,
         onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
@@ -236,6 +238,8 @@ fun SharedReaderScreen(
     val byokSettings = aiByokSettings.sanitized()
     val background = settings.backgroundColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
     val foreground = settings.textColorArgb?.toComposeColor() ?: if (settings.darkMode) Color(0xFFE7E3D8) else Color(0xFF24231F)
+    val chromeBarColor = MaterialTheme.colorScheme.surfaceVariant
+    val chromeContentColor = MaterialTheme.colorScheme.onSurface
     val pageInfoText = readerState.pageInfoText()
     val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
     val activeTtsProgress = readerExtrasState.cloudTts.progress
@@ -321,6 +325,8 @@ fun SharedReaderScreen(
         isBookmarked = session.currentBookmark != null,
         onToggleBookmark = { dispatch(ReaderAction.ToggleBookmark) },
         onSearchAction = { dispatch(ReaderAction.SearchOpened) },
+        useDetachedChromeLayer = useDetachedChromeLayer,
+        useDetachedPanelLayer = useDetachedPanelLayer,
         topSearchBar = if (session.isSearchActive) {
             {
                 SharedReaderSearchTopBar(
@@ -442,11 +448,11 @@ fun SharedReaderScreen(
                         )
                     },
                 shape = RoundedCornerShape(6.dp),
-                color = background,
-                contentColor = foreground,
+                color = chromeBarColor,
+                contentColor = chromeContentColor,
                 tonalElevation = 0.dp,
                 shadowElevation = 1.dp,
-                border = BorderStroke(1.dp, foreground.copy(alpha = 0.12f))
+                border = BorderStroke(1.dp, chromeContentColor.copy(alpha = 0.12f))
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                     bottomChromeExtraContent()
@@ -458,7 +464,7 @@ fun SharedReaderScreen(
                             onForward = { dispatch(ReaderAction.JumpForward) },
                             onClear = { dispatch(ReaderAction.JumpHistoryCleared) }
                         )
-                        HorizontalDivider(color = foreground.copy(alpha = 0.12f))
+                        HorizontalDivider(color = chromeContentColor.copy(alpha = 0.12f))
                     }
                     SharedReaderCompactNavigation(
                         session = session,
@@ -469,7 +475,7 @@ fun SharedReaderScreen(
                         onPrevious = { dispatch(ReaderAction.PreviousPage) },
                         onNext = { dispatch(ReaderAction.NextPage) },
                         onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) },
-                        contentColor = foreground
+                        contentColor = chromeContentColor
                     )
                 }
             }
@@ -483,8 +489,8 @@ fun SharedReaderScreen(
                 onJumpBack = { dispatch(ReaderAction.JumpBack) },
                 onJumpForward = { dispatch(ReaderAction.JumpForward) },
                 onClearJumpHistory = { dispatch(ReaderAction.JumpHistoryCleared) },
-                backgroundColor = background,
-                contentColor = foreground
+                backgroundColor = chromeBarColor,
+                contentColor = chromeContentColor
             )
         }
     ) { onChromeActivity ->
@@ -652,7 +658,8 @@ private fun SharedReaderSearchTopBar(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 2.dp
     ) {
         Row(

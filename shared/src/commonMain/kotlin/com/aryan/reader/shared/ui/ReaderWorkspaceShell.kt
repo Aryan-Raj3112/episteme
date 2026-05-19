@@ -99,6 +99,8 @@ fun ReaderWorkspaceShell(
     onPrintAction: (() -> Unit)? = null,
     onTextViewAction: (() -> Unit)? = null,
     topSearchBar: (@Composable () -> Unit)? = null,
+    useDetachedChromeLayer: Boolean = true,
+    useDetachedPanelLayer: Boolean = true,
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
@@ -261,15 +263,17 @@ fun ReaderWorkspaceShell(
                     showLeftPanel = showLeftPanel,
                     showRightPanel = showRightPanel,
                     wide = wide,
+                    useDetachedPanelLayer = useDetachedPanelLayer,
                     onCloseLeftPanel = { leftPanelOpen = false },
                     onCloseRightPanel = { rightPanelOpen = false },
                     leftSidebar = leftSidebar,
                     rightInspector = rightInspector
                 )
-                val useDetachedChromeLayer =
+                val useDetachedChromeLayerForChrome =
+                    useDetachedChromeLayer &&
                     model.kind == ReaderWorkspaceKind.EPUB &&
-                        modalAnchorBounds != null
-                if (useDetachedChromeLayer) {
+                    modalAnchorBounds != null
+                if (useDetachedChromeLayerForChrome) {
                     if (topSearchBar != null || showTopChrome) {
                         SharedReaderModalLayer(
                             level = SharedReaderModalLevel.ChromeTop,
@@ -490,6 +494,7 @@ private fun ReaderWorkspacePanelOverlays(
     showLeftPanel: Boolean,
     showRightPanel: Boolean,
     wide: Boolean,
+    useDetachedPanelLayer: Boolean,
     onCloseLeftPanel: () -> Unit,
     onCloseRightPanel: () -> Unit,
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
@@ -498,13 +503,17 @@ private fun ReaderWorkspacePanelOverlays(
     if (!showLeftPanel && !showRightPanel) return
 
     if (showLeftPanel) {
-        SharedReaderModalLayer(
-            level = SharedReaderModalLevel.PanelLeft,
-            onDismiss = onCloseLeftPanel
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize()) panelConstraints@ {
+        val panelContent: @Composable () -> Unit = {
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .then(if (useDetachedPanelLayer) Modifier else Modifier.zIndex(ReaderChromeZIndex + 1f))
+            ) panelConstraints@ {
                 val availableWidth = this@panelConstraints.maxWidth
-                val leftPanelWidth = if (sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelLeft)) {
+                val leftPanelWidth = if (
+                    useDetachedPanelLayer &&
+                    sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelLeft)
+                ) {
                     availableWidth
                 } else if (wide) {
                     minOf(340.dp, availableWidth)
@@ -521,15 +530,29 @@ private fun ReaderWorkspacePanelOverlays(
                 }
             }
         }
+        if (useDetachedPanelLayer) {
+            SharedReaderModalLayer(
+                level = SharedReaderModalLevel.PanelLeft,
+                onDismiss = onCloseLeftPanel
+            ) {
+                panelContent()
+            }
+        } else {
+            panelContent()
+        }
     }
     if (showRightPanel) {
-        SharedReaderModalLayer(
-            level = SharedReaderModalLevel.PanelRight,
-            onDismiss = onCloseRightPanel
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize()) panelConstraints@ {
+        val panelContent: @Composable () -> Unit = {
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .then(if (useDetachedPanelLayer) Modifier else Modifier.zIndex(ReaderChromeZIndex + 1f))
+            ) panelConstraints@ {
                 val availableWidth = this@panelConstraints.maxWidth
-                val rightPanelWidth = if (sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelRight)) {
+                val rightPanelWidth = if (
+                    useDetachedPanelLayer &&
+                    sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelRight)
+                ) {
                     availableWidth
                 } else if (wide) {
                     minOf(380.dp, availableWidth)
@@ -545,6 +568,16 @@ private fun ReaderWorkspacePanelOverlays(
                     rightInspector()
                 }
             }
+        }
+        if (useDetachedPanelLayer) {
+            SharedReaderModalLayer(
+                level = SharedReaderModalLevel.PanelRight,
+                onDismiss = onCloseRightPanel
+            ) {
+                panelContent()
+            }
+        } else {
+            panelContent()
         }
     }
 }
@@ -720,7 +753,8 @@ private fun ReaderWorkspaceTopChrome(
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(SharedUiTokens.chromeRadius),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
         border = sharedSubtleBorder(alpha = 0.55f)

@@ -732,7 +732,7 @@ private fun ActiveTabStrip(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Active tabs", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Open readers", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onCloseAllTabs) {
                 Text("Close all")
@@ -765,7 +765,7 @@ private fun ActiveTabStrip(
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(onClick = { onCloseTab(book) }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = "Close tab", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Close, contentDescription = "Close reader", modifier = Modifier.size(18.dp))
                         }
                     }
                 }

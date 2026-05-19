@@ -78,7 +78,7 @@ internal fun DesktopPdfFullscreenBottomChrome(
     onClearJumpHistory: () -> Unit,
     extraContent: @Composable ColumnScope.() -> Unit = {}
 ) {
-    val chromeBackground = MaterialTheme.colorScheme.surface
+    val chromeBackground = MaterialTheme.colorScheme.surfaceVariant
     val chromeContent = MaterialTheme.colorScheme.onSurface
     val sliderActive = MaterialTheme.colorScheme.primary
     val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
@@ -167,7 +167,7 @@ internal fun DesktopPdfBottomChrome(
     onClearJumpHistory: () -> Unit,
     extraContent: @Composable ColumnScope.() -> Unit = {}
 ) {
-    val chromeBackground = MaterialTheme.colorScheme.surface
+    val chromeBackground = MaterialTheme.colorScheme.surfaceVariant
     val chromeContent = MaterialTheme.colorScheme.onSurface
     val sliderActive = MaterialTheme.colorScheme.primary
     val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
