@@ -44,9 +44,11 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.pdf.data.VirtualPage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.text.font.Font
@@ -458,6 +460,65 @@ private fun AnnotatedString.withRestoredTrailingAndroidPageBreak(shouldRestore: 
     if (!shouldRestore) return this
     if (text.lastOrNull() == PAGE_BREAK_CHAR) return this
     return this + AnnotatedString(PAGE_BREAK_CHAR.toString())
+}
+
+internal fun androidRichTextInsertionIndexForPage(
+    insertPageIndex: Int,
+    pageLayouts: List<PageTextLayout>,
+    textLength: Int
+): Int {
+    val rawIndex = if (insertPageIndex <= 0) {
+        0
+    } else {
+        pageLayouts.find { it.pageIndex == insertPageIndex - 1 }?.globalEndIndex ?: textLength
+    }
+    return rawIndex.coerceIn(0, textLength)
+}
+
+internal fun androidRichTextBlankInsertBreakCount(text: String, insertionCharIndex: Int): Int {
+    val safeIndex = insertionCharIndex.coerceIn(0, text.length)
+    if (safeIndex == 0 || safeIndex == text.length) return 1
+
+    val hasBoundaryBreakBefore = text.getOrNull(safeIndex - 1) == PAGE_BREAK_CHAR
+    val hasBoundaryBreakAfter = text.getOrNull(safeIndex) == PAGE_BREAK_CHAR
+    return if (hasBoundaryBreakBefore || hasBoundaryBreakAfter) 1 else 2
+}
+
+internal fun remapAndroidRichTextForLayoutChange(
+    currentLayout: List<VirtualPage>,
+    updatedLayout: List<VirtualPage>,
+    pageLayouts: List<PageTextLayout>
+): AnnotatedString {
+    if (pageLayouts.isEmpty()) return AnnotatedString("")
+
+    val mapping = buildPdfPageIndexMapping(
+        currentLayout = currentLayout,
+        updatedLayout = updatedLayout,
+        sourcePageIndices = pageLayouts.map { it.pageIndex }
+    )
+    if (mapping.isEmpty()) return AnnotatedString("")
+
+    val contentByTargetPage = linkedMapOf<Int, AnnotatedString>()
+    pageLayouts.sortedBy { it.pageIndex }.forEach { layout ->
+        val targetPageIndex = mapping[layout.pageIndex] ?: return@forEach
+        val pageContent = layout.visibleText.withoutTrailingAndroidPageBreak()
+        contentByTargetPage[targetPageIndex] = pageContent
+    }
+
+    val lastPageWithContent = contentByTargetPage
+        .filterValues { it.text.isNotEmpty() }
+        .keys
+        .maxOrNull()
+        ?: return AnnotatedString("")
+
+    val builder = AnnotatedString.Builder()
+    for (pageIndex in 0..lastPageWithContent) {
+        contentByTargetPage[pageIndex]?.let { builder.append(it) }
+        if (pageIndex < lastPageWithContent) {
+            builder.append(PAGE_BREAK_CHAR.toString())
+        }
+    }
+    return builder.toAnnotatedString()
 }
 
 class PdfRichTextRepository(private val context: Context) {
@@ -1166,30 +1227,139 @@ class RichTextController(
             val original = globalTextFieldValue.annotatedString
             Timber.tag("RichTextMigration").d("insertPageBreakAt: Target Page Index: $insertPageIndex, Count: $count")
 
-            val insertionCharIndex = if (insertPageIndex == 0) 0 else {
-                val prevLayout = pageLayouts.find { it.pageIndex == insertPageIndex - 1 }
-                val idx = prevLayout?.globalEndIndex ?: original.length
-                Timber.tag("RichTextMigration").v("insertPageBreakAt: Prev Page (${insertPageIndex - 1}) ends at global index $idx")
-                idx
-            }
-            val safeIndex = insertionCharIndex.coerceIn(0, original.length)
+            val safeIndex = androidRichTextInsertionIndexForPage(
+                insertPageIndex = insertPageIndex,
+                pageLayouts = pageLayouts,
+                textLength = original.length
+            )
+            Timber.tag("RichTextMigration").v("insertPageBreakAt: insertion index $safeIndex")
 
-            Timber.tag("RichTextMigration").i("insertPageBreakAt: Inserting $count PAGE_BREAK_CHARs at global index $safeIndex")
+            insertPageBreaksIntoGlobalText(
+                original = original,
+                safeIndex = safeIndex,
+                count = count,
+                caller = "InsertPageBreakAt"
+            )
+        }
+    }
 
-            val builder = AnnotatedString.Builder()
-            builder.append(original.subSequence(0, safeIndex))
+    fun insertBlankPageAt(insertPageIndex: Int) {
+        scope.launch {
+            forceSyncAndClear()
 
-            repeat(count) {
-                builder.append(PAGE_BREAK_CHAR.toString())
-            }
+            val original = globalTextFieldValue.annotatedString
+            val safeIndex = androidRichTextInsertionIndexForPage(
+                insertPageIndex = insertPageIndex,
+                pageLayouts = pageLayouts,
+                textLength = original.length
+            )
+            val requiredBreaks = androidRichTextBlankInsertBreakCount(
+                text = original.text,
+                insertionCharIndex = safeIndex
+            )
 
-            builder.append(original.subSequence(safeIndex, original.length))
+            Timber.tag("RichTextMigration").i(
+                "insertBlankPageAt: page=$insertPageIndex index=$safeIndex breaks=$requiredBreaks"
+            )
 
-            val newCursorPos = safeIndex + count
+            insertPageBreaksIntoGlobalText(
+                original = original,
+                safeIndex = safeIndex,
+                count = requiredBreaks,
+                caller = "InsertBlankPageAt"
+            )
+        }
+    }
 
-            globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(newCursorPos))
-            debouncedSave(globalTextFieldValue)
-            repaginate(dirtyStartIndex = safeIndex, caller = "InsertPageBreakAt")
+    suspend fun remapPagesForLayoutChange(
+        currentLayout: List<VirtualPage>,
+        updatedLayout: List<VirtualPage>
+    ) = withContext(NonCancellable) {
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "rich.remap.start current=${currentLayout.pdfLayoutDebugSummary()} " +
+                "updated=${updatedLayout.pdfLayoutDebugSummary()} pageLayouts=${pageLayouts.size} " +
+                "textLen=${globalTextFieldValue.annotatedString.length}"
+        )
+        forceSyncAndClear()
+
+        val original = globalTextFieldValue.annotatedString
+        if (pageLayouts.isEmpty() && original.text.isNotEmpty()) {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                "rich.remap.skipNoLayouts current=${currentLayout.pdfLayoutDebugSummary()} " +
+                    "updated=${updatedLayout.pdfLayoutDebugSummary()} textLen=${original.length}"
+            )
+            Timber.tag("RichTextMigration").w(
+                "remapPagesForLayoutChange skipped: no rich text page layouts for non-empty text"
+            )
+            return@withContext
+        }
+        val remapped = remapAndroidRichTextForLayoutChange(
+            currentLayout = currentLayout,
+            updatedLayout = updatedLayout,
+            pageLayouts = pageLayouts
+        )
+
+        if (remapped == original) {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "rich.remap.noChange current=${currentLayout.pdfLayoutDebugSummary()} " +
+                    "updated=${updatedLayout.pdfLayoutDebugSummary()} textLen=${original.length}"
+            )
+            return@withContext
+        }
+
+        Timber.tag("RichTextMigration").i(
+            "remapPagesForLayoutChange: textLen ${original.length} -> ${remapped.length}, " +
+                "pages ${currentLayout.size} -> ${updatedLayout.size}"
+        )
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "rich.remap.apply textLen=${original.length}->${remapped.length} " +
+                "current=${currentLayout.pdfLayoutDebugSummary()} updated=${updatedLayout.pdfLayoutDebugSummary()}"
+        )
+
+        globalTextFieldValue = TextFieldValue(
+            remapped,
+            selection = TextRange(remapped.length)
+        )
+        repaginateSync(0)
+        saveCurrentGlobalTextImmediately()
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "rich.remap.done textLen=${globalTextFieldValue.annotatedString.length} pageLayouts=${pageLayouts.size}"
+        )
+    }
+
+    private fun insertPageBreaksIntoGlobalText(
+        original: AnnotatedString,
+        safeIndex: Int,
+        count: Int,
+        caller: String
+    ) {
+        val safeCount = count.coerceAtLeast(0)
+        if (safeCount == 0) return
+
+        Timber.tag("RichTextMigration").i("$caller: Inserting $safeCount PAGE_BREAK_CHARs at global index $safeIndex")
+
+        val builder = AnnotatedString.Builder()
+        builder.append(original.subSequence(0, safeIndex))
+
+        repeat(safeCount) {
+            builder.append(PAGE_BREAK_CHAR.toString())
+        }
+
+        builder.append(original.subSequence(safeIndex, original.length))
+
+        val newCursorPos = safeIndex + safeCount
+
+        globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(newCursorPos))
+        debouncedSave(globalTextFieldValue)
+        repaginate(dirtyStartIndex = safeIndex, caller = caller)
+    }
+
+    private suspend fun saveCurrentGlobalTextImmediately() {
+        saveJob?.cancel()
+        val finalAnnotated = globalTextFieldValue.annotatedString
+        withContext(Dispatchers.Default) {
+            val doc = RichTextMapper.fromAnnotatedString(finalAnnotated, lastPageHeight)
+            repository.save(bookId, doc)
         }
     }
 

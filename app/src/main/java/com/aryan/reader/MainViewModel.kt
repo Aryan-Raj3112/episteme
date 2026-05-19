@@ -86,9 +86,13 @@ import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
+import com.aryan.reader.pdf.PDF_BLANK_PAGE_PERSISTENCE_TAG
 import com.aryan.reader.pdf.PdfUserHighlight
 import com.aryan.reader.pdf.PdfiumAnnotationExporter
 import com.aryan.reader.pdf.ReflowWorker
+import com.aryan.reader.pdf.pdfLayoutDebugSummary
+import com.aryan.reader.pdf.remapPdfAnnotationsForLayoutChange
+import com.aryan.reader.pdf.remapPdfBookmarksJsonForLayoutChange
 import com.aryan.reader.pdf.data.PageLayoutRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -110,6 +114,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -1018,57 +1023,50 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         currentBookmarksJson: String,
         referenceWidth: Int,
         referenceHeight: Int,
+        blankPageId: String? = null,
         wasManuallyAdded: Boolean = false
-    ): PageModificationResult = withContext(Dispatchers.Default) {
+    ): PageModificationResult = withContext(Dispatchers.Default + NonCancellable) {
         Timber.d("Adding page at index $insertIndex for book $bookId (manual=$wasManuallyAdded)")
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "vm.addPage.start bookId=$bookId insertIndex=$insertIndex blankPageId=$blankPageId " +
+                "manual=$wasManuallyAdded ref=${referenceWidth}x$referenceHeight " +
+                "current=${currentLayout.pdfLayoutDebugSummary()} annotationPages=${currentAnnotations.keys.sorted()} " +
+                "bookmarksBytes=${currentBookmarksJson.length}"
+        )
 
         val newLayout = currentLayout.toMutableList()
         val safeIndex = insertIndex.coerceIn(0, newLayout.size)
 
         val newPage = VirtualPage.BlankPage(
-            id = UUID.randomUUID().toString(),
+            id = blankPageId ?: UUID.randomUUID().toString(),
             width = referenceWidth,
             height = referenceHeight,
             wasManuallyAdded = wasManuallyAdded
         )
         newLayout.add(safeIndex, newPage)
 
-        val newAnnotations = mutableMapOf<Int, List<PdfAnnotation>>()
-        currentAnnotations.forEach { (pageIdx, annots) ->
-            val newIdx = if (pageIdx >= safeIndex) pageIdx + 1 else pageIdx
-            val shiftedAnnots = annots.map { it.copy(pageIndex = newIdx) }
-            newAnnotations[newIdx] = shiftedAnnots
-        }
+        val newAnnotations = remapPdfAnnotationsForLayoutChange(
+            currentLayout = currentLayout,
+            updatedLayout = newLayout,
+            annotations = currentAnnotations
+        )
 
-        val newTotalPages = newLayout.size
         val newBookmarksJson = try {
-            if (currentBookmarksJson.isNotBlank()) {
-                val jsonArray = JSONArray(currentBookmarksJson)
-                val newArray = JSONArray()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val bmPageIndex = obj.getInt("pageIndex")
-                    val title = obj.getString("title")
-
-                    val newBmPageIndex = if (bmPageIndex >= safeIndex) bmPageIndex + 1
-                    else bmPageIndex
-
-                    val newObj = JSONObject()
-                    newObj.put("pageIndex", newBmPageIndex)
-                    newObj.put("title", title)
-                    newObj.put("totalPages", newTotalPages)
-                    newArray.put(newObj)
-                }
-                newArray.toString()
-            } else {
-                "[]"
-            }
+            remapPdfBookmarksJsonForLayoutChange(
+                currentLayout = currentLayout,
+                updatedLayout = newLayout,
+                currentBookmarksJson = currentBookmarksJson
+            )
         } catch (e: Exception) {
             Timber.e(e, "Error shifting bookmarks")
             currentBookmarksJson
         }
 
         pageLayoutRepository.saveLayout(bookId, newLayout)
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "vm.addPage.done bookId=$bookId safeIndex=$safeIndex new=${newLayout.pdfLayoutDebugSummary()} " +
+                "newAnnotationPages=${newAnnotations.keys.sorted()} bookmarksBytes=${newBookmarksJson.length}"
+        )
 
         PageModificationResult(newLayout, newAnnotations, newBookmarksJson)
     }
@@ -1079,58 +1077,48 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         removeIndex: Int,
         currentAnnotations: Map<Int, List<PdfAnnotation>>,
         currentBookmarksJson: String
-    ): PageModificationResult = withContext(Dispatchers.Default) {
+    ): PageModificationResult = withContext(Dispatchers.Default + NonCancellable) {
         Timber.d("Removing page at index $removeIndex for book $bookId")
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "vm.removePage.start bookId=$bookId removeIndex=$removeIndex " +
+                "current=${currentLayout.pdfLayoutDebugSummary()} annotationPages=${currentAnnotations.keys.sorted()} " +
+                "bookmarksBytes=${currentBookmarksJson.length}"
+        )
 
         val newLayout = currentLayout.toMutableList()
         if (removeIndex in newLayout.indices) {
             newLayout.removeAt(removeIndex)
         } else {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                "vm.removePage.ignored bookId=$bookId removeIndex=$removeIndex current=${currentLayout.pdfLayoutDebugSummary()}"
+            )
             return@withContext PageModificationResult(
                 currentLayout, currentAnnotations, currentBookmarksJson
             )
         }
 
-        val newAnnotations = mutableMapOf<Int, List<PdfAnnotation>>()
-        currentAnnotations.forEach { (pageIdx, annots) ->
-            if (pageIdx != removeIndex) {
-                val newIdx = if (pageIdx > removeIndex) pageIdx - 1 else pageIdx
-                val shiftedAnnots = annots.map { it.copy(pageIndex = newIdx) }
-                newAnnotations[newIdx] = shiftedAnnots
-            }
-        }
+        val newAnnotations = remapPdfAnnotationsForLayoutChange(
+            currentLayout = currentLayout,
+            updatedLayout = newLayout,
+            annotations = currentAnnotations
+        )
 
-        val newTotalPages = newLayout.size
         val newBookmarksJson = try {
-            if (currentBookmarksJson.isNotBlank()) {
-                val jsonArray = JSONArray(currentBookmarksJson)
-                val newArray = JSONArray()
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val bmPageIndex = obj.getInt("pageIndex")
-
-                    if (bmPageIndex == removeIndex) continue
-
-                    val title = obj.getString("title")
-                    val newBmPageIndex = if (bmPageIndex > removeIndex) bmPageIndex - 1
-                    else bmPageIndex
-
-                    val newObj = JSONObject()
-                    newObj.put("pageIndex", newBmPageIndex)
-                    newObj.put("title", title)
-                    newObj.put("totalPages", newTotalPages)
-                    newArray.put(newObj)
-                }
-                newArray.toString()
-            } else {
-                "[]"
-            }
+            remapPdfBookmarksJsonForLayoutChange(
+                currentLayout = currentLayout,
+                updatedLayout = newLayout,
+                currentBookmarksJson = currentBookmarksJson
+            )
         } catch (e: Exception) {
             Timber.e(e, "Error shifting bookmarks")
             currentBookmarksJson
         }
 
         pageLayoutRepository.saveLayout(bookId, newLayout)
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "vm.removePage.done bookId=$bookId removeIndex=$removeIndex new=${newLayout.pdfLayoutDebugSummary()} " +
+                "newAnnotationPages=${newAnnotations.keys.sorted()} bookmarksBytes=${newBookmarksJson.length}"
+        )
 
         PageModificationResult(newLayout, newAnnotations, newBookmarksJson)
     }
@@ -5483,6 +5471,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (legacyId == newId) return@withContext
             Timber.tag("FolderAnnotationSync")
                 .d("Checking migration from legacyId=$legacyId to newId=$newId")
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "vm.migrate.check legacyId=$legacyId newId=$newId"
+            )
 
             try {
                 fun safeMigrate(legacyFile: File?, newFile: File?, tag: String) {
@@ -5514,6 +5505,95 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
+                fun layoutBlankScore(file: File?): Pair<Int, Int> {
+                    if (file == null || !file.exists()) return 0 to 0
+                    return try {
+                        val array = JSONArray(file.readText())
+                        var blankCount = 0
+                        var manualBlankCount = 0
+                        for (i in 0 until array.length()) {
+                            val page = array.optJSONObject(i) ?: continue
+                            if (page.optString("type") == "blank") {
+                                blankCount++
+                                if (page.optBoolean("manual", false)) manualBlankCount++
+                            }
+                        }
+                        manualBlankCount to blankCount
+                    } catch (e: Exception) {
+                        Timber.tag("FolderAnnotationSync").w(e, "Unable to score layout for migration: ${file.name}")
+                        0 to 0
+                    }
+                }
+
+                fun safeMigrateLayout(legacyFile: File?, newFile: File?) {
+                    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                        "vm.migrate.layout.start legacyId=$legacyId newId=$newId " +
+                            "legacyPath=${legacyFile?.absolutePath} legacyExists=${legacyFile?.exists()} " +
+                            "legacyBytes=${legacyFile?.takeIf { it.exists() }?.length() ?: 0L} " +
+                            "legacyMtime=${legacyFile?.takeIf { it.exists() }?.lastModified() ?: 0L} " +
+                            "newPath=${newFile?.absolutePath} newExists=${newFile?.exists()} " +
+                            "newBytes=${newFile?.takeIf { it.exists() }?.length() ?: 0L} " +
+                            "newMtime=${newFile?.takeIf { it.exists() }?.lastModified() ?: 0L}"
+                    )
+                    if (legacyFile == null || !legacyFile.exists()) {
+                        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                            "vm.migrate.layout.noLegacy legacyId=$legacyId newId=$newId"
+                        )
+                        return
+                    }
+                    if (newFile == null) {
+                        Timber.tag("FolderAnnotationSync")
+                            .w("Destination file for layout is null. Skipping.")
+                        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                            "vm.migrate.layout.noDestination legacyId=$legacyId newId=$newId"
+                        )
+                        return
+                    }
+
+                    if (newFile.exists()) {
+                        val legacyTs = legacyFile.lastModified()
+                        val newTs = newFile.lastModified()
+                        val legacyScore = layoutBlankScore(legacyFile)
+                        val newScore = layoutBlankScore(newFile)
+                        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                            "vm.migrate.layout.compare legacyId=$legacyId newId=$newId " +
+                                "legacyScore=$legacyScore legacyTs=$legacyTs newScore=$newScore newTs=$newTs"
+                        )
+                        val shouldKeepExisting =
+                            newScore.first > legacyScore.first ||
+                                (newScore.first == legacyScore.first && newScore.second > legacyScore.second) ||
+                                (newScore == legacyScore && newTs >= legacyTs)
+
+                        if (shouldKeepExisting) {
+                            Timber.tag("FolderAnnotationSync")
+                                .i("Skipping layout migration: destination preserves newer or richer blank-page layout.")
+                            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                                "vm.migrate.layout.keepExisting legacyId=$legacyId newId=$newId"
+                            )
+                            legacyFile.delete()
+                            return
+                        }
+
+                        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                            "vm.migrate.layout.replaceExisting legacyId=$legacyId newId=$newId"
+                        )
+                        newFile.delete()
+                    }
+
+                    if (legacyFile.renameTo(newFile)) {
+                        Timber.tag("FolderAnnotationSync").i("Migrated layout successfully.")
+                        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                            "vm.migrate.layout.done legacyId=$legacyId newId=$newId " +
+                                "newExists=${newFile.exists()} newBytes=${newFile.length()} newMtime=${newFile.lastModified()}"
+                        )
+                    } else {
+                        Timber.tag("FolderAnnotationSync").w("Failed to rename layout file.")
+                        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                            "vm.migrate.layout.renameFailed legacyId=$legacyId newId=$newId"
+                        )
+                    }
+                }
+
                 // 1. Annotations
                 safeMigrate(
                     pdfAnnotationRepository.getAnnotationFileForSync(legacyId),
@@ -5529,10 +5609,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 // 3. Layout
-                safeMigrate(
+                safeMigrateLayout(
                     pageLayoutRepository.getLayoutFile(legacyId),
-                    pageLayoutRepository.getLayoutFile(newId),
-                    "layout"
+                    pageLayoutRepository.getLayoutFile(newId)
                 )
 
                 // 4. Text Boxes

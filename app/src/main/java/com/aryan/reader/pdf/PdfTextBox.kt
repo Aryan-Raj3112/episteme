@@ -43,6 +43,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -85,6 +87,63 @@ enum class HandlePosition {
     TOP, BOTTOM, AUTO
 }
 
+private const val TEXT_BOX_DRAG_PILL_VISUAL_WIDTH_DP = 48f
+private const val TEXT_BOX_DRAG_PILL_VISUAL_HEIGHT_DP = 24f
+private const val TEXT_BOX_DRAG_PILL_TOUCH_WIDTH_DP = 72f
+private const val TEXT_BOX_DRAG_PILL_TOUCH_HEIGHT_DP = 48f
+private const val TEXT_BOX_DRAG_PILL_GAP_DP = 8f
+
+internal data class TextBoxChromeLayout(
+    val containerWidthPx: Float,
+    val containerHeightPx: Float,
+    val contentWidthPx: Float,
+    val contentHeightPx: Float,
+    val contentOffsetX: Float,
+    val contentOffsetY: Float,
+    val outerTranslationX: Float,
+    val outerTranslationY: Float,
+    val dragPillLeftPx: Float,
+    val dragPillTopPx: Float
+)
+
+internal fun calculateTextBoxChromeLayout(
+    textBoundsPx: Rect,
+    isSelected: Boolean,
+    isHandleAtTop: Boolean,
+    handleSizePx: Float,
+    dragPillWidthPx: Float,
+    dragPillHeightPx: Float,
+    dragPillGapPx: Float
+): TextBoxChromeLayout {
+    val halfHandlePx = handleSizePx / 2f
+    val contentWidthPx = textBoundsPx.width + handleSizePx
+    val contentHeightPx = textBoundsPx.height + handleSizePx
+    val dragPillTrackHeightPx = if (isSelected) dragPillHeightPx + dragPillGapPx else 0f
+    val containerWidthPx = maxOf(contentWidthPx, if (isSelected) dragPillWidthPx else contentWidthPx)
+    val containerHeightPx = contentHeightPx + dragPillTrackHeightPx
+    val contentOffsetX = (containerWidthPx - contentWidthPx) / 2f
+    val contentOffsetY = if (isSelected && isHandleAtTop) dragPillTrackHeightPx else 0f
+    val dragPillLeftPx = (containerWidthPx - dragPillWidthPx) / 2f
+    val dragPillTopPx = if (isSelected && isHandleAtTop) {
+        0f
+    } else {
+        containerHeightPx - dragPillHeightPx
+    }
+
+    return TextBoxChromeLayout(
+        containerWidthPx = containerWidthPx,
+        containerHeightPx = containerHeightPx,
+        contentWidthPx = contentWidthPx,
+        contentHeightPx = contentHeightPx,
+        contentOffsetX = contentOffsetX,
+        contentOffsetY = contentOffsetY,
+        outerTranslationX = textBoundsPx.left - halfHandlePx - contentOffsetX,
+        outerTranslationY = textBoundsPx.top - halfHandlePx - contentOffsetY,
+        dragPillLeftPx = dragPillLeftPx,
+        dragPillTopPx = dragPillTopPx
+    )
+}
+
 // Eagerly consumes pointer events so parent scaled pan/zoom gestures don't intercept it
 suspend fun PointerInputScope.detectEagerDragGestures(
     onDragStart: (Offset) -> Unit,
@@ -95,14 +154,14 @@ suspend fun PointerInputScope.detectEagerDragGestures(
     awaitEachGesture {
         var dragStarted = false
         try {
-            val down = awaitFirstDown(requireUnconsumed = false)
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             down.consume() // Consume immediately
             onDragStart(down.position)
             dragStarted = true
             val pointerId = down.id
             var canceled = false
             while (true) {
-                val event = awaitPointerEvent()
+                val event = awaitPointerEvent(PointerEventPass.Initial)
                 val change = event.changes.firstOrNull { it.id == pointerId }
                 if (change == null) {
                     canceled = true
@@ -151,6 +210,13 @@ fun ResizableTextBox(
 
     val density = LocalDensity.current
     val focusRequester = remember { FocusRequester() }
+    val currentOnBoundsChanged by rememberUpdatedState(onBoundsChanged)
+    val currentOnTextChanged by rememberUpdatedState(onTextChanged)
+    val currentOnSelect by rememberUpdatedState(onSelect)
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    val currentOnDragCancel by rememberUpdatedState(onDragCancel)
 
     // Counter-scale fixed sizes so they render proportionally regardless of the zoom level
     val handleSize = (10f / scale).dp
@@ -236,170 +302,207 @@ fun ResizableTextBox(
         }
     }
 
+    val dragPillTouchWidth = (TEXT_BOX_DRAG_PILL_TOUCH_WIDTH_DP / scale).dp
+    val dragPillTouchHeight = (TEXT_BOX_DRAG_PILL_TOUCH_HEIGHT_DP / scale).dp
+    val dragPillWidthPx = with(density) { dragPillTouchWidth.toPx() }
+    val dragPillHeightPx = with(density) { dragPillTouchHeight.toPx() }
+    val dragPillGapPx = with(density) { (TEXT_BOX_DRAG_PILL_GAP_DP / scale).dp.toPx() }
+    val chromeLayout = calculateTextBoxChromeLayout(
+        textBoundsPx = currentRectPx,
+        isSelected = isSelected,
+        isHandleAtTop = isHandleAtTop,
+        handleSizePx = handleSizePx,
+        dragPillWidthPx = dragPillWidthPx,
+        dragPillHeightPx = dragPillHeightPx,
+        dragPillGapPx = dragPillGapPx
+    )
+
     Box(
         modifier = modifier
             .zIndex(if (isSelected) 10f else 0f)
             .graphicsLayer {
-                translationX = currentRectPx.left - halfHandlePx
-                translationY = currentRectPx.top - halfHandlePx
+                translationX = chromeLayout.outerTranslationX
+                translationY = chromeLayout.outerTranslationY
             }
             .size(
-                width = with(density) { (currentRectPx.width + handleSizePx).toDp() },
-                height = with(density) { (currentRectPx.height + handleSizePx).toDp() }
+                width = with(density) { chromeLayout.containerWidthPx.toDp() },
+                height = with(density) { chromeLayout.containerHeightPx.toDp() }
             )
     ) {
-        // --- 1. Content Body ---
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(handleSize / 2)
-                .pointerInput(Unit) {
-                    detectTapGestures {
-                        Timber.tag("PdfTextBoxDebug").d("TextBox Tapped[ID: ${box.id}]")
-                        onSelect()
-                    }
+                .offset {
+                    IntOffset(
+                        chromeLayout.contentOffsetX.roundToInt(),
+                        chromeLayout.contentOffsetY.roundToInt()
+                    )
                 }
-                .then(
-                    if (isSelected) Modifier.border((1.5f / scale).dp, borderColor) else Modifier
+                .size(
+                    width = with(density) { chromeLayout.contentWidthPx.toDp() },
+                    height = with(density) { chromeLayout.contentHeightPx.toDp() }
                 )
+                .zIndex(1f)
         ) {
-            BasicTextField(
-                value = box.text,
-                onValueChange = onTextChanged,
+            // --- 1. Content Body ---
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(8.dp)
-                    .verticalScroll(rememberScrollState())
-                    .focusRequester(focusRequester),
-                textStyle = TextStyle(
-                    color = box.color,
-                    background = box.backgroundColor,
-                    fontFamily = fontFamily,
-                    fontSize = with(LocalDensity.current) {
-                        (box.fontSize * pageHeightPx).toSp()
-                    },
-                    fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
-                    fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
-                    textDecoration = run {
-                        val decs = mutableListOf<TextDecoration>()
-                        if (box.isUnderline) decs.add(TextDecoration.Underline)
-                        if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
-                        if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                    .padding(handleSize / 2)
+                    .pointerInput(Unit) {
+                        detectTapGestures {
+                            Timber.tag("PdfTextBoxDebug").d("TextBox Tapped[ID: ${box.id}]")
+                            currentOnSelect()
+                        }
                     }
-                ),
-                cursorBrush = SolidColor(if (isDarkMode) Color.White else MaterialTheme.colorScheme.primary),
-                enabled = isEditMode && isSelected,
-                readOnly = !isEditMode
-            )
+                    .then(
+                        if (isSelected) Modifier.border((1.5f / scale).dp, borderColor) else Modifier
+                    )
+            ) {
+                BasicTextField(
+                    value = box.text,
+                    onValueChange = currentOnTextChanged,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp)
+                        .verticalScroll(rememberScrollState())
+                        .focusRequester(focusRequester),
+                    textStyle = TextStyle(
+                        color = box.color,
+                        background = box.backgroundColor,
+                        fontFamily = fontFamily,
+                        fontSize = with(LocalDensity.current) {
+                            (box.fontSize * pageHeightPx).toSp()
+                        },
+                        fontWeight = if (box.isBold) FontWeight.Bold else FontWeight.Normal,
+                        fontStyle = if (box.isItalic) FontStyle.Italic else FontStyle.Normal,
+                        textDecoration = run {
+                            val decs = mutableListOf<TextDecoration>()
+                            if (box.isUnderline) decs.add(TextDecoration.Underline)
+                            if (box.isStrikeThrough) decs.add(TextDecoration.LineThrough)
+                            if (decs.isEmpty()) TextDecoration.None else TextDecoration.combine(decs)
+                        }
+                    ),
+                    cursorBrush = SolidColor(if (isDarkMode) Color.White else MaterialTheme.colorScheme.primary),
+                    enabled = isEditMode && isSelected,
+                    readOnly = !isEditMode
+                )
+            }
+
+            if (isSelected) {
+                val handles = ResizeHandle.entries.filter { it != ResizeHandle.NONE }
+
+                fun getHandleCenter(handle: ResizeHandle, w: Float, h: Float): Offset {
+                    return when (handle) {
+                        ResizeHandle.TOP_LEFT -> Offset(halfHandlePx, halfHandlePx)
+                        ResizeHandle.TOP_CENTER -> Offset(halfHandlePx + w / 2, halfHandlePx)
+                        ResizeHandle.TOP_RIGHT -> Offset(halfHandlePx + w, halfHandlePx)
+                        ResizeHandle.RIGHT_CENTER -> Offset(halfHandlePx + w, halfHandlePx + h / 2)
+                        ResizeHandle.BOTTOM_RIGHT -> Offset(halfHandlePx + w, halfHandlePx + h)
+                        ResizeHandle.BOTTOM_CENTER -> Offset(halfHandlePx + w / 2, halfHandlePx + h)
+                        ResizeHandle.BOTTOM_LEFT -> Offset(halfHandlePx, halfHandlePx + h)
+                        ResizeHandle.LEFT_CENTER -> Offset(halfHandlePx, halfHandlePx + h / 2)
+                        else -> Offset.Zero
+                    }
+                }
+
+                handles.forEach { handle ->
+                    val center = getHandleCenter(handle, currentRectPx.width, currentRectPx.height)
+
+                    Box(
+                        modifier = Modifier
+                            .offset {
+                                IntOffset(
+                                    (center.x - handleTouchSizePx / 2).roundToInt(),
+                                    (center.y - handleTouchSizePx / 2).roundToInt()
+                                )
+                            }
+                            .size(handleTouchSize)
+                            .pointerInput(box.id, handle, pageWidthPx, pageHeightPx) {
+                                detectEagerDragGestures(
+                                    onDragStart = {
+                                        Timber.tag("PdfTextBoxDebug").d("ResizeHandle DragStart[ID: ${box.id}] Handle=$handle")
+                                        isDraggingOrResizing = true
+                                    },
+                                    onDragEnd = {
+                                        isDraggingOrResizing = false
+                                        val normalized = Rect(
+                                            left = currentRectPx.left / pageWidthPx,
+                                            top = currentRectPx.top / pageHeightPx,
+                                            right = currentRectPx.right / pageWidthPx,
+                                            bottom = currentRectPx.bottom / pageHeightPx
+                                        )
+                                        Timber.tag("PdfTextBoxDebug").d("ResizeHandle DragEnd [ID: ${box.id}] finalNormalized=$normalized")
+                                        currentOnBoundsChanged(normalized)
+                                    },
+                                    onDragCancel = { isDraggingOrResizing = false }
+                                ) { change, dragAmount ->
+                                    Timber.tag("PdfTextBoxDebug").v("ResizeHandle Drag [ID: ${box.id}] Handle=$handle | dragAmount=$dragAmount")
+
+                                    var l = currentRectPx.left
+                                    var t = currentRectPx.top
+                                    var r = currentRectPx.right
+                                    var b = currentRectPx.bottom
+                                    val dx = dragAmount.x
+                                    val dy = dragAmount.y
+                                    val minSize = 50f / scale
+
+                                    when (handle) {
+                                        ResizeHandle.TOP_LEFT -> {
+                                            l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
+                                            t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
+                                        }
+                                        ResizeHandle.TOP_CENTER -> t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
+                                        ResizeHandle.TOP_RIGHT -> {
+                                            r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
+                                            t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
+                                        }
+                                        ResizeHandle.RIGHT_CENTER -> r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
+                                        ResizeHandle.BOTTOM_RIGHT -> {
+                                            r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
+                                            b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
+                                        }
+                                        ResizeHandle.BOTTOM_CENTER -> b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
+                                        ResizeHandle.BOTTOM_LEFT -> {
+                                            l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
+                                            b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
+                                        }
+                                        ResizeHandle.LEFT_CENTER -> l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
+                                        else -> {}
+                                    }
+                                    currentRectPx = Rect(l, t, r, b)
+                                }
+                            }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(handleSize)
+                                .background(handleColor, CircleShape)
+                                .align(Alignment.Center)
+                        )
+                    }
+                }
+            }
         }
 
         if (isSelected) {
-            val handles = ResizeHandle.entries.filter { it != ResizeHandle.NONE }
-
-            fun getHandleCenter(handle: ResizeHandle, w: Float, h: Float): Offset {
-                return when (handle) {
-                    ResizeHandle.TOP_LEFT -> Offset(halfHandlePx, halfHandlePx)
-                    ResizeHandle.TOP_CENTER -> Offset(halfHandlePx + w / 2, halfHandlePx)
-                    ResizeHandle.TOP_RIGHT -> Offset(halfHandlePx + w, halfHandlePx)
-                    ResizeHandle.RIGHT_CENTER -> Offset(halfHandlePx + w, halfHandlePx + h / 2)
-                    ResizeHandle.BOTTOM_RIGHT -> Offset(halfHandlePx + w, halfHandlePx + h)
-                    ResizeHandle.BOTTOM_CENTER -> Offset(halfHandlePx + w / 2, halfHandlePx + h)
-                    ResizeHandle.BOTTOM_LEFT -> Offset(halfHandlePx, halfHandlePx + h)
-                    ResizeHandle.LEFT_CENTER -> Offset(halfHandlePx, halfHandlePx + h / 2)
-                    else -> Offset.Zero
-                }
-            }
-
-            handles.forEach { handle ->
-                val center = getHandleCenter(handle, currentRectPx.width, currentRectPx.height)
-
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                (center.x - handleTouchSizePx / 2).roundToInt(),
-                                (center.y - handleTouchSizePx / 2).roundToInt()
-                            )
-                        }
-                        .size(handleTouchSize)
-                        .pointerInput(onBoundsChanged) {
-                            detectEagerDragGestures(
-                                onDragStart = {
-                                    Timber.tag("PdfTextBoxDebug").d("ResizeHandle DragStart[ID: ${box.id}] Handle=$handle")
-                                    isDraggingOrResizing = true
-                                },
-                                onDragEnd = {
-                                    isDraggingOrResizing = false
-                                    val normalized = Rect(
-                                        left = currentRectPx.left / pageWidthPx,
-                                        top = currentRectPx.top / pageHeightPx,
-                                        right = currentRectPx.right / pageWidthPx,
-                                        bottom = currentRectPx.bottom / pageHeightPx
-                                    )
-                                    Timber.tag("PdfTextBoxDebug").d("ResizeHandle DragEnd [ID: ${box.id}] finalNormalized=$normalized")
-                                    onBoundsChanged(normalized)
-                                },
-                                onDragCancel = { isDraggingOrResizing = false }
-                            ) { change, dragAmount ->
-                                Timber.tag("PdfTextBoxDebug").v("ResizeHandle Drag [ID: ${box.id}] Handle=$handle | dragAmount=$dragAmount")
-
-                                var l = currentRectPx.left
-                                var t = currentRectPx.top
-                                var r = currentRectPx.right
-                                var b = currentRectPx.bottom
-                                val dx = dragAmount.x
-                                val dy = dragAmount.y
-                                val minSize = 50f / scale
-
-                                when (handle) {
-                                    ResizeHandle.TOP_LEFT -> {
-                                        l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
-                                        t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
-                                    }
-                                    ResizeHandle.TOP_CENTER -> t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
-                                    ResizeHandle.TOP_RIGHT -> {
-                                        r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
-                                        t = (t + dy).coerceIn(0f, maxOf(0f, b - minSize))
-                                    }
-                                    ResizeHandle.RIGHT_CENTER -> r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
-                                    ResizeHandle.BOTTOM_RIGHT -> {
-                                        r = (r + dx).coerceIn(l + minSize, maxOf(l + minSize, pageWidthPx))
-                                        b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
-                                    }
-                                    ResizeHandle.BOTTOM_CENTER -> b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
-                                    ResizeHandle.BOTTOM_LEFT -> {
-                                        l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
-                                        b = (b + dy).coerceIn(t + minSize, maxOf(t + minSize, pageHeightPx))
-                                    }
-                                    ResizeHandle.LEFT_CENTER -> l = (l + dx).coerceIn(0f, maxOf(0f, r - minSize))
-                                    else -> {}
-                                }
-                                currentRectPx = Rect(l, t, r, b)
-                            }
-                        }
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(handleSize)
-                            .background(handleColor, CircleShape)
-                            .align(Alignment.Center)
-                    )
-                }
-            }
-
             DragPill(
                 isDarkMode = isDarkMode,
                 scale = scale,
                 modifier = Modifier
-                    .align(if (isHandleAtTop) Alignment.TopCenter else Alignment.BottomCenter)
-                    .offset(y = if (isHandleAtTop) (-32f / scale).dp else (32f / scale).dp)
+                    .offset {
+                        IntOffset(
+                            chromeLayout.dragPillLeftPx.roundToInt(),
+                            chromeLayout.dragPillTopPx.roundToInt()
+                        )
+                    }
+                    .size(width = dragPillTouchWidth, height = dragPillTouchHeight)
                     .zIndex(20f)
-                    .pointerInput(pageWidthPx, pageHeightPx, onDragStart, onDragEnd, onDragCancel) {
+                    .pointerInput(box.id, pageWidthPx, pageHeightPx) {
                         detectEagerDragGestures(
                             onDragStart = { offset ->
                                 Timber.tag("PdfTextBoxDebug").d("DragPill DragStart [ID: ${box.id}] at offset=$offset")
                                 isDraggingOrResizing = true
-                                onDragStart(offset)
+                                currentOnDragStart(offset)
                             },
                             onDragEnd = {
                                 isDraggingOrResizing = false
@@ -410,12 +513,12 @@ fun ResizableTextBox(
                                     bottom = currentRectPx.bottom / pageHeightPx
                                 )
                                 Timber.tag("PdfTextBoxDebug").d("DragPill DragEnd[ID: ${box.id}] finalNormalized=$normalized")
-                                onBoundsChanged(normalized)
-                                onDragEnd()
+                                currentOnBoundsChanged(normalized)
+                                currentOnDragEnd()
                             },
                             onDragCancel = {
                                 isDraggingOrResizing = false
-                                onDragCancel()
+                                currentOnDragCancel()
                             }
                         ) { change, dragAmount ->
                             val w = currentRectPx.width
@@ -426,7 +529,7 @@ fun ResizableTextBox(
                             val newTop = rawTop.coerceIn(0f, maxOf(0f, pageHeightPx - h))
                             val newRect = Rect(newLeft, newTop, newLeft + w, newTop + h)
                             currentRectPx = newRect
-                            onDrag(dragAmount, newRect)
+                            currentOnDrag(dragAmount, newRect)
                         }
                     }
             )
@@ -440,20 +543,28 @@ private fun DragPill(
     isDarkMode: Boolean,
     scale: Float = 1f
 ) {
-    Surface(
-        modifier = modifier
-            .size(width = (48f / scale).dp, height = (24f / scale).dp),
-        shape = CircleShape,
-        color = if (isDarkMode) Color.White else Color.Black,
-        contentColor = if (isDarkMode) Color.Black else Color.White,
-        shadowElevation = (4f / scale).dp
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                painter = painterResource(id = R.drawable.drag_handle),
-                contentDescription = stringResource(R.string.content_desc_drag_text_box),
-                modifier = Modifier.size((20f / scale).dp)
-            )
+        Surface(
+            modifier = Modifier
+                .size(
+                    width = (TEXT_BOX_DRAG_PILL_VISUAL_WIDTH_DP / scale).dp,
+                    height = (TEXT_BOX_DRAG_PILL_VISUAL_HEIGHT_DP / scale).dp
+                ),
+            shape = CircleShape,
+            color = if (isDarkMode) Color.White else Color.Black,
+            contentColor = if (isDarkMode) Color.Black else Color.White,
+            shadowElevation = (4f / scale).dp
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(id = R.drawable.drag_handle),
+                    contentDescription = stringResource(R.string.content_desc_drag_text_box),
+                    modifier = Modifier.size((20f / scale).dp)
+                )
+            }
         }
     }
 }

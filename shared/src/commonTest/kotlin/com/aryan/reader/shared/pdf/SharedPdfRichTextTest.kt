@@ -272,4 +272,45 @@ class SharedPdfRichTextTest {
 
         assertEquals("Body", editable.text)
     }
+
+    @Test
+    fun `blank page insertion uses one page break at explicit rich text boundaries`() {
+        val text = "Page 1$SHARED_PDF_PAGE_BREAK_CHARPage 2"
+        val insertionIndex = "Page 1$SHARED_PDF_PAGE_BREAK_CHAR".length
+
+        assertEquals(1, sharedPdfRichTextBlankInsertBreakCount(text, insertionIndex))
+        assertEquals(1, sharedPdfRichTextBlankInsertBreakCount("Page 1", "Page 1".length))
+        assertEquals(1, sharedPdfRichTextBlankInsertBreakCount("Page 1", 0))
+    }
+
+    @Test
+    fun `blank page insertion uses two page breaks only for measured text boundaries with following content`() {
+        val text = "Page 1Page 2"
+        val insertionIndex = "Page 1".length
+
+        assertEquals(2, sharedPdfRichTextBlankInsertBreakCount(text, insertionIndex))
+        assertEquals(
+            insertionIndex,
+            sharedPdfRichTextInsertionIndexForPage(
+                insertPageIndex = 1,
+                pageLayouts = listOf(
+                    SharedPdfRichPageLayout(
+                        pageIndex = 0,
+                        visibleText = AnnotatedString("Page 1"),
+                        globalStartIndex = 0,
+                        globalEndIndex = insertionIndex,
+                        pageHeightPx = 1_000f
+                    ),
+                    SharedPdfRichPageLayout(
+                        pageIndex = 1,
+                        visibleText = AnnotatedString("Page 2"),
+                        globalStartIndex = insertionIndex,
+                        globalEndIndex = text.length,
+                        pageHeightPx = 1_000f
+                    )
+                ),
+                textLength = text.length
+            )
+        )
+    }
 }

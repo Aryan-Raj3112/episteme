@@ -3,6 +3,7 @@ package com.aryan.reader.pdf
 import android.content.Context
 import android.graphics.RectF
 import android.graphics.Rect
+import android.net.Uri
 import androidx.compose.ui.graphics.Color
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfAnnotationRepository
@@ -21,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 class PdfReaderCoreLogicTest {
@@ -110,6 +112,18 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `getFastFileId uses stable file name and length for file uris`() {
+        val file = File("build/test-tmp/pdf-reader/fast-id-${System.nanoTime()}.pdf").apply {
+            parentFile?.mkdirs()
+            writeText("pdf")
+        }
+
+        val id = getFastFileId(RuntimeEnvironment.getApplication(), Uri.fromFile(file))
+
+        assertEquals("${file.name}_${file.length()}", id)
+    }
+
+    @Test
     fun `pdf export choice is hidden when loaded sidecars have no annotations`() {
         assertFalse(
             shouldShowPdfAnnotationExportChoice(
@@ -184,6 +198,95 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `layout remap keeps annotations on their virtual pages when inserting a blank page`() {
+        val existingBlank = VirtualPage.BlankPage("existing-blank", 612, 792, wasManuallyAdded = true)
+        val insertedBlank = VirtualPage.BlankPage("inserted-blank", 612, 792, wasManuallyAdded = true)
+        val currentLayout = listOf(
+            VirtualPage.PdfPage(0),
+            existingBlank,
+            VirtualPage.PdfPage(1),
+            VirtualPage.PdfPage(5)
+        )
+        val updatedLayout = listOf(
+            VirtualPage.PdfPage(0),
+            insertedBlank,
+            existingBlank,
+            VirtualPage.PdfPage(1),
+            VirtualPage.PdfPage(5)
+        )
+        val annotations = mapOf(
+            0 to listOf(testInkAnnotation(id = "pdf-0", pageIndex = 0)),
+            1 to listOf(testInkAnnotation(id = "existing-blank", pageIndex = 99)),
+            2 to listOf(testInkAnnotation(id = "pdf-1", pageIndex = 2)),
+            3 to listOf(testInkAnnotation(id = "pdf-5", pageIndex = 3))
+        )
+
+        val remapped = remapPdfAnnotationsForLayoutChange(currentLayout, updatedLayout, annotations)
+
+        assertNull(remapped[1])
+        assertEquals(setOf(0, 2, 3, 4), remapped.keys)
+        assertEquals("pdf-0", remapped.getValue(0).single().id)
+        assertEquals(0, remapped.getValue(0).single().pageIndex)
+        assertEquals("existing-blank", remapped.getValue(2).single().id)
+        assertEquals(2, remapped.getValue(2).single().pageIndex)
+        assertEquals("pdf-1", remapped.getValue(3).single().id)
+        assertEquals(3, remapped.getValue(3).single().pageIndex)
+        assertEquals("pdf-5", remapped.getValue(4).single().id)
+        assertEquals(4, remapped.getValue(4).single().pageIndex)
+    }
+
+    @Test
+    fun `layout remap drops annotations from a removed blank page and keeps later pdf annotations`() {
+        val removedBlank = VirtualPage.BlankPage("removed-blank", 612, 792, wasManuallyAdded = true)
+        val currentLayout = listOf(VirtualPage.PdfPage(0), removedBlank, VirtualPage.PdfPage(1))
+        val updatedLayout = listOf(VirtualPage.PdfPage(0), VirtualPage.PdfPage(1))
+        val annotations = mapOf(
+            1 to listOf(testInkAnnotation(id = "blank-note", pageIndex = 1)),
+            2 to listOf(testInkAnnotation(id = "pdf-1", pageIndex = 2))
+        )
+
+        val remapped = remapPdfAnnotationsForLayoutChange(currentLayout, updatedLayout, annotations)
+
+        assertNull(remapped[0])
+        assertEquals(setOf(1), remapped.keys)
+        assertEquals("pdf-1", remapped.getValue(1).single().id)
+        assertEquals(1, remapped.getValue(1).single().pageIndex)
+    }
+
+    @Test
+    fun `text box chrome layout keeps drag pill inside hit bounds without moving text body`() {
+        val bounds = androidx.compose.ui.geometry.Rect(100f, 200f, 180f, 260f)
+        val bottomHandle = calculateTextBoxChromeLayout(
+            textBoundsPx = bounds,
+            isSelected = true,
+            isHandleAtTop = false,
+            handleSizePx = 10f,
+            dragPillWidthPx = 72f,
+            dragPillHeightPx = 48f,
+            dragPillGapPx = 8f
+        )
+        val topHandle = calculateTextBoxChromeLayout(
+            textBoundsPx = bounds,
+            isSelected = true,
+            isHandleAtTop = true,
+            handleSizePx = 10f,
+            dragPillWidthPx = 72f,
+            dragPillHeightPx = 48f,
+            dragPillGapPx = 8f
+        )
+
+        listOf(bottomHandle, topHandle).forEach { layout ->
+            assertEquals(bounds.left, layout.outerTranslationX + layout.contentOffsetX + 5f, 0.0001f)
+            assertEquals(bounds.top, layout.outerTranslationY + layout.contentOffsetY + 5f, 0.0001f)
+            assertTrue(layout.dragPillLeftPx >= 0f)
+            assertTrue(layout.dragPillLeftPx + 72f <= layout.containerWidthPx)
+            assertTrue(layout.dragPillTopPx >= 0f)
+            assertTrue(layout.dragPillTopPx + 48f <= layout.containerHeightPx)
+        }
+        assertEquals(0f, topHandle.dragPillTopPx, 0.0001f)
+    }
+
+    @Test
     fun `bubble prefetch only includes current page and nearby pages`() {
         assertEquals(listOf(10, 11, 9), buildPdfBubblePrefetchOrder(currentPage = 10, totalPages = 100))
     }
@@ -201,6 +304,50 @@ class PdfReaderCoreLogicTest {
         assertEquals(false, canUsePdfSidecarsForBook("book-a", "book-b", areSidecarsLoaded = true))
         assertEquals(false, canUsePdfSidecarsForBook("book-a", "book-a", areSidecarsLoaded = false))
         assertEquals(false, canUsePdfSidecarsForBook(null, "book-a", areSidecarsLoaded = true))
+    }
+
+    @Test
+    fun `canManagePdfVirtualPages waits for the active page layout to load`() {
+        assertTrue(
+            canManagePdfVirtualPages(
+                isDocumentReady = true,
+                currentBookId = "book-a",
+                loadedPageLayoutBookId = "book-a",
+                virtualPageCount = 3
+            )
+        )
+        assertFalse(
+            canManagePdfVirtualPages(
+                isDocumentReady = true,
+                currentBookId = "book-a",
+                loadedPageLayoutBookId = null,
+                virtualPageCount = 3
+            )
+        )
+        assertFalse(
+            canManagePdfVirtualPages(
+                isDocumentReady = true,
+                currentBookId = "book-a",
+                loadedPageLayoutBookId = "book-b",
+                virtualPageCount = 3
+            )
+        )
+        assertFalse(
+            canManagePdfVirtualPages(
+                isDocumentReady = false,
+                currentBookId = "book-a",
+                loadedPageLayoutBookId = "book-a",
+                virtualPageCount = 3
+            )
+        )
+        assertFalse(
+            canManagePdfVirtualPages(
+                isDocumentReady = true,
+                currentBookId = "book-a",
+                loadedPageLayoutBookId = "book-a",
+                virtualPageCount = 0
+            )
+        )
     }
 
     @Test
@@ -376,6 +523,18 @@ class PdfReaderCoreLogicTest {
         )
         val block = OcrBlock(text = line.text, boundingBox = null, lines = listOf(line))
         return OcrResult(text = line.text, textBlocks = listOf(block))
+    }
+
+    private fun testInkAnnotation(id: String, pageIndex: Int): PdfAnnotation {
+        return PdfAnnotation(
+            type = AnnotationType.INK,
+            inkType = InkType.PEN,
+            pageIndex = pageIndex,
+            points = listOf(PdfPoint(0.1f, 0.2f), PdfPoint(0.2f, 0.3f)),
+            color = Color.Black,
+            strokeWidth = 0.01f,
+            id = id
+        )
     }
 
     private fun assertRectFEquals(expected: RectF, actual: RectF) {

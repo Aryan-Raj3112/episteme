@@ -136,7 +136,7 @@ class PdfReaderRepositoryTest {
         repository.saveLayout("folder/book.pdf", pages)
 
         assertEquals(pages, repository.loadLayout("folder/book.pdf", totalPdfPages = 10))
-        assertNotNull(repository.getLayoutOrNull("folder/book.pdf"))
+        assertEquals(pages, repository.getLayoutOrNull("folder/book.pdf"))
         assertTrue(File(context.filesDir, "page_layouts/layout_folder_book.pdf.json").exists())
     }
 

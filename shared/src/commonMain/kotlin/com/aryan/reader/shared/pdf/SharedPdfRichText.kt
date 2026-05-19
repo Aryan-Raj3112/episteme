@@ -515,6 +515,28 @@ private fun AnnotatedString.withRestoredTrailingSharedPdfPageBreak(shouldRestore
     return this + AnnotatedString(SHARED_PDF_PAGE_BREAK_CHAR.toString())
 }
 
+internal fun sharedPdfRichTextInsertionIndexForPage(
+    insertPageIndex: Int,
+    pageLayouts: List<SharedPdfRichPageLayout>,
+    textLength: Int
+): Int {
+    val rawIndex = if (insertPageIndex <= 0) {
+        0
+    } else {
+        pageLayouts.find { it.pageIndex == insertPageIndex - 1 }?.globalEndIndex ?: textLength
+    }
+    return rawIndex.coerceIn(0, textLength)
+}
+
+internal fun sharedPdfRichTextBlankInsertBreakCount(text: String, insertionCharIndex: Int): Int {
+    val safeIndex = insertionCharIndex.coerceIn(0, text.length)
+    if (safeIndex == 0 || safeIndex == text.length) return 1
+
+    val hasBoundaryBreakBefore = text.getOrNull(safeIndex - 1) == SHARED_PDF_PAGE_BREAK_CHAR
+    val hasBoundaryBreakAfter = text.getOrNull(safeIndex) == SHARED_PDF_PAGE_BREAK_CHAR
+    return if (hasBoundaryBreakBefore || hasBoundaryBreakAfter) 1 else 2
+}
+
 internal fun List<SharedPdfRichPageLayout>.withTrailingBlankRichTextPageIfNeeded(
     globalText: AnnotatedString,
     pageHeightPx: Float
@@ -933,23 +955,53 @@ class SharedPdfRichTextController(
         scope.launch {
             forceSyncAndClear()
             val original = globalTextFieldValue.annotatedString
-            val insertionCharIndex = if (insertPageIndex == 0) {
-                0
-            } else {
-                pageLayouts.find { it.pageIndex == insertPageIndex - 1 }?.globalEndIndex ?: original.length
-            }
-            val safeIndex = insertionCharIndex.coerceIn(0, original.length)
-            val builder = AnnotatedString.Builder()
-            builder.append(original.subSequence(0, safeIndex))
-            repeat(count) { builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString()) }
-            builder.append(original.subSequence(safeIndex, original.length))
-            globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(safeIndex + count))
-            debouncedSave(globalTextFieldValue)
-            repaginate(dirtyStartIndex = safeIndex)
+            val safeIndex = sharedPdfRichTextInsertionIndexForPage(
+                insertPageIndex = insertPageIndex,
+                pageLayouts = pageLayouts,
+                textLength = original.length
+            )
+            insertPageBreaksIntoGlobalText(original, safeIndex, count)
             SharedPdfRichTextLog.d(
                 "controller.insertPageBreak inserted index=$safeIndex newLen=${globalTextFieldValue.text.length}"
             )
         }
+    }
+
+    fun insertBlankPageAt(insertPageIndex: Int) {
+        SharedPdfRichTextLog.d("controller.insertBlankPage requested page=$insertPageIndex")
+        scope.launch {
+            forceSyncAndClear()
+            val original = globalTextFieldValue.annotatedString
+            val safeIndex = sharedPdfRichTextInsertionIndexForPage(
+                insertPageIndex = insertPageIndex,
+                pageLayouts = pageLayouts,
+                textLength = original.length
+            )
+            val requiredBreaks = sharedPdfRichTextBlankInsertBreakCount(
+                text = original.text,
+                insertionCharIndex = safeIndex
+            )
+            insertPageBreaksIntoGlobalText(original, safeIndex, requiredBreaks)
+            SharedPdfRichTextLog.d(
+                "controller.insertBlankPage inserted index=$safeIndex breaks=$requiredBreaks newLen=${globalTextFieldValue.text.length}"
+            )
+        }
+    }
+
+    private fun insertPageBreaksIntoGlobalText(
+        original: AnnotatedString,
+        safeIndex: Int,
+        count: Int
+    ) {
+        val safeCount = count.coerceAtLeast(0)
+        if (safeCount == 0) return
+        val builder = AnnotatedString.Builder()
+        builder.append(original.subSequence(0, safeIndex))
+        repeat(safeCount) { builder.append(SHARED_PDF_PAGE_BREAK_CHAR.toString()) }
+        builder.append(original.subSequence(safeIndex, original.length))
+        globalTextFieldValue = TextFieldValue(builder.toAnnotatedString(), TextRange(safeIndex + safeCount))
+        debouncedSave(globalTextFieldValue)
+        repaginate(dirtyStartIndex = safeIndex)
     }
 
     fun deleteTextOnPage(pageIndex: Int) {

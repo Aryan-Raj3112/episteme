@@ -314,6 +314,18 @@ internal fun canUsePdfSidecarsForBook(
     areSidecarsLoaded: Boolean
 ): Boolean = activeBookId != null && areSidecarsLoaded && loadedSidecarBookId == activeBookId
 
+internal fun canManagePdfVirtualPages(
+    isDocumentReady: Boolean,
+    currentBookId: String?,
+    loadedPageLayoutBookId: String?,
+    virtualPageCount: Int
+): Boolean {
+    return isDocumentReady &&
+        currentBookId != null &&
+        loadedPageLayoutBookId == currentBookId &&
+        virtualPageCount > 0
+}
+
 internal fun currentPageScaleAfterPdfPageChange(
     displayMode: DisplayMode,
     isScrollLocked: Boolean,
@@ -1016,6 +1028,8 @@ fun PdfViewerScreen(
     val pdfiumCore = remember { PdfiumCoreProvider.core }
     val verticalReaderState = rememberVerticalPdfReaderState()
     var virtualPages by remember { mutableStateOf<List<VirtualPage>>(emptyList()) }
+    var loadedPageLayoutBookId by remember { mutableStateOf<String?>(null) }
+    var pageLayoutMutationVersion by remember(currentBookId) { mutableLongStateOf(0L) }
     val totalDisplayPages by remember(virtualPages, totalPages) {
         derivedStateOf { if (virtualPages.isNotEmpty()) virtualPages.size else totalPages }
     }
@@ -1727,13 +1741,40 @@ fun PdfViewerScreen(
 
     val onInsertPage: () -> Unit = {
         coroutineScope.launch {
-            val targetIndex = (currentPage + 1).coerceIn(0, virtualPages.size)
+            val activeBookId = currentBookId ?: return@launch
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.insert.request bookId=$activeBookId loadedLayoutBookId=$loadedPageLayoutBookId " +
+                    "isReady=$isDocumentReady mutation=$pageLayoutMutationVersion currentPage=$currentPage " +
+                    "totalPdfPages=$totalPages displayMode=$displayMode current=${virtualPages.pdfLayoutDebugSummary()}"
+            )
+            if (!canManagePdfVirtualPages(
+                    isDocumentReady = isDocumentReady,
+                    currentBookId = activeBookId,
+                    loadedPageLayoutBookId = loadedPageLayoutBookId,
+                    virtualPageCount = virtualPages.size
+                )
+            ) {
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                    "ui.insert.blocked bookId=$activeBookId loadedLayoutBookId=$loadedPageLayoutBookId " +
+                        "isReady=$isDocumentReady virtualCount=${virtualPages.size}"
+                )
+                Timber.tag("RichTextMigration").w("INSERT: Ignoring page insert until saved layout is loaded.")
+                return@launch
+            }
+            val layoutBeforeInsert = virtualPages.ifEmpty {
+                (0 until totalPages).map { VirtualPage.PdfPage(it) }
+            }
+            val targetIndex = (currentPage + 1).coerceIn(0, layoutBeforeInsert.size)
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.insert.target bookId=$activeBookId targetIndex=$targetIndex before=${layoutBeforeInsert.pdfLayoutDebugSummary()}"
+            )
             Timber.tag("RichTextMigration").i("INSERT: User requested blank page at index $targetIndex")
+            pageLayoutMutationVersion++
 
             val (refWidth, refHeight) = withContext(Dispatchers.IO) {
-                if (virtualPages.isNotEmpty()) {
-                    val refIndex = (currentPage).coerceIn(0, virtualPages.size - 1)
-                    when (val vp = virtualPages[refIndex]) {
+                if (layoutBeforeInsert.isNotEmpty()) {
+                    val refIndex = (currentPage).coerceIn(0, layoutBeforeInsert.size - 1)
+                    when (val vp = layoutBeforeInsert[refIndex]) {
                         is VirtualPage.PdfPage -> {
                             var w = 595
                             var h = 842
@@ -1763,44 +1804,61 @@ fun PdfViewerScreen(
                 }
             }
 
-            if (currentBookId != null) {
-                val shiftedBoxes = textBoxes.map { box ->
-                    if (box.pageIndex >= targetIndex) {
-                        box.copy(pageIndex = box.pageIndex + 1)
-                    } else {
-                        box
-                    }
-                }
-                if (shiftedBoxes != textBoxes) {
+            run {
+                val annotationsBeforeInsert = allAnnotations
+                val undoStackBeforeInsert = undoStack.toList()
+                val redoStackBeforeInsert = redoStack.toList()
+                val tempNewPage = VirtualPage.BlankPage(generateShortId(), refWidth, refHeight, wasManuallyAdded = true)
+                val optimisticPages = layoutBeforeInsert.toMutableList()
+                optimisticPages.add(targetIndex, tempNewPage)
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.insert.optimistic bookId=$activeBookId targetIndex=$targetIndex " +
+                        "newBlankId=${tempNewPage.id} ref=${refWidth}x$refHeight " +
+                        "optimistic=${optimisticPages.pdfLayoutDebugSummary()}"
+                )
+
+                allAnnotations = remapPdfAnnotationsForLayoutChange(
+                    currentLayout = layoutBeforeInsert,
+                    updatedLayout = optimisticPages,
+                    annotations = annotationsBeforeInsert
+                )
+                val shiftedBoxes = remapPdfTextBoxesForLayoutChange(
+                    currentLayout = layoutBeforeInsert,
+                    updatedLayout = optimisticPages,
+                    textBoxes = textBoxes
+                )
+                if (shiftedBoxes != textBoxes.toList()) {
                     textBoxes.clear()
                     textBoxes.addAll(shiftedBoxes)
                 }
 
-                val shiftedHighlights = userHighlights.map { highlight ->
-                    if (highlight.pageIndex >= targetIndex) {
-                        highlight.copy(pageIndex = highlight.pageIndex + 1)
-                    } else {
-                        highlight
-                    }
-                }
+                val shiftedHighlights = remapPdfUserHighlightsForLayoutChange(
+                    currentLayout = layoutBeforeInsert,
+                    updatedLayout = optimisticPages,
+                    highlights = userHighlights
+                )
                 if (shiftedHighlights != userHighlights.toList()) {
                     userHighlights.clear()
                     userHighlights.addAll(shiftedHighlights)
                 }
-
-                val tempNewPage = VirtualPage.BlankPage(generateShortId(), refWidth, refHeight, wasManuallyAdded = true)
-                val optimisticPages = virtualPages.toMutableList()
-                optimisticPages.add(targetIndex, tempNewPage)
+                undoStack.clear()
+                undoStack.addAll(
+                    remapPdfHistoryActionsForLayoutChange(
+                        currentLayout = layoutBeforeInsert,
+                        updatedLayout = optimisticPages,
+                        actions = undoStackBeforeInsert
+                    )
+                )
+                redoStack.clear()
+                redoStack.addAll(
+                    remapPdfHistoryActionsForLayoutChange(
+                        currentLayout = layoutBeforeInsert,
+                        updatedLayout = optimisticPages,
+                        actions = redoStackBeforeInsert
+                    )
+                )
 
                 virtualPages = optimisticPages
-                if (displayMode == DisplayMode.PAGINATION) {
-                    pagerState.animateScrollToPage(targetIndex)
-                } else {
-                    verticalReaderState.scrollToPage(targetIndex)
-                }
-
-                Timber.tag("RichTextMigration").d("INSERT: Triggering RichTextController.insertPageBreakAt($targetIndex, count=2)")
-                richTextController?.insertPageBreakAt(targetIndex, count = 2)
 
                 val objectList = bookmarks.map { bookmark ->
                     JSONObject().apply {
@@ -1811,25 +1869,66 @@ fun PdfViewerScreen(
                 }
                 val currentJson = JSONArray(objectList).toString()
 
-                val result = viewModel.addPage(
-                    bookId = currentBookId!!,
-                    currentLayout = virtualPages - tempNewPage,
-                    insertIndex = targetIndex,
-                    currentAnnotations = allAnnotations,
-                    currentBookmarksJson = currentJson,
-                    referenceWidth = refWidth,
-                    referenceHeight = refHeight,
-                    wasManuallyAdded = true
-                )
+                val result = withContext(NonCancellable) {
+                    val savedResult = viewModel.addPage(
+                        bookId = activeBookId,
+                        currentLayout = layoutBeforeInsert,
+                        insertIndex = targetIndex,
+                        currentAnnotations = annotationsBeforeInsert,
+                        currentBookmarksJson = currentJson,
+                        referenceWidth = refWidth,
+                        referenceHeight = refHeight,
+                        blankPageId = tempNewPage.id,
+                        wasManuallyAdded = true
+                    )
+                    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                        "ui.insert.saved bookId=$activeBookId targetIndex=$targetIndex " +
+                            "result=${savedResult.layout.pdfLayoutDebugSummary()}"
+                    )
+                    richTextController?.remapPagesForLayoutChange(
+                        currentLayout = layoutBeforeInsert,
+                        updatedLayout = savedResult.layout
+                    )
+                    savedResult
+                }
 
                 Timber.tag("RichTextMigration").i("INSERT: Layout update complete. New virtualPages size: ${result.layout.size}")
 
                 virtualPages = result.layout
                 allAnnotations = result.annotations
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.insert.applied bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
+                        "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
+                val remappedUndoStack = remapPdfHistoryActionsForLayoutChange(
+                    currentLayout = optimisticPages,
+                    updatedLayout = result.layout,
+                    actions = undoStack
+                )
+                undoStack.clear()
+                undoStack.addAll(remappedUndoStack)
+                val remappedRedoStack = remapPdfHistoryActionsForLayoutChange(
+                    currentLayout = optimisticPages,
+                    updatedLayout = result.layout,
+                    actions = redoStack
+                )
+                redoStack.clear()
+                redoStack.addAll(remappedRedoStack)
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
                 onBookmarksChanged(result.bookmarksJson)
 
                 showBanner("Page added at ${targetIndex + 1}")
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.insert.scroll.start bookId=$activeBookId targetIndex=$targetIndex displayMode=$displayMode"
+                )
+                if (displayMode == DisplayMode.PAGINATION) {
+                    pagerState.animateScrollToPage(targetIndex)
+                } else {
+                    verticalReaderState.scrollToPage(targetIndex)
+                }
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.insert.scroll.done bookId=$activeBookId targetIndex=$targetIndex displayMode=$displayMode"
+                )
             }
         }
     }
@@ -1866,30 +1965,36 @@ fun PdfViewerScreen(
 
     val onDeletePage: () -> Unit = {
         coroutineScope.launch {
-            if (currentBookId != null && currentPage in virtualPages.indices) {
+            val activeBookId = currentBookId ?: return@launch
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.delete.request bookId=$activeBookId loadedLayoutBookId=$loadedPageLayoutBookId " +
+                    "isReady=$isDocumentReady mutation=$pageLayoutMutationVersion currentPage=$currentPage " +
+                    "totalPdfPages=$totalPages displayMode=$displayMode current=${virtualPages.pdfLayoutDebugSummary()}"
+            )
+            if (!canManagePdfVirtualPages(
+                    isDocumentReady = isDocumentReady,
+                    currentBookId = activeBookId,
+                    loadedPageLayoutBookId = loadedPageLayoutBookId,
+                    virtualPageCount = virtualPages.size
+                )
+            ) {
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                    "ui.delete.blocked bookId=$activeBookId loadedLayoutBookId=$loadedPageLayoutBookId " +
+                        "isReady=$isDocumentReady virtualCount=${virtualPages.size}"
+                )
+                Timber.tag("RichTextMigration").w("DELETE: Ignoring page delete until saved layout is loaded.")
+                return@launch
+            }
+            val layoutBeforeDelete = virtualPages.ifEmpty {
+                (0 until totalPages).map { VirtualPage.PdfPage(it) }
+            }
+            if (currentPage in layoutBeforeDelete.indices) {
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.delete.target bookId=$activeBookId removeIndex=$currentPage " +
+                        "before=${layoutBeforeDelete.pdfLayoutDebugSummary()}"
+                )
                 Timber.tag("RichTextMigration").i("DELETE: User requested deletion of page at index $currentPage")
-
-                val boxesToKeep = textBoxes.filter { it.pageIndex != currentPage }
-                val shiftedBoxes = boxesToKeep.map { box ->
-                    if (box.pageIndex > currentPage) {
-                        box.copy(pageIndex = box.pageIndex - 1)
-                    } else {
-                        box
-                    }
-                }
-                textBoxes.clear()
-                textBoxes.addAll(shiftedBoxes)
-
-                val highlightsToKeep = userHighlights.filter { it.pageIndex != currentPage }
-                val shiftedHighlights = highlightsToKeep.map { highlight ->
-                    if (highlight.pageIndex > currentPage) {
-                        highlight.copy(pageIndex = highlight.pageIndex - 1)
-                    } else {
-                        highlight
-                    }
-                }
-                userHighlights.clear()
-                userHighlights.addAll(shiftedHighlights)
+                pageLayoutMutationVersion++
 
                 val objectList = bookmarks.map { bookmark ->
                     JSONObject().apply {
@@ -1900,20 +2005,56 @@ fun PdfViewerScreen(
                 }
                 val currentJson = JSONArray(objectList).toString()
 
-                val cleanedAnnotations = allAnnotations.filterKeys { it != currentPage }
-
-                allAnnotations = cleanedAnnotations
-
-                Timber.tag("RichTextMigration").d("DELETE: Wiping text and structural breaks for page $currentPage")
-                richTextController?.deleteTextOnPage(currentPage)
-
-                val result = viewModel.removePage(
-                    currentBookId!!, virtualPages, currentPage, cleanedAnnotations, currentJson
-                )
+                val result = withContext(NonCancellable) {
+                    val savedResult = viewModel.removePage(
+                        activeBookId, layoutBeforeDelete, currentPage, allAnnotations, currentJson
+                    )
+                    richTextController?.remapPagesForLayoutChange(
+                        currentLayout = layoutBeforeDelete,
+                        updatedLayout = savedResult.layout
+                    )
+                    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                        "ui.delete.saved bookId=$activeBookId removeIndex=$currentPage " +
+                            "result=${savedResult.layout.pdfLayoutDebugSummary()}"
+                    )
+                    savedResult
+                }
                 Timber.tag("RichTextMigration").i("DELETE: Layout update complete. New virtualPages size: ${result.layout.size}")
 
+                val shiftedBoxes = remapPdfTextBoxesForLayoutChange(
+                    currentLayout = layoutBeforeDelete,
+                    updatedLayout = result.layout,
+                    textBoxes = textBoxes
+                )
+                textBoxes.clear()
+                textBoxes.addAll(shiftedBoxes)
+                val shiftedHighlights = remapPdfUserHighlightsForLayoutChange(
+                    currentLayout = layoutBeforeDelete,
+                    updatedLayout = result.layout,
+                    highlights = userHighlights
+                )
+                userHighlights.clear()
+                userHighlights.addAll(shiftedHighlights)
                 virtualPages = result.layout
                 allAnnotations = result.annotations
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.delete.applied bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
+                        "virtual=${virtualPages.pdfLayoutDebugSummary()}"
+                )
+                val remappedUndoStack = remapPdfHistoryActionsForLayoutChange(
+                    currentLayout = layoutBeforeDelete,
+                    updatedLayout = result.layout,
+                    actions = undoStack
+                )
+                undoStack.clear()
+                undoStack.addAll(remappedUndoStack)
+                val remappedRedoStack = remapPdfHistoryActionsForLayoutChange(
+                    currentLayout = layoutBeforeDelete,
+                    updatedLayout = result.layout,
+                    actions = redoStack
+                )
+                redoStack.clear()
+                redoStack.addAll(remappedRedoStack)
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
                 onBookmarksChanged(result.bookmarksJson)
 
@@ -1927,6 +2068,10 @@ fun PdfViewerScreen(
                         verticalReaderState.scrollToPage(newMax)
                     }
                 }
+            } else {
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                    "ui.delete.invalidIndex bookId=$activeBookId removeIndex=$currentPage before=${layoutBeforeDelete.pdfLayoutDebugSummary()}"
+                )
             }
         }
     }
@@ -2010,8 +2155,24 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(highestRequiredTextPageIndex, virtualPages.size, allAnnotations) {
-        if (richTextController == null || !isDocumentReady) return@LaunchedEffect
+    LaunchedEffect(highestRequiredTextPageIndex, virtualPages.size, allAnnotations, loadedPageLayoutBookId) {
+        val activeBookId = currentBookId
+        if (
+            richTextController == null ||
+            !canManagePdfVirtualPages(
+                isDocumentReady = isDocumentReady,
+                currentBookId = activeBookId,
+                loadedPageLayoutBookId = loadedPageLayoutBookId,
+                virtualPageCount = virtualPages.size
+            )
+        ) {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).d(
+                "ui.autoPage.skip bookId=$activeBookId hasRichController=${richTextController != null} " +
+                    "isReady=$isDocumentReady loadedLayoutBookId=$loadedPageLayoutBookId " +
+                    "virtualCount=${virtualPages.size} highestRequired=$highestRequiredTextPageIndex"
+            )
+            return@LaunchedEffect
+        }
 
         delay(500)
 
@@ -2021,6 +2182,10 @@ fun PdfViewerScreen(
         // Expansion Logic
         if (requiredPages > virtualPages.size) {
             Timber.tag("RichTextFlow").i("Text overflow detected. Required pages: $requiredPages, current: ${virtualPages.size}. Adding page.")
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.autoPage.expand.start bookId=$activeBookId requiredPages=$requiredPages " +
+                    "current=${virtualPages.pdfLayoutDebugSummary()}"
+            )
 
             val lastPage = virtualPages.lastOrNull()
             val (refWidth, refHeight) = when(lastPage) {
@@ -2046,7 +2211,7 @@ fun PdfViewerScreen(
             val currentJson = JSONArray(objectList).toString()
 
             val result = viewModel.addPage(
-                bookId = currentBookId!!,
+                bookId = activeBookId!!,
                 currentLayout = virtualPages,
                 insertIndex = virtualPages.size,
                 currentAnnotations = allAnnotations,
@@ -2055,11 +2220,16 @@ fun PdfViewerScreen(
                 referenceHeight = refHeight,
                 wasManuallyAdded = false // Auto-added page
             )
+            pageLayoutMutationVersion++
 
             virtualPages = result.layout
             allAnnotations = result.annotations
             bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
             onBookmarksChanged(result.bookmarksJson)
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.autoPage.expand.done bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
+                    "result=${virtualPages.pdfLayoutDebugSummary()}"
+            )
         }
         // Contraction Logic
         else {
@@ -2077,6 +2247,10 @@ fun PdfViewerScreen(
                 userHighlights.none { it.pageIndex == currentLastIndex }
             ) {
                 Timber.tag("RichTextFlow").i("Auto-pruning empty page at index $currentLastIndex.")
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.autoPage.prune.start bookId=$activeBookId removeIndex=$currentLastIndex " +
+                        "highestRequired=$highestRequiredTextPageIndex before=${virtualPages.pdfLayoutDebugSummary()}"
+                )
                 pageRemoved = true
 
                 val objectList = bookmarks.map {
@@ -2089,13 +2263,18 @@ fun PdfViewerScreen(
                 val currentJson = JSONArray(objectList).toString()
 
                 val result = viewModel.removePage(
-                    currentBookId!!, virtualPages, currentLastIndex, allAnnotations, currentJson
+                    activeBookId!!, virtualPages, currentLastIndex, allAnnotations, currentJson
                 )
+                pageLayoutMutationVersion++
 
                 virtualPages = result.layout
                 allAnnotations = result.annotations
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
                 onBookmarksChanged(result.bookmarksJson)
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.autoPage.prune.done bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
+                        "result=${virtualPages.pdfLayoutDebugSummary()}"
+                )
 
                 currentLastIndex--
                 lastPage = virtualPages.getOrNull(currentLastIndex)
@@ -2156,10 +2335,33 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(isDocumentReady, currentBookId) {
-        if (isDocumentReady && currentBookId != null && totalPages > 0) {
-            val layout = viewModel.loadPageLayout(currentBookId!!, totalPages)
+    LaunchedEffect(isDocumentReady, currentBookId, totalPages) {
+        val loadingBookId = currentBookId
+        if (isDocumentReady && loadingBookId != null && totalPages > 0) {
+            val loadMutationVersion = pageLayoutMutationVersion
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.layoutLoad.start bookId=$loadingBookId totalPdfPages=$totalPages " +
+                    "mutationAtStart=$loadMutationVersion currentMutation=$pageLayoutMutationVersion " +
+                    "loadedLayoutBookId=$loadedPageLayoutBookId current=${virtualPages.pdfLayoutDebugSummary()}"
+            )
+            val layout = viewModel.loadPageLayout(loadingBookId, totalPages)
+            if (currentBookId != loadingBookId || loadMutationVersion != pageLayoutMutationVersion) {
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                    "ui.layoutLoad.stale bookId=$loadingBookId currentBookId=$currentBookId " +
+                        "mutationAtStart=$loadMutationVersion currentMutation=$pageLayoutMutationVersion " +
+                        "loaded=${layout.pdfLayoutDebugSummary()}"
+                )
+                Timber.tag("RichTextMigration").w(
+                    "Skipping stale page layout load for $loadingBookId; mutation version changed."
+                )
+                return@LaunchedEffect
+            }
             virtualPages = layout
+            loadedPageLayoutBookId = loadingBookId
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.layoutLoad.applied bookId=$loadingBookId loadedLayoutBookId=$loadedPageLayoutBookId " +
+                    "mutation=$pageLayoutMutationVersion layout=${layout.pdfLayoutDebugSummary()}"
+            )
 
             if (initialPage != null && initialPage >= totalPages && initialPage < layout.size) {
                 Timber.d("Restoring position to added page: $initialPage")
@@ -2169,6 +2371,11 @@ fun PdfViewerScreen(
                     verticalReaderState.scrollToPage(initialPage)
                 }
             }
+        } else {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).d(
+                "ui.layoutLoad.skip isReady=$isDocumentReady bookId=$loadingBookId totalPdfPages=$totalPages " +
+                    "loadedLayoutBookId=$loadedPageLayoutBookId current=${virtualPages.pdfLayoutDebugSummary()}"
+            )
         }
     }
 
@@ -2325,19 +2532,31 @@ fun PdfViewerScreen(
 
     LaunchedEffect(currentBookId) {
         val loadingBookId = currentBookId
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "ui.sidecarLoad.start bookId=$loadingBookId previousLoadedLayoutBookId=$loadedPageLayoutBookId " +
+                "previousVirtual=${virtualPages.pdfLayoutDebugSummary()}"
+        )
 
         areAnnotationsLoaded = false
         loadedSidecarBookId = null
         allAnnotations = emptyMap()
         textBoxes.clear()
         userHighlights.clear()
+        virtualPages = emptyList()
+        loadedPageLayoutBookId = null
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "ui.sidecarLoad.reset bookId=$loadingBookId virtualCleared=true loadedLayoutBookId=$loadedPageLayoutBookId"
+        )
         selectedTextBoxId = null
         undoStack.clear()
         redoStack.clear()
         erasedAnnotationsFromStroke.clear()
         drawingState.onDrawCancel()
 
-        if (loadingBookId == null) return@LaunchedEffect
+        if (loadingBookId == null) {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i("ui.sidecarLoad.noBook")
+            return@LaunchedEffect
+        }
 
         val loaded = annotationRepository.loadAnnotations(loadingBookId)
         val loadedBoxes = textBoxRepository.loadTextBoxes(loadingBookId)
@@ -2350,6 +2569,10 @@ fun PdfViewerScreen(
         userHighlights.addAll(loadedHighlights)
         loadedSidecarBookId = loadingBookId
         areAnnotationsLoaded = true
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "ui.sidecarLoad.done bookId=$loadingBookId annotationPages=${loaded.keys.sorted()} " +
+                "textBoxes=${loadedBoxes.size} highlights=${loadedHighlights.size}"
+        )
     }
 
     var isRebuildingSyncedHighlightBounds by remember(currentBookId) { mutableStateOf(false) }
@@ -3258,6 +3481,11 @@ fun PdfViewerScreen(
 
     LaunchedEffect(effectivePdfUri, pdfiumCore, documentPassword) {
         Timber.tag("PdfTabSync").i("UI: LaunchedEffect triggered by URI change: $effectivePdfUri")
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "ui.open.start uri=$effectivePdfUri scheme=${effectivePdfUri.scheme} " +
+                "selectedBookId=${uiState.selectedBookId} previousBookId=$currentBookId " +
+                "documentPasswordSet=${documentPassword != null}"
+        )
 
         Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: ${uiState.activeTabBookId}, isLoading: $isLoadingDocument")
 
@@ -3273,6 +3501,11 @@ fun PdfViewerScreen(
         allAnnotations = emptyMap()
         textBoxes.clear()
         userHighlights.clear()
+        virtualPages = emptyList()
+        loadedPageLayoutBookId = null
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "ui.open.reset uri=$effectivePdfUri virtualCleared=true loadedLayoutBookId=$loadedPageLayoutBookId"
+        )
         selectedTextBoxId = null
         undoStack.clear()
         redoStack.clear()
@@ -3286,6 +3519,9 @@ fun PdfViewerScreen(
 
         val fastId = getFastFileId(context, effectivePdfUri)
         val selectedId = uiState.selectedBookId
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "ui.open.ids uri=$effectivePdfUri fastId=$fastId selectedId=$selectedId activeTabBookId=${uiState.activeTabBookId}"
+        )
         val shouldPreserveCurrentTtsSession =
             uiState.isOpeningFromTtsNotification ||
                 (
@@ -3300,14 +3536,32 @@ fun PdfViewerScreen(
 
         if (selectedId != null && selectedId != fastId) {
             Timber.tag("FolderAnnotationSync").i("Detected ID mismatch. Legacy: $fastId, Selected: $selectedId. Initiating migration.")
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.open.migrateFastToSelected legacyId=$fastId selectedId=$selectedId"
+            )
             viewModel.checkAndMigrateLegacyBookId(fastId, selectedId)
             currentBookId = selectedId
         } else {
             currentBookId = fastId
         }
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+            "ui.open.activeId uri=$effectivePdfUri currentBookId=$currentBookId"
+        )
 
-        val cachedItem = documentCache.get(currentBookId!!)
+        val activeBookIdForLoad = currentBookId!!
+        val rawUriBookId = effectivePdfUri.toString()
+        if (rawUriBookId != activeBookIdForLoad) {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.open.migrateRawUri legacyId=$rawUriBookId activeId=$activeBookIdForLoad"
+            )
+            viewModel.checkAndMigrateLegacyBookId(rawUriBookId, activeBookIdForLoad)
+        }
+
+        val cachedItem = documentCache.get(activeBookIdForLoad)
         if (cachedItem != null) {
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.open.cacheHit bookId=$activeBookIdForLoad cachedTotalPages=${cachedItem.totalPages}"
+            )
             Timber.tag("PdfTabSync").i("UI: Restoring from cache for $currentBookId")
             pdfDocument = cachedItem.doc
             pfdState = cachedItem.pfd
@@ -3328,8 +3582,13 @@ fun PdfViewerScreen(
             initialScrollDone = false
             isDocumentReady = true
             isLoadingDocument = false
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                "ui.open.cacheReady bookId=$activeBookIdForLoad totalPdfPages=$totalPages " +
+                    "isReady=$isDocumentReady virtual=${virtualPages.pdfLayoutDebugSummary()}"
+            )
             return@LaunchedEffect
         }
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i("ui.open.cacheMiss bookId=$activeBookIdForLoad")
 
         val mapPageInit = tabStateMap[currentBookId!!]
         val uiPageInit = uiState.initialPageInBook
@@ -3373,6 +3632,10 @@ fun PdfViewerScreen(
                 }
                 pfdState = currentPfdOpened
                 val pagesCount = doc.getPageCount()
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.open.documentLoaded bookId=$currentBookId uri=$effectivePdfUri pagesCount=$pagesCount " +
+                        "docType=$selectedDocumentType"
+                )
 
                 if (pagesCount > 0) {
                     try {
@@ -3385,6 +3648,9 @@ fun PdfViewerScreen(
                 }
 
                 totalPages = pagesCount
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "ui.open.totalPagesSet bookId=$currentBookId totalPdfPages=$totalPages"
+                )
 
                 if (pagesCount > 0) {
                     val cachedRatios = pdfTextRepository.getPageRatios(currentBookId!!)
@@ -3442,6 +3708,11 @@ fun PdfViewerScreen(
                     pageAspectRatios = ratios
                     isDocumentReady = true
                     isLoadingDocument = false
+                    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                        "ui.open.ready bookId=$currentBookId totalPdfPages=$totalPages " +
+                            "isReady=$isDocumentReady virtual=${virtualPages.pdfLayoutDebugSummary()} " +
+                            "loadedLayoutBookId=$loadedPageLayoutBookId"
+                    )
 
                     documentCache.put(
                         currentBookId!!,
@@ -3492,12 +3763,19 @@ fun PdfViewerScreen(
                 } else {
                     isDocumentReady = true
                     isLoadingDocument = false
+                    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).w(
+                        "ui.open.readyZeroPages bookId=$currentBookId totalPdfPages=$totalPages"
+                    )
                 }
 
                 Timber.tag("PdfTabSync").v("UI: Pdfium Document created. Page count: $pagesCount")
             }
         } catch (e: Throwable) {
             if (e is CancellationException || e.javaClass.name.contains("CancellationException")) throw e
+            Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).e(
+                e,
+                "ui.open.failed uri=$effectivePdfUri currentBookId=$currentBookId totalPdfPages=$totalPages"
+            )
             Timber.tag("PdfTabSync").e(e, "UI: Error in load effect for $effectivePdfUri")
             val errorString = e.toString()
             val causeString = e.cause?.toString() ?: ""

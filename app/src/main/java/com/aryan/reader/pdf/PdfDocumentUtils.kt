@@ -158,21 +158,40 @@ internal fun shouldShowPdfAnnotationExportChoice(
 
 internal fun getFastFileId(context: Context, uri: Uri): String {
     var result = uri.toString()
+    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+        "id.fast.start uri=$uri scheme=${uri.scheme}"
+    )
     try {
-        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (uri.scheme == "file") {
+            uri.path?.let {
+                val file = java.io.File(it)
+                result = "${file.name}_${file.length()}"
+                Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                    "id.fast.file uri=$uri path=${file.absolutePath} exists=${file.exists()} " +
+                        "name=${file.name} size=${file.length()} mtime=${file.lastModified()} result=$result"
+                )
+            }
+        } else {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
 
-                val size = if (sizeIndex != -1) cursor.getLong(sizeIndex) else 0L
-                val name = if (nameIndex != -1) cursor.getString(nameIndex) else "unknown"
+                    val size = if (sizeIndex != -1) cursor.getLong(sizeIndex) else 0L
+                    val name = if (nameIndex != -1) cursor.getString(nameIndex) else "unknown"
 
-                result = "${name}_${size}"
+                    result = "${name}_${size}"
+                    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
+                        "id.fast.content uri=$uri name=$name size=$size result=$result"
+                    )
+                }
             }
         }
     } catch (e: Exception) {
+        Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).e(e, "id.fast.failed uri=$uri fallback=$result")
         Timber.e(e, "Failed to generate fast file ID")
     }
+    Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i("id.fast.done uri=$uri result=$result")
     return result
 }
 

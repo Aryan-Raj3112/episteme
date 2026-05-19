@@ -10,6 +10,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.pdf.data.VirtualPage
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -178,6 +179,96 @@ class PdfReaderRichTextTest {
     fun `hasRenderableRichText ignores whitespace and explicit page breaks`() {
         assertFalse(" \n\t${PAGE_BREAK_CHAR}".hasRenderableRichText())
         assertTrue("${PAGE_BREAK_CHAR}\nVisible".hasRenderableRichText())
+    }
+
+    @Test
+    fun `blank page insertion uses one page break when the rich text boundary is already explicit`() {
+        val text = "Page 1${PAGE_BREAK_CHAR}Page 2"
+        val insertionIndex = "Page 1${PAGE_BREAK_CHAR}".length
+
+        assertEquals(1, androidRichTextBlankInsertBreakCount(text, insertionIndex))
+        assertEquals(1, androidRichTextBlankInsertBreakCount("Page 1", "Page 1".length))
+        assertEquals(1, androidRichTextBlankInsertBreakCount("Page 1", 0))
+    }
+
+    @Test
+    fun `blank page insertion uses two page breaks only for measured text boundaries with following content`() {
+        val text = "Page 1Page 2"
+        val insertionIndex = "Page 1".length
+
+        assertEquals(2, androidRichTextBlankInsertBreakCount(text, insertionIndex))
+        assertEquals(
+            insertionIndex,
+            androidRichTextInsertionIndexForPage(
+                insertPageIndex = 1,
+                pageLayouts = listOf(
+                    PageTextLayout(
+                        pageIndex = 0,
+                        visibleText = AnnotatedString("Page 1"),
+                        globalStartIndex = 0,
+                        globalEndIndex = insertionIndex,
+                        pageHeightPx = 1_000f
+                    ),
+                    PageTextLayout(
+                        pageIndex = 1,
+                        visibleText = AnnotatedString("Page 2"),
+                        globalStartIndex = insertionIndex,
+                        globalEndIndex = text.length,
+                        pageHeightPx = 1_000f
+                    )
+                ),
+                textLength = text.length
+            )
+        )
+    }
+
+    @Test
+    fun `rich text remap keeps later text on same pdf page when inserting a blank page`() {
+        val currentLayout = listOf(VirtualPage.PdfPage(0), VirtualPage.PdfPage(1))
+        val updatedLayout = listOf(
+            VirtualPage.PdfPage(0),
+            VirtualPage.BlankPage("blank", 612, 792, wasManuallyAdded = true),
+            VirtualPage.PdfPage(1)
+        )
+        val pageLayouts = listOf(
+            PageTextLayout(
+                pageIndex = 0,
+                visibleText = AnnotatedString("Page 1$PAGE_BREAK_CHAR"),
+                globalStartIndex = 0,
+                globalEndIndex = 7,
+                pageHeightPx = 1_000f
+            ),
+            PageTextLayout(
+                pageIndex = 1,
+                visibleText = AnnotatedString("Page 2"),
+                globalStartIndex = 7,
+                globalEndIndex = 13,
+                pageHeightPx = 1_000f
+            )
+        )
+
+        val remapped = remapAndroidRichTextForLayoutChange(currentLayout, updatedLayout, pageLayouts)
+
+        assertEquals("Page 1$PAGE_BREAK_CHAR$PAGE_BREAK_CHARPage 2", remapped.text)
+    }
+
+    @Test
+    fun `rich text remap drops deleted blank page and shifts later text back`() {
+        val currentLayout = listOf(
+            VirtualPage.PdfPage(0),
+            VirtualPage.BlankPage("blank", 612, 792, wasManuallyAdded = true),
+            VirtualPage.PdfPage(1)
+        )
+        val updatedLayout = listOf(VirtualPage.PdfPage(0), VirtualPage.PdfPage(1))
+        val pageLayouts = listOf(
+            PageTextLayout(0, AnnotatedString("A$PAGE_BREAK_CHAR"), 0, 2, 1_000f),
+            PageTextLayout(1, AnnotatedString("$PAGE_BREAK_CHAR"), 2, 3, 1_000f),
+            PageTextLayout(2, AnnotatedString("B"), 3, 4, 1_000f)
+        )
+
+        val remapped = remapAndroidRichTextForLayoutChange(currentLayout, updatedLayout, pageLayouts)
+
+        assertEquals("A${PAGE_BREAK_CHAR}B", remapped.text)
     }
 
     @Test
