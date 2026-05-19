@@ -272,6 +272,48 @@ private val epubToolbarTools = setOf(
     ReaderTool.SCREEN_ORIENTATION
 )
 
+internal enum class EpubOverflowMenuSection {
+    CUSTOMIZE_TOOLBAR,
+    HIDDEN_TOOLS,
+    VIEW_ORIGINAL_PDF,
+    DELETE_TEXT_VIEW,
+    READING_MODE,
+    BOOKMARK,
+    TAP_TO_TURN,
+    VOLUME_SCROLL,
+    PAGE_TURN_ANIM,
+    KEEP_SCREEN_ON,
+    VISUAL_OPTIONS,
+    AUTO_SCROLL,
+    TTS_SETTINGS
+}
+
+internal fun epubOverflowMenuSections(
+    hiddenTools: Set<String>,
+    hasHiddenToolbarTools: Boolean,
+    hasToggleReflow: Boolean,
+    hasDeleteReflow: Boolean
+): List<EpubOverflowMenuSection> = buildList {
+    add(EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR)
+    if (hasHiddenToolbarTools) add(EpubOverflowMenuSection.HIDDEN_TOOLS)
+    if (hasToggleReflow) add(EpubOverflowMenuSection.VIEW_ORIGINAL_PDF)
+    if (hasDeleteReflow) add(EpubOverflowMenuSection.DELETE_TEXT_VIEW)
+    if (!hiddenTools.contains(ReaderTool.READING_MODE.name)) add(EpubOverflowMenuSection.READING_MODE)
+    if (!hiddenTools.contains(ReaderTool.BOOKMARK.name)) add(EpubOverflowMenuSection.BOOKMARK)
+    if (!hiddenTools.contains(ReaderTool.TAP_TO_TURN.name)) add(EpubOverflowMenuSection.TAP_TO_TURN)
+    if (!hiddenTools.contains(ReaderTool.VOLUME_SCROLL.name)) add(EpubOverflowMenuSection.VOLUME_SCROLL)
+    if (!hiddenTools.contains(ReaderTool.PAGE_TURN_ANIM.name)) add(EpubOverflowMenuSection.PAGE_TURN_ANIM)
+    if (!hiddenTools.contains(ReaderTool.KEEP_SCREEN_ON.name)) add(EpubOverflowMenuSection.KEEP_SCREEN_ON)
+    if (!hiddenTools.contains(ReaderTool.VISUAL_OPTIONS.name)) add(EpubOverflowMenuSection.VISUAL_OPTIONS)
+    if (!hiddenTools.contains(ReaderTool.AUTO_SCROLL.name)) add(EpubOverflowMenuSection.AUTO_SCROLL)
+    if (
+        !hiddenTools.contains(ReaderTool.TTS_SETTINGS.name) ||
+        !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
+    ) {
+        add(EpubOverflowMenuSection.TTS_SETTINGS)
+    }
+}
+
 internal fun defaultReaderHiddenTools(): Set<String> = setOf(
     ReaderTool.SCREEN_ORIENTATION.name,
     ReaderTool.BRIGHTNESS.name
@@ -526,319 +568,315 @@ fun EpubReaderTopBar(
                             }
                         ) {
                             val hiddenToolbarTools = toolOrder.filter { it in epubToolbarTools && hiddenTools.contains(it.name) }
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.title_customize_toolbar)) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    onCustomizeTools()
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
-                                }
-                            )
-                            HorizontalDivider()
-
-                            if (hiddenToolbarTools.isNotEmpty()) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.toolbar_hidden_tools_menu)) },
-                                    onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
-                                    trailingIcon = {
-                                        Icon(
-                                            Icons.Default.ArrowDropDown,
-                                            contentDescription = null,
-                                            modifier = Modifier.rotate(if (showHiddenToolsExpanded) 180f else 0f)
-                                        )
-                                    }
-                                )
-                                if (showHiddenToolsExpanded) {
-                                    hiddenToolbarTools.forEach { tool ->
-                                        HiddenEpubToolMenuItem(
-                                            tool = tool,
-                                            currentRenderMode = currentRenderMode,
-                                            isTtsActive = isTtsActive,
-                                            showMoreMenu = {
-                                                showHiddenToolsExpanded = false
-                                                showMoreMenu = false
-                                            },
-                                            onOpenDictionarySettings = onOpenDictionarySettings,
-                                            onOpenThemeSettings = onOpenThemeSettings,
-                                            onOpenBrightness = onOpenBrightness,
-                                            onOpenSlider = onOpenSlider,
-                                            onOpenDrawer = onOpenDrawer,
-                                            onToggleFormat = onToggleFormat,
-                                            onToggleSearch = onToggleSearch,
-                                            onOpenAiHub = onOpenAiHub,
-                                            onToggleTts = onToggleTts,
-                                            onOpenScreenOrientation = onOpenScreenOrientation
-                                        )
-                                    }
-                                }
-                                HorizontalDivider()
-                            }
-
-                            if (onToggleReflow != null) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_view_original_pdf)) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onToggleReflow()
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.picture_as_pdf),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                )
-                                HorizontalDivider()
-                            }
-
-                            onDeleteReflow?.let {
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_delete_text_view)) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        it()
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.error
-                                        )
-                                    },
-                                    colors = androidx.compose.material3.MenuDefaults.itemColors(
-                                        textColor = MaterialTheme.colorScheme.error
-                                    )
-                                )
-                            }
-
-                            if (!hiddenTools.contains(ReaderTool.READING_MODE.name)) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_change_reading_mode)) },
-                                    onClick = { showReadingModeExpanded = !showReadingModeExpanded },
-                                    trailingIcon = {
-                                        Icon(
-                                            Icons.Default.ArrowDropDown,
-                                            contentDescription = null,
-                                            modifier = Modifier.rotate(if (showReadingModeExpanded) 180f else 0f)
-                                        )
-                                    }
-                                )
-                                if (showReadingModeExpanded) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
-                                        enabled = !isTtsActive,
-                                        onClick = {
-                                            showMoreMenu = false
-                                            onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
-                                        },
-                                        trailingIcon = {
-                                            if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(
-                                                Icons.Default.Check,
-                                                contentDescription = stringResource(R.string.content_desc_selected)
-                                            )
-                                        })
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
-                                        enabled = !isTtsActive,
-                                        onClick = {
-                                            onSetRightToLeftPagination(false)
-                                            showMoreMenu = false
-                                            onChangeRenderMode(RenderMode.PAGINATED)
-                                        },
-                                        trailingIcon = {
-                                            if (currentRenderMode == RenderMode.PAGINATED && !isRightToLeftPagination) {
-                                                Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.content_desc_selected)
-                                                )
-                                            }
-                                        })
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.menu_right_to_left_pagination)) },
-                                        enabled = !isTtsActive,
-                                        onClick = {
-                                            onSetRightToLeftPagination(true)
-                                            showMoreMenu = false
-                                            onChangeRenderMode(RenderMode.PAGINATED)
-                                        },
-                                        trailingIcon = {
-                                            if (currentRenderMode == RenderMode.PAGINATED && isRightToLeftPagination) {
-                                                Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.content_desc_selected)
-                                                )
-                                            }
-                                        })
-                                }
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.BOOKMARK.name)) {
-                                DropdownMenuItem(text = {
-                                    Text(
-                                        if (isBookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(
-                                            R.string.menu_bookmark_this_page
-                                        )
-                                    )
-                                }, onClick = {
-                                    showMoreMenu = false
-                                    onToggleBookmark()
-                                })
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.TAP_TO_TURN.name)) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_tap_to_turn_pages)) },
-                                    enabled = currentRenderMode == RenderMode.PAGINATED,
-                                    onClick = {
-                                        onToggleTapToNavigate(!tapToNavigateEnabled)
-                                        showMoreMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (tapToNavigateEnabled) Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = stringResource(R.string.content_desc_enabled)
-                                        )
-                                    })
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.VOLUME_SCROLL.name)) {
-                                DropdownMenuItem(
-                                    text = {
-                                    Text(
-                                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) stringResource(
-                                            R.string.menu_volume_button_scrolling
-                                        )
-                                        else stringResource(R.string.menu_volume_button_page_turn)
-                                    )
-                                },
-                                    enabled = true,
-                                    onClick = {
-                                        onToggleVolumeScroll(!volumeScrollEnabled)
-                                        showMoreMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (volumeScrollEnabled) Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = stringResource(R.string.content_desc_enabled)
-                                        )
-                                    })
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.PAGE_TURN_ANIM.name)) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_realistic_page_turns)) },
-                                    enabled = currentRenderMode == RenderMode.PAGINATED,
-                                    onClick = {
-                                        onTogglePageTurnAnimation(!isPageTurnAnimationEnabled)
-                                        showMoreMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (isPageTurnAnimationEnabled) Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = stringResource(R.string.content_desc_enabled)
-                                        )
-                                    })
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.KEEP_SCREEN_ON.name)) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_keep_screen_on)) },
-                                    onClick = {
-                                        onToggleKeepScreenOn(!isKeepScreenOn)
-                                        showMoreMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (isKeepScreenOn) Icon(
-                                            Icons.Default.Check,
-                                            contentDescription = stringResource(R.string.content_desc_enabled)
-                                        )
-                                    })
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.VISUAL_OPTIONS.name)) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_visual_options)) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onOpenVisualOptions()
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Visibility,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    })
-                                HorizontalDivider()
-                            }
-                            if (!hiddenTools.contains(ReaderTool.AUTO_SCROLL.name)) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_auto_scroll)) },
-                                    enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
-                                    onClick = {
-                                        showMoreMenu = false
-                                        onStartAutoScroll()
-                                    })
-                                HorizontalDivider()
-                            }
                             val showTtsVoiceSettings = !hiddenTools.contains(ReaderTool.TTS_SETTINGS.name)
                             val showTtsReplacements = !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
-                            if (showTtsVoiceSettings || showTtsReplacements) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.menu_tts_settings)) },
-                                    onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.GraphicEq,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    },
-                                    trailingIcon = {
-                                        Icon(
-                                            Icons.Default.ArrowDropDown,
-                                            contentDescription = null,
-                                            modifier = Modifier.rotate(if (showTtsSettingsExpanded) 180f else 0f)
-                                        )
-                                    }
-                                )
-                                if (showTtsSettingsExpanded) {
-                                    if (showTtsVoiceSettings) {
+                            epubOverflowMenuSections(
+                                hiddenTools = hiddenTools,
+                                hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
+                                hasToggleReflow = onToggleReflow != null,
+                                hasDeleteReflow = onDeleteReflow != null
+                            ).forEachIndexed { index, section ->
+                                if (index > 0) HorizontalDivider()
+                                when (section) {
+                                    EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR -> {
                                         DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
-                                            enabled = !isTtsActive,
+                                            text = { Text(stringResource(R.string.title_customize_toolbar)) },
                                             onClick = {
                                                 showMoreMenu = false
-                                                onOpenTtsSettings()
+                                                onCustomizeTools()
+                                            },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
+                                            }
+                                        )
+                                    }
+                                    EpubOverflowMenuSection.HIDDEN_TOOLS -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.toolbar_hidden_tools_menu)) },
+                                            onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
+                                            trailingIcon = {
+                                                Icon(
+                                                    Icons.Default.ArrowDropDown,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.rotate(if (showHiddenToolsExpanded) 180f else 0f)
+                                                )
+                                            }
+                                        )
+                                        if (showHiddenToolsExpanded) {
+                                            hiddenToolbarTools.forEach { tool ->
+                                                HiddenEpubToolMenuItem(
+                                                    tool = tool,
+                                                    currentRenderMode = currentRenderMode,
+                                                    isTtsActive = isTtsActive,
+                                                    showMoreMenu = {
+                                                        showHiddenToolsExpanded = false
+                                                        showMoreMenu = false
+                                                    },
+                                                    onOpenDictionarySettings = onOpenDictionarySettings,
+                                                    onOpenThemeSettings = onOpenThemeSettings,
+                                                    onOpenBrightness = onOpenBrightness,
+                                                    onOpenSlider = onOpenSlider,
+                                                    onOpenDrawer = onOpenDrawer,
+                                                    onToggleFormat = onToggleFormat,
+                                                    onToggleSearch = onToggleSearch,
+                                                    onOpenAiHub = onOpenAiHub,
+                                                    onToggleTts = onToggleTts,
+                                                    onOpenScreenOrientation = onOpenScreenOrientation
+                                                )
+                                            }
+                                        }
+                                    }
+                                    EpubOverflowMenuSection.VIEW_ORIGINAL_PDF -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_view_original_pdf)) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onToggleReflow?.invoke()
                                             },
                                             leadingIcon = {
                                                 Icon(
-                                                    Icons.Default.GraphicEq,
+                                                    painter = painterResource(id = R.drawable.picture_as_pdf),
                                                     contentDescription = null,
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             }
                                         )
                                     }
-                                    if (showTtsReplacements) {
+                                    EpubOverflowMenuSection.DELETE_TEXT_VIEW -> {
                                         DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
+                                            text = { Text(stringResource(R.string.menu_delete_text_view)) },
                                             onClick = {
                                                 showMoreMenu = false
-                                                onOpenTtsReplacements()
+                                                onDeleteReflow?.invoke()
                                             },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            },
+                                            colors = androidx.compose.material3.MenuDefaults.itemColors(
+                                                textColor = MaterialTheme.colorScheme.error
+                                            )
+                                        )
+                                    }
+                                    EpubOverflowMenuSection.READING_MODE -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_change_reading_mode)) },
+                                            onClick = { showReadingModeExpanded = !showReadingModeExpanded },
+                                            trailingIcon = {
+                                                Icon(
+                                                    Icons.Default.ArrowDropDown,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.rotate(if (showReadingModeExpanded) 180f else 0f)
+                                                )
+                                            }
+                                        )
+                                        if (showReadingModeExpanded) {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
+                                                enabled = !isTtsActive,
+                                                onClick = {
+                                                    showMoreMenu = false
+                                                    onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
+                                                },
+                                                trailingIcon = {
+                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(
+                                                        Icons.Default.Check,
+                                                        contentDescription = stringResource(R.string.content_desc_selected)
+                                                    )
+                                                })
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
+                                                enabled = !isTtsActive,
+                                                onClick = {
+                                                    onSetRightToLeftPagination(false)
+                                                    showMoreMenu = false
+                                                    onChangeRenderMode(RenderMode.PAGINATED)
+                                                },
+                                                trailingIcon = {
+                                                    if (currentRenderMode == RenderMode.PAGINATED && !isRightToLeftPagination) {
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = stringResource(R.string.content_desc_selected)
+                                                        )
+                                                    }
+                                                })
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.menu_right_to_left_pagination)) },
+                                                enabled = !isTtsActive,
+                                                onClick = {
+                                                    onSetRightToLeftPagination(true)
+                                                    showMoreMenu = false
+                                                    onChangeRenderMode(RenderMode.PAGINATED)
+                                                },
+                                                trailingIcon = {
+                                                    if (currentRenderMode == RenderMode.PAGINATED && isRightToLeftPagination) {
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = stringResource(R.string.content_desc_selected)
+                                                        )
+                                                    }
+                                                })
+                                        }
+                                    }
+                                    EpubOverflowMenuSection.BOOKMARK -> {
+                                        DropdownMenuItem(text = {
+                                            Text(
+                                                if (isBookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(
+                                                    R.string.menu_bookmark_this_page
+                                                )
+                                            )
+                                        }, onClick = {
+                                            showMoreMenu = false
+                                            onToggleBookmark()
+                                        })
+                                    }
+                                    EpubOverflowMenuSection.TAP_TO_TURN -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_tap_to_turn_pages)) },
+                                            enabled = currentRenderMode == RenderMode.PAGINATED,
+                                            onClick = {
+                                                onToggleTapToNavigate(!tapToNavigateEnabled)
+                                                showMoreMenu = false
+                                            },
+                                            trailingIcon = {
+                                                if (tapToNavigateEnabled) Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.content_desc_enabled)
+                                                )
+                                            })
+                                    }
+                                    EpubOverflowMenuSection.VOLUME_SCROLL -> {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL) stringResource(
+                                                        R.string.menu_volume_button_scrolling
+                                                    )
+                                                    else stringResource(R.string.menu_volume_button_page_turn)
+                                                )
+                                            },
+                                            enabled = true,
+                                            onClick = {
+                                                onToggleVolumeScroll(!volumeScrollEnabled)
+                                                showMoreMenu = false
+                                            },
+                                            trailingIcon = {
+                                                if (volumeScrollEnabled) Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.content_desc_enabled)
+                                                )
+                                            })
+                                    }
+                                    EpubOverflowMenuSection.PAGE_TURN_ANIM -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_realistic_page_turns)) },
+                                            enabled = currentRenderMode == RenderMode.PAGINATED,
+                                            onClick = {
+                                                onTogglePageTurnAnimation(!isPageTurnAnimationEnabled)
+                                                showMoreMenu = false
+                                            },
+                                            trailingIcon = {
+                                                if (isPageTurnAnimationEnabled) Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.content_desc_enabled)
+                                                )
+                                            })
+                                    }
+                                    EpubOverflowMenuSection.KEEP_SCREEN_ON -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_keep_screen_on)) },
+                                            onClick = {
+                                                onToggleKeepScreenOn(!isKeepScreenOn)
+                                                showMoreMenu = false
+                                            },
+                                            trailingIcon = {
+                                                if (isKeepScreenOn) Icon(
+                                                    Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.content_desc_enabled)
+                                                )
+                                            })
+                                    }
+                                    EpubOverflowMenuSection.VISUAL_OPTIONS -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_visual_options)) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onOpenVisualOptions()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.Visibility,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            })
+                                    }
+                                    EpubOverflowMenuSection.AUTO_SCROLL -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_auto_scroll)) },
+                                            enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onStartAutoScroll()
+                                            })
+                                    }
+                                    EpubOverflowMenuSection.TTS_SETTINGS -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_tts_settings)) },
+                                            onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
                                             leadingIcon = {
                                                 Icon(
                                                     Icons.Default.GraphicEq,
                                                     contentDescription = null,
                                                     modifier = Modifier.size(20.dp)
                                                 )
+                                            },
+                                            trailingIcon = {
+                                                Icon(
+                                                    Icons.Default.ArrowDropDown,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.rotate(if (showTtsSettingsExpanded) 180f else 0f)
+                                                )
                                             }
                                         )
+                                        if (showTtsSettingsExpanded) {
+                                            if (showTtsVoiceSettings) {
+                                                DropdownMenuItem(
+                                                    text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
+                                                    enabled = !isTtsActive,
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        onOpenTtsSettings()
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            Icons.Default.GraphicEq,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                            if (showTtsReplacements) {
+                                                DropdownMenuItem(
+                                                    text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
+                                                    onClick = {
+                                                        showMoreMenu = false
+                                                        onOpenTtsReplacements()
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            Icons.Default.GraphicEq,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
+                                                    }
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

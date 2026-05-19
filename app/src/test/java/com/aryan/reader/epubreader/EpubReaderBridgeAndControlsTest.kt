@@ -250,4 +250,20 @@ class EpubReaderBridgeAndControlsTest {
             defaultItems.single { it.tool == ReaderTool.SLIDER }.section
         )
     }
+
+    @Test
+    fun `epub overflow sections end at auto scroll when tts submenu is hidden`() {
+        val sections = epubOverflowMenuSections(
+            hiddenTools = setOf(
+                ReaderTool.TTS_SETTINGS.name,
+                ReaderTool.TTS_REPLACEMENTS.name
+            ),
+            hasHiddenToolbarTools = false,
+            hasToggleReflow = false,
+            hasDeleteReflow = false
+        )
+
+        assertEquals(EpubOverflowMenuSection.AUTO_SCROLL, sections.last())
+        assertTrue(EpubOverflowMenuSection.TTS_SETTINGS !in sections)
+    }
 }

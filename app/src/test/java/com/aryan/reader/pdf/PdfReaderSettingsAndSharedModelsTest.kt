@@ -2,6 +2,7 @@ package com.aryan.reader.pdf
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.aryan.reader.FileType
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
 import com.aryan.reader.pdf.data.AnnotationToolSettings
 import com.aryan.reader.pdf.data.TextStyleConfig
@@ -199,5 +200,34 @@ class PdfReaderSettingsAndSharedModelsTest {
             PdfToolbarSection.BOTTOM,
             defaultItems.single { it.tool == PdfReaderTool.SLIDER }.section
         )
+    }
+
+    @Test
+    fun `pdf overflow sections end at reflow when all file actions are hidden`() {
+        val sections = pdfOverflowMenuSections(
+            hiddenTools = setOf(
+                PdfReaderTool.SHARE.name,
+                PdfReaderTool.SAVE_COPY.name,
+                PdfReaderTool.PRINT.name
+            ),
+            hasHiddenToolbarTools = false,
+            isPro = false,
+            effectiveFileType = FileType.PDF
+        )
+
+        assertEquals(PdfOverflowMenuSection.REFLOW, sections.last())
+        assertTrue(PdfOverflowMenuSection.FILE_ACTIONS !in sections)
+    }
+
+    @Test
+    fun `pdf overflow sections keep file actions when only print is hidden`() {
+        val sections = pdfOverflowMenuSections(
+            hiddenTools = setOf(PdfReaderTool.PRINT.name),
+            hasHiddenToolbarTools = false,
+            isPro = false,
+            effectiveFileType = FileType.PDF
+        )
+
+        assertEquals(PdfOverflowMenuSection.FILE_ACTIONS, sections.last())
     }
 }
