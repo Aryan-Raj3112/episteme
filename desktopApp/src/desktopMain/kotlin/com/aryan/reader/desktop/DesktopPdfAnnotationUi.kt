@@ -57,6 +57,7 @@ import com.aryan.reader.shared.pdf.withSharedPdfTextStyle
 import com.aryan.reader.shared.ui.SharedHsvColorPickerDialog
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
+import com.aryan.reader.shared.ui.readerString
 
 internal val DesktopPdfAnnotationTools = listOf(
     PdfInkTool.PEN,
@@ -96,17 +97,17 @@ internal fun DesktopPdfAnnotationEditor(
         Column(modifier = Modifier.padding(2.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Selected ${annotation.desktopLabel()}",
+                    readerString("desktop_selected_annotation_format", "Selected %1\$s", annotation.desktopLabel()),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = onClose) {
-                    Text("Close")
+                    Text(readerString("action_close", "Close"))
                 }
             }
             Text(
-                "Page ${annotation.pageIndex + 1}",
+                readerString("pdf_page_short", "Page %1\$d", annotation.pageIndex + 1),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -141,13 +142,13 @@ internal fun DesktopPdfAnnotationEditor(
                 ) {
                     DesktopBottomSheetToolButton(
                         icon = Icons.Default.ContentCopy,
-                        label = "Copy",
+                        label = readerString("action_copy", "Copy"),
                         onClick = onCopy
                     )
                     if (showSearch) {
                         DesktopBottomSheetToolButton(
                             icon = Icons.Default.Search,
-                            label = "Search",
+                            label = readerString("action_search", "Search"),
                             onClick = onSearch
                         )
                     }
@@ -157,7 +158,7 @@ internal fun DesktopPdfAnnotationEditor(
                 SharedStableOutlinedTextField(
                     value = annotation.text,
                     onValueChange = { onUpdate(annotation.copy(text = it)) },
-                    label = { Text("Text note") },
+                    label = { Text(readerString("desktop_text_note", "Text note")) },
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth(),
                     selectionKey = annotation.id
@@ -173,7 +174,7 @@ internal fun DesktopPdfAnnotationEditor(
                 } else {
                     SharedPdfAnnotationDefaults.penPalette
                 }
-                Text("Color", style = MaterialTheme.typography.labelLarge)
+                Text(readerString("desktop_color", "Color"), style = MaterialTheme.typography.labelLarge)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -227,7 +228,7 @@ internal fun DesktopPdfAnnotationEditor(
                 SharedStableOutlinedTextField(
                     value = annotation.note.orEmpty(),
                     onValueChange = { note -> onUpdate(annotation.copy(note = note.takeIf { it.isNotBlank() })) },
-                    label = { Text("Note") },
+                    label = { Text(readerString("label_note", "Note")) },
                     minLines = 3,
                     maxLines = 5,
                     modifier = Modifier.fillMaxWidth(),
@@ -238,7 +239,14 @@ internal fun DesktopPdfAnnotationEditor(
             if (annotation.kind == PdfAnnotationKind.INK) {
                 val strokeRange = annotation.tool.sharedPdfStrokeWidthRange()
                 val strokeValue = annotation.strokeWidth.coerceIn(strokeRange.start, strokeRange.endInclusive)
-                Text("Thickness ${strokeValue.sharedPdfStrokePercent(strokeRange)}", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    readerString(
+                        "desktop_thickness_format",
+                        "Thickness %1\$s",
+                        strokeValue.sharedPdfStrokePercent(strokeRange)
+                    ),
+                    style = MaterialTheme.typography.labelLarge
+                )
                 Slider(
                     value = strokeValue,
                     onValueChange = { onUpdate(annotation.copy(strokeWidth = it.coerceAtLeast(0.0001f))) },
@@ -247,7 +255,7 @@ internal fun DesktopPdfAnnotationEditor(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onDelete) {
-                    Text("Delete")
+                    Text(readerString("action_delete", "Delete"))
                 }
             }
         }
@@ -257,7 +265,7 @@ internal fun DesktopPdfAnnotationEditor(
         val initialColor = Color(highlighterColors[slot]).copy(alpha = 1f)
         SharedHsvColorPickerDialog(
             initialColor = initialColor,
-            title = "Highlight color ${slot + 1}",
+            title = readerString("desktop_highlight_color_format", "Highlight color %1\$d", slot + 1),
             onDismiss = { editingHighlighterSlot = null },
             onSave = { color ->
                 val nextArgb = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
@@ -348,28 +356,35 @@ internal fun DesktopPdfEmbeddedAnnotationPanel(
         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Embedded PDF comment",
+                    readerString("desktop_embedded_pdf_comment", "Embedded PDF comment"),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = onClose) {
-                    Text("Close")
+                    Text(readerString("action_close", "Close"))
                 }
             }
             Text(
-                "Page ${annotation.pageIndex + 1}${annotation.author.takeIf { it.isNotBlank() }?.let { " - $it" }.orEmpty()}",
+                annotation.author.takeIf { it.isNotBlank() }?.let { author ->
+                    readerString(
+                        "desktop_pdf_page_author_format",
+                        "Page %1\$d - %2\$s",
+                        annotation.pageIndex + 1,
+                        author
+                    )
+                } ?: readerString("pdf_page_short", "Page %1\$d", annotation.pageIndex + 1),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
             DesktopPdfEmbeddedComment(
                 author = annotation.author,
-                contents = annotation.contents.ifBlank { "No comment" },
+                contents = annotation.contents,
                 depth = 0
             )
             DesktopPdfEmbeddedReplies(annotation.replies, depth = 1)
             TextButton(onClick = onCopy) {
-                Text("Copy thread")
+                Text(readerString("action_copy_thread", "Copy thread"))
             }
         }
     }
@@ -404,31 +419,47 @@ private fun DesktopPdfEmbeddedComment(
         verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         Text(
-            author.ifBlank { "Unknown" },
+            author.ifBlank { readerString("unknown", "Unknown") },
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold
         )
         Text(
-            contents.ifBlank { "No comment" },
+            contents.ifBlank { readerString("desktop_no_comment", "No comment") },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
 
+@Composable
 internal fun SharedPdfAnnotation.desktopLabel(): String {
     return when (kind) {
-        PdfAnnotationKind.HIGHLIGHT -> "highlight"
-        PdfAnnotationKind.INK -> tool.name.lowercase().replace('_', ' ')
-        PdfAnnotationKind.TEXT -> "text note"
+        PdfAnnotationKind.HIGHLIGHT -> readerString("label_highlight_color", "highlight")
+        PdfAnnotationKind.INK -> tool.desktopLabel()
+        PdfAnnotationKind.TEXT -> readerString("desktop_text_note_lowercase", "text note")
     }
 }
 
+@Composable
 internal fun SharedPdfAnnotation.desktopSheetTitle(): String {
     return when (kind) {
-        PdfAnnotationKind.HIGHLIGHT -> "Highlight"
-        PdfAnnotationKind.INK -> "Annotation"
-        PdfAnnotationKind.TEXT -> "Text note"
+        PdfAnnotationKind.HIGHLIGHT -> readerString("label_highlight_color", "Highlight")
+        PdfAnnotationKind.INK -> readerString("desktop_annotation", "Annotation")
+        PdfAnnotationKind.TEXT -> readerString("desktop_text_note", "Text note")
+    }
+}
+
+@Composable
+private fun PdfInkTool.desktopLabel(): String {
+    return when (this) {
+        PdfInkTool.PEN -> readerString("content_desc_pen", "Pen")
+        PdfInkTool.FOUNTAIN_PEN -> readerString("desktop_fountain_pen", "Fountain pen")
+        PdfInkTool.PENCIL -> readerString("desktop_pencil", "Pencil")
+        PdfInkTool.HIGHLIGHTER -> readerString("content_desc_highlighter", "Highlighter")
+        PdfInkTool.HIGHLIGHTER_ROUND -> readerString("desktop_round_highlighter", "Round highlighter")
+        PdfInkTool.TEXT -> readerString("desktop_text_note", "Text note")
+        PdfInkTool.ERASER -> readerString("content_desc_eraser", "Eraser")
+        PdfInkTool.NONE -> readerString("label_none", "None")
     }
 }
 

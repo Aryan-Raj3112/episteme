@@ -10,6 +10,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -98,11 +99,13 @@ import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
 import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
+import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedOpdsScreen
 import com.aryan.reader.shared.ui.SharedReaderModalOwnerWindowProvider
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.withTtsReplacements
 import dev.datlag.kcef.KCEF
 import kotlinx.coroutines.Dispatchers
@@ -125,9 +128,12 @@ private enum class DesktopFeatureNoticeAction {
 }
 
 private data class DesktopFeatureNotice(
-    val title: String,
-    val message: String,
-    val confirmLabel: String = "OK",
+    val titleKey: String,
+    val titleFallback: String,
+    val messageKey: String,
+    val messageFallback: String,
+    val confirmKey: String = "action_ok",
+    val confirmFallback: String = "OK",
     val action: DesktopFeatureNoticeAction? = null
 )
 
@@ -147,6 +153,10 @@ internal fun EpistemeDesktopApp(
     onReaderFullscreenChange: (Boolean) -> Unit
 ) {
     val desktopBuildProfile = remember { currentDesktopBuildProfile() }
+    val desktopStringResolver = remember { loadDesktopStringResolver() }
+    fun desktopString(name: String, fallback: String, vararg args: Any?): String {
+        return desktopStringResolver.string(name, fallback, *args)
+    }
     val featurePolicy = desktopBuildProfile.featurePolicy
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
@@ -932,41 +942,82 @@ internal fun EpistemeDesktopApp(
 
     fun cloudTtsUnavailableMessage(): String {
         return if (desktopBuildProfile.byokAiAvailable) {
-            "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+            desktopString(
+                "desktop_cloud_tts_needs_gemini_key_desc",
+                "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+            )
         } else if (state.currentUser == null) {
-            "Sign in with Google to use cloud TTS."
+            desktopString("desktop_cloud_tts_sign_in_required_desc", "Sign in with Google to use cloud TTS.")
         } else if (state.credits <= 0) {
-            "Out of credits. Pro and credits can only be purchased from the Android app."
+            desktopString(
+                "desktop_out_of_credits_android_purchase_desc",
+                "Out of credits. Pro and credits can only be purchased from the Android app."
+            )
         } else {
-            "Cloud TTS is not configured for this desktop build."
+            desktopString(
+                "desktop_cloud_tts_not_configured_desc",
+                "Cloud TTS is not configured for this desktop build."
+            )
+        }
+    }
+
+    fun desktopReadScopeLabel(readScope: ReaderTtsReadScope): String {
+        return when (readScope) {
+            ReaderTtsReadScope.PAGE -> desktopString("desktop_page", "Page")
+            ReaderTtsReadScope.CHAPTER -> desktopString("chapter", "Chapter")
+            ReaderTtsReadScope.BOOK -> desktopString("desktop_from_here", "From here")
         }
     }
 
     fun desktopFeatureNoticeForReaderAi(feature: ReaderAiFeature, text: String): DesktopFeatureNotice? {
         if (desktopBuildProfile.byokAiAvailable) return null
         if (!featurePolicy.networkAccess || !desktopCloudConfig.isAiWorkerConfigured) {
-            return desktopFeatureUnavailableNotice("Desktop AI is not configured for this build.")
+            return desktopFeatureUnavailableNotice(
+                messageKey = "desktop_ai_not_configured_desc",
+                messageFallback = "Desktop AI is not configured for this build."
+            )
         }
         if (effectiveAiSettings().hideReaderAiFeatures) {
-            return desktopFeatureUnavailableNotice("Reader AI features are hidden.")
+            return desktopFeatureUnavailableNotice(
+                messageKey = "desktop_reader_ai_hidden_desc",
+                messageFallback = "Reader AI features are hidden."
+            )
         }
         if (feature == ReaderAiFeature.DEFINE && desktopReaderWordCount(text) > 1 && state.currentUser == null) {
-            return desktopSignInRequiredNotice("multi-word smart dictionary")
+            return desktopSignInRequiredNotice(
+                messageKey = "desktop_sign_in_required_multi_word_dictionary_desc",
+                messageFallback = "Sign in with Google to use multi-word smart dictionary on desktop."
+            )
         }
         if (feature == ReaderAiFeature.DEFINE && desktopReaderWordCount(text) > 1 && !state.isProUser) {
-            return desktopProRequiredNotice("Multi-word smart dictionary")
+            return desktopProRequiredNotice(
+                messageKey = "desktop_pro_required_multi_word_dictionary_desc",
+                messageFallback = "Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in."
+            )
         }
         if (feature == ReaderAiFeature.SUMMARIZE && state.currentUser == null) {
-            return desktopSignInRequiredNotice("summaries")
+            return desktopSignInRequiredNotice(
+                messageKey = "desktop_sign_in_required_summaries_desc",
+                messageFallback = "Sign in with Google to use summaries on desktop."
+            )
         }
         if (feature == ReaderAiFeature.SUMMARIZE && !state.isProUser && state.credits <= 0) {
-            return desktopOutOfCreditsNotice("summaries")
+            return desktopOutOfCreditsNotice(
+                messageKey = "desktop_out_of_credits_summaries_desc",
+                messageFallback = "Using summaries needs credits on desktop. Pro and credits can only be purchased from the Android app."
+            )
         }
         if (feature == ReaderAiFeature.RECAP && state.currentUser == null) {
-            return desktopSignInRequiredNotice("recaps")
+            return desktopSignInRequiredNotice(
+                messageKey = "desktop_sign_in_required_recaps_desc",
+                messageFallback = "Sign in with Google to use recaps on desktop."
+            )
         }
         if (feature == ReaderAiFeature.RECAP && state.credits <= 0) {
-            return desktopOutOfCreditsNotice("recaps")
+            return desktopOutOfCreditsNotice(
+                messageKey = "desktop_out_of_credits_recaps_desc",
+                messageFallback = "Using recaps needs credits on desktop. Pro and credits can only be purchased from the Android app."
+            )
         }
         return null
     }
@@ -974,10 +1025,23 @@ internal fun EpistemeDesktopApp(
     fun desktopFeatureNoticeForCloudTts(): DesktopFeatureNotice? {
         if (desktopBuildProfile.byokAiAvailable) return null
         if (!featurePolicy.networkAccess || !desktopCloudConfig.isTtsWorkerConfigured) {
-            return desktopFeatureUnavailableNotice("Cloud TTS is not configured for this desktop build.")
+            return desktopFeatureUnavailableNotice(
+                messageKey = "desktop_cloud_tts_not_configured_desc",
+                messageFallback = "Cloud TTS is not configured for this desktop build."
+            )
         }
-        if (state.currentUser == null) return desktopSignInRequiredNotice("cloud TTS")
-        if (state.credits <= 0) return desktopOutOfCreditsNotice("cloud TTS")
+        if (state.currentUser == null) {
+            return desktopSignInRequiredNotice(
+                messageKey = "desktop_cloud_tts_sign_in_required_desc",
+                messageFallback = "Sign in with Google to use cloud TTS."
+            )
+        }
+        if (state.credits <= 0) {
+            return desktopOutOfCreditsNotice(
+                messageKey = "desktop_out_of_credits_cloud_tts_desc",
+                messageFallback = "Using cloud TTS needs credits on desktop. Pro and credits can only be purchased from the Android app."
+            )
+        }
         return null
     }
 
@@ -1051,7 +1115,13 @@ internal fun EpistemeDesktopApp(
         val chapterTitle = readerHubChapterTitle(content, chapterIndex)
         val bookKey = readerHubBookKey(content)
         if (text.isBlank()) {
-            updateTextReaderWindow(windowId) { it.copy(summaryResult = SummarizationResult(error = "There is no text to summarize.")) }
+            updateTextReaderWindow(windowId) {
+                it.copy(
+                    summaryResult = SummarizationResult(
+                        error = desktopString("desktop_no_text_to_summarize", "There is no text to summarize.")
+                    )
+                )
+            }
             return
         }
         if (!force) {
@@ -1412,7 +1482,10 @@ internal fun EpistemeDesktopApp(
                         content = content.copy(
                             ttsJob = null,
                             extrasState = content.extrasState.copy(
-                                cloudTts = readerCloudTtsStoppedState(content, statusMessage = "Stopped")
+                                cloudTts = readerCloudTtsStoppedState(
+                                    content,
+                                    statusMessage = desktopString("desktop_stopped", "Stopped")
+                                )
                             )
                         )
                     )
@@ -1443,7 +1516,8 @@ internal fun EpistemeDesktopApp(
                             cloudTts = latest.extrasState.cloudTts.copy(
                                 isPaused = false,
                                 isPlaying = true,
-                                statusMessage = latest.extrasState.cloudTts.progress.currentPositionLabel ?: "Reading"
+                                statusMessage = latest.extrasState.cloudTts.progress.currentPositionLabel
+                                    ?: desktopString("label_reading", "Reading")
                             )
                         )
                     )
@@ -1458,7 +1532,7 @@ internal fun EpistemeDesktopApp(
                             cloudTts = latest.extrasState.cloudTts.copy(
                                 isPlaying = false,
                                 isPaused = true,
-                                statusMessage = "Paused"
+                                statusMessage = desktopString("desktop_paused", "Paused")
                             )
                         )
                     )
@@ -1474,7 +1548,7 @@ internal fun EpistemeDesktopApp(
             latest.copy(
                 extrasState = latest.extrasState.copy(
                     cloudTts = latest.extrasState.cloudTts.copy(
-                        statusMessage = "Voice cache cleared",
+                        statusMessage = desktopString("desktop_voice_cache_cleared", "Voice cache cleared"),
                         cacheSummary = textReaderTtsCacheSummary(latest)
                     )
                 )
@@ -1506,7 +1580,7 @@ internal fun EpistemeDesktopApp(
                 latest.copy(
                     extrasState = latest.extrasState.copy(
                         cloudTts = latest.extrasState.cloudTts.copy(
-                            errorMessage = "There is no text here to read.",
+                            errorMessage = desktopString("desktop_no_text_here_to_read", "There is no text here to read."),
                             cacheSummary = textReaderTtsCacheSummary(latest)
                         )
                     )
@@ -1538,7 +1612,10 @@ internal fun EpistemeDesktopApp(
                     content = textContent.copy(
                         ttsJob = null,
                         extrasState = textContent.extrasState.copy(
-                            cloudTts = readerCloudTtsStoppedState(textContent, statusMessage = "Stopped")
+                            cloudTts = readerCloudTtsStoppedState(
+                                textContent,
+                                statusMessage = desktopString("desktop_stopped", "Stopped")
+                            )
                         )
                     )
                 )
@@ -1559,7 +1636,11 @@ internal fun EpistemeDesktopApp(
                     cloudTts = ReaderCloudTtsState(
                         isAvailable = true,
                         isLoading = true,
-                        statusMessage = "Preparing ${readScope.label.lowercase()}",
+                        statusMessage = desktopString(
+                            "desktop_preparing_scope_format",
+                            "Preparing %1\$s",
+                            desktopReadScopeLabel(readScope)
+                        ),
                         progress = initialProgress,
                         cacheSummary = textReaderTtsCacheSummary(latest)
                     )
@@ -1591,7 +1672,8 @@ internal fun EpistemeDesktopApp(
                                 cloudTts = ReaderCloudTtsState(
                                     isAvailable = true,
                                     isPlaying = true,
-                                    statusMessage = progress.currentPositionLabel ?: "Reading",
+                                    statusMessage = progress.currentPositionLabel
+                                        ?: desktopString("label_reading", "Reading"),
                                     progress = progress,
                                     cacheSummary = textReaderTtsCacheSummary(current)
                                 )
@@ -1613,7 +1695,10 @@ internal fun EpistemeDesktopApp(
                         latest.copy(
                             ttsJob = null,
                             extrasState = latest.extrasState.copy(
-                                cloudTts = readerCloudTtsStoppedState(latest, statusMessage = "Stopped")
+                                cloudTts = readerCloudTtsStoppedState(
+                                    latest,
+                                    statusMessage = desktopString("desktop_stopped", "Stopped")
+                                )
                             )
                         )
                     } else {
@@ -1623,7 +1708,8 @@ internal fun EpistemeDesktopApp(
                             extrasState = latest.extrasState.copy(
                                 cloudTts = readerCloudTtsStoppedState(
                                     latest,
-                                    errorMessage = error.message ?: "Cloud TTS failed."
+                                    errorMessage = error.message
+                                        ?: desktopString("desktop_cloud_tts_failed", "Cloud TTS failed.")
                                 )
                             )
                         )
@@ -1635,7 +1721,10 @@ internal fun EpistemeDesktopApp(
                     latest.copy(
                         ttsJob = null,
                         extrasState = latest.extrasState.copy(
-                            cloudTts = readerCloudTtsStoppedState(latest, statusMessage = "Finished")
+                            cloudTts = readerCloudTtsStoppedState(
+                                latest,
+                                statusMessage = desktopString("desktop_finished", "Finished")
+                            )
                         )
                     )
                 }
@@ -1664,7 +1753,10 @@ internal fun EpistemeDesktopApp(
                 latest.copy(
                     extrasState = latest.extrasState.copy(
                         cloudTts = latest.extrasState.cloudTts.copy(
-                            errorMessage = "There is no text on this page to read.",
+                            errorMessage = desktopString(
+                                "desktop_no_text_on_page_to_read",
+                                "There is no text on this page to read."
+                            ),
                             cacheSummary = textReaderTtsCacheSummary(latest)
                         )
                     )
@@ -1702,7 +1794,7 @@ internal fun EpistemeDesktopApp(
                 text = normalizedText,
                 pageIndex = content.session.reader.currentPageIndex,
                 chapterIndex = 0,
-                chapterTitle = "Selection"
+                chapterTitle = desktopString("desktop_selection", "Selection")
             )
         }
         startReaderCloudTts(windowId, ReaderTtsReadScope.PAGE, selectionChunks)
@@ -2717,13 +2809,14 @@ internal fun EpistemeDesktopApp(
         }
     }
 
-    SharedAppTheme(
-        appThemeMode = state.appThemeMode,
-        appContrastOption = state.appContrastOption,
-        appTextDimFactorLight = state.appTextDimFactorLight,
-        appTextDimFactorDark = state.appTextDimFactorDark,
-        appSeedColor = state.appSeedColor
-    ) {
+    CompositionLocalProvider(LocalSharedStringResolver provides desktopStringResolver) {
+        SharedAppTheme(
+            appThemeMode = state.appThemeMode,
+            appContrastOption = state.appContrastOption,
+            appTextDimFactorLight = state.appTextDimFactorLight,
+            appTextDimFactorDark = state.appTextDimFactorDark,
+            appSeedColor = state.appSeedColor
+        ) {
         EpistemeDesktopWindowChromeEffect(
             window = window,
             captionColor = MaterialTheme.colorScheme.surface,
@@ -3055,7 +3148,7 @@ internal fun EpistemeDesktopApp(
                 )
                 Window(
                     onCloseRequest = { closeReaderWindow(readerWindow.id) },
-                    title = "${readerWindow.title} - ${readerWindowDefaults.title}",
+                    title = desktopString("desktop_label_pair_format", "%1\$s - %2\$s", readerWindow.title, readerWindowDefaults.title),
                     state = windowState,
                     icon = painterResource(readerWindowDefaults.iconResourcePath)
                 ) {
@@ -3339,7 +3432,9 @@ internal fun EpistemeDesktopApp(
                                     if (content.showAiHub) {
                                         DesktopAiHubSheet(
                                             bookKey = readerHubBookKey(content),
-                                            bookTitle = content.session.reader.book.title.ifBlank { "Untitled" },
+                                            bookTitle = content.session.reader.book.title.ifBlank {
+                                                desktopString("desktop_untitled", "Untitled")
+                                            },
                                             itemIndex = readerHubChapterIndex(content),
                                             itemTitle = readerHubChapterTitle(content),
                                             summaryCacheStore = desktopSummaryCacheStore,
@@ -3375,8 +3470,8 @@ internal fun EpistemeDesktopApp(
         desktopFeatureNotice?.let { notice ->
             AlertDialog(
                 onDismissRequest = { desktopFeatureNotice = null },
-                title = { Text(notice.title) },
-                text = { Text(notice.message) },
+                title = { Text(readerString(notice.titleKey, notice.titleFallback)) },
+                text = { Text(readerString(notice.messageKey, notice.messageFallback)) },
                 confirmButton = {
                     TextButton(
                         onClick = {
@@ -3388,13 +3483,13 @@ internal fun EpistemeDesktopApp(
                             }
                         }
                     ) {
-                        Text(notice.confirmLabel)
+                        Text(readerString(notice.confirmKey, notice.confirmFallback))
                     }
                 },
                 dismissButton = if (notice.action != null) {
                     {
                         TextButton(onClick = { desktopFeatureNotice = null }) {
-                            Text("Not now")
+                            Text(readerString("action_not_now", "Not now"))
                         }
                     }
                 } else {
@@ -3433,9 +3528,12 @@ internal fun EpistemeDesktopApp(
 
         if (showClearBookCacheDialog) {
             SharedConfirmDialog(
-                title = "Clear book cache",
-                body = "Delete generated desktop book and EPUB pagination cache files? They will be recreated the next time books are opened.",
-                confirmLabel = "Clear",
+                title = readerString("options_clear_book_cache", "Clear book cache"),
+                body = readerString(
+                    "desktop_clear_book_cache_desc",
+                    "Delete generated desktop book and EPUB pagination cache files? They will be recreated the next time books are opened."
+                ),
+                confirmLabel = readerString("action_clear", "Clear"),
                 onDismiss = { showClearBookCacheDialog = false },
                 onConfirm = {
                     clearDesktopBookCache()
@@ -3446,10 +3544,10 @@ internal fun EpistemeDesktopApp(
 
         if (showCreateShelfDialog) {
             SharedTextInputDialog(
-                title = "Create shelf",
-                label = "Shelf name",
+                title = readerString("create_new_shelf", "Create shelf"),
+                label = readerString("shelf_name_hint", "Shelf name"),
                 initialValue = "",
-                confirmLabel = "Create",
+                confirmLabel = readerString("action_create", "Create"),
                 onDismiss = { showCreateShelfDialog = false },
                 onConfirm = { name ->
                     createShelf(name)
@@ -3470,10 +3568,10 @@ internal fun EpistemeDesktopApp(
 
         shelfToRename?.let { shelf ->
             SharedTextInputDialog(
-                title = "Rename shelf",
-                label = "Shelf name",
+                title = readerString("dialog_rename_shelf", "Rename shelf"),
+                label = readerString("shelf_name_hint", "Shelf name"),
                 initialValue = shelf.name,
-                confirmLabel = "Rename",
+                confirmLabel = readerString("action_rename", "Rename"),
                 onDismiss = { shelfToRename = null },
                 onConfirm = { name ->
                     renameShelf(shelf, name)
@@ -3484,9 +3582,9 @@ internal fun EpistemeDesktopApp(
 
         shelfToDelete?.let { shelf ->
             SharedConfirmDialog(
-                title = "Delete shelf",
-                body = "Delete \"${shelf.name}\"? Books stay in your library.",
-                confirmLabel = "Delete",
+                title = readerString("menu_delete_shelf", "Delete shelf"),
+                body = readerString("desktop_delete_shelf_desc", "Delete \"%1\$s\"? Books stay in your library.", shelf.name),
+                confirmLabel = readerString("action_delete", "Delete"),
                 onDismiss = { shelfToDelete = null },
                 onConfirm = {
                     deleteShelf(shelf)
@@ -3497,9 +3595,14 @@ internal fun EpistemeDesktopApp(
 
         folderToRemove?.let { folder ->
             SharedConfirmDialog(
-                title = "Remove folder",
-                body = "Remove \"${folder.name}\" and its ${folder.bookCount} book(s) from the app? Files on disk will not be deleted.",
-                confirmLabel = "Remove",
+                title = readerString("menu_remove_folder", "Remove folder"),
+                body = readerString(
+                    "desktop_remove_folder_desc",
+                    "Remove \"%1\$s\" and its %2\$d book(s) from the app? Files on disk will not be deleted.",
+                    folder.name,
+                    folder.bookCount
+                ),
+                confirmLabel = readerString("action_remove", "Remove"),
                 onDismiss = { folderToRemove = null },
                 onConfirm = {
                     removeFolder(folder)
@@ -3525,10 +3628,10 @@ internal fun EpistemeDesktopApp(
 
         if (showTagSelectionDialog) {
             SharedTextInputDialog(
-                title = "Tag selected books",
-                label = "Tag name",
+                title = readerString("desktop_tag_selected_books", "Tag selected books"),
+                label = readerString("desktop_tag_name", "Tag name"),
                 initialValue = state.allTags.firstOrNull()?.name.orEmpty(),
-                confirmLabel = "Apply",
+                confirmLabel = readerString("action_apply", "Apply"),
                 onDismiss = { showTagSelectionDialog = false },
                 onConfirm = { name ->
                     tagSelectedBooks(name)
@@ -3564,40 +3667,64 @@ internal fun EpistemeDesktopApp(
                 }
             )
         }
+        }
     }
 }
 
-private fun desktopSignInRequiredNotice(featureLabel: String): DesktopFeatureNotice {
+private fun desktopSignInRequiredNotice(
+    messageKey: String,
+    messageFallback: String
+): DesktopFeatureNotice {
     return DesktopFeatureNotice(
-        title = "Sign in required",
-        message = "Sign in with Google to use $featureLabel on desktop.",
-        confirmLabel = "Sign in",
+        titleKey = "sign_in_required",
+        titleFallback = "Sign in required",
+        messageKey = messageKey,
+        messageFallback = messageFallback,
+        confirmKey = "drawer_sign_in",
+        confirmFallback = "Sign in",
         action = DesktopFeatureNoticeAction.SIGN_IN
     )
 }
 
-private fun desktopOutOfCreditsNotice(featureLabel: String): DesktopFeatureNotice {
+private fun desktopOutOfCreditsNotice(
+    messageKey: String,
+    messageFallback: String
+): DesktopFeatureNotice {
     return DesktopFeatureNotice(
-        title = "Out of credits",
-        message = "Using $featureLabel needs credits on desktop. Pro and credits can only be purchased from the Android app.",
-        confirmLabel = "View Pro and credits",
+        titleKey = "dialog_out_of_credits_title",
+        titleFallback = "Out of credits",
+        messageKey = messageKey,
+        messageFallback = messageFallback,
+        confirmKey = "desktop_view_pro_and_credits",
+        confirmFallback = "View Pro and credits",
         action = DesktopFeatureNoticeAction.OPEN_PRO
     )
 }
 
-private fun desktopProRequiredNotice(featureLabel: String): DesktopFeatureNotice {
+private fun desktopProRequiredNotice(
+    messageKey: String,
+    messageFallback: String
+): DesktopFeatureNotice {
     return DesktopFeatureNotice(
-        title = "Pro required",
-        message = "$featureLabel requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.",
-        confirmLabel = "View Pro and credits",
+        titleKey = "desktop_pro_required",
+        titleFallback = "Pro required",
+        messageKey = messageKey,
+        messageFallback = messageFallback,
+        confirmKey = "desktop_view_pro_and_credits",
+        confirmFallback = "View Pro and credits",
         action = DesktopFeatureNoticeAction.OPEN_PRO
     )
 }
 
-private fun desktopFeatureUnavailableNotice(message: String): DesktopFeatureNotice {
+private fun desktopFeatureUnavailableNotice(
+    messageKey: String,
+    messageFallback: String
+): DesktopFeatureNotice {
     return DesktopFeatureNotice(
-        title = "Feature unavailable",
-        message = message
+        titleKey = "desktop_feature_unavailable",
+        titleFallback = "Feature unavailable",
+        messageKey = messageKey,
+        messageFallback = messageFallback
     )
 }
 
@@ -3613,17 +3740,26 @@ private fun desktopFeatureNoticeForError(errorMessage: String?): DesktopFeatureN
             (message.contains("free summar", ignoreCase = true) && message.contains("limit", ignoreCase = true)) ||
             message.contains("needs credits", ignoreCase = true) ||
             message.contains("This action needs credits", ignoreCase = true) ->
-            desktopOutOfCreditsNotice("This feature")
+            desktopOutOfCreditsNotice(
+                messageKey = "desktop_out_of_credits_generic_feature_desc",
+                messageFallback = "Using this feature needs credits on desktop. Pro and credits can only be purchased from the Android app."
+            )
 
         message.contains("Sign in", ignoreCase = true) ||
             message.contains("HTTP 401", ignoreCase = true) ||
             message.contains("status code 401", ignoreCase = true) ||
             message.contains("Authentication required", ignoreCase = true) ->
-            desktopSignInRequiredNotice("this feature")
+            desktopSignInRequiredNotice(
+                messageKey = "desktop_sign_in_required_generic_feature_desc",
+                messageFallback = "Sign in with Google to use this feature on desktop."
+            )
 
         message.contains("requires Pro", ignoreCase = true) ||
             message.contains("REQUIRES_PRO", ignoreCase = true) ->
-            desktopProRequiredNotice("This feature")
+            desktopProRequiredNotice(
+                messageKey = "desktop_pro_required_generic_feature_desc",
+                messageFallback = "This feature requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in."
+            )
 
         else -> null
     }

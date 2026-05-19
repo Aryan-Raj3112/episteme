@@ -76,8 +76,8 @@ fun SharedCustomFontsScreen(
     var showGoogleFontsDialog by remember { mutableStateOf(false) }
 
     SharedScreenScaffold(
-        title = "Custom Fonts",
-        subtitle = "Imported fonts for the reader",
+        title = readerString("custom_fonts", "Custom fonts"),
+        subtitle = readerString("desktop_custom_fonts_desc", "Imported fonts for the reader"),
         modifier = modifier,
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -85,13 +85,13 @@ fun SharedCustomFontsScreen(
                     Button(onClick = { showGoogleFontsDialog = true }) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Google Fonts")
+                        Text(readerString("google_fonts", "Google Fonts"))
                     }
                 }
                 Button(onClick = onImportFont) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Import")
+                    Text(readerString("action_import", "Import"))
                 }
             }
         }
@@ -100,9 +100,9 @@ fun SharedCustomFontsScreen(
         if (activeFonts.isEmpty()) {
             SharedUtilityEmptyState(
                 icon = { Icon(Icons.Default.TextFields, contentDescription = null, modifier = Modifier.size(56.dp)) },
-                title = "No custom fonts",
-                body = "Import TTF, OTF, or WOFF2 files to use them in books.",
-                actionLabel = "Import font",
+                title = readerString("no_custom_fonts", "No custom fonts"),
+                body = readerString("desktop_no_custom_fonts_desc", "Import TTF, OTF, or WOFF2 files to use them in books."),
+                actionLabel = readerString("import_font", "Import font"),
                 onAction = onImportFont,
                 modifier = Modifier.weight(1f)
             )
@@ -135,8 +135,8 @@ fun SharedCustomFontsScreen(
     fontPendingDelete?.let { font ->
         AlertDialog(
             onDismissRequest = { fontPendingDelete = null },
-            title = { Text("Delete font?") },
-            text = { Text("Delete ${font.displayName}? Books using it will fall back to the default font.") },
+            title = { Text(readerString("dialog_delete_font", "Delete font?")) },
+            text = { Text(readerString("desktop_delete_font_desc", "Delete %1\$s? Books using it will fall back to the default font.", font.displayName)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -144,12 +144,12 @@ fun SharedCustomFontsScreen(
                         fontPendingDelete = null
                     }
                 ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { fontPendingDelete = null }) {
-                    Text("Cancel")
+                    Text(readerString("action_cancel", "Cancel"))
                 }
             }
         )
@@ -199,7 +199,7 @@ private fun SharedGoogleFontsDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Browse Google Fonts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(readerString("action_browse_google_fonts", "Browse Google Fonts"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         },
         text = {
         Column(
@@ -210,7 +210,7 @@ private fun SharedGoogleFontsDialog(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search 1900+ fonts...") },
+                placeholder = { Text(readerString("google_fonts_search_placeholder", "Search 1900+ fonts...")) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 singleLine = true,
                 shape = RoundedCornerShape(8.dp)
@@ -224,7 +224,7 @@ private fun SharedGoogleFontsDialog(
                 if (searchQuery.isBlank()) {
                     item {
                         Text(
-                            text = "Popular choices",
+                            text = readerString("google_fonts_popular_choices", "Popular choices"),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -232,7 +232,7 @@ private fun SharedGoogleFontsDialog(
                 } else if (displayList.isEmpty()) {
                     item {
                         Text(
-                            text = "No fonts found matching '$searchQuery'",
+                            text = readerString("desktop_no_fonts_matching", "No fonts found matching '%1\$s'", searchQuery),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(16.dp)
@@ -275,9 +275,9 @@ private fun SharedGoogleFontsDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             when {
-                                isDownloaded -> Icon(Icons.Default.Check, contentDescription = "Already downloaded", tint = MaterialTheme.colorScheme.primary)
+                                isDownloaded -> Icon(Icons.Default.Check, contentDescription = readerString("content_desc_already_downloaded", "Already downloaded"), tint = MaterialTheme.colorScheme.primary)
                                 isDownloading -> CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                else -> Icon(Icons.Default.CloudDownload, contentDescription = "Download")
+                                else -> Icon(Icons.Default.CloudDownload, contentDescription = readerString("action_download", "Download"))
                             }
                         }
                     }
@@ -287,7 +287,7 @@ private fun SharedGoogleFontsDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text(readerString("action_close", "Close"))
             }
         }
     )
@@ -348,7 +348,7 @@ private fun SharedFontListItem(
                     )
                 }
                 IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete font", tint = MaterialTheme.colorScheme.error)
+                    Icon(Icons.Default.Delete, contentDescription = readerString("desktop_delete_font", "Delete font"), tint = MaterialTheme.colorScheme.error)
                 }
             }
             Box(
@@ -358,7 +358,7 @@ private fun SharedFontListItem(
                     .padding(12.dp)
             ) {
                 Text(
-                    text = "Grumpy wizards make toxic brew for the evil queen! 1234567890 ?.,;:",
+                    text = readerString("font_preview_text", "Grumpy wizards make toxic brew for the evil queen! 1234567890 ?.,;:"),
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp),
                     fontFamily = previewFontFamily,
                     color = MaterialTheme.colorScheme.onSurface
@@ -375,24 +375,24 @@ fun SharedHelpFeedbackScreen(
     modifier: Modifier = Modifier
 ) {
     SharedScreenScaffold(
-        title = "Help & Feedback",
-        subtitle = "Bug reports, feature requests, and support",
+        title = readerString("drawer_help_feedback", "Help & Feedback"),
+        subtitle = readerString("desktop_help_feedback_desc", "Bug reports, feature requests, and support"),
         modifier = modifier
     ) {
         SharedUtilityHeader(
             icon = { Icon(Icons.Default.Feedback, contentDescription = null, modifier = Modifier.size(52.dp)) },
-            title = "Get in touch",
-            body = "Report bugs, request features, or contact support directly."
+            title = readerString("get_in_touch", "Get in touch"),
+            body = readerString("desktop_get_in_touch_desc", "Report bugs, request features, or contact support directly.")
         )
         SharedUtilityOptionCard(
-            title = "GitHub Issues",
-            body = "Report bugs, request features, and track development progress.",
+            title = readerString("github_issues", "GitHub Issues"),
+            body = readerString("github_issues_desc", "Report bugs, request features, and track development progress."),
             icon = { Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(28.dp)) },
             onClick = onOpenGitHubIssues
         )
         SharedUtilityOptionCard(
-            title = "Email Support",
-            body = "Contact us directly by email for anything else.",
+            title = readerString("email_support", "Email support"),
+            body = readerString("desktop_email_support_desc", "Contact us directly by email for anything else."),
             icon = { Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(28.dp)) },
             onClick = onEmailSupport
         )
@@ -406,24 +406,24 @@ fun SharedSupportProjectScreen(
     modifier: Modifier = Modifier
 ) {
     SharedScreenScaffold(
-        title = "Support Project",
-        subtitle = "Ways to support Episteme development",
+        title = readerString("drawer_support_project", "Support project"),
+        subtitle = readerString("desktop_support_project_desc", "Ways to support Episteme development"),
         modifier = modifier
     ) {
         SharedUtilityHeader(
             icon = { Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(52.dp)) },
-            title = "Support Episteme",
-            body = "Contributions help keep the reader improving across Android and desktop."
+            title = readerString("desktop_support_episteme", "Support Episteme"),
+            body = readerString("desktop_support_episteme_desc", "Contributions help keep the reader improving across Android and desktop.")
         )
         SharedUtilityOptionCard(
-            title = "GitHub Sponsors",
-            body = "Support development through GitHub Sponsors.",
+            title = readerString("desktop_github_sponsors", "GitHub Sponsors"),
+            body = readerString("desktop_github_sponsors_desc", "Support development through GitHub Sponsors."),
             icon = { Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(28.dp)) },
             onClick = onOpenGitHubSponsors
         )
         SharedUtilityOptionCard(
-            title = "Patreon",
-            body = "Support the project on Patreon.",
+            title = readerString("desktop_patreon", "Patreon"),
+            body = readerString("desktop_patreon_desc", "Support the project on Patreon."),
             icon = { Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(28.dp)) },
             onClick = onOpenPatreon
         )
@@ -439,8 +439,8 @@ fun SharedAboutScreen(
     modifier: Modifier = Modifier
 ) {
     SharedScreenScaffold(
-        title = "About Episteme",
-        subtitle = "Desktop reader",
+        title = readerString("about_title", "About Episteme"),
+        subtitle = readerString("desktop_about_subtitle", "Desktop reader"),
         modifier = modifier
     ) {
         Surface(
@@ -464,7 +464,7 @@ fun SharedAboutScreen(
                     }
                 }
                 Column {
-                    Text("Episteme", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(readerString("app_name", "Episteme"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(versionName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(buildLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -472,16 +472,16 @@ fun SharedAboutScreen(
         }
         if (onOpenSource != null) {
             SharedUtilityOptionCard(
-                title = "Source Code",
-                body = "Browse the project source on GitHub.",
+                title = readerString("desktop_source_code", "Source code"),
+                body = readerString("desktop_source_code_desc", "Browse the project source on GitHub."),
                 icon = { Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(28.dp)) },
                 onClick = onOpenSource
             )
         }
         if (onOpenIssues != null) {
             SharedUtilityOptionCard(
-                title = "Issues",
-                body = "Open the issue tracker for bugs and feature requests.",
+                title = readerString("desktop_issues", "Issues"),
+                body = readerString("desktop_issues_desc", "Open the issue tracker for bugs and feature requests."),
                 icon = { Icon(Icons.Default.Feedback, contentDescription = null, modifier = Modifier.size(28.dp)) },
                 onClick = onOpenIssues
             )
@@ -557,7 +557,7 @@ private fun SharedUtilityOptionCard(
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Open")
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = readerString("action_open", "Open"))
         }
     }
 }

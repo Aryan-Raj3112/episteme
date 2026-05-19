@@ -40,6 +40,7 @@ import com.aryan.reader.shared.AppContrastOption
 import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.ui.SharedAppTheme
+import com.aryan.reader.shared.ui.readerString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -172,7 +173,7 @@ private fun EpistemeDesktopStartupScreen(window: Component?) {
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = "Opening your library",
+                    text = readerString("desktop_opening_your_library", "Opening your library"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -499,10 +500,10 @@ internal fun DesktopWebViewRuntimeIndicator(
     modifier: Modifier = Modifier
 ) {
     val message = when {
-        state.errorMessage != null -> "Embedded webview could not start: ${state.errorMessage}"
-        state.restartRequired -> "Embedded webview installed. Restart Episteme to finish setup."
-        state.downloadProgress >= 0f -> "Preparing bundled embedded webview ${state.downloadProgress.toInt()}%"
-        else -> "Preparing embedded webview..."
+        state.errorMessage != null -> readerString("desktop_webview_start_error", "Embedded webview could not start: %1\$s", state.errorMessage)
+        state.restartRequired -> readerString("desktop_webview_restart_required", "Embedded webview installed. Restart Episteme to finish setup.")
+        state.downloadProgress >= 0f -> readerString("desktop_webview_preparing_progress", "Preparing bundled embedded webview %1\$d%%", state.downloadProgress.toInt())
+        else -> readerString("desktop_webview_preparing", "Preparing embedded webview...")
     }
 
     Box(

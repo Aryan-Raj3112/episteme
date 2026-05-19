@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
+import com.aryan.reader.shared.ui.readerString
 
 @Composable
 internal fun DesktopPdfPasswordDialog(
@@ -33,27 +34,31 @@ internal fun DesktopPdfPasswordDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Password protected PDF") },
+        title = { Text(readerString("desktop_password_protected_pdf", "Password protected PDF")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     if (isError) {
-                        "That password did not open $title. Enter the PDF password and try again."
+                        readerString(
+                            "desktop_pdf_password_retry_desc",
+                            "That password did not open %1\$s. Enter the PDF password and try again.",
+                            title
+                        )
                     } else {
-                        "$title requires a password before it can be opened."
+                        readerString("desktop_pdf_password_required_desc", "%1\$s requires a password before it can be opened.", title)
                     }
                 )
                 SharedStableOutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Password") },
+                    label = { Text(readerString("password", "Password")) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (isError) {
                     Text(
-                        "Password is required or incorrect.",
+                        readerString("desktop_pdf_password_required_or_incorrect", "Password is required or incorrect."),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -65,12 +70,12 @@ internal fun DesktopPdfPasswordDialog(
                 enabled = password.isNotEmpty(),
                 onClick = { onConfirm(password) }
             ) {
-                Text("Open")
+                Text(readerString("action_open", "Open"))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(readerString("action_cancel", "Cancel"))
             }
         }
     )

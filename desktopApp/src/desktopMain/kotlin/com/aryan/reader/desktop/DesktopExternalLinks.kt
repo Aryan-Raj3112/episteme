@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.ui.readerString
 import java.awt.Desktop
 import java.net.URI
 import java.net.URLEncoder
@@ -58,11 +59,11 @@ internal fun DesktopExternalLinkDialog(
         onDismiss()
     }
     DesktopReaderBottomSheet(
-        title = "External link",
+        title = readerString("dialog_external_link_title", "External link"),
         onDismiss = ::dismiss
     ) {
         Text(
-            "You clicked an external link.",
+            readerString("desktop_external_link_desc", "You clicked an external link."),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -85,7 +86,7 @@ internal fun DesktopExternalLinkDialog(
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = ::dismiss) {
-                Text("Cancel")
+                Text(readerString("action_cancel", "Cancel"))
             }
             TextButton(
                 onClick = {
@@ -94,7 +95,7 @@ internal fun DesktopExternalLinkDialog(
                     onDismiss()
                 }
             ) {
-                Text("Copy")
+                Text(readerString("action_copy", "Copy"))
             }
             TextButton(
                 onClick = {
@@ -103,7 +104,7 @@ internal fun DesktopExternalLinkDialog(
                     onDismiss()
                 }
             ) {
-                Text("Open")
+                Text(readerString("action_open", "Open"))
             }
         }
     }

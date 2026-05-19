@@ -11,14 +11,15 @@ import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 
 internal fun desktopEmptyReaderBook(): SharedEpubBook {
+    val noBookOpen = loadDesktopStringResolver().string("desktop_no_book_open", "No book open")
     return SharedEpubBook(
         id = "desktop_empty_reader",
         fileName = "",
-        title = "No book open",
+        title = noBookOpen,
         chapters = listOf(
             SharedEpubChapter(
                 id = "empty",
-                title = "No book open",
+                title = noBookOpen,
                 plainText = ""
             )
         )

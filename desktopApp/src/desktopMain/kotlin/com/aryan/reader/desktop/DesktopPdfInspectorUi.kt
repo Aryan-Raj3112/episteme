@@ -62,6 +62,7 @@ import com.aryan.reader.shared.ui.SharedPdfHighlighterPaletteEditor
 import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
 import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 
 @Composable
@@ -207,7 +208,7 @@ private fun DesktopPdfInspectorHeader(
         modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("PDF tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(readerString("desktop_pdf_tools", "PDF tools"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         ScrollableTabRow(
             selectedTabIndex = selectedTab.ordinal,
             edgePadding = 0.dp,
@@ -219,7 +220,7 @@ private fun DesktopPdfInspectorHeader(
                     onClick = { onTabSelected(tab) },
                     text = {
                         Text(
-                            tab.title,
+                            tab.localizedTitle(),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -297,17 +298,17 @@ private fun ColumnScope.DesktopPdfInspectorContent(
             when (selectedTab) {
                 DesktopPdfInspectorTab.VIEW -> {
                     item {
-                        DesktopPdfInspectorSection("Reading") {
+                        DesktopPdfInspectorSection(readerString("label_reading", "Reading")) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 FilterChip(
                                     selected = displayMode == PdfDisplayMode.PAGINATION,
                                     onClick = { onDisplayModeSelected(PdfDisplayMode.PAGINATION) },
-                                    label = { Text("Page") }
+                                    label = { Text(readerString("desktop_page", "Page")) }
                                 )
                                 FilterChip(
                                     selected = displayMode == PdfDisplayMode.VERTICAL_SCROLL,
                                     onClick = { onDisplayModeSelected(PdfDisplayMode.VERTICAL_SCROLL) },
-                                    label = { Text("Scroll") }
+                                    label = { Text(readerString("desktop_scroll", "Scroll")) }
                                 )
                             }
                             if (displayMode == PdfDisplayMode.PAGINATION) {
@@ -319,7 +320,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                                 pdfReaderSettings.copy(pageSpreadMode = ReaderPageSpreadMode.SINGLE)
                                             )
                                         },
-                                        label = { Text("Single page") }
+                                        label = { Text(readerString("visual_options_pdf_spread_single", "Single page")) }
                                     )
                                     FilterChip(
                                         selected = pdfReaderSettings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE,
@@ -328,13 +329,16 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                                 pdfReaderSettings.copy(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
                                             )
                                         },
-                                        label = { Text("Two pages") }
+                                        label = { Text(readerString("visual_options_pdf_spread_two", "Two pages")) }
                                     )
                                 }
                                 if (pdfReaderSettings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE) {
                                     DesktopPdfVisualOptionSwitch(
-                                        title = "First page alone",
-                                        description = "Starts facing-page spreads after the cover page.",
+                                        title = readerString("visual_options_pdf_first_page_alone", "First page alone"),
+                                        description = readerString(
+                                            "visual_options_pdf_first_page_alone_desc",
+                                            "Starts facing-page spreads after the cover page."
+                                        ),
                                         checked = pdfReaderSettings.pdfFirstPageStandaloneInSpread,
                                         onCheckedChange = { enabled ->
                                             onReaderSettingsChange(
@@ -347,7 +351,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                         }
                     }
                     item {
-                        DesktopPdfInspectorSection("Position") {
+                        DesktopPdfInspectorSection(readerString("visual_options_progress_bar_position", "Position")) {
                             val pageRange = if (displayMode == PdfDisplayMode.PAGINATION) {
                                 PdfSpreadLayout.pageRangeLabel(pageIndex, document.pageCount, pdfReaderSettings)
                             } else {
@@ -355,9 +359,9 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                             }
                             Text(
                                 if ('-' in pageRange) {
-                                    "Pages $pageRange of ${document.pageCount}"
+                                    readerString("desktop_pdf_pages_of_count", "Pages %1\$s of %2\$d", pageRange, document.pageCount)
                                 } else {
-                                    "Page $pageRange of ${document.pageCount}"
+                                    readerString("desktop_pdf_page_of_count", "Page %1\$s of %2\$d", pageRange, document.pageCount)
                                 },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -372,7 +376,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                         }
                     }
                     item {
-                        DesktopPdfInspectorSection("Appearance") {
+                        DesktopPdfInspectorSection(readerString("app_theme_appearance", "Appearance")) {
                             SharedReaderThemeControls(
                                 settings = pdfReaderSettings,
                                 builtInThemes = BuiltInPdfReaderThemes,
@@ -382,13 +386,16 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                             )
                             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                             Text(
-                                "Visual options",
+                                readerString("visual_options_title", "Visual options"),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold
                             )
                             DesktopPdfVisualOptionSwitch(
-                                title = "Remove gap between pages",
-                                description = "Applies to vertical reading mode.",
+                                title = readerString("visual_options_remove_page_gap", "Remove gap between pages"),
+                                description = readerString(
+                                    "desktop_remove_gap_between_pages_desc",
+                                    "Applies to vertical reading mode."
+                                ),
                                 checked = !pdfReaderSettings.pdfVerticalPageGapVisible,
                                 onCheckedChange = { removeGap ->
                                     onReaderSettingsChange(
@@ -397,8 +404,11 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                 }
                             )
                             DesktopPdfVisualOptionSwitch(
-                                title = "Hide page number overlay",
-                                description = "Removes the small page count label from each page.",
+                                title = readerString("visual_options_hide_page_number_overlay", "Hide page number overlay"),
+                                description = readerString(
+                                    "visual_options_hide_page_number_overlay_desc",
+                                    "Removes the small page count label from each page."
+                                ),
                                 checked = !pdfReaderSettings.pdfPageNumberOverlayVisible,
                                 onCheckedChange = { hideOverlay ->
                                     onReaderSettingsChange(
@@ -409,10 +419,10 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                         }
                     }
                     item {
-                        DesktopPdfInspectorSection("Zoom") {
+                        DesktopPdfInspectorSection(readerString("desktop_zoom", "Zoom")) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(onClick = onZoomOut) {
-                                    Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out")
+                                    Icon(Icons.Default.ZoomOut, contentDescription = readerString("desktop_zoom_out", "Zoom out"))
                                 }
                                 Text(
                                     "${(zoomControlScale * 100).toInt()}%",
@@ -420,7 +430,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                     textAlign = TextAlign.Center
                                 )
                                 IconButton(onClick = onZoomIn) {
-                                    Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
+                                    Icon(Icons.Default.ZoomIn, contentDescription = readerString("desktop_zoom_in", "Zoom in"))
                                 }
                             }
                             Slider(
@@ -433,28 +443,28 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                 }
                 DesktopPdfInspectorTab.MARKUP -> {
                     item {
-                        DesktopPdfInspectorSection("Interaction") {
+                        DesktopPdfInspectorSection(readerString("desktop_interaction", "Interaction")) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 FilterChip(
                                     selected = !isTextSelectionMode && selectedTool == PdfInkTool.NONE && !isRichTextMode,
                                     onClick = onSelectPanMode,
-                                    label = { Text("Pan") }
+                                    label = { Text(readerString("desktop_pan", "Pan")) }
                                 )
                                 FilterChip(
                                     selected = isTextSelectionMode,
                                     onClick = onTextSelectionModeToggle,
-                                    label = { Text("Select text") }
+                                    label = { Text(readerString("desktop_select_text", "Select text")) }
                                 )
                                 FilterChip(
                                     selected = isRichTextMode,
                                     onClick = onRichTextModeToggle,
-                                    label = { Text("Document text") }
+                                    label = { Text(readerString("desktop_document_text", "Document text")) }
                                 )
                             }
                         }
                     }
                     item {
-                        DesktopPdfInspectorSection("Annotation tools") {
+                        DesktopPdfInspectorSection(readerString("desktop_annotation_tools", "Annotation tools")) {
                             SharedPdfAnnotationToolDock(
                                 selectedTool = selectedTool,
                                 selectedColor = selectedColor,
@@ -472,7 +482,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                         }
                     }
                     item {
-                        DesktopPdfInspectorSection("Highlighter palette") {
+                        DesktopPdfInspectorSection(readerString("desktop_highlighter_palette", "Highlighter palette")) {
                             SharedPdfHighlighterPaletteEditor(
                                 palette = pdfHighlighterPalette,
                                 onPaletteChange = onHighlighterPaletteChange
@@ -481,7 +491,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                     }
                     if (isRichTextMode || selectedTool == PdfInkTool.TEXT) {
                         item {
-                            DesktopPdfInspectorSection("Text style") {
+                            DesktopPdfInspectorSection(readerString("desktop_text_style", "Text style")) {
                                 SharedPdfTextAnnotationDock(
                                     style = if (isRichTextMode) {
                                         richTextController.currentSharedPdfTextStyleConfig()
@@ -527,5 +537,14 @@ private fun ColumnScope.DesktopPdfInspectorContent(
             listState = listState,
             modifier = Modifier.align(Alignment.CenterEnd)
         )
+    }
+}
+
+@Composable
+private fun DesktopPdfInspectorTab.localizedTitle(): String {
+    return when (this) {
+        DesktopPdfInspectorTab.VIEW -> readerString("desktop_view", "View")
+        DesktopPdfInspectorTab.MARKUP -> readerString("desktop_markup", "Markup")
+        DesktopPdfInspectorTab.ASSIST -> readerString("desktop_assist", "Assist")
     }
 }

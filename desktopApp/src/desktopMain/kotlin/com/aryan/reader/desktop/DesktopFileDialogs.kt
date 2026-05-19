@@ -20,7 +20,7 @@ private val DesktopBookFileDialogPattern = SharedFileCapabilities.all
 internal fun desktopBookFileTypesForDialog(): Set<FileType> = DesktopBookFileTypes
 
 internal fun chooseFiles(): List<ImportedBookFile> {
-    val dialog = FileDialog(null as Frame?, "Import books", FileDialog.LOAD).apply {
+    val dialog = FileDialog(null as Frame?, desktopDialogString("desktop_import_books", "Import books"), FileDialog.LOAD).apply {
         isMultipleMode = true
         isVisible = true
     }
@@ -28,7 +28,7 @@ internal fun chooseFiles(): List<ImportedBookFile> {
 }
 
 internal fun chooseBookFile(): File? {
-    val dialog = FileDialog(null as Frame?, "Open Book", FileDialog.LOAD).apply {
+    val dialog = FileDialog(null as Frame?, desktopDialogString("desktop_open_book", "Open Book"), FileDialog.LOAD).apply {
         file = DesktopBookFileDialogPattern
         isVisible = true
     }
@@ -38,7 +38,7 @@ internal fun chooseBookFile(): File? {
 }
 
 internal fun choosePdfFile(): File? {
-    val dialog = FileDialog(null as Frame?, "Open PDF", FileDialog.LOAD).apply {
+    val dialog = FileDialog(null as Frame?, desktopDialogString("desktop_open_pdf", "Open PDF"), FileDialog.LOAD).apply {
         file = "*.pdf"
         isVisible = true
     }
@@ -48,7 +48,7 @@ internal fun choosePdfFile(): File? {
 }
 
 internal fun chooseFontFile(): File? {
-    val dialog = FileDialog(null as Frame?, "Choose font", FileDialog.LOAD).apply {
+    val dialog = FileDialog(null as Frame?, desktopDialogString("desktop_choose_font", "Choose font"), FileDialog.LOAD).apply {
         file = "*.ttf;*.otf;*.woff2"
         isVisible = true
     }
@@ -58,7 +58,7 @@ internal fun chooseFontFile(): File? {
 }
 
 internal fun chooseReaderTextureFile(): File? {
-    val dialog = FileDialog(null as Frame?, "Choose reader texture", FileDialog.LOAD).apply {
+    val dialog = FileDialog(null as Frame?, desktopDialogString("desktop_choose_reader_texture", "Choose reader texture"), FileDialog.LOAD).apply {
         file = "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp"
         isVisible = true
     }
@@ -68,7 +68,7 @@ internal fun chooseReaderTextureFile(): File? {
 }
 
 internal fun chooseSaveImageFile(defaultFileName: String): File? {
-    val dialog = FileDialog(null as Frame?, "Save image", FileDialog.SAVE).apply {
+    val dialog = FileDialog(null as Frame?, desktopDialogString("desktop_save_image", "Save image"), FileDialog.SAVE).apply {
         file = defaultFileName
         isVisible = true
     }
@@ -79,7 +79,7 @@ internal fun chooseSaveImageFile(defaultFileName: String): File? {
 
 internal fun chooseFolder(): File? {
     val chooser = JFileChooser().apply {
-        dialogTitle = "Import folder"
+        dialogTitle = desktopDialogString("desktop_import_folder", "Import folder")
         fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
         isAcceptAllFileFilterUsed = false
     }
@@ -88,6 +88,10 @@ internal fun chooseFolder(): File? {
     } else {
         null
     }
+}
+
+private fun desktopDialogString(name: String, fallback: String): String {
+    return loadDesktopStringResolver().string(name, fallback)
 }
 
 internal fun ImportedBookFile.desktopFileType(): FileType {

@@ -46,6 +46,7 @@ import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.SharedLibraryScreen
 import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
+import com.aryan.reader.shared.ui.readerString
 import java.io.File
 
 internal fun BookItem.hasEmbeddedMetadataChange(updated: BookItem): Boolean {
@@ -128,7 +129,7 @@ internal fun DesktopReaderOpeningScreen(
         ) {
             CircularProgressIndicator()
             Text(
-                text = "Opening ${opening.title}",
+                text = readerString("desktop_opening_title", "Opening %1\$s", opening.title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center
@@ -304,7 +305,7 @@ internal fun SmartShelfDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create smart shelf") },
+        title = { Text(readerString("desktop_create_smart_shelf", "Create smart shelf")) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -313,7 +314,7 @@ internal fun SmartShelfDialog(
                 SharedStableOutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Shelf name") },
+                    label = { Text(readerString("shelf_name_hint", "Shelf name")) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -321,29 +322,29 @@ internal fun SmartShelfDialog(
                     FilterChip(
                         selected = matchAll,
                         onClick = { matchAll = true },
-                        label = { Text("All") }
+                        label = { Text(readerString("filter_all", "All")) }
                     )
                     FilterChip(
                         selected = !matchAll,
                         onClick = { matchAll = false },
-                        label = { Text("Any") }
+                        label = { Text(readerString("desktop_match_any", "Any")) }
                     )
                     Spacer(Modifier.weight(1f))
                     TextButton(
                         onClick = { rules = rules + DesktopSmartRuleDraft() },
                         enabled = rules.size < 4
                     ) {
-                        Text("Add rule")
+                        Text(readerString("tts_replacements_add_rule", "Add rule"))
                     }
                 }
                 rules.forEachIndexed { index, draft ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             SmartRuleDropdown(
-                                label = "Field",
+                                label = readerString("desktop_field", "Field"),
                                 selected = draft.field,
                                 options = SmartField.entries.toList(),
-                                optionLabel = { it.desktopLabel() },
+                                optionLabel = { it.localizedLabel() },
                                 onSelected = { field ->
                                     rules = rules.updateAt(index) {
                                         val operator = smartOperatorsFor(field).first()
@@ -352,24 +353,24 @@ internal fun SmartShelfDialog(
                                 }
                             )
                             SmartRuleDropdown(
-                                label = "Operator",
+                                label = readerString("desktop_operator", "Operator"),
                                 selected = draft.operator,
                                 options = smartOperatorsFor(draft.field),
-                                optionLabel = { it.desktopLabel() },
+                                optionLabel = { it.localizedLabel() },
                                 onSelected = { operator ->
                                     rules = rules.updateAt(index) { copy(operator = operator) }
                                 }
                             )
                             if (rules.size > 1) {
                                 TextButton(onClick = { rules = rules.filterIndexed { i, _ -> i != index } }) {
-                                    Text("Remove")
+                                    Text(readerString("action_remove", "Remove"))
                                 }
                             }
                         }
                         SharedStableOutlinedTextField(
                             value = draft.value,
                             onValueChange = { value -> rules = rules.updateAt(index) { copy(value = value) } },
-                            label = { Text(draft.field.valueLabel()) },
+                            label = { Text(draft.field.localizedValueLabel()) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             selectionKey = index
@@ -385,12 +386,12 @@ internal fun SmartShelfDialog(
                 },
                 enabled = name.isNotBlank() && validRules.isNotEmpty()
             ) {
-                Text("Create")
+                Text(readerString("action_create", "Create"))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(readerString("action_cancel", "Cancel"))
             }
         }
     )
@@ -401,13 +402,14 @@ private fun <T> SmartRuleDropdown(
     label: String,
     selected: T,
     options: List<T>,
-    optionLabel: (T) -> String,
+    optionLabel: @Composable (T) -> String,
     onSelected: (T) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         TextButton(onClick = { expanded = true }) {
-            Text("$label: ${optionLabel(selected)}")
+            val selectedLabel = optionLabel(selected)
+            Text(readerString("filter_facet", "%1\$s: %2\$s", label, selectedLabel))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
@@ -430,34 +432,37 @@ private fun smartOperatorsFor(field: SmartField): List<SmartOperator> {
     }
 }
 
-private fun SmartField.desktopLabel(): String {
+@Composable
+private fun SmartField.localizedLabel(): String {
     return when (this) {
-        SmartField.TITLE -> "Title"
-        SmartField.AUTHOR -> "Author"
-        SmartField.PROGRESS -> "Progress"
-        SmartField.FILE_TYPE -> "File type"
-        SmartField.FOLDER -> "Folder"
-        SmartField.TAG -> "Tag"
+        SmartField.TITLE -> readerString("label_title", "Title")
+        SmartField.AUTHOR -> readerString("author", "Author")
+        SmartField.PROGRESS -> readerString("desktop_progress", "Progress")
+        SmartField.FILE_TYPE -> readerString("filter_file_type", "File type")
+        SmartField.FOLDER -> readerString("desktop_folder", "Folder")
+        SmartField.TAG -> readerString("content_desc_tag", "Tag")
     }
 }
 
-private fun SmartField.valueLabel(): String {
+@Composable
+private fun SmartField.localizedValueLabel(): String {
     return when (this) {
-        SmartField.PROGRESS -> "Percent"
-        SmartField.FILE_TYPE -> "Type, e.g. PDF"
-        SmartField.FOLDER -> "Folder path"
-        SmartField.TAG -> "Tag name"
-        SmartField.TITLE -> "Title text"
-        SmartField.AUTHOR -> "Author text"
+        SmartField.PROGRESS -> readerString("desktop_percent", "Percent")
+        SmartField.FILE_TYPE -> readerString("desktop_type_example_pdf", "Type, e.g. PDF")
+        SmartField.FOLDER -> readerString("desktop_folder_path", "Folder path")
+        SmartField.TAG -> readerString("desktop_tag_name", "Tag name")
+        SmartField.TITLE -> readerString("desktop_title_text", "Title text")
+        SmartField.AUTHOR -> readerString("desktop_author_text", "Author text")
     }
 }
 
-private fun SmartOperator.desktopLabel(): String {
+@Composable
+private fun SmartOperator.localizedLabel(): String {
     return when (this) {
-        SmartOperator.EQUALS -> "Equals"
-        SmartOperator.CONTAINS -> "Contains"
-        SmartOperator.GREATER_THAN -> "Greater than"
-        SmartOperator.LESS_THAN -> "Less than"
+        SmartOperator.EQUALS -> readerString("desktop_equals", "Equals")
+        SmartOperator.CONTAINS -> readerString("desktop_contains", "Contains")
+        SmartOperator.GREATER_THAN -> readerString("desktop_greater_than", "Greater than")
+        SmartOperator.LESS_THAN -> readerString("desktop_less_than", "Less than")
     }
 }
 

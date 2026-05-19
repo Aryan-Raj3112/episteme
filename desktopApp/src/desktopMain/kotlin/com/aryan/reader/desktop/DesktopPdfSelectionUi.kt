@@ -59,6 +59,7 @@ import com.aryan.reader.shared.ui.SharedHsvColorPickerDialog
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import kotlin.math.roundToInt
 
@@ -203,7 +204,7 @@ internal fun PdfTextSelectionHandles(
         start?.let { position ->
             Icon(
                 imageVector = DesktopPdfSelectionMenuIcons.Teardrop,
-                contentDescription = "Selection start handle",
+                contentDescription = readerString("desktop_selection_start_handle", "Selection start handle"),
                 tint = handleColor.copy(alpha = if (activeHandle == DesktopPdfSelectionHandle.END) 0.72f else 1f),
                 modifier = Modifier
                     .handleOffset(position)
@@ -217,7 +218,7 @@ internal fun PdfTextSelectionHandles(
         end?.let { position ->
             Icon(
                 imageVector = DesktopPdfSelectionMenuIcons.Teardrop,
-                contentDescription = "Selection end handle",
+                contentDescription = readerString("desktop_selection_end_handle", "Selection end handle"),
                 tint = handleColor.copy(alpha = if (activeHandle == DesktopPdfSelectionHandle.START) 0.72f else 1f),
                 modifier = Modifier
                     .handleOffset(position)
@@ -297,11 +298,11 @@ internal fun PdfSelectionMenu(
         mutableStateOf<Int?>(null)
     }
     val actions = buildList {
-        add(PdfSelectionMenuAction("Copy", DesktopPdfSelectionMenuIcons.Copy, onCopy))
-        if (showDefine) add(PdfSelectionMenuAction("Define", DesktopPdfSelectionMenuIcons.Dictionary, onDefine))
-        if (showSpeak) add(PdfSelectionMenuAction("Speak", Icons.AutoMirrored.Filled.VolumeUp, onSpeak))
-        if (showSearch) add(PdfSelectionMenuAction("Search", DesktopPdfSelectionMenuIcons.Search, onSearch))
-        add(PdfSelectionMenuAction("Clear", Icons.Default.Close, onClear, isDestructive = true))
+        add(PdfSelectionMenuAction(readerString("action_copy", "Copy"), DesktopPdfSelectionMenuIcons.Copy, onCopy))
+        if (showDefine) add(PdfSelectionMenuAction(readerString("action_define", "Define"), DesktopPdfSelectionMenuIcons.Dictionary, onDefine))
+        if (showSpeak) add(PdfSelectionMenuAction(readerString("label_speak", "Speak"), Icons.AutoMirrored.Filled.VolumeUp, onSpeak))
+        if (showSearch) add(PdfSelectionMenuAction(readerString("action_search", "Search"), DesktopPdfSelectionMenuIcons.Search, onSearch))
+        add(PdfSelectionMenuAction(readerString("action_clear", "Clear"), Icons.Default.Close, onClear, isDestructive = true))
     }
     val estimatedHeight = PdfSelectionMenuPaletteHeightPx +
         (((actions.size + 2) / 3).coerceAtLeast(1) * PdfSelectionMenuActionRowHeightPx)
@@ -439,7 +440,7 @@ internal fun PdfSelectionMenu(
         val initialColor = Color(paletteColors[slot]).copy(alpha = 1f)
         SharedHsvColorPickerDialog(
             initialColor = initialColor,
-            title = "Highlight color ${slot + 1}",
+            title = readerString("desktop_highlight_color_format", "Highlight color %1\$d", slot + 1),
             onDismiss = { editingHighlighterSlot = null },
             onSave = { color ->
                 onHighlighterPaletteChange(

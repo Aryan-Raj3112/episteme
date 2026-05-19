@@ -180,15 +180,15 @@ fun SharedHomeScreen(
 ) {
     val model = state.toNonReaderHomeLayoutModel()
     NonReaderScreenScaffold(
-        title = "Home",
-        subtitle = "Continue reading and recent books",
+        title = readerString("nav_home", "Home"),
+        subtitle = readerString("desktop_home_subtitle", "Continue reading and recent books"),
         modifier = modifier,
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onOpenSettings) {
                     Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Settings")
+                    Text(readerString("settings", "Settings"))
                 }
                 RecentLimitMenu(
                     currentLimit = state.recentFilesLimit,
@@ -197,12 +197,12 @@ fun SharedHomeScreen(
                 OutlinedButton(onClick = onImportFolder) {
                     Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Add folder")
+                    Text(readerString("fab_add_folder", "Add folder"))
                 }
                 Button(onClick = onImportBooks) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Import files")
+                    Text(readerString("desktop_import_files", "Import files"))
                 }
             }
         }
@@ -236,7 +236,7 @@ fun SharedHomeScreen(
             } else {
                 SharedEmptyState(
                     icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
-                    title = "No recent files",
+                    title = readerString("no_recent_files", "No recent files"),
                     body = "Open books from the library and they will appear here.",
                     actionLabel = "Import files",
                     onAction = onImportBooks,
@@ -277,7 +277,7 @@ fun SharedHomeScreen(
                 if (model.pinnedBooks.isNotEmpty()) {
                     item(key = "pinned") {
                         HomeBookShelf(
-                            title = "Pinned",
+                            title = readerString("pinned", "Pinned"),
                             books = model.pinnedBooks,
                             selectedBookIds = state.selectedBookIds,
                             pinnedBookIds = state.pinnedHomeBookIds,
@@ -292,7 +292,7 @@ fun SharedHomeScreen(
                 if (model.recentBooks.isNotEmpty()) {
                     item(key = "recent") {
                         HomeBookShelf(
-                            title = "Recent",
+                            title = readerString("sort_recent", "Recent"),
                             books = model.recentBooks,
                             selectedBookIds = state.selectedBookIds,
                             pinnedBookIds = state.pinnedHomeBookIds,
@@ -347,8 +347,8 @@ fun SharedLibraryScreen(
     }
 
     NonReaderScreenScaffold(
-        title = "Library",
-        subtitle = "Browse your collection",
+        title = readerString("library_title", "Library"),
+        subtitle = readerString("desktop_library_subtitle", "Browse your collection"),
         showHeader = false,
         modifier = modifier
     ) {
@@ -500,15 +500,15 @@ fun SharedShelvesScreen(
     modifier: Modifier = Modifier
 ) {
     NonReaderScreenScaffold(
-        title = "Shelves",
-        subtitle = "Collections, series, tags, and folders",
+        title = readerString("tab_shelves", "Shelves"),
+        subtitle = readerString("desktop_shelves_subtitle", "Collections, series, tags, and folders"),
         modifier = modifier,
         trailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = onCreateShelf) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Shelf")
+                    Text(readerString("desktop_shelf", "Shelf"))
                 }
             }
         }
@@ -525,7 +525,7 @@ fun SharedShelvesScreen(
             onRenameShelf = onRenameShelf,
             onDeleteShelf = onDeleteShelf,
             onRemoveFolder = onRemoveFolder,
-            emptyTitle = "No shelves yet",
+            emptyTitle = readerString("desktop_no_shelves_yet", "No shelves yet"),
             emptyBody = "Add shelves, tags, or folder metadata to organize your library.",
             modifier = Modifier.weight(1f)
         )
@@ -587,7 +587,7 @@ private fun ContinueReadingCard(
                 modifier = Modifier.size(width = 112.dp, height = 164.dp)
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Continue reading", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(readerString("action_continue_reading", "Continue reading"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 Text(book.cardTitle(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(book.cardAuthor(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 ProgressSection(book.progressPercentage)
@@ -595,7 +595,7 @@ private fun ContinueReadingCard(
                     Button(onClick = onOpenBook) {
                         Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Read")
+                        Text(readerString("action_read", "Read"))
                     }
                     IconButton(onClick = onTogglePinned) {
                         Icon(
@@ -605,10 +605,10 @@ private fun ContinueReadingCard(
                         )
                     }
                     IconButton(onClick = onShowBookInfo) {
-                        Icon(Icons.Default.Info, contentDescription = "Info")
+                        Icon(Icons.Default.Info, contentDescription = readerString("info", "Info"))
                     }
                     IconButton(onClick = onEditBook) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit")
+                        Icon(Icons.Default.Edit, contentDescription = readerString("action_edit", "Edit"))
                     }
                 }
             }
@@ -671,7 +671,7 @@ private fun SelectionToolbar(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("$count selected", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(readerString("items_selected_count", "%1\$d selected", count), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.width(12.dp))
             Row(
                 modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
@@ -682,7 +682,7 @@ private fun SelectionToolbar(
                     TextButton(onClick = info) {
                         Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Info")
+                        Text(readerString("info", "Info"))
                     }
                 }
                 onPin?.let { pin ->
@@ -695,12 +695,12 @@ private fun SelectionToolbar(
                 TextButton(onClick = onTag) {
                     Icon(Icons.Default.Tag, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Tag")
+                    Text(readerString("content_desc_tag", "Tag"))
                 }
                 TextButton(onClick = onAddToShelf) {
                     Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Shelf")
+                    Text(readerString("desktop_shelf", "Shelf"))
                 }
                 onSelectAll?.let { selectAll ->
                     TextButton(onClick = selectAll) {
@@ -710,12 +710,12 @@ private fun SelectionToolbar(
                     }
                 }
                 TextButton(onClick = onClear) {
-                    Text("Clear")
+                    Text(readerString("action_clear", "Clear"))
                 }
                 TextButton(onClick = onRemove) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Remove")
+                    Text(readerString("action_remove", "Remove"))
                 }
             }
         }
@@ -732,10 +732,10 @@ private fun ActiveTabStrip(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Open readers", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(readerString("desktop_open_readers", "Open readers"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onCloseAllTabs) {
-                Text("Close all")
+                Text(readerString("close_all_tabs", "Close all"))
             }
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -765,7 +765,7 @@ private fun ActiveTabStrip(
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(onClick = { onCloseTab(book) }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = "Close reader", modifier = Modifier.size(18.dp))
+                                            Icon(Icons.Default.Close, contentDescription = readerString("desktop_close_reader", "Close reader"), modifier = Modifier.size(18.dp))
                         }
                     }
                 }
@@ -796,7 +796,7 @@ private fun RecentLimitMenu(
                         onRecentLimitChange(limit)
                     },
                     trailingIcon = if (normalizedLimit == limit) {
-                        { Icon(Icons.Default.Check, contentDescription = "Selected") }
+                        { Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) }
                     } else {
                         null
                     }
@@ -826,7 +826,7 @@ private fun LibraryOrganizationSidebar(
         ) {
             item {
                 Text(
-                    "Browse",
+                    readerString("desktop_browse", "Browse"),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
@@ -837,7 +837,7 @@ private fun LibraryOrganizationSidebar(
                 item {
                     LibraryNavItem(
                         icon = tab.icon,
-                        label = tab.label,
+                        label = tab.label(),
                         count = tab.count(organization),
                         selected = selectedTab == tab,
                         onClick = { onTabSelected(tab) }
@@ -865,7 +865,7 @@ private fun LibraryTabStrip(
                 selected = selectedTab == tab,
                 onClick = { onTabSelected(tab) },
                 leadingIcon = { Icon(tab.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                label = { Text("${tab.label} ${tab.count(organization)}") }
+                label = { Text(readerString("desktop_label_count_format", "%1\$s %2\$d", tab.label(), tab.count(organization))) }
             )
         }
     }
@@ -915,7 +915,7 @@ private fun LibraryToolbar(
             value = state.searchQuery,
             onValueChange = { onStateChange(state.reduce(LibraryAction.SearchChanged(it))) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            label = { Text("Search books, authors, or tags") },
+            label = { Text(readerString("library_search_placeholder", "Search books, authors, or tags")) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -928,12 +928,18 @@ private fun LibraryToolbar(
             OutlinedButton(onClick = { onViewModeChange(if (viewMode == BookViewMode.COVERS) BookViewMode.LIST else BookViewMode.COVERS) }) {
                 Icon(if (viewMode == BookViewMode.COVERS) Icons.AutoMirrored.Filled.List else Icons.Default.Book, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (viewMode == BookViewMode.COVERS) "List" else "Covers")
+                Text(
+                    if (viewMode == BookViewMode.COVERS) {
+                        readerString("desktop_list_view", "List")
+                    } else {
+                        readerString("desktop_cover_view", "Covers")
+                    }
+                )
             }
             OutlinedButton(onClick = onToggleFilters) {
                 Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (showFilters) "Hide filters" else "Filters")
+                Text(if (showFilters) readerString("desktop_hide_filters", "Hide filters") else readerString("filter_library", "Filters"))
                 if (state.libraryFilters.isActive) {
                     Spacer(Modifier.width(8.dp))
                     Surface(
@@ -953,17 +959,17 @@ private fun LibraryToolbar(
             OutlinedButton(onClick = onCreateShelf) {
                 Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Shelf")
+                Text(readerString("desktop_shelf", "Shelf"))
             }
             OutlinedButton(onClick = onImportFolder) {
                 Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Add folder")
+                Text(readerString("fab_add_folder", "Add folder"))
             }
             Button(onClick = onImportBooks) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Import files")
+                Text(readerString("desktop_import_files", "Import files"))
             }
         }
     }
@@ -1079,8 +1085,8 @@ private fun LibraryContent(
                         onRenameShelf = onRenameShelf,
                         onDeleteShelf = onDeleteShelf,
                         onRemoveFolder = onRemoveFolder,
-                        emptyTitle = "No shelves yet",
-                        emptyBody = "Manual shelves and series collections will appear here.",
+                        emptyTitle = readerString("desktop_no_shelves_yet", "No shelves yet"),
+                        emptyBody = readerString("desktop_no_shelves_desc", "Manual shelves and series collections will appear here."),
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -1097,8 +1103,8 @@ private fun LibraryContent(
                 onTogglePinned = onTogglePinned,
                 onRenameShelf = onRenameShelf,
                 onDeleteShelf = onDeleteShelf,
-                emptyTitle = "No smart shelves yet",
-                emptyBody = "Create smart shelves to collect books by rules.",
+                emptyTitle = readerString("desktop_no_smart_shelves_yet", "No smart shelves yet"),
+                emptyBody = readerString("desktop_no_smart_shelves_desc", "Create smart shelves to collect books by rules."),
                 modifier = Modifier.weight(1f)
             )
 
@@ -1111,8 +1117,8 @@ private fun LibraryContent(
                 onShowBookInfo = onShowBookInfo,
                 onEditBook = onEditBook,
                 onTogglePinned = onTogglePinned,
-                emptyTitle = "No tags yet",
-                emptyBody = "Tags added to books will appear here.",
+                emptyTitle = readerString("desktop_no_tags_yet", "No tags yet"),
+                emptyBody = readerString("desktop_no_tags_desc", "Tags added to books will appear here."),
                 modifier = Modifier.weight(1f)
             )
 
@@ -1155,8 +1161,8 @@ private fun LibraryContent(
                             onTogglePinned = onTogglePinned,
                             onRemoveFolder = onRemoveFolder,
                             onOpenShelf = { shelf -> onStateChange(state.copy(viewingShelfId = shelf.id)) },
-                            emptyTitle = "No folders yet",
-                            emptyBody = "Add a folder to read files from that folder in place.",
+                            emptyTitle = readerString("desktop_no_folders_yet", "No folders yet"),
+                            emptyBody = readerString("desktop_no_folders_desc", "Add a folder to read files from that folder in place."),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -1181,12 +1187,12 @@ private fun FolderSyncActionRow(
         OutlinedButton(onClick = onSyncFolderMetadata) {
             Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Sync metadata")
+            Text(readerString("desktop_sync_metadata", "Sync metadata"))
         }
         Button(onClick = onScanFolders) {
             Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Full scan")
+            Text(readerString("desktop_full_scan", "Full scan"))
         }
     }
 }
@@ -1204,48 +1210,45 @@ private fun LibraryFilterSummary(
         if (state.searchQuery.isNotBlank()) {
             AssistChip(
                 onClick = { onStateChange(state.reduce(LibraryAction.SearchChanged(""))) },
-                label = { Text("Search: ${state.searchQuery}") },
-                trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear search", modifier = Modifier.size(16.dp)) }
+                label = { Text(readerString("desktop_search_filter_format", "Search: %1\$s", state.searchQuery)) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = readerString("tooltip_clear_search", "Clear search"), modifier = Modifier.size(16.dp)) }
             )
         }
         if (state.libraryFilters.fileTypes.isNotEmpty()) {
             AssistChip(
                 onClick = { onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(fileTypes = emptySet())))) },
                 label = {
-                    Text(
-                        "Types: ${
-                            state.libraryFilters.fileTypes
+                    val fileTypes = state.libraryFilters.fileTypes
                                 .sortedBy { it.ordinal }
                                 .joinToString { SharedFileCapabilities.displayNameFor(it) }
-                        }"
-                    )
+                    Text(readerString("filter_types", "Types: %1\$s", fileTypes))
                 },
-                trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear file types", modifier = Modifier.size(16.dp)) }
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = readerString("desktop_clear_file_types", "Clear file types"), modifier = Modifier.size(16.dp)) }
             )
         }
         if (state.libraryFilters.sourceFolders.isNotEmpty()) {
             AssistChip(
                 onClick = { onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(sourceFolders = emptySet())))) },
-                label = { Text("Sources: ${state.libraryFilters.sourceFolders.size}") },
-                trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear sources", modifier = Modifier.size(16.dp)) }
+                label = { Text(readerString("filter_folders", "Folders: %1\$d", state.libraryFilters.sourceFolders.size)) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = readerString("desktop_clear_sources", "Clear sources"), modifier = Modifier.size(16.dp)) }
             )
         }
         if (state.libraryFilters.readStatus != ReadStatusFilter.ALL) {
             AssistChip(
                 onClick = { onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(readStatus = ReadStatusFilter.ALL)))) },
-                label = { Text("Status: ${state.libraryFilters.readStatus.label}") },
-                trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear status", modifier = Modifier.size(16.dp)) }
+                label = { Text(readerString("filter_status", "Status: %1\$s", state.libraryFilters.readStatus.label())) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = readerString("desktop_clear_status", "Clear status"), modifier = Modifier.size(16.dp)) }
             )
         }
         if (state.libraryFilters.tagIds.isNotEmpty()) {
             AssistChip(
                 onClick = { onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(tagIds = emptySet())))) },
-                label = { Text("Tags: ${state.libraryFilters.tagIds.size}") },
-                trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Clear tags", modifier = Modifier.size(16.dp)) }
+                label = { Text(readerString("filter_tags", "Tags: %1\$s", state.libraryFilters.tagIds.size.toString())) },
+                trailingIcon = { Icon(Icons.Default.Close, contentDescription = readerString("desktop_clear_tags", "Clear tags"), modifier = Modifier.size(16.dp)) }
             )
         }
         TextButton(onClick = { onStateChange(state.reduce(LibraryAction.SearchChanged("")).reduce(LibraryAction.FiltersChanged(LibraryFilters()))) }) {
-            Text("Clear all")
+            Text(readerString("clear_all", "Clear all"))
         }
     }
 }
@@ -1263,20 +1266,20 @@ private fun LibraryFilterPanel(
     ) {
         Column(Modifier.fillMaxWidth().padding(SharedUiTokens.panelPadding), verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Filters", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(readerString("filter_library", "Filters"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 if (state.libraryFilters.isActive || state.searchQuery.isNotBlank()) {
                     TextButton(onClick = { onStateChange(state.reduce(LibraryAction.SearchChanged("")).reduce(LibraryAction.FiltersChanged(LibraryFilters()))) }) {
-                        Text("Clear")
+                        Text(readerString("action_clear", "Clear"))
                     }
                 }
             }
 
-            LibraryFilterSection(title = "File type") {
+            LibraryFilterSection(title = readerString("filter_file_type", "File type")) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     nonReaderLibraryFileTypeGroups().forEach { group ->
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                group.title,
+                                readerString(group.titleKey, group.titleFallback),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1300,7 +1303,7 @@ private fun LibraryFilterPanel(
                 }
             }
 
-            LibraryFilterSection(title = "Source folder") {
+            LibraryFilterSection(title = readerString("filter_source_folder", "Source folder")) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1312,7 +1315,7 @@ private fun LibraryFilterPanel(
                             val updated = state.libraryFilters.sourceFolders.toggle(IN_APP_STORAGE_SOURCE)
                             onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(sourceFolders = updated))))
                         },
-                        label = { Text("In-app") }
+                        label = { Text(readerString("source_in_app", "In-app")) }
                     )
                     state.syncedFolders.forEach { folder ->
                         FilterChip(
@@ -1328,7 +1331,7 @@ private fun LibraryFilterPanel(
                 }
             }
 
-            LibraryFilterSection(title = "Read status") {
+            LibraryFilterSection(title = readerString("filter_read_status", "Read status")) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1346,14 +1349,14 @@ private fun LibraryFilterPanel(
                                     )
                                 )
                             },
-                            label = { Text(status.label) }
+                            label = { Text(status.label()) }
                         )
                     }
                 }
             }
 
             if (state.allTags.isNotEmpty()) {
-                LibraryFilterSection(title = "Tags") {
+                LibraryFilterSection(title = readerString("section_tags", "Tags")) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1495,18 +1498,18 @@ private fun BookTile(
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     if (pinned) {
-                        OverlayBadge(Icons.Default.PushPin, "Pinned")
+                        OverlayBadge(Icons.Default.PushPin, readerString("pinned", "Pinned"))
                     }
                     if (book.sourceFolder != null) {
-                        OverlayBadge(Icons.Default.Folder, "Folder")
+                        OverlayBadge(Icons.Default.Folder, readerString("desktop_folder", "Folder"))
                     }
                     if (book.isOpdsStream()) {
-                        OverlayBadge(Icons.Default.Cloud, "Stream")
+                        OverlayBadge(Icons.Default.Cloud, readerString("action_stream", "Stream"))
                     }
                 }
                 Box(Modifier.align(Alignment.TopEnd).padding(3.dp)) {
                     IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Book actions")
+                        Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_book_actions", "Book actions"))
                     }
                     BookActionMenu(
                         expanded = menuExpanded,
@@ -1574,15 +1577,15 @@ private fun BookListItem(
                 Text(book.cardAuthor(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     TypeBadge(book.type)
-                    if (pinned) StatusBadge(Icons.Default.PushPin, "Pinned")
-                    if (book.sourceFolder != null) StatusBadge(Icons.Default.Folder, "Folder")
-                    if (book.isOpdsStream()) StatusBadge(Icons.Default.Cloud, "Stream")
+                    if (pinned) StatusBadge(Icons.Default.PushPin, readerString("pinned", "Pinned"))
+                    if (book.sourceFolder != null) StatusBadge(Icons.Default.Folder, readerString("desktop_folder", "Folder"))
+                    if (book.isOpdsStream()) StatusBadge(Icons.Default.Cloud, readerString("action_stream", "Stream"))
                 }
                 ProgressSection(book.progressPercentage)
             }
             Box {
                 IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "Book actions")
+                    Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_book_actions", "Book actions"))
                 }
                 BookActionMenu(
                     expanded = menuExpanded,
@@ -1613,7 +1616,7 @@ private fun BookActionMenu(
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         DropdownMenuItem(
             leadingIcon = { Icon(Icons.Default.PushPin, contentDescription = null) },
-            text = { Text(if (pinned) "Unpin" else "Pin") },
+            text = { Text(if (pinned) readerString("desktop_unpin", "Unpin") else readerString("desktop_pin", "Pin")) },
             onClick = {
                 onDismiss()
                 onTogglePinned()
@@ -1621,7 +1624,7 @@ private fun BookActionMenu(
         )
         DropdownMenuItem(
             leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
-            text = { Text("Info") },
+            text = { Text(readerString("info", "Info")) },
             onClick = {
                 onDismiss()
                 onShowInfo()
@@ -1629,7 +1632,7 @@ private fun BookActionMenu(
         )
         DropdownMenuItem(
             leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-            text = { Text("Edit") },
+            text = { Text(readerString("action_edit", "Edit")) },
             onClick = {
                 onDismiss()
                 onEdit()
@@ -1637,7 +1640,7 @@ private fun BookActionMenu(
         )
         DropdownMenuItem(
             leadingIcon = { Icon(if (selected) Icons.Default.Check else Icons.AutoMirrored.Filled.List, contentDescription = null) },
-            text = { Text(if (selected) "Clear selection" else "Select") },
+            text = { Text(if (selected) readerString("clear_selection", "Clear selection") else readerString("action_select", "Select")) },
             onClick = {
                 onDismiss()
                 onToggleSelection()
@@ -1760,7 +1763,7 @@ private fun ProgressSection(progressPercentage: Float?) {
     val percent = progressPercentValue(progressPercentage)
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Progress", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(readerString("desktop_progress", "Progress"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.weight(1f))
             Text("$percent%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         }
@@ -1781,7 +1784,7 @@ private fun BrowseByTagRow(
     if (tagShelves.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "Browse by tag",
+            readerString("section_browse_by_tag", "Browse by tag"),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold
         )
@@ -1900,21 +1903,21 @@ private fun ShelfSection(
                     if (openShelf != null) {
                         Icon(
                             Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Open folder",
+                            contentDescription = readerString("desktop_open_folder", "Open folder"),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
                 if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
                     IconButton(onClick = { onRenameShelf(shelf) }, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Default.Edit, contentDescription = "Rename shelf", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Edit, contentDescription = readerString("menu_rename_shelf", "Rename shelf"), modifier = Modifier.size(18.dp))
                     }
                     IconButton(onClick = { onDeleteShelf(shelf) }, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete shelf", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Delete, contentDescription = readerString("menu_delete_shelf", "Delete shelf"), modifier = Modifier.size(18.dp))
                     }
                 } else if (shelf.type == ShelfType.FOLDER && shelf.parentShelfId == null) {
                     IconButton(onClick = { onRemoveFolder(shelf) }, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Default.Delete, contentDescription = "Remove folder", modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Delete, contentDescription = readerString("menu_remove_folder", "Remove folder"), modifier = Modifier.size(18.dp))
                     }
                 }
             }
@@ -1967,7 +1970,7 @@ private fun FolderShelfDetail(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("action_back", "Back"))
                 }
                 Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Column(Modifier.weight(1f)) {
@@ -1980,8 +1983,8 @@ private fun FolderShelfDetail(
         if (childShelves.isEmpty() && shelf.directBooks.isEmpty()) {
             SharedEmptyState(
                 icon = { Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(56.dp)) },
-                title = "Folder is empty",
-                body = "No supported files or subfolders are available here.",
+                title = readerString("desktop_folder_empty", "Folder is empty"),
+                body = readerString("desktop_folder_empty_desc", "No supported files or subfolders are available here."),
                 modifier = Modifier.weight(1f)
             )
         } else {
@@ -1992,7 +1995,7 @@ private fun FolderShelfDetail(
             ) {
                 if (childShelves.isNotEmpty()) {
                     item(key = "folders_header") {
-                        SectionLabel("Folders")
+                        SectionLabel(readerString("section_folders", "Folders"))
                     }
                     items(childShelves, key = { it.id }) { childShelf ->
                         FolderShelfListItem(
@@ -2003,7 +2006,7 @@ private fun FolderShelfDetail(
                 }
                 if (shelf.directBooks.isNotEmpty()) {
                     item(key = "files_header") {
-                        SectionLabel("Files")
+                        SectionLabel(readerString("section_files", "Files"))
                     }
                     items(shelf.directBooks, key = { it.id }) { book ->
                         BookListItem(
@@ -2060,32 +2063,35 @@ private fun FolderShelfListItem(
             }
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = "Open folder",
+                contentDescription = readerString("desktop_open_folder", "Open folder"),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
 }
 
+@Composable
 private fun Shelf.subtitleLabel(): String {
     if (type != ShelfType.FOLDER) return bookCountLabel(bookCount)
-    val parts = buildList {
-        if (childShelfCount > 0) add(folderCountLabel(childShelfCount))
-        if (directBookCount > 0) add(fileCountLabel(directBookCount))
-    }
-    return parts.ifEmpty { listOf(bookCountLabel(bookCount)) }.joinToString(", ")
+    val parts = mutableListOf<String>()
+    if (childShelfCount > 0) parts += folderCountLabel(childShelfCount)
+    if (directBookCount > 0) parts += fileCountLabel(directBookCount)
+    return if (parts.isEmpty()) bookCountLabel(bookCount) else parts.joinToString(", ")
 }
 
+@Composable
 private fun bookCountLabel(count: Int): String {
-    return "$count ${if (count == 1) "book" else "books"}"
+    return readerString("desktop_book_count_format", "%1\$d book(s)", count)
 }
 
+@Composable
 private fun folderCountLabel(count: Int): String {
-    return "$count ${if (count == 1) "folder" else "folders"}"
+    return readerString("desktop_folder_count_format", "%1\$d folder(s)", count)
 }
 
+@Composable
 private fun fileCountLabel(count: Int): String {
-    return "$count ${if (count == 1) "file" else "files"}"
+    return readerString("desktop_file_count_format", "%1\$d file(s)", count)
 }
 
 @Composable
@@ -2195,18 +2201,18 @@ private fun SortMenu(
         OutlinedButton(onClick = { expanded = true }) {
             Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text(sortOrder.label)
+            Text(sortOrder.label())
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SortOrder.entries.forEach { order ->
                 DropdownMenuItem(
-                    text = { Text(order.label) },
+                    text = { Text(order.label()) },
                     onClick = {
                         expanded = false
                         onSortOrderChange(order)
                     },
                     trailingIcon = if (sortOrder == order) {
-                        { Icon(Icons.Default.Check, contentDescription = "Selected") }
+                        { Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) }
                     } else {
                         null
                     }
@@ -2224,11 +2230,11 @@ private fun LibraryImportEmptyState(
 ) {
     SharedEmptyState(
         icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
-        title = "Your library is empty",
-        body = "Import files into app storage or add a folder to read files in place.",
-        actionLabel = "Import files",
+        title = readerString("your_library_empty", "Your library is empty"),
+        body = readerString("desktop_library_empty_desc", "Import files into app storage or add a folder to read files in place."),
+        actionLabel = readerString("desktop_import_files", "Import files"),
         onAction = onImportBooks,
-        secondaryActionLabel = "Add folder",
+        secondaryActionLabel = readerString("fab_add_folder", "Add folder"),
         onSecondaryAction = onImportFolder,
         modifier = modifier
     )
@@ -2284,17 +2290,19 @@ private fun SharedEmptyState(
     }
 }
 
-private val NonReaderLibraryTab.label: String
-    get() = when (this) {
-        NonReaderLibraryTab.BOOKS -> "Books"
-        NonReaderLibraryTab.SHELVES -> "Shelves"
-        NonReaderLibraryTab.SMART_SHELVES -> "Smart"
-        NonReaderLibraryTab.TAGS -> "Tags"
-        NonReaderLibraryTab.FOLDERS -> "Folders"
-        NonReaderLibraryTab.UNREAD -> "Unread"
-        NonReaderLibraryTab.IN_PROGRESS -> "In progress"
-        NonReaderLibraryTab.COMPLETED -> "Complete"
+@Composable
+private fun NonReaderLibraryTab.label(): String {
+    return when (this) {
+        NonReaderLibraryTab.BOOKS -> readerString("tab_all_books", "Books")
+        NonReaderLibraryTab.SHELVES -> readerString("tab_shelves", "Shelves")
+        NonReaderLibraryTab.SMART_SHELVES -> readerString("desktop_smart_shelves", "Smart")
+        NonReaderLibraryTab.TAGS -> readerString("section_tags", "Tags")
+        NonReaderLibraryTab.FOLDERS -> readerString("tab_folders", "Folders")
+        NonReaderLibraryTab.UNREAD -> readerString("read_status_unread", "Unread")
+        NonReaderLibraryTab.IN_PROGRESS -> readerString("read_status_in_progress", "In progress")
+        NonReaderLibraryTab.COMPLETED -> readerString("read_status_completed", "Complete")
     }
+}
 
 private val NonReaderLibraryTab.icon: ImageVector
     get() = when (this) {
@@ -2330,24 +2338,28 @@ private fun NonReaderLibraryTab.readStatusFilter(): ReadStatusFilter? {
     }
 }
 
-private val SortOrder.label: String
-    get() = when (this) {
-        SortOrder.RECENT -> "Recent"
-        SortOrder.TITLE_ASC -> "Title A-Z"
-        SortOrder.AUTHOR_ASC -> "Author A-Z"
-        SortOrder.PERCENT_ASC -> "Progress low"
-        SortOrder.PERCENT_DESC -> "Progress high"
-        SortOrder.SIZE_ASC -> "Size small"
-        SortOrder.SIZE_DESC -> "Size large"
+@Composable
+private fun SortOrder.label(): String {
+    return when (this) {
+        SortOrder.RECENT -> readerString("sort_recent", "Recent")
+        SortOrder.TITLE_ASC -> readerString("sort_title_az", "Title A-Z")
+        SortOrder.AUTHOR_ASC -> readerString("sort_author_az", "Author A-Z")
+        SortOrder.PERCENT_ASC -> readerString("sort_percent_asc", "Progress low")
+        SortOrder.PERCENT_DESC -> readerString("sort_percent_desc", "Progress high")
+        SortOrder.SIZE_ASC -> readerString("sort_size_smallest", "Size small")
+        SortOrder.SIZE_DESC -> readerString("sort_size_biggest", "Size large")
     }
+}
 
-private val ReadStatusFilter.label: String
-    get() = when (this) {
-        ReadStatusFilter.ALL -> "All"
-        ReadStatusFilter.UNREAD -> "Unread"
-        ReadStatusFilter.IN_PROGRESS -> "In progress"
-        ReadStatusFilter.COMPLETED -> "Complete"
+@Composable
+private fun ReadStatusFilter.label(): String {
+    return when (this) {
+        ReadStatusFilter.ALL -> readerString("filter_all", "All")
+        ReadStatusFilter.UNREAD -> readerString("read_status_unread", "Unread")
+        ReadStatusFilter.IN_PROGRESS -> readerString("read_status_in_progress", "In progress")
+        ReadStatusFilter.COMPLETED -> readerString("read_status_completed", "Complete")
     }
+}
 
 private val ShelfType.icon: ImageVector
     get() = when (this) {

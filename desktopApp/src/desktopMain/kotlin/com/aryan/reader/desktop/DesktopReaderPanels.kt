@@ -60,6 +60,7 @@ import com.aryan.reader.shared.ui.SharedMarkdownText
 import com.aryan.reader.shared.ui.SharedReaderPopupLayer
 import com.aryan.reader.shared.ui.SharedReaderTtsReplacementControls
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedReaderPopupWidth
 
 @Composable
@@ -119,7 +120,7 @@ internal fun DesktopReaderBottomSheet(
                             overflow = TextOverflow.Ellipsis
                         )
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
+                            Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
                         }
                     }
                     HorizontalDivider()
@@ -148,11 +149,11 @@ internal fun DesktopReaderAiResultSheet(
     ) {
         val errorMessage = result.errorMessage
         when {
-            result.isLoading && result.text.isBlank() -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            result.isLoading && result.text.isBlank() -> Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
             errorMessage != null -> Text(errorMessage, color = MaterialTheme.colorScheme.error)
             else -> {
                 if (result.isLoading) {
-                    Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 SharedMarkdownText(result.text)
             }
@@ -173,7 +174,7 @@ internal fun DesktopAiByokSettingsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("AI keys and models") },
+        title = { Text(readerString("ai_settings_title", "AI keys and models")) },
         text = {
             Column(
                 modifier = Modifier
@@ -183,29 +184,35 @@ internal fun DesktopAiByokSettingsDialog(
             ) {
                 if (!secureStorageAvailable) {
                     Text(
-                        "Secure key storage is unavailable on this operating system. Keys entered here will be used for this session but will not be persisted.",
+                        readerString(
+                            "desktop_secure_key_storage_unavailable",
+                            "Secure key storage is unavailable on this operating system. Keys entered here will be used for this session but will not be persisted."
+                        ),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
 
-                Text("Saved keys", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(readerString("ai_settings_saved_keys", "Saved keys"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 DesktopSavedAiKeyRow(
-                    label = "Gemini",
+                    label = readerString("provider_gemini", "Gemini"),
                     keyValue = sanitized.geminiKey,
                     onClear = { onSettingsChange(sanitized.copy(geminiKey = "", ttsModel = "")) }
                 )
                 DesktopSavedAiKeyRow(
-                    label = "Groq",
+                    label = readerString("provider_groq", "Groq"),
                     keyValue = sanitized.groqKey,
                     onClear = { onSettingsChange(sanitized.copy(groqKey = "")) }
                 )
 
                 HorizontalDivider()
 
-                Text("Add or replace key", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(readerString("ai_settings_add_or_replace_key", "Add or replace key"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    listOf("gemini" to "Gemini", "groq" to "Groq").forEach { (provider, label) ->
+                    listOf(
+                        "gemini" to readerString("provider_gemini", "Gemini"),
+                        "groq" to readerString("provider_groq", "Groq")
+                    ).forEach { (provider, label) ->
                         FilterChip(
                             selected = selectedProvider == provider,
                             onClick = { selectedProvider = provider },
@@ -216,7 +223,7 @@ internal fun DesktopAiByokSettingsDialog(
                 SharedStableOutlinedTextField(
                     value = pendingKey,
                     onValueChange = { pendingKey = it },
-                    label = { Text("API key") },
+                    label = { Text(readerString("label_api_key", "API key")) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth()
@@ -238,16 +245,19 @@ internal fun DesktopAiByokSettingsDialog(
                     },
                     modifier = Modifier.align(Alignment.End)
                 ) {
-                    Text("Save key")
+                    Text(readerString("ai_settings_save_key", "Save key"))
                 }
 
                 HorizontalDivider()
 
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Show AI in reader", style = MaterialTheme.typography.titleMedium)
+                        Text(readerString("options_show_ai_in_reader", "Show AI in reader"), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Matches the Android hide toggle for smart dictionary, summaries, and recaps.",
+                            readerString(
+                                "desktop_show_ai_in_reader_desc",
+                                "Matches the Android hide toggle for smart dictionary, summaries, and recaps."
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -262,9 +272,9 @@ internal fun DesktopAiByokSettingsDialog(
 
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Use one model for all features", style = MaterialTheme.typography.titleMedium)
+                        Text(readerString("ai_settings_use_one_model", "Use one model for all features"), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Turn this off to choose separate models per reader AI feature.",
+                            readerString("ai_settings_use_one_model_desc", "When off, each reader AI feature uses its own selected model."),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -277,40 +287,40 @@ internal fun DesktopAiByokSettingsDialog(
 
                 if (sanitized.useOneModel) {
                     DesktopAiModelSelector(
-                        title = "All AI features",
-                        description = "Smart dictionary, summaries, and recaps all use this model.",
+                        title = readerString("ai_settings_all_features", "All AI features"),
+                        description = readerString("ai_settings_all_features_desc", "Smart dictionary, summaries, and recaps all use this model."),
                         selectedId = sanitized.modelForAll,
                         onSelected = { onSettingsChange(sanitized.copy(modelForAll = it)) }
                     )
                 } else {
                     DesktopAiModelSelector(
-                        title = "Smart dictionary",
-                        description = "Used when defining selected words or phrases.",
+                        title = readerString("ai_settings_smart_dictionary", "Smart dictionary"),
+                        description = readerString("ai_settings_smart_dictionary_desc", "Used when defining selected words or phrases."),
                         selectedId = sanitized.defineModel,
                         onSelected = { onSettingsChange(sanitized.copy(defineModel = it)) }
                     )
                     DesktopAiModelSelector(
-                        title = "Summaries",
-                        description = "Used for EPUB summaries and PDF page summaries.",
+                        title = readerString("ai_settings_summaries", "Summaries"),
+                        description = readerString("desktop_ai_settings_summaries_desc", "Used for EPUB summaries and PDF page summaries."),
                         selectedId = sanitized.summarizeModel,
                         onSelected = { onSettingsChange(sanitized.copy(summarizeModel = it)) }
                     )
                     DesktopAiModelSelector(
-                        title = "Recaps",
-                        description = "Used for story recap generation.",
+                        title = readerString("ai_settings_recaps", "Recaps"),
+                        description = readerString("ai_settings_recaps_desc", "Used for story recap generation."),
                         selectedId = sanitized.recapModel,
                         onSelected = { onSettingsChange(sanitized.copy(recapModel = it)) }
                     )
                 }
 
                 DesktopAiModelSelector(
-                    title = "Cloud TTS",
-                    description = "Uses the saved Gemini key. Only $GEMINI_CLOUD_TTS_MODEL is supported for now.",
+                    title = readerString("credits_cloud_tts_title", "Cloud TTS"),
+                    description = readerString("ai_settings_cloud_tts_desc", "Uses the saved Gemini key. Only %1\$s is supported for now.", GEMINI_CLOUD_TTS_MODEL),
                     selectedId = sanitized.ttsModel,
                     options = listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
                     onSelected = { onSettingsChange(sanitized.copy(ttsModel = it)) }
                 )
-                Text("Cloud TTS voice", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(readerString("desktop_cloud_tts_voice", "Cloud TTS voice"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     ReaderCloudTtsVoices.chunked(3).forEach { rowVoices ->
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
@@ -339,7 +349,7 @@ internal fun DesktopAiByokSettingsDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Done")
+                Text(readerString("action_done", "Done"))
             }
         }
     )
@@ -355,13 +365,13 @@ private fun DesktopSavedAiKeyRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(label, fontWeight = FontWeight.SemiBold)
             Text(
-                keyValue.takeIf { it.isNotBlank() }?.let(::maskedReaderAiKey) ?: "No key saved",
+                keyValue.takeIf { it.isNotBlank() }?.let(::maskedReaderAiKey) ?: readerString("ai_settings_no_key_saved", "No key saved"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         TextButton(enabled = keyValue.isNotBlank(), onClick = onClear) {
-            Text("Clear")
+            Text(readerString("action_clear", "Clear"))
         }
     }
 }
@@ -381,7 +391,7 @@ private fun DesktopAiModelSelector(
             FilterChip(
                 selected = selectedId.isBlank(),
                 onClick = { onSelected("") },
-                label = { Text("No model") }
+                label = { Text(readerString("ai_settings_no_model_selected", "No model selected")) }
             )
             options.forEach { option ->
                 FilterChip(
@@ -417,7 +427,7 @@ internal fun DesktopPdfExtrasPanel(
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-        Text("Extras", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(readerString("desktop_extras", "Extras"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         if (externalLookupAvailable) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 ReaderExternalLookupAction.entries.forEach { action ->
@@ -431,7 +441,7 @@ internal fun DesktopPdfExtrasPanel(
             }
         }
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Auto scroll", modifier = Modifier.weight(1f))
+            Text(readerString("menu_auto_scroll", "Auto Scroll"), modifier = Modifier.weight(1f))
             Switch(
                 checked = autoScroll.enabled,
                 onCheckedChange = { onAutoScrollChange(autoScroll.copy(enabled = it)) }
@@ -448,12 +458,12 @@ internal fun DesktopPdfExtrasPanel(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         when {
-                            extrasState.cloudTts.isLoading -> "Preparing audio"
-                            extrasState.cloudTts.isPaused -> "Paused"
-                            extrasState.cloudTts.isPlaying -> "Reading"
-                            settings.isCloudTtsAvailable -> "Cloud TTS ready"
-                            settings.serverBackedReaderAiFeatures -> "Cloud TTS needs signed-in credits"
-                            else -> "Cloud TTS needs Gemini"
+                            extrasState.cloudTts.isLoading -> readerString("desktop_preparing_audio", "Preparing audio")
+                            extrasState.cloudTts.isPaused -> readerString("desktop_paused", "Paused")
+                            extrasState.cloudTts.isPlaying -> readerString("label_reading", "Reading")
+                            settings.isCloudTtsAvailable -> readerString("desktop_cloud_tts_ready", "Cloud TTS ready")
+                            settings.serverBackedReaderAiFeatures -> readerString("desktop_cloud_tts_needs_signed_in_credits", "Cloud TTS needs signed-in credits")
+                            else -> readerString("desktop_cloud_tts_needs_gemini", "Cloud TTS needs Gemini")
                         },
                         fontWeight = FontWeight.SemiBold
                     )
@@ -476,13 +486,13 @@ internal fun DesktopPdfExtrasPanel(
                         }
                     }
                 ) {
-                    Text(if (ttsBusy) "Stop" else "Read")
+                    Text(if (ttsBusy) readerString("action_stop", "Stop") else readerString("action_read", "Read"))
                 }
             }
             if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     TextButton(onClick = onCloudTtsPauseResume) {
-                        Text(if (extrasState.cloudTts.isPaused) "Resume" else "Pause")
+                        Text(if (extrasState.cloudTts.isPaused) readerString("tooltip_tts_resume", "Resume") else readerString("tooltip_tts_pause", "Pause"))
                     }
                 }
             }
@@ -491,25 +501,25 @@ internal fun DesktopPdfExtrasPanel(
                     enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
                     onClick = { onCloudTtsStart(ReaderTtsReadScope.PAGE) }
                 ) {
-                    Text("Page")
+                    Text(readerString("desktop_page", "Page"))
                 }
                 TextButton(
                     enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
                     onClick = { onCloudTtsStart(ReaderTtsReadScope.BOOK) }
                 ) {
-                    Text("From here")
+                    Text(readerString("desktop_from_here", "From here"))
                 }
             }
             val cacheSummary = extrasState.cloudTts.cacheSummary
             if (cacheSummary.hasCachedAudio) {
                 Text(
-                    "Cache: ${cacheSummary.currentVoiceLabel}",
+                    readerString("desktop_cache_format", "Cache: %1\$s", cacheSummary.currentVoiceLabel),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 if (cacheSummary.hasCurrentVoiceCachedAudio) {
                     TextButton(onClick = onCloudTtsClearCache) {
-                        Text("Clear voice cache")
+                        Text(readerString("desktop_clear_voice_cache", "Clear voice cache"))
                     }
                 }
             }
@@ -522,7 +532,7 @@ internal fun DesktopPdfExtrasPanel(
         if (settings.areReaderAiFeaturesAvailable && onOpenAiHub != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 TextButton(onClick = onOpenAiHub) {
-                    Text("AI hub")
+                    Text(readerString("desktop_ai_hub", "AI hub"))
                 }
             }
         }

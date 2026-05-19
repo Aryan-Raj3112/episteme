@@ -146,7 +146,7 @@ fun SharedOpdsScreen(
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = onClearError) {
-                        Text("Dismiss")
+                        Text(readerString("action_dismiss", "Dismiss"))
                     }
                 }
             }
@@ -176,8 +176,8 @@ fun SharedOpdsScreen(
     catalogToDelete?.let { catalog ->
         AlertDialog(
             onDismissRequest = { catalogToDelete = null },
-            title = { Text("Delete catalog") },
-            text = { Text("Delete \"${catalog.title}\"? Streamed books from this catalog may stop opening if credentials change later.") },
+            title = { Text(readerString("delete_catalog", "Delete catalog")) },
+            text = { Text(readerString("desktop_opds_delete_catalog_desc", "Delete \"%1\$s\"? Streamed books from this catalog may stop opening if credentials change later.", catalog.title)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -185,12 +185,12 @@ fun SharedOpdsScreen(
                         catalogToDelete = null
                     }
                 ) {
-                    Text("Delete")
+                    Text(readerString("action_delete", "Delete"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { catalogToDelete = null }) {
-                    Text("Cancel")
+                    Text(readerString("action_cancel", "Cancel"))
                 }
             }
         )
@@ -232,12 +232,12 @@ private fun SharedOpdsCatalogList(
     Column(Modifier.fillMaxSize()) {
         SharedScreenScaffold(
             title = "OPDS",
-            subtitle = "Browse catalogs, streams, and downloads",
+            subtitle = readerString("desktop_opds_subtitle", "Browse catalogs, streams, and downloads"),
             trailing = {
                 Button(onClick = onAddCatalog) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Catalog")
+                    Text(readerString("desktop_opds_catalog", "Catalog"))
                 }
             }
         ) {
@@ -299,13 +299,13 @@ private fun SharedOpdsFeedView(
                             onNavigateBack()
                         }
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("action_back", "Back"))
                     }
                     if (showSearch) {
                         SharedStableOutlinedTextField(
                             value = query,
                             onValueChange = { query = it },
-                            placeholder = { Text("Search catalog") },
+                            placeholder = { Text(readerString("search_catalog_placeholder", "Search catalog")) },
                             singleLine = true,
                             modifier = Modifier.weight(1f),
                             trailingIcon = {
@@ -316,14 +316,14 @@ private fun SharedOpdsFeedView(
                                         showSearch = false
                                     }
                                 }) {
-                                    Icon(Icons.Default.Search, contentDescription = "Search")
+                                    Icon(Icons.Default.Search, contentDescription = readerString("action_search", "Search"))
                                 }
                             }
                         )
                     } else {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                text = state.currentFeed?.title ?: "Loading",
+                                text = state.currentFeed?.title ?: readerString("status_loading", "Loading"),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -341,7 +341,7 @@ private fun SharedOpdsFeedView(
                         }
                         if (state.searchUrlTemplate != null) {
                             IconButton(onClick = { showSearch = true }) {
-                                Icon(Icons.Default.Search, contentDescription = "Search")
+                                Icon(Icons.Default.Search, contentDescription = readerString("action_search", "Search"))
                             }
                         }
                     }
@@ -375,7 +375,7 @@ private fun SharedOpdsFeedView(
         val entries = state.currentFeed?.entries.orEmpty()
         if (entries.isEmpty() && !state.isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("This feed is empty.")
+                Text(readerString("feed_empty", "This feed is empty."))
             }
         } else {
             LazyColumn(
@@ -463,7 +463,7 @@ private fun SharedOpdsCatalogCard(
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                "Preset",
+                                readerString("preset_label", "Preset"),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -474,10 +474,10 @@ private fun SharedOpdsCatalogCard(
                 Spacer(Modifier.weight(1f))
                 if (!catalog.isDefault) {
                     IconButton(onClick = onEditCatalog) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit")
+                        Icon(Icons.Default.Edit, contentDescription = readerString("action_edit", "Edit"))
                     }
                     IconButton(onClick = onDeleteCatalog) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete")
+                        Icon(Icons.Default.Delete, contentDescription = readerString("action_delete", "Delete"))
                     }
                 }
             }
@@ -496,12 +496,12 @@ private fun SharedOpdsEmptyState(onAddCatalog: () -> Unit, modifier: Modifier = 
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("No catalogs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Add an OPDS catalog to browse remote books.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(readerString("desktop_opds_no_catalogs", "No catalogs"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(readerString("desktop_opds_no_catalogs_desc", "Add an OPDS catalog to browse remote books."), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Button(onClick = onAddCatalog) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Add catalog")
+                    Text(readerString("fab_add_catalog", "Add catalog"))
                 }
             }
         }
@@ -520,7 +520,16 @@ private fun SharedOpdsFacetMenu(
         FilterChip(
             selected = activeFacet?.isActive == true,
             onClick = { expanded = true },
-            label = { Text("$groupName: ${activeFacet?.title ?: "Select"}") },
+            label = {
+                Text(
+                    readerString(
+                        "filter_facet",
+                        "%1\$s: %2\$s",
+                        groupName,
+                        activeFacet?.title ?: readerString("action_select", "Select")
+                    )
+                )
+            },
             trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -610,7 +619,7 @@ private fun SharedOpdsBookCard(
                         OutlinedButton(onClick = { onReadBook(localLibraryBook) }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Read")
+                            Text(readerString("action_read", "Read"))
                         }
                     }
                     isDownloading -> SharedOpdsDownloadProgress(downloadState)
@@ -619,7 +628,7 @@ private fun SharedOpdsBookCard(
                             FilledTonalButton(onClick = onStreamBook, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
                                 Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Stream")
+                                Text(readerString("action_stream", "Stream"))
                             }
                         }
                         Box {
@@ -640,7 +649,13 @@ private fun SharedOpdsBookCard(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                Text(if (uniqueAcquisitions.isEmpty()) "Unavailable" else "Download")
+                                Text(
+                                    if (uniqueAcquisitions.isEmpty()) {
+                                        readerString("action_unavailable", "Unavailable")
+                                    } else {
+                                        readerString("action_download", "Download")
+                                    }
+                                )
                             }
                             DropdownMenu(expanded = showFormatMenu, onDismissRequest = { showFormatMenu = false }) {
                                 uniqueAcquisitions.forEach { acquisition ->
@@ -666,7 +681,7 @@ private fun SharedOpdsDownloadProgress(downloadState: SharedOpdsDownloadState?) 
     val progress = downloadState?.progress
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Downloading", style = MaterialTheme.typography.labelMedium)
+            Text(readerString("status_downloading", "Downloading"), style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.weight(1f))
             if (progress != null) {
                 Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
@@ -725,9 +740,15 @@ private fun SharedOpdsEntryDetailsDialog(
                             )
                         }
                         val secondary = listOfNotNull(
-                            entry.publisher?.takeIf { it.isNotBlank() }?.let { "Publisher: $it" },
-                            entry.published?.takeIf { it.isNotBlank() }?.substringBefore("T")?.let { "Published: $it" },
-                            entry.language?.takeIf { it.isNotBlank() }?.uppercase()?.let { "Language: $it" }
+                            entry.publisher?.takeIf { it.isNotBlank() }?.let {
+                                readerString("filter_facet", "%1\$s: %2\$s", readerString("publisher", "Publisher"), it)
+                            },
+                            entry.published?.takeIf { it.isNotBlank() }?.substringBefore("T")?.let {
+                                readerString("filter_facet", "%1\$s: %2\$s", readerString("published", "Published"), it)
+                            },
+                            entry.language?.takeIf { it.isNotBlank() }?.uppercase()?.let {
+                                readerString("filter_facet", "%1\$s: %2\$s", readerString("language", "Language"), it)
+                            }
                         )
                         secondary.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
@@ -736,7 +757,7 @@ private fun SharedOpdsEntryDetailsDialog(
                     Button(onClick = { onReadBook(book) }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Default.Check, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Read")
+                        Text(readerString("action_read", "Read"))
                     }
                 }
                 if (downloadState?.isDownloading == true) {
@@ -746,11 +767,11 @@ private fun SharedOpdsEntryDetailsDialog(
                         Button(onClick = onStreamBook, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Default.Cloud, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Stream now")
+                            Text(readerString("action_stream_now", "Stream now"))
                         }
                     }
                     if (uniqueAcquisitions.isNotEmpty()) {
-                        Text("Download format", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(readerString("download_format", "Download format"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             uniqueAcquisitions.take(4).forEach { acquisition ->
                                 FilledTonalButton(onClick = { onDownloadBook(acquisition) }) {
@@ -762,7 +783,7 @@ private fun SharedOpdsEntryDetailsDialog(
                 }
                 if (entry.authors.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Authors", style = MaterialTheme.typography.labelLarge)
+                        Text(readerString("desktop_authors", "Authors"), style = MaterialTheme.typography.labelLarge)
                         entry.authors.forEach { author ->
                             TextButton(
                                 onClick = {
@@ -775,7 +796,7 @@ private fun SharedOpdsEntryDetailsDialog(
                     }
                 }
                 if (entry.categories.isNotEmpty()) {
-                    Text("Categories", style = MaterialTheme.typography.labelLarge)
+                    Text(readerString("desktop_categories", "Categories"), style = MaterialTheme.typography.labelLarge)
                     entry.categories.distinct().take(8).forEach { category ->
                         TextButton(onClick = { onSearch(category) }) {
                             Text(category)
@@ -784,14 +805,14 @@ private fun SharedOpdsEntryDetailsDialog(
                 }
                 val summary = SharedOpdsText.cleanSummary(entry.summary)
                 if (summary.isNotBlank()) {
-                    Text("Synopsis", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(readerString("synopsis", "Synopsis"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Text(summary, style = MaterialTheme.typography.bodyMedium)
                 }
             }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close")
+                Text(readerString("action_close", "Close"))
             }
         }
     )
@@ -811,17 +832,17 @@ private fun SharedOpdsCatalogDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEditMode) "Edit catalog" else "Add OPDS catalog") },
+        title = { Text(if (isEditMode) readerString("edit_catalog", "Edit catalog") else readerString("add_opds_catalog", "Add OPDS catalog")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SharedStableOutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Catalog name") }, singleLine = true, selectionKey = catalog?.id ?: "new:title")
-                SharedStableOutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("URL") }, singleLine = true, selectionKey = catalog?.id ?: "new:url")
-                Text("Authentication optional", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                SharedStableOutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, singleLine = true, selectionKey = catalog?.id ?: "new:username")
+                SharedStableOutlinedTextField(value = title, onValueChange = { title = it }, label = { Text(readerString("catalog_name", "Catalog name")) }, singleLine = true, selectionKey = catalog?.id ?: "new:title")
+                SharedStableOutlinedTextField(value = url, onValueChange = { url = it }, label = { Text(readerString("url", "URL")) }, singleLine = true, selectionKey = catalog?.id ?: "new:url")
+                Text(readerString("auth_optional", "Authentication optional"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                SharedStableOutlinedTextField(value = username, onValueChange = { username = it }, label = { Text(readerString("username", "Username")) }, singleLine = true, selectionKey = catalog?.id ?: "new:username")
                 SharedStableOutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("Password") },
+                    label = { Text(readerString("password", "Password")) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     selectionKey = catalog?.id ?: "new:password"
@@ -833,12 +854,12 @@ private fun SharedOpdsCatalogDialog(
                 onClick = { onSave(title, url, username, password) },
                 enabled = title.isNotBlank() && url.isNotBlank()
             ) {
-                Text("Save")
+                Text(readerString("action_save", "Save"))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(readerString("action_cancel", "Cancel"))
             }
         }
     )

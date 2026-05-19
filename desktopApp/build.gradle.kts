@@ -360,6 +360,7 @@ val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
 val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
+val generatedDesktopStringResourcesDir = layout.buildDirectory.dir("generated/desktopStringResources")
 val rootLocalProperties = Properties()
 val rootLocalPropertiesFile = rootProject.file("local.properties")
 if (rootLocalPropertiesFile.exists()) {
@@ -501,12 +502,22 @@ val prepareBundledDesktopResources by tasks.registering(Sync::class) {
     into(generatedDesktopResourcesDir)
 }
 
+val prepareDesktopStringResources by tasks.registering(Sync::class) {
+    // Reuse Android string resources as the localization source for desktop.
+    from(rootProject.layout.projectDirectory.dir("app/src/main/res")) {
+        include("values*/strings.xml")
+        into("desktop-android-res")
+    }
+    into(generatedDesktopStringResourcesDir)
+}
+
 kotlin {
     jvm("desktop")
     jvmToolchain(21)
 
     sourceSets {
         val desktopMain by getting {
+            resources.srcDir(prepareDesktopStringResources)
             dependencies {
                 implementation(project(":shared"))
                 implementation(compose.desktop.currentOs)

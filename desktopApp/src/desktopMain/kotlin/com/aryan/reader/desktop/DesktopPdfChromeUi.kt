@@ -57,6 +57,7 @@ import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
+import com.aryan.reader.shared.ui.readerString
 import kotlinx.coroutines.delay
 
 @Composable
@@ -115,7 +116,7 @@ internal fun DesktopPdfFullscreenBottomChrome(
                 IconButton(onClick = onPrevious, enabled = canGoPrevious) {
                     Icon(
                         Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = "Previous page",
+                        contentDescription = readerString("desktop_previous_page", "Previous page"),
                         tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
                     )
                 }
@@ -138,7 +139,7 @@ internal fun DesktopPdfFullscreenBottomChrome(
                 IconButton(onClick = onNext, enabled = canGoNext) {
                     Icon(
                         Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = "Next page",
+                        contentDescription = readerString("desktop_next_page", "Next page"),
                         tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
                     )
                 }
@@ -201,7 +202,7 @@ internal fun DesktopPdfBottomChrome(
                 IconButton(onClick = onPrevious, enabled = canGoPrevious) {
                     Icon(
                         Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = "Previous page",
+                        contentDescription = readerString("desktop_previous_page", "Previous page"),
                         tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
                     )
                 }
@@ -232,7 +233,7 @@ internal fun DesktopPdfBottomChrome(
                 IconButton(onClick = onNext, enabled = canGoNext) {
                     Icon(
                         Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = "Next page",
+                        contentDescription = readerString("desktop_next_page", "Next page"),
                         tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
                     )
                 }
@@ -269,7 +270,7 @@ internal fun DesktopPdfZoomPercentageIndicator(
             Spacer(Modifier.width(8.dp))
             Icon(
                 imageVector = Icons.Default.ZoomOut,
-                contentDescription = "Reset zoom",
+                contentDescription = readerString("content_desc_reset_zoom", "Reset zoom"),
                 tint = Color.White,
                 modifier = Modifier
                     .size(20.dp)
@@ -307,18 +308,18 @@ internal fun DesktopPdfSearchTopBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.Default.Close, contentDescription = "Close search")
+                Icon(Icons.Default.Close, contentDescription = readerString("content_desc_close_search", "Close search"))
             }
             SharedStableOutlinedTextField(
                 value = query,
                 onValueChange = onQueryChange,
-                placeholder = { Text("Search in PDF") },
+                placeholder = { Text(readerString("desktop_search_in_pdf", "Search in PDF")) },
                 singleLine = true,
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 trailingIcon = if (query.isNotEmpty()) {
                     {
                         IconButton(onClick = { onQueryChange("") }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            Icon(Icons.Default.Close, contentDescription = readerString("tooltip_clear_search", "Clear search"))
                         }
                     }
                 } else {
@@ -329,7 +330,11 @@ internal fun DesktopPdfSearchTopBar(
             IconButton(onClick = onToggleResults, modifier = Modifier.size(36.dp)) {
                 Icon(
                     if (showResultsPanel) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (showResultsPanel) "Hide search results" else "Show search results"
+                    contentDescription = if (showResultsPanel) {
+                        readerString("desktop_hide_search_results", "Hide search results")
+                    } else {
+                        readerString("desktop_show_search_results", "Show search results")
+                    }
                 )
             }
         }
@@ -373,7 +378,12 @@ internal fun BoxScope.DesktopPdfSearchOverlay(
                     ) {
                         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
                             Text(
-                                "Indexing ${indexedPageCount.coerceAtMost(pageCount)}/$pageCount pages",
+                                readerString(
+                                    "desktop_indexing_pages_format",
+                                    "Indexing %1\$d/%2\$d pages",
+                                    indexedPageCount.coerceAtMost(pageCount),
+                                    pageCount
+                                ),
                                 style = MaterialTheme.typography.bodySmall
                             )
                             LinearProgressIndicator(
@@ -387,14 +397,18 @@ internal fun BoxScope.DesktopPdfSearchOverlay(
                 when {
                     query.isBlank() -> {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Type to search this PDF", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(readerString("desktop_type_to_search_pdf", "Type to search this PDF"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
 
                     results.isEmpty() -> {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
-                                if (isIndexing) "No matches in indexed pages yet" else "No matches",
+                                if (isIndexing) {
+                                    readerString("desktop_no_matches_indexed_pages_yet", "No matches in indexed pages yet")
+                                } else {
+                                    readerString("desktop_no_matches", "No matches")
+                                },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -403,8 +417,8 @@ internal fun BoxScope.DesktopPdfSearchOverlay(
                     else -> {
                         Text(
                             when {
-                                isIndexing -> "${results.size} matches so far"
-                                else -> "${results.size} matches"
+                                isIndexing -> readerString("desktop_matches_so_far_format", "%1\$d matches so far", results.size)
+                                else -> readerString("desktop_matches_format", "%1\$d matches", results.size)
                             },
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
@@ -428,7 +442,7 @@ internal fun BoxScope.DesktopPdfSearchOverlay(
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         Text(
-                                            "Page ${result.pageIndex + 1}",
+                                            readerString("pdf_page_short", "Page %1\$d", result.pageIndex + 1),
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -496,7 +510,7 @@ private fun DesktopPdfSearchNavigationPill(
             IconButton(onClick = onToggleHighlightMode, modifier = Modifier.size(36.dp)) {
                 Icon(
                     if (highlightMode == SearchHighlightMode.ALL) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                    contentDescription = "Toggle search highlights",
+                    contentDescription = readerString("content_desc_toggle_search_highlights", "Toggle search highlights"),
                     tint = if (highlightMode == SearchHighlightMode.ALL) {
                         MaterialTheme.colorScheme.primary
                     } else {
@@ -505,20 +519,20 @@ private fun DesktopPdfSearchNavigationPill(
                 )
             }
             IconButton(onClick = onPrevious, enabled = resultCount > 0, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous search result")
+                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = readerString("desktop_previous_search_result", "Previous search result"))
             }
             Text(
                 text = if (activeSearchIndex in 0 until resultCount) {
                     "${activeSearchIndex + 1}/$resultCount"
                 } else {
-                    "$resultCount matches"
+                    readerString("desktop_matches_format", "%1\$d matches", resultCount)
                 },
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.clickable(onClick = onShowResults).padding(horizontal = 8.dp)
             )
             IconButton(onClick = onNext, enabled = resultCount > 0, modifier = Modifier.size(36.dp)) {
-                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next search result")
+                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = readerString("desktop_next_search_result", "Next search result"))
             }
         }
     }

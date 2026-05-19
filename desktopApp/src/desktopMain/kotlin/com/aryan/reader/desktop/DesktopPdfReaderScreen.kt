@@ -125,6 +125,7 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.ReaderWorkspaceFileActionState
 import com.aryan.reader.shared.ui.ReaderWorkspaceShell
+import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfInlineTextEditorOverlay
@@ -134,6 +135,7 @@ import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfVerticalScrollbar
 import com.aryan.reader.shared.ui.pdfReaderWorkspaceModel
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
@@ -185,6 +187,10 @@ internal fun PdfReaderScreen(
     onReflowAction: ((pageIndex: Int) -> Unit)? = null
 ) {
     val documentHandleId = document.handleId
+    val stringResolver = LocalSharedStringResolver.current
+    fun pdfString(name: String, fallback: String, vararg args: Any?): String {
+        return stringResolver.string(name, fallback, *args)
+    }
     val zoomSpec = remember { DesktopPdfZoomSpec }
     val restoredInitialViewport = remember(documentHandleId, initialViewport) {
         initialViewport?.sanitized(document.pageCount, zoomSpec)
@@ -522,25 +528,9 @@ internal fun PdfReaderScreen(
             listOf(pageIndex.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0)))
         }
     }
-    val pdfPageLabel: String = remember(
-        pageIndex,
-        document.pageCount,
-        displayMode,
-        pdfReaderSettings.pageSpreadMode,
-        pdfReaderSettings.pdfFirstPageStandaloneInSpread
-    ) {
-        desktopPdfPageLabel(pageIndex, document.pageCount, displayMode, pdfReaderSettings)
-    }
-    val pdfPageScrubPreviewLabel: String? = remember(
-        pageScrubPreview,
-        document.pageCount,
-        displayMode,
-        pdfReaderSettings.pageSpreadMode,
-        pdfReaderSettings.pdfFirstPageStandaloneInSpread
-    ) {
-        pageScrubPreview?.let {
-            desktopPdfPageLabel(it, document.pageCount, displayMode, pdfReaderSettings)
-        }
+    val pdfPageLabel = desktopPdfPageLabel(pageIndex, document.pageCount, displayMode, pdfReaderSettings)
+    val pdfPageScrubPreviewLabel = pageScrubPreview?.let {
+        desktopPdfPageLabel(it, document.pageCount, displayMode, pdfReaderSettings)
     }
     val zoomControlScale = pdfZoomPreview?.zoom ?: scale
     val shouldShowPdfZoomIndicator = abs(zoomControlScale - 1f) > 0.001f
@@ -924,8 +914,11 @@ internal fun PdfReaderScreen(
                 )
             } catch (error: Throwable) {
                 pdfFileActionNotice = DesktopPdfFileActionNotice(
-                    title = "PDF action failed",
-                    message = error.message ?: "The PDF action could not be completed.",
+                    title = pdfString("desktop_pdf_action_failed", "PDF action failed"),
+                    message = error.message ?: pdfString(
+                        "desktop_pdf_action_failed_desc",
+                        "The PDF action could not be completed."
+                    ),
                     isError = true
                 )
             } finally {
@@ -949,7 +942,7 @@ internal fun PdfReaderScreen(
                 isAnnotated = mode == SaveMode.ANNOTATED
             )
         ) ?: return
-        runPdfFileAction(successTitle = "PDF saved") {
+        runPdfFileAction(successTitle = pdfString("desktop_pdf_saved", "PDF saved")) {
             if (mode == SaveMode.ANNOTATED) {
                 preparePdfAnnotationExport()
             }
@@ -964,7 +957,7 @@ internal fun PdfReaderScreen(
                     richTextPageLayouts = richTextSnapshot
                 )
             }
-            "Saved to ${target.absolutePath}"
+            pdfString("desktop_saved_to_path_format", "Saved to %1\$s", target.absolutePath)
         }
     }
 
@@ -976,11 +969,11 @@ internal fun PdfReaderScreen(
         }
     }
     val requestPrint: () -> Unit = {
-        runPdfFileAction(successTitle = "Print") {
+        runPdfFileAction(successTitle = pdfString("action_print", "Print")) {
             withContext(Dispatchers.IO) {
                 printDesktopPdfDocument(document)
             }
-            "The print dialog has finished."
+            pdfString("desktop_print_dialog_finished", "The print dialog has finished.")
         }
     }
 
@@ -1306,7 +1299,7 @@ internal fun PdfReaderScreen(
                 text = pageText,
                 pageIndex = targetPage,
                 chapterIndex = 0,
-                chapterTitle = "Page ${targetPage + 1}"
+                chapterTitle = pdfString("pdf_page_short", "Page %1\$d", targetPage + 1)
             ).forEach { chunk ->
                 chunks += chunk.copy(index = chunks.size)
             }
@@ -1355,9 +1348,9 @@ internal fun PdfReaderScreen(
     fun generatePdfHubSummary(force: Boolean) {
         val pageText = currentPdfPageText(16_000)
         val bookKey = pdfHubBookKey()
-        val pageTitle = "Page ${pageIndex + 1}"
+        val pageTitle = pdfString("pdf_page_short", "Page %1\$d", pageIndex + 1)
         if (pageText.isBlank()) {
-            pdfHubSummaryResult = SummarizationResult(error = "There is no text to summarize on this page.")
+            pdfHubSummaryResult = SummarizationResult(error = pdfString("desktop_no_text_to_summarize", "There is no text to summarize."))
             return
         }
         if (!force) {
@@ -1547,7 +1540,7 @@ internal fun PdfReaderScreen(
         ttsAdapter.clearBookCacheForSpeaker(document.title, aiByokSettings.sanitized().ttsSpeakerId)
         pdfExtrasState = pdfExtrasState.copy(
             cloudTts = pdfExtrasState.cloudTts.copy(
-                statusMessage = "Voice cache cleared",
+                statusMessage = pdfString("desktop_voice_cache_cleared", "Voice cache cleared"),
                 cacheSummary = currentPdfTtsCacheSummary()
             )
         )
@@ -1555,9 +1548,23 @@ internal fun PdfReaderScreen(
 
     fun pdfCloudTtsUnavailableMessage(): String {
         return if (aiByokSettings.serverBackedReaderAiFeatures || aiByokSettings.serverBackedCloudTts) {
-            "Cloud TTS needs a signed-in account with credits. Pro and credits can only be purchased from the Android app."
+            pdfString(
+                "desktop_cloud_tts_signed_in_credits_required_desc",
+                "Cloud TTS needs a signed-in account with credits. Pro and credits can only be purchased from the Android app."
+            )
         } else {
-            "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+            pdfString(
+                "desktop_cloud_tts_needs_gemini_key_desc",
+                "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+            )
+        }
+    }
+
+    fun pdfReadScopeLabel(readScope: ReaderTtsReadScope): String {
+        return when (readScope) {
+            ReaderTtsReadScope.PAGE -> pdfString("desktop_page", "Page")
+            ReaderTtsReadScope.CHAPTER -> pdfString("chapter", "Chapter")
+            ReaderTtsReadScope.BOOK -> pdfString("desktop_from_here", "From here")
         }
     }
 
@@ -1590,11 +1597,15 @@ internal fun PdfReaderScreen(
             cloudTts = ReaderCloudTtsState(
                 isAvailable = true,
                 isLoading = true,
-                statusMessage = "Preparing ${readScope.label.lowercase()}",
+                statusMessage = pdfString(
+                    "desktop_preparing_scope_format",
+                    "Preparing %1\$s",
+                    pdfReadScopeLabel(readScope)
+                ),
                 cacheSummary = currentPdfTtsCacheSummary()
             )
         )
-        val noTextMessage = "There is no text here to read."
+        val noTextMessage = pdfString("desktop_no_text_here_to_read", "There is no text here to read.")
         pdfTtsJob = pdfScope.launch {
             var completedChunkCount = 0
             runCatching {
@@ -1625,7 +1636,7 @@ internal fun PdfReaderScreen(
                         cloudTts = ReaderCloudTtsState(
                             isAvailable = true,
                             isPlaying = true,
-                            statusMessage = progress.currentPositionLabel ?: "Reading",
+                            statusMessage = progress.currentPositionLabel ?: pdfString("label_reading", "Reading"),
                             progress = progress,
                             cacheSummary = currentPdfTtsCacheSummary()
                         )
@@ -1641,18 +1652,20 @@ internal fun PdfReaderScreen(
                 if (error !is kotlinx.coroutines.CancellationException && error.message != noTextMessage) error.printStackTrace()
                 pdfExtrasState = if (error is kotlinx.coroutines.CancellationException) {
                     pdfExtrasState.copy(
-                        cloudTts = pdfCloudTtsStoppedState(statusMessage = "Stopped")
+                        cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_stopped", "Stopped"))
                     )
                 } else {
                     onPaidFeatureError(error.message)
                     pdfExtrasState.copy(
-                        cloudTts = pdfCloudTtsStoppedState(errorMessage = error.message ?: "Cloud TTS failed.")
+                        cloudTts = pdfCloudTtsStoppedState(
+                            errorMessage = error.message ?: pdfString("desktop_cloud_tts_failed", "Cloud TTS failed.")
+                        )
                     )
                 }
             }.onSuccess {
                 logDesktopTts("pdf_sequence_success chunks=$completedChunkCount")
                 pdfExtrasState = pdfExtrasState.copy(
-                    cloudTts = pdfCloudTtsStoppedState(statusMessage = "Finished")
+                    cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_finished", "Finished"))
                 )
             }
         }
@@ -1674,7 +1687,7 @@ internal fun PdfReaderScreen(
             logDesktopTts("pdf_toggle_ignored reason=blank_text")
             pdfExtrasState = pdfExtrasState.copy(
                 cloudTts = pdfExtrasState.cloudTts.copy(
-                    errorMessage = "There is no text on this page to read.",
+                    errorMessage = pdfString("desktop_no_text_on_page_to_read", "There is no text on this page to read."),
                     cacheSummary = currentPdfTtsCacheSummary()
                 )
             )
@@ -1696,12 +1709,12 @@ internal fun PdfReaderScreen(
             text = normalizedText,
             pageIndex = pageIndex,
             chapterIndex = 0,
-            chapterTitle = "Page ${pageIndex + 1}"
+            chapterTitle = pdfString("pdf_page_short", "Page %1\$d", pageIndex + 1)
         ).withTtsReplacements(ttsReplacementPreferences, document.path)
         if (selectionChunks.isEmpty()) {
             pdfExtrasState = pdfExtrasState.copy(
                 cloudTts = pdfExtrasState.cloudTts.copy(
-                    errorMessage = "There is no text on this page to read.",
+                    errorMessage = pdfString("desktop_no_text_on_page_to_read", "There is no text on this page to read."),
                     cacheSummary = currentPdfTtsCacheSummary()
                 )
             )
@@ -1723,7 +1736,7 @@ internal fun PdfReaderScreen(
                     cloudTts = ReaderCloudTtsState(
                         isAvailable = true,
                         isLoading = true,
-                        statusMessage = "Preparing selection",
+                        statusMessage = pdfString("desktop_preparing_selection", "Preparing selection"),
                         progress = initialProgress,
                         cacheSummary = currentPdfTtsCacheSummary()
                     )
@@ -1734,7 +1747,7 @@ internal fun PdfReaderScreen(
                         cloudTts = ReaderCloudTtsState(
                             isAvailable = true,
                             isPlaying = true,
-                            statusMessage = progress.currentPositionLabel ?: "Reading",
+                            statusMessage = progress.currentPositionLabel ?: pdfString("label_reading", "Reading"),
                             progress = progress,
                             cacheSummary = currentPdfTtsCacheSummary()
                         )
@@ -1745,16 +1758,18 @@ internal fun PdfReaderScreen(
                 if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
                 pdfExtrasState = pdfExtrasState.copy(
                     cloudTts = if (error is kotlinx.coroutines.CancellationException) {
-                        pdfCloudTtsStoppedState(statusMessage = "Stopped")
+                        pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_stopped", "Stopped"))
                     } else {
                         onPaidFeatureError(error.message)
-                        pdfCloudTtsStoppedState(errorMessage = error.message ?: "Cloud TTS failed.")
+                        pdfCloudTtsStoppedState(
+                            errorMessage = error.message ?: pdfString("desktop_cloud_tts_failed", "Cloud TTS failed.")
+                        )
                     }
                 )
             }.onSuccess {
                 logDesktopTts("pdf_job_success")
                 pdfExtrasState = pdfExtrasState.copy(
-                    cloudTts = pdfCloudTtsStoppedState(statusMessage = "Finished")
+                    cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_finished", "Finished"))
                 )
             }
         }
@@ -1982,7 +1997,7 @@ internal fun PdfReaderScreen(
                 renderedPage = null
                 renderedPageIndex = null
                 renderedPageScale = null
-                renderError = "Failed to render page."
+                renderError = pdfString("desktop_failed_render_page", "Failed to render page.")
                 isRendering = false
                 return@launch
             }
@@ -2037,7 +2052,11 @@ internal fun PdfReaderScreen(
                     renderedPageScale = renderScale
                 }
                 renderError = result.exceptionOrNull()?.message
-                    ?: if (renderedPage == null || renderedPageIndex != pageIndex) "Failed to render page." else null
+                    ?: if (renderedPage == null || renderedPageIndex != pageIndex) {
+                        pdfString("desktop_failed_render_page", "Failed to render page.")
+                    } else {
+                        null
+                    }
                 logPdfZoomPerf {
                     "render_end page=${pageIndex + 1} renderScale=${renderScale.formatLogFloat()} " +
                         "requestedScale=${scale.formatLogFloat()} elapsedMs=$elapsedMs success=${result.isSuccess} " +
@@ -2233,7 +2252,7 @@ internal fun PdfReaderScreen(
     ReaderWorkspaceShell(
         model = pdfWorkspaceModel,
         title = document.title,
-        subtitle = "${document.formatLabel} - $pdfPageLabel",
+        subtitle = pdfString("desktop_label_pair_format", "%1\$s - %2\$s", document.formatLabel, pdfPageLabel),
         progressLabel = "${progressPercent.toInt()}%",
         onReturnToLibrary = onReturnToLibrary?.let { returnToLibrary ->
             {
@@ -2737,7 +2756,7 @@ internal fun PdfReaderScreen(
                     currentPageRender != null -> {
                         val pageSize = document.pageSizes.getOrNull(pageIndex)
                         if (pageSize == null) {
-                            Text("Failed to render page.", color = MaterialTheme.colorScheme.error)
+                            Text(readerString("desktop_failed_render_page", "Failed to render page."), color = MaterialTheme.colorScheme.error)
                             return@Box
                         }
                         val pageDisplayScale = zoomSpec.clamp(scale)
@@ -3238,7 +3257,7 @@ internal fun PdfReaderScreen(
                         ) {
                             DesktopPdfThemedPageImage(
                                 bitmap = currentPageRender.image,
-                                contentDescription = "PDF page ${pageIndex + 1}",
+                                contentDescription = readerString("desktop_pdf_page_content_desc", "PDF page %1\$d", pageIndex + 1),
                                 themeStyle = pdfThemeStyle,
                                 modifier = Modifier.fillMaxSize()
                             )
@@ -3369,7 +3388,10 @@ internal fun PdfReaderScreen(
                         }
                     }
                     isRendering -> CircularProgressIndicator(modifier = Modifier.padding(48.dp))
-                    renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
+                    renderError != null -> Text(
+                        renderError ?: readerString("desktop_failed_render_page", "Failed to render page."),
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
                 DesktopPdfPageScrubOverlay(
                     pageIndex = pageScrubPreview,
@@ -3401,7 +3423,7 @@ internal fun PdfReaderScreen(
                     bookKey = pdfHubBookKey(),
                     bookTitle = pdfHubBookTitle(),
                     itemIndex = pageIndex,
-                    itemTitle = "Page ${pageIndex + 1}",
+                    itemTitle = readerString("pdf_page_short", "Page %1\$d", pageIndex + 1),
                     summaryCacheStore = summaryCacheStore,
                     summaryResult = pdfHubSummaryResult,
                     isSummaryLoading = isPdfHubSummaryLoading,
@@ -3443,7 +3465,7 @@ internal fun PdfReaderScreen(
             }
             selectedEmbeddedAnnotation != null -> {
                 DesktopReaderBottomSheet(
-                    title = "PDF comment",
+                    title = readerString("desktop_pdf_comment", "PDF comment"),
                     onDismiss = { selectedEmbeddedAnnotationId = null }
                 ) {
                     DesktopPdfEmbeddedAnnotationPanel(
@@ -3478,8 +3500,8 @@ internal fun PdfReaderScreen(
 
     if (showPdfSaveDialog) {
         DesktopPdfExportChoiceDialog(
-            title = "Save to device",
-            message = "Choose which PDF to save.",
+            title = readerString("title_save_to_device", "Save to device"),
+            message = readerString("desktop_choose_pdf_to_save", "Choose which PDF to save."),
             onOriginal = {
                 showPdfSaveDialog = false
                 savePdfCopy(SaveMode.ORIGINAL)
@@ -3504,13 +3526,14 @@ internal fun PdfReaderScreen(
             },
             confirmButton = {
                 TextButton(onClick = { pdfFileActionNotice = null }) {
-                    Text("OK")
+                    Text(readerString("action_ok", "OK"))
                 }
             }
         )
     }
 }
 
+@Composable
 private fun desktopPdfPageLabel(
     pageIndex: Int,
     pageCount: Int,
@@ -3523,9 +3546,9 @@ private fun desktopPdfPageLabel(
         "${pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) + 1}"
     }
     return if ('-' in pageRange) {
-        "Pages $pageRange of $pageCount"
+        readerString("desktop_pdf_pages_of_count", "Pages %1\$s of %2\$d", pageRange, pageCount)
     } else {
-        "Page $pageRange of $pageCount"
+        readerString("desktop_pdf_page_of_count", "Page %1\$s of %2\$d", pageRange, pageCount)
     }
 }
 
@@ -3543,15 +3566,15 @@ private fun DesktopPdfExportChoiceDialog(
         text = { Text(message) },
         confirmButton = {
             TextButton(onClick = onAnnotated) {
-                Text("With annotations")
+                Text(readerString("action_with_annotations", "With annotations"))
             }
         },
         dismissButton = {
             TextButton(onClick = onOriginal) {
-                Text("Original")
+                Text(readerString("action_original", "Original"))
             }
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(readerString("action_cancel", "Cancel"))
             }
         }
     )

@@ -521,7 +521,7 @@ private fun ReaderWorkspacePanelOverlays(
                     minOf(320.dp, availableWidth * 0.92f)
                 }
                 ReaderWorkspaceOverlayPanel(
-                    title = "Reader",
+                    title = readerString("desktop_reader", "Reader"),
                     edge = ReaderWorkspacePanelEdge.Start,
                     onClose = onCloseLeftPanel,
                     modifier = Modifier.align(Alignment.CenterStart).width(leftPanelWidth)
@@ -560,7 +560,7 @@ private fun ReaderWorkspacePanelOverlays(
                     minOf(360.dp, availableWidth * 0.92f)
                 }
                 ReaderWorkspaceOverlayPanel(
-                    title = "Tools",
+                    title = readerString("desktop_tools", "Tools"),
                     edge = ReaderWorkspacePanelEdge.End,
                     onClose = onCloseRightPanel,
                     modifier = Modifier.align(Alignment.CenterEnd).width(rightPanelWidth)
@@ -766,7 +766,7 @@ private fun ReaderWorkspaceTopChrome(
         ) {
             onReturnToLibrary?.let { returnToLibrary ->
                 IconButton(onClick = returnToLibrary, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to library")
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("desktop_back_to_library", "Back to library"))
                 }
             }
             if (hasLeftPanel) {
@@ -781,14 +781,18 @@ private fun ReaderWorkspaceTopChrome(
             Text(progressLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (ReaderWorkspaceTopAction.SEARCH in topActions && onSearchAction != null) {
                 IconButton(onClick = onSearchAction, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Search, contentDescription = "Search in reader")
+                    Icon(Icons.Default.Search, contentDescription = readerString("desktop_search_in_reader", "Search in reader"))
                 }
             }
             if (ReaderWorkspaceTopAction.BOOKMARK in topActions && onToggleBookmark != null) {
                 IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
                     Icon(
                         if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = if (isBookmarked) "Remove bookmark" else "Add bookmark"
+                        contentDescription = if (isBookmarked) {
+                            readerString("menu_remove_bookmark", "Remove bookmark")
+                        } else {
+                            readerString("menu_bookmark_this_page", "Bookmark this page")
+                        }
                     )
                 }
             }
@@ -798,7 +802,7 @@ private fun ReaderWorkspaceTopChrome(
             ) {
                 Box {
                     IconButton(onClick = { fileActionsExpanded = true }, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "PDF file actions")
+                        Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_pdf_file_actions", "PDF file actions"))
                     }
                     DropdownMenu(
                         expanded = fileActionsExpanded,
@@ -806,7 +810,7 @@ private fun ReaderWorkspaceTopChrome(
                     ) {
                         if (fileActions.canShare && onShareAction != null) {
                             DropdownMenuItem(
-                                text = { Text("Share") },
+                                text = { Text(readerString("action_share", "Share")) },
                                 onClick = {
                                     fileActionsExpanded = false
                                     onShareAction()
@@ -824,9 +828,9 @@ private fun ReaderWorkspaceTopChrome(
                                 text = {
                                     Text(
                                         when {
-                                            fileActions.isGeneratingTextView -> "Generating Text View..."
-                                            fileActions.hasGeneratedTextView -> "Open Text View"
-                                            else -> "Generate Text View"
+                                            fileActions.isGeneratingTextView -> readerString("generating_text_view", "Generating Text View...")
+                                            fileActions.hasGeneratedTextView -> readerString("action_open_text_view", "Open Text View")
+                                            else -> readerString("action_generate_text_view", "Generate Text View")
                                         }
                                     )
                                 },
@@ -840,7 +844,7 @@ private fun ReaderWorkspaceTopChrome(
                         }
                         if (fileActions.canSaveCopy && onSaveCopyAction != null) {
                             DropdownMenuItem(
-                                text = { Text("Save") },
+                                text = { Text(readerString("action_save", "Save")) },
                                 onClick = {
                                     fileActionsExpanded = false
                                     onSaveCopyAction()
@@ -850,7 +854,7 @@ private fun ReaderWorkspaceTopChrome(
                         }
                         if (fileActions.canPrint && onPrintAction != null) {
                             DropdownMenuItem(
-                                text = { Text("Print") },
+                                text = { Text(readerString("action_print", "Print")) },
                                 onClick = {
                                     fileActionsExpanded = false
                                     onPrintAction()
@@ -865,13 +869,24 @@ private fun ReaderWorkspaceTopChrome(
                 IconButton(onClick = onToggleFullscreen, modifier = Modifier.size(36.dp)) {
                     Icon(
                         if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                        contentDescription = if (isFullscreen) "Exit full screen" else "Enter full screen"
+                        contentDescription = if (isFullscreen) {
+                            readerString("desktop_exit_full_screen", "Exit full screen")
+                        } else {
+                            readerString("desktop_enter_full_screen", "Enter full screen")
+                        }
                     )
                 }
             }
             if (hasRightPanel) {
                 IconButton(onClick = onToggleRightPanel, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Tune, contentDescription = if (rightPanelOpen) "Hide reader tools" else "Show reader tools")
+                    Icon(
+                        Icons.Default.Tune,
+                        contentDescription = if (rightPanelOpen) {
+                            readerString("desktop_hide_reader_tools", "Hide reader tools")
+                        } else {
+                            readerString("desktop_show_reader_tools", "Show reader tools")
+                        }
+                    )
                 }
             }
         }
@@ -962,7 +977,7 @@ private fun ReaderWorkspaceOverlayPanel(
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = onClose, modifier = Modifier.size(34.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Close")
+                        Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))

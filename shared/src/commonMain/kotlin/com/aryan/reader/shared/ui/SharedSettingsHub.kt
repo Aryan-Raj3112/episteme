@@ -134,7 +134,7 @@ fun SharedSettingsHub(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                label = { Text("Search settings") }
+                label = { Text(readerString("desktop_search_settings", "Search settings")) }
             )
 
             when {
@@ -185,7 +185,7 @@ private fun SharedSettingsHeader(
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (canNavigateUp) {
             TextButton(onClick = onNavigateUp) {
-                Text("Back")
+                Text(readerString("action_back", "Back"))
             }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -340,7 +340,7 @@ private fun SharedSettingsEmptySearch(modifier: Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(36.dp))
-            Text("No settings found", fontWeight = FontWeight.SemiBold)
+            Text(readerString("desktop_no_settings_found", "No settings found"), fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -536,9 +536,12 @@ private fun SharedSettingsDetailPage(
                 }
                 SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS -> {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Text("Fixed-layout appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(readerString("desktop_fixed_layout_appearance", "Fixed-layout appearance"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "These defaults apply where the platform supports shared PDF appearance. Per-book PDF overrides stay in the PDF reader.",
+                            readerString(
+                                "desktop_pdf_appearance_defaults_desc",
+                                "These defaults apply where the platform supports shared PDF appearance. Per-book PDF overrides stay in the PDF reader."
+                            ),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         SharedReaderThemeControls(
@@ -549,18 +552,18 @@ private fun SharedSettingsDetailPage(
                             onSettingsChange = onPdfSettingsChange
                         )
                         HorizontalDivider()
-                        Text("Visual options", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(readerString("visual_options_title", "Visual options"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         SharedPdfVisualOptionDefaultsSwitch(
-                            title = "Remove gap between pages",
-                            summary = "Applies to vertical PDF reading mode.",
+                            title = readerString("visual_options_remove_page_gap", "Remove gap between pages"),
+                            summary = readerString("desktop_remove_gap_between_pages_desc", "Applies to vertical reading mode."),
                             checked = !pdfSettings.pdfVerticalPageGapVisible,
                             onCheckedChange = { removeGap ->
                                 onPdfSettingsChange(pdfSettings.copy(pdfVerticalPageGapVisible = !removeGap))
                             }
                         )
                         SharedPdfVisualOptionDefaultsSwitch(
-                            title = "Hide page number overlay",
-                            summary = "Removes the small page count label from each PDF page.",
+                            title = readerString("visual_options_hide_page_number_overlay", "Hide page number overlay"),
+                            summary = readerString("visual_options_hide_page_number_overlay_desc", "Removes the small page count label from each page."),
                             checked = !pdfSettings.pdfPageNumberOverlayVisible,
                             onCheckedChange = { hideOverlay ->
                                 onPdfSettingsChange(pdfSettings.copy(pdfPageNumberOverlayVisible = !hideOverlay))
@@ -570,16 +573,19 @@ private fun SharedSettingsDetailPage(
                 }
                 SharedSettingsDestination.PDF_READER_TOOLS -> {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Text("Reader-managed PDF tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(readerString("desktop_reader_managed_pdf_tools", "Reader-managed PDF tools"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Auto-scroll, OCR, annotation defaults, and PDF-only tool visibility are managed inside the active PDF reader.",
+                            readerString(
+                                "desktop_reader_managed_pdf_tools_desc",
+                                "Auto-scroll, OCR, annotation defaults, and PDF-only tool visibility are managed inside the active PDF reader."
+                            ),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
                 SharedSettingsDestination.READER_TOOLBAR_DEFAULTS -> {
                     if (toolbarPreferences == null) {
-                        Text("Reader toolbar defaults are managed from the reader on this platform.")
+                        Text(readerString("desktop_reader_toolbar_managed_in_reader", "Reader toolbar defaults are managed from the reader on this platform."))
                     } else {
                         SharedReaderToolbarControls(
                             toolbarPreferences = toolbarPreferences,

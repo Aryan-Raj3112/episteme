@@ -50,6 +50,7 @@ import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.readerCloudTtsVoiceById
 import com.aryan.reader.shared.ui.SharedMarkdownText
+import com.aryan.reader.shared.ui.readerString
 
 @Composable
 internal fun DesktopAiHubSheet(
@@ -79,16 +80,19 @@ internal fun DesktopAiHubSheet(
     val effectiveSummary = summaryResult ?: cachedSummary?.let {
         SummarizationResult(summary = it, isCacheHit = true)
     }
+    val summaryTab = readerString("label_summary", "Summary")
+    val recapTab = readerString("ai_tab_recap", "Recap")
+    val cacheTab = readerString("ai_tab_cache", "Cache")
     val tabs = buildList {
-        add("Summary")
-        if (onGenerateRecap != null) add("Recap")
-        add("Cache")
+        add(summaryTab)
+        if (onGenerateRecap != null) add(recapTab)
+        add(cacheTab)
     }
     val selectedTabIndex = selectedTab.coerceIn(0, tabs.lastIndex)
-    val activeTab = tabs.getOrElse(selectedTabIndex) { "Summary" }
+    val activeTab = tabs.getOrElse(selectedTabIndex) { summaryTab }
 
     DesktopReaderBottomSheet(
-        title = "AI hub",
+        title = readerString("desktop_ai_hub", "AI hub"),
         onDismiss = onDismiss
     ) {
         Row(
@@ -106,7 +110,7 @@ internal fun DesktopAiHubSheet(
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Text(
-                        "$credits credits",
+                        readerString("credits_count", "%1\$d credits", credits),
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
@@ -127,7 +131,7 @@ internal fun DesktopAiHubSheet(
         }
 
         when (activeTab) {
-            "Summary" -> {
+            summaryTab -> {
                 DesktopAiHubResultView(
                     title = itemTitle,
                     resultText = effectiveSummary?.summary,
@@ -136,9 +140,9 @@ internal fun DesktopAiHubSheet(
                     freeRemaining = effectiveSummary?.freeRemaining,
                     isCacheHit = effectiveSummary?.isCacheHit == true,
                     isLoading = isSummaryLoading,
-                    loadingLabel = "Generating summary...",
-                    emptyTitle = "No summary cached for this section.",
-                    primaryActionLabel = "Generate summary",
+                    loadingLabel = readerString("generating_summary", "Generating summary..."),
+                    emptyTitle = readerString("desktop_no_summary_cached_section", "No summary cached for this section."),
+                    primaryActionLabel = readerString("desktop_generate_summary", "Generate summary"),
                     onPrimaryAction = { onGenerateSummary(false) },
                     onRegenerate = { onGenerateSummary(true) },
                     onClear = {
@@ -148,24 +152,24 @@ internal fun DesktopAiHubSheet(
                     }
                 )
             }
-            "Recap" -> {
+            recapTab -> {
                 DesktopAiHubResultView(
-                    title = "Story recap",
+                    title = readerString("ai_story_recap", "Story recap"),
                     resultText = recapResult?.recap,
                     errorText = recapResult?.error,
                     cost = recapResult?.cost,
                     freeRemaining = recapResult?.freeRemaining,
                     isCacheHit = false,
                     isLoading = isRecapLoading,
-                    loadingLabel = recapProgressMessage?.takeIf { it.isNotBlank() } ?: "Generating recap...",
-                    emptyTitle = "Create a recap up to your current position.",
-                    primaryActionLabel = "Generate recap",
+                    loadingLabel = recapProgressMessage?.takeIf { it.isNotBlank() } ?: readerString("ai_generating_recap", "Generating recap..."),
+                    emptyTitle = readerString("desktop_create_recap_current_position", "Create a recap up to your current position."),
+                    primaryActionLabel = readerString("desktop_generate_recap", "Generate recap"),
                     onPrimaryAction = { onGenerateRecap?.invoke() },
                     onRegenerate = { onGenerateRecap?.invoke() },
                     onClear = onClearRecap
                 )
             }
-            "Cache" -> {
+            cacheTab -> {
                 DesktopSummaryCachePanel(
                     bookKey = bookKey,
                     summaryCacheStore = summaryCacheStore,
@@ -219,14 +223,14 @@ private fun DesktopAiHubResultView(
             hasText -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     TextButton(enabled = !isLoading, onClick = onRegenerate) {
-                        Text("Regenerate")
+                        Text(readerString("ai_regenerate", "Regenerate"))
                     }
                     TextButton(enabled = !isLoading, onClick = onClear) {
-                        Text("Clear")
+                        Text(readerString("action_clear", "Clear"))
                     }
                     Spacer(Modifier.weight(1f))
                     IconButton(onClick = { clipboard.setText(AnnotatedString(resultText.orEmpty())) }) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy")
+                        Icon(Icons.Default.ContentCopy, contentDescription = readerString("action_copy", "Copy"))
                     }
                 }
                 HorizontalDivider()
@@ -258,10 +262,10 @@ private fun DesktopAiUsageBadge(
     isLoading: Boolean
 ) {
     val text = when {
-        isCacheHit -> "Cached"
-        cost == 0.0 && freeRemaining != null -> "Free, $freeRemaining left"
-        cost != null -> "$cost credits"
-        isLoading -> "Cost calculating"
+        isCacheHit -> readerString("desktop_cached", "Cached")
+        cost == 0.0 && freeRemaining != null -> readerString("desktop_free_remaining_format", "Free, %1\$d left", freeRemaining)
+        cost != null -> readerString("desktop_credits_decimal_format", "%1\$s credits", cost)
+        isLoading -> readerString("desktop_cost_calculating", "Cost calculating")
         else -> null
     } ?: return
     Surface(
@@ -293,7 +297,7 @@ private fun DesktopSummaryCachePanel(
 ) {
     var cachedItems by remember(bookKey) { mutableStateOf(summaryCacheStore.getAllSummaries(bookKey)) }
     if (cachedItems.isEmpty()) {
-        Text("No cached summaries for this book yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(readerString("desktop_no_cached_summaries_book", "No cached summaries for this book yet."), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -308,10 +312,10 @@ private fun DesktopSummaryCachePanel(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Cached summary", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(readerString("desktop_cached_summary", "Cached summary"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         TextButton(onClick = { expanded = !expanded }) {
-                            Text(if (expanded) "Hide" else "View")
+                            Text(if (expanded) readerString("desktop_hide", "Hide") else readerString("desktop_view", "View"))
                         }
                         IconButton(
                             onClick = {
@@ -320,7 +324,7 @@ private fun DesktopSummaryCachePanel(
                                 onCacheChanged()
                             }
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete summary", tint = MaterialTheme.colorScheme.error)
+                            Icon(Icons.Default.Delete, contentDescription = readerString("desktop_delete_summary", "Delete summary"), tint = MaterialTheme.colorScheme.error)
                         }
                     }
                     if (expanded) {
@@ -337,7 +341,7 @@ private fun DesktopSummaryCachePanel(
             },
             modifier = Modifier.align(Alignment.End)
         ) {
-            Text("Clear all", color = MaterialTheme.colorScheme.error)
+            Text(readerString("clear_all", "Clear all"), color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -370,11 +374,11 @@ internal fun DesktopCloudTtsChromeControls(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     when {
-                        cloudTts.isLoading -> "Preparing audio"
-                        cloudTts.isPaused -> "Paused"
-                        cloudTts.isPlaying -> "Reading"
-                        sanitized.isCloudTtsAvailable -> "Cloud TTS ready"
-                        else -> "Cloud TTS unavailable"
+                        cloudTts.isLoading -> readerString("desktop_preparing_audio", "Preparing audio")
+                        cloudTts.isPaused -> readerString("desktop_paused", "Paused")
+                        cloudTts.isPlaying -> readerString("label_reading", "Reading")
+                        sanitized.isCloudTtsAvailable -> readerString("desktop_cloud_tts_ready", "Cloud TTS ready")
+                        else -> readerString("desktop_cloud_tts_unavailable", "Cloud TTS unavailable")
                     },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
@@ -392,21 +396,21 @@ internal fun DesktopCloudTtsChromeControls(
                 )
             }
             if (showCredits) {
-                AssistChip(onClick = {}, label = { Text("$credits credits") })
+                AssistChip(onClick = {}, label = { Text(readerString("credits_count", "%1\$d credits", credits)) })
             }
             if (cloudTts.isPlaying || cloudTts.isPaused) {
                 TextButton(onClick = onPauseResume) {
-                    Text(if (cloudTts.isPaused) "Resume" else "Pause")
+                    Text(if (cloudTts.isPaused) readerString("tooltip_tts_resume", "Resume") else readerString("tooltip_tts_pause", "Pause"))
                 }
             }
             TextButton(
                 enabled = sanitized.isCloudTtsAvailable || ttsBusy,
                 onClick = { if (ttsBusy) onStop() else onRead() }
             ) {
-                Text(if (ttsBusy) "Stop" else "Read")
+                Text(if (ttsBusy) readerString("action_stop", "Stop") else readerString("action_read", "Read"))
             }
             IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Default.Settings, contentDescription = "Cloud TTS settings")
+                Icon(Icons.Default.Settings, contentDescription = readerString("desktop_cloud_tts_settings", "Cloud TTS settings"))
             }
         }
     }
@@ -436,9 +440,13 @@ internal fun DesktopCloudTtsSettingsOverlay(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Cloud TTS voice", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(readerString("desktop_cloud_tts_voice", "Cloud TTS voice"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (isTtsActive) "Stop reading to change voices." else "Choose the Gemini voice used for cloud read aloud.",
+                        if (isTtsActive) {
+                            readerString("desktop_stop_reading_change_voices", "Stop reading to change voices.")
+                        } else {
+                            readerString("desktop_choose_cloud_tts_voice", "Choose the Gemini voice used for cloud read aloud.")
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -449,7 +457,7 @@ internal fun DesktopCloudTtsSettingsOverlay(
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Text(
-                            "$credits credits",
+                            readerString("credits_count", "%1\$d credits", credits),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
@@ -486,7 +494,7 @@ internal fun DesktopCloudTtsSettingsOverlay(
                 HorizontalDivider()
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Voice cache", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(readerString("desktop_voice_cache", "Voice cache"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Text(
                             cacheSummary.currentVoiceLabel,
                             style = MaterialTheme.typography.bodySmall,
@@ -495,7 +503,7 @@ internal fun DesktopCloudTtsSettingsOverlay(
                     }
                     if (cacheSummary.hasCurrentVoiceCachedAudio && onClearCache != null) {
                         TextButton(enabled = !isTtsActive, onClick = onClearCache) {
-                            Text("Clear voice cache")
+                            Text(readerString("desktop_clear_voice_cache", "Clear voice cache"))
                         }
                     }
                 }

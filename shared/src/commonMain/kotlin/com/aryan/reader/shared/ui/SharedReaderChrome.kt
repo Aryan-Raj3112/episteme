@@ -671,18 +671,18 @@ private fun SharedReaderSearchTopBar(
                 onClick = { onReaderAction(ReaderAction.SearchClosed) },
                 modifier = Modifier.size(36.dp)
             ) {
-                Icon(Icons.Default.Close, contentDescription = "Close search")
+                Icon(Icons.Default.Close, contentDescription = readerString("content_desc_close_search", "Close search"))
             }
             SharedStableOutlinedTextField(
                 value = session.searchQuery,
                 onValueChange = { onReaderAction(ReaderAction.SearchChanged(it)) },
-                placeholder = { Text("Search in book") },
+                placeholder = { Text(readerString("search_in_book", "Search in book")) },
                 singleLine = true,
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 trailingIcon = if (session.searchQuery.isNotEmpty()) {
                     {
                         IconButton(onClick = { onReaderAction(ReaderAction.SearchChanged("")) }) {
-                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                            Icon(Icons.Default.Close, contentDescription = readerString("tooltip_clear_search", "Clear search"))
                         }
                     }
                 } else {
@@ -696,7 +696,11 @@ private fun SharedReaderSearchTopBar(
             ) {
                 Icon(
                     if (session.showSearchResultsPanel) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (session.showSearchResultsPanel) "Hide search results" else "Show search results"
+                    contentDescription = if (session.showSearchResultsPanel) {
+                        readerString("desktop_hide_search_results", "Hide search results")
+                    } else {
+                        readerString("desktop_show_search_results", "Show search results")
+                    }
                 )
             }
         }
@@ -724,20 +728,20 @@ private fun BoxScope.SharedReaderSearchOverlay(
             when {
                 session.searchQuery.isBlank() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Type to search this book", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(readerString("desktop_type_to_search_book", "Type to search this book"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
                 session.searchResults.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No matches", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(readerString("desktop_no_matches", "No matches"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
                 else -> {
                     Column(Modifier.fillMaxSize()) {
                         Text(
-                            "${session.searchResults.size} matches",
+                            readerString("desktop_matches_format", "%1\$d matches", session.searchResults.size),
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                         )
@@ -760,7 +764,12 @@ private fun BoxScope.SharedReaderSearchOverlay(
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         Text(
-                                            "Page ${result.pageIndex + 1} - ${result.chapterTitle}",
+                                            readerString(
+                                                "desktop_pdf_page_author_format",
+                                                "Page %1\$d - %2\$s",
+                                                result.pageIndex + 1,
+                                                result.chapterTitle
+                                            ),
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -824,13 +833,13 @@ private fun SharedReaderSearchNavigationPill(
                 enabled = session.canGoToPreviousSearchResult,
                 modifier = Modifier.size(36.dp)
             ) {
-                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous search result")
+                Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = readerString("desktop_previous_search_result", "Previous search result"))
             }
             Text(
                 text = if (session.activeSearchResultIndex in session.searchResults.indices) {
                     "${session.activeSearchResultIndex + 1}/${session.searchResults.size}"
                 } else {
-                    "${session.searchResults.size} matches"
+                    readerString("desktop_matches_format", "%1\$d matches", session.searchResults.size)
                 },
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
@@ -841,7 +850,7 @@ private fun SharedReaderSearchNavigationPill(
                 enabled = session.canGoToNextSearchResult,
                 modifier = Modifier.size(36.dp)
             ) {
-                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next search result")
+                Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = readerString("desktop_next_search_result", "Next search result"))
             }
         }
     }
@@ -867,11 +876,11 @@ private fun SharedReaderHighlightSheet(
     val chapterTitle = session.reader.book.chapters
         .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
         ?.title
-        ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
+        ?: readerString("chapter_number_format", "Chapter %1\$d", (locator.chapterIndex ?: highlight.chapterIndex) + 1)
     var noteText by remember(highlight.id, highlight.note) { mutableStateOf(highlight.note.orEmpty()) }
 
     SharedReaderBottomSheet(
-        title = "Highlight",
+        title = readerString("label_highlight_color", "Highlight"),
         onDismiss = onDismiss
     ) {
         Row(
@@ -939,11 +948,11 @@ private fun SharedReaderHighlightSheet(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            SharedReaderBottomSheetToolButton(Icons.Default.ContentCopy, "Copy") {
+            SharedReaderBottomSheetToolButton(Icons.Default.ContentCopy, readerString("action_copy", "Copy")) {
                 onCopy()
                 onDismiss()
             }
-            SharedReaderBottomSheetToolButton(Icons.Default.Search, "Search") {
+            SharedReaderBottomSheetToolButton(Icons.Default.Search, readerString("action_search", "Search")) {
                 onSearch()
                 onDismiss()
             }
@@ -951,7 +960,7 @@ private fun SharedReaderHighlightSheet(
         SharedStableOutlinedTextField(
             value = noteText,
             onValueChange = { noteText = it },
-            label = { Text("Note") },
+            label = { Text(readerString("label_note", "Note")) },
             minLines = 3,
             maxLines = 5,
             modifier = Modifier.fillMaxWidth(),
@@ -964,13 +973,13 @@ private fun SharedReaderHighlightSheet(
             verticalAlignment = Alignment.CenterVertically
         ) {
             TextButton(onClick = onDelete) {
-                Text("Delete", color = MaterialTheme.colorScheme.error)
+                Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
             }
             TextButton(onClick = {
                 onSaveNote(noteText)
                 onDismiss()
             }) {
-                Text("Save note")
+                Text(readerString("action_save_note", "Save note"))
             }
         }
     }
@@ -1011,16 +1020,16 @@ private fun SharedReaderAiResultSheet(
     onDismiss: () -> Unit
 ) {
     SharedReaderBottomSheet(
-        title = result.title ?: "AI",
+        title = result.title ?: readerString("desktop_ai", "AI"),
         onDismiss = onDismiss
     ) {
         val errorMessage = result.errorMessage
         when {
-            result.isLoading && result.text.isBlank() -> Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            result.isLoading && result.text.isBlank() -> Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
             errorMessage != null -> Text(errorMessage, color = MaterialTheme.colorScheme.error)
             else -> {
                 if (result.isLoading) {
-                    Text("Working...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(readerString("desktop_working", "Working..."), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 SharedMarkdownText(result.text)
             }
@@ -1084,7 +1093,7 @@ private fun SharedReaderBottomSheet(
                             overflow = TextOverflow.Ellipsis
                         )
                         IconButton(onClick = onDismiss) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
+                            Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
                         }
                     }
                     HorizontalDivider()
@@ -1140,25 +1149,32 @@ private fun SharedReaderQuickActions(
                 ReaderTool.BOOKMARK -> IconButton(onClick = onToggleBookmark) {
                     Icon(
                         if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = "Bookmark"
+                        contentDescription = readerString("content_desc_bookmark", "Bookmark")
                     )
                 }
 
                 ReaderTool.THEME -> IconButton(onClick = onToggleTheme) {
-                    Icon(Icons.Default.Palette, contentDescription = if (isDarkMode) "Use light theme" else "Use dark theme")
+                    Icon(
+                        Icons.Default.Palette,
+                        contentDescription = if (isDarkMode) {
+                            readerString("desktop_use_light_theme", "Use light theme")
+                        } else {
+                            readerString("desktop_use_dark_theme", "Use dark theme")
+                        }
+                    )
                 }
 
                 ReaderTool.SEARCH -> IconButton(onClick = onToggleSearch) {
                     Icon(
                         if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
-                        contentDescription = "Search"
+                        contentDescription = readerString("action_search", "Search")
                     )
                 }
 
                 ReaderTool.DICTIONARY -> IconButton(
                     onClick = { onExternalLookup(ReaderExternalLookupAction.DICTIONARY, ReaderContextExtractor.currentPageText(session)) }
                 ) {
-                    Icon(Icons.Default.Translate, contentDescription = "External lookup")
+                    Icon(Icons.Default.Translate, contentDescription = readerString("desktop_external_lookup", "External lookup"))
                 }
 
                 ReaderTool.AI_FEATURES -> Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1168,7 +1184,7 @@ private fun SharedReaderQuickActions(
                             !extrasState.aiResult.isLoading,
                         onClick = { onAiAction(ReaderAiFeature.DEFINE, ReaderContextExtractor.currentPageText(session).take(1200)) }
                     ) {
-                        Icon(Icons.Default.Psychology, contentDescription = "Define page")
+                        Icon(Icons.Default.Psychology, contentDescription = readerString("desktop_define_page", "Define page"))
                     }
                 }
 
@@ -1190,7 +1206,14 @@ private fun SharedReaderQuickActions(
                         }
                     }
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPaused) "Stop read aloud" else "Read aloud")
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isLoading || extrasState.cloudTts.isPaused) {
+                            readerString("desktop_stop_read_aloud", "Stop read aloud")
+                        } else {
+                            readerString("action_read_aloud", "Read aloud")
+                        }
+                    )
                 }
 
                 ReaderTool.AUTO_SCROLL -> IconButton(
@@ -1199,7 +1222,14 @@ private fun SharedReaderQuickActions(
                         onAutoScrollChange(autoScroll.copy(enabled = !autoScroll.enabled))
                     }
                 ) {
-                    Icon(Icons.Default.Speed, contentDescription = if (extrasState.autoScroll.enabled) "Stop auto scroll" else "Start auto scroll")
+                    Icon(
+                        Icons.Default.Speed,
+                        contentDescription = if (extrasState.autoScroll.enabled) {
+                            readerString("desktop_stop_auto_scroll", "Stop auto scroll")
+                        } else {
+                            readerString("desktop_start_auto_scroll", "Start auto scroll")
+                        }
+                    )
                 }
 
                 else -> Unit
@@ -1255,7 +1285,7 @@ private fun SharedReaderControlPanel(
             verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)
         ) {
             item {
-                Text("Reader tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(readerString("desktop_reader_tools", "Reader tools"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1266,7 +1296,7 @@ private fun SharedReaderControlPanel(
                         FilterChip(
                             selected = activeSection == section,
                             onClick = { selectedSection = section },
-                            label = { Text(section.title) }
+                            label = { Text(section.localizedTitle()) }
                         )
                     }
                 }
@@ -1320,11 +1350,21 @@ private fun SharedReaderControlPanel(
     }
 }
 
-private enum class ReaderControlSection(val title: String) {
-    PAGE("Navigation"),
-    FORMAT("Typography"),
-    THEME("Appearance"),
-    EXTRAS("Assist")
+private enum class ReaderControlSection {
+    PAGE,
+    FORMAT,
+    THEME,
+    EXTRAS
+}
+
+@Composable
+private fun ReaderControlSection.localizedTitle(): String {
+    return when (this) {
+        ReaderControlSection.PAGE -> readerString("desktop_navigation", "Navigation")
+        ReaderControlSection.FORMAT -> readerString("desktop_typography", "Typography")
+        ReaderControlSection.THEME -> readerString("app_theme_appearance", "Appearance")
+        ReaderControlSection.EXTRAS -> readerString("desktop_assist", "Assist")
+    }
 }
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(session: ReaderSessionState): List<ReaderControlSection> {
@@ -1353,7 +1393,7 @@ private fun SharedReaderPageControls(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (session.shouldShowJumpHistory) {
-            Text("Jump history", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(readerString("desktop_jump_history", "Jump history"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             SharedReaderJumpHistoryBar(
                 session = session,
                 onBack = { onReaderAction(ReaderAction.JumpBack) },
@@ -1374,21 +1414,21 @@ fun SharedReaderFormatControls(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         if (toolbarPreferences.isVisible(ReaderTool.READING_MODE)) {
-            SharedReaderPanelSection("Reading") {
+            SharedReaderPanelSection(readerString("label_reading", "Reading")) {
                 SharedReaderChoiceRow {
                     FilterChip(
                         selected = settings.readingMode == ReaderReadingMode.PAGINATED,
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
                         },
-                        label = { Text("Pages") }
+                        label = { Text(readerString("tab_pages", "Pages")) }
                     )
                     FilterChip(
                         selected = settings.readingMode == ReaderReadingMode.VERTICAL,
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.VERTICAL)))
                         },
-                        label = { Text("Vertical") }
+                        label = { Text(readerString("menu_reading_mode_vertical", "Vertical")) }
                     )
                 }
                 if (settings.readingMode == ReaderReadingMode.PAGINATED) {
@@ -1400,7 +1440,7 @@ fun SharedReaderFormatControls(
                                     ReaderAction.SettingsChanged(settings.copy(pageSpreadMode = ReaderPageSpreadMode.SINGLE))
                                 )
                             },
-                            label = { Text("Single page") }
+                            label = { Text(readerString("visual_options_pdf_spread_single", "Single page")) }
                         )
                         FilterChip(
                             selected = settings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE,
@@ -1409,7 +1449,7 @@ fun SharedReaderFormatControls(
                                     ReaderAction.SettingsChanged(settings.copy(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE))
                                 )
                             },
-                            label = { Text("Two pages") }
+                            label = { Text(readerString("visual_options_pdf_spread_two", "Two pages")) }
                         )
                     }
                 }
@@ -1417,7 +1457,7 @@ fun SharedReaderFormatControls(
         }
 
         if (toolbarPreferences.isVisible(ReaderTool.FORMAT)) {
-            SharedReaderPanelSection("Font & Alignment") {
+            SharedReaderPanelSection(readerString("section_font_alignment", "Font & Alignment")) {
                 val customFontName = settings.customFontPath
                     ?.substringAfterLast('/')
                     ?.substringAfterLast('\\')
@@ -1434,7 +1474,7 @@ fun SharedReaderFormatControls(
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(customFontName ?: settings.fontFamily, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("Font", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(readerString("select_font", "Font"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     TextButton(
                         enabled = onPickCustomFont != null,
@@ -1451,12 +1491,18 @@ fun SharedReaderFormatControls(
                             }
                         }
                     ) {
-                        Text("Choose")
+                        Text(readerString("action_choose", "Choose"))
                     }
                 }
 
                 SharedReaderChoiceRow {
-                    listOf("Default", "Serif", "Sans", "Mono").forEach { family ->
+                    val fontFamilies = listOf(
+                        "Default" to readerString("label_default", "Default"),
+                        "Serif" to readerString("font_serif", "Serif"),
+                        "Sans" to readerString("font_sans", "Sans"),
+                        "Mono" to readerString("font_mono", "Mono")
+                    )
+                    fontFamilies.forEach { (family, label) ->
                         FilterChip(
                             selected = settings.customFontPath == null && settings.fontFamily == family,
                             onClick = {
@@ -1464,7 +1510,7 @@ fun SharedReaderFormatControls(
                                     ReaderAction.SettingsChanged(settings.copy(fontFamily = family, customFontPath = null))
                                 )
                             },
-                            label = { Text(family) }
+                            label = { Text(label) }
                         )
                     }
                     if (settings.customFontPath != null) {
@@ -1475,7 +1521,7 @@ fun SharedReaderFormatControls(
                                 )
                             }
                         ) {
-                            Text("Clear")
+                            Text(readerString("action_clear", "Clear"))
                         }
                     }
                 }
@@ -1483,7 +1529,7 @@ fun SharedReaderFormatControls(
                 val activeCustomFonts = customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() }
                 if (activeCustomFonts.isNotEmpty()) {
                     Text(
-                        "Imported fonts",
+                        readerString("desktop_imported_fonts", "Imported fonts"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1513,35 +1559,35 @@ fun SharedReaderFormatControls(
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.START)))
                         },
-                        label = { Text("Left") }
+                        label = { Text(readerString("label_left", "Left")) }
                     )
                     FilterChip(
                         selected = settings.textAlign == SharedReaderTextAlign.RIGHT,
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.RIGHT)))
                         },
-                        label = { Text("Right") }
+                        label = { Text(readerString("label_right", "Right")) }
                     )
                     FilterChip(
                         selected = settings.textAlign == SharedReaderTextAlign.JUSTIFY,
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.JUSTIFY)))
                         },
-                        label = { Text("Justify") }
+                        label = { Text(readerString("label_justify", "Justify")) }
                     )
                     FilterChip(
                         selected = settings.textAlign == SharedReaderTextAlign.CENTER,
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.CENTER)))
                         },
-                        label = { Text("Center") }
+                        label = { Text(readerString("desktop_align_center", "Center")) }
                     )
                 }
             }
 
-            SharedReaderPanelSection("Layout & Spacing") {
+            SharedReaderPanelSection(readerString("desktop_layout_spacing", "Layout & Spacing")) {
                 SharedReaderSettingSlider(
-                    label = "Font size",
+                    label = readerString("label_font_size", "Font size"),
                     value = settings.fontSize.toFloat(),
                     onValueChange = { value ->
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(fontSize = value.roundToInt())))
@@ -1552,7 +1598,7 @@ fun SharedReaderFormatControls(
                     formatValue = { it.roundToInt().toString() }
                 )
                 SharedReaderSettingSlider(
-                    label = "Line height",
+                    label = readerString("label_line_height", "Line height"),
                     value = settings.lineSpacing,
                     onValueChange = { value ->
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(lineSpacing = value)))
@@ -1562,7 +1608,7 @@ fun SharedReaderFormatControls(
                     formatValue = { "${it.formatTwoDecimals()}x" }
                 )
                 SharedReaderSettingSlider(
-                    label = "Paragraph gap",
+                    label = readerString("label_paragraph_gap", "Paragraph gap"),
                     value = settings.paragraphSpacing,
                     onValueChange = { value ->
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(paragraphSpacing = value)))
@@ -1572,7 +1618,7 @@ fun SharedReaderFormatControls(
                     formatValue = { "${it.formatTwoDecimals()}x" }
                 )
                 SharedReaderSettingSlider(
-                    label = "Image size",
+                    label = readerString("label_image_size", "Image size"),
                     value = settings.imageScale,
                     onValueChange = { value ->
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(imageScale = value)))
@@ -1582,7 +1628,7 @@ fun SharedReaderFormatControls(
                     formatValue = { "${it.formatTwoDecimals()}x" }
                 )
                 SharedReaderSettingSlider(
-                    label = "Horizontal margin",
+                    label = readerString("label_horizontal_margin", "Horizontal margin"),
                     value = settings.resolvedHorizontalMargin.toFloat(),
                     onValueChange = { value ->
                         val nextHorizontal = value.roundToInt()
@@ -1599,7 +1645,7 @@ fun SharedReaderFormatControls(
                     formatValue = { it.roundToInt().toString() }
                 )
                 SharedReaderSettingSlider(
-                    label = "Vertical margin",
+                    label = readerString("label_vertical_margin", "Vertical margin"),
                     value = settings.resolvedVerticalMargin.toFloat(),
                     onValueChange = { value ->
                         val nextVertical = value.roundToInt()
@@ -1616,7 +1662,7 @@ fun SharedReaderFormatControls(
                     formatValue = { it.roundToInt().toString() }
                 )
                 SharedReaderSettingSlider(
-                    label = "Page width",
+                    label = readerString("desktop_page_width", "Page width"),
                     value = settings.pageWidth.toFloat(),
                     onValueChange = { value ->
                         onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.roundToInt())))
@@ -1654,17 +1700,17 @@ fun SharedReaderThemeControls(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        SharedReaderPanelSection("Reading Themes") {
+        SharedReaderPanelSection(readerString("reading_themes", "Reading Themes")) {
             SharedReaderChoiceRow {
                 FilterChip(
                     selected = !textured,
                     onClick = { textured = false },
-                    label = { Text("Solid") }
+                    label = { Text(readerString("desktop_solid", "Solid")) }
                 )
                 FilterChip(
                     selected = textured,
                     onClick = { textured = true },
-                    label = { Text("Textured") }
+                    label = { Text(readerString("theme_textured", "Textured")) }
                 )
             }
             activeThemes.chunked(3).forEach { rowThemes ->
@@ -1684,7 +1730,7 @@ fun SharedReaderThemeControls(
             }
         }
 
-        SharedReaderPanelSection("Custom colors") {
+        SharedReaderPanelSection(readerString("desktop_custom_colors", "Custom colors")) {
             val backgroundColor = settings.readerBackgroundColor(builtInThemes)
             val textColor = settings.readerTextColor(builtInThemes)
             Surface(
@@ -1698,19 +1744,19 @@ fun SharedReaderThemeControls(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text("Custom theme preview", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    Text("Page and text colors", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    Text(readerString("desktop_custom_theme_preview", "Custom theme preview"), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(readerString("desktop_page_and_text_colors", "Page and text colors"), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 SharedReaderThemeColorButton(
-                    label = "Page",
+                    label = readerString("desktop_page", "Page"),
                     color = backgroundColor,
                     onClick = { editingColorTarget = ReaderThemeColorTarget.BACKGROUND },
                     modifier = Modifier.weight(1f)
                 )
                 SharedReaderThemeColorButton(
-                    label = "Text",
+                    label = readerString("content_desc_text", "Text"),
                     color = textColor,
                     onClick = { editingColorTarget = ReaderThemeColorTarget.TEXT },
                     modifier = Modifier.weight(1f)
@@ -1719,7 +1765,7 @@ fun SharedReaderThemeControls(
         }
 
         if (highlightPalette != null && onHighlightPaletteChange != null) {
-            SharedReaderPanelSection("Highlight palette") {
+            SharedReaderPanelSection(readerString("desktop_highlighter_palette", "Highlight palette")) {
                 SharedHighlightPaletteEditor(
                     palette = highlightPalette,
                     onPaletteChange = onHighlightPaletteChange
@@ -1728,12 +1774,12 @@ fun SharedReaderThemeControls(
         }
 
         if (textured) {
-            SharedReaderPanelSection("Texture") {
+            SharedReaderPanelSection(readerString("theme_texture", "Texture")) {
                 SharedReaderChoiceRow {
                     FilterChip(
                         selected = settings.textureId == null,
                         onClick = { onSettingsChange(settings.copy(textureId = null)) },
-                        label = { Text("None") }
+                        label = { Text(readerString("label_none", "None")) }
                     )
                     if (onImportTexture != null) {
                         FilterChip(
@@ -1742,7 +1788,7 @@ fun SharedReaderThemeControls(
                                 onImportTexture(settings)?.let(onSettingsChange)
                             },
                             leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
-                            label = { Text("Import") }
+                            label = { Text(readerString("action_import", "Import")) }
                         )
                     }
                     ReaderTexture.entries.forEach { texture ->
@@ -1762,7 +1808,7 @@ fun SharedReaderThemeControls(
                 }
                 if (settings.textureId != null) {
                     SharedReaderSettingSlider(
-                        label = "Texture strength",
+                        label = readerString("desktop_texture_strength", "Texture strength"),
                         value = settings.textureAlpha.coerceIn(0f, 1f),
                         onValueChange = { value ->
                             onSettingsChange(settings.copy(textureAlpha = value))
@@ -1786,7 +1832,7 @@ fun SharedReaderThemeControls(
         }
         SharedHsvColorPickerDialog(
             initialColor = initialColor,
-            title = target.title,
+            title = target.localizedTitle(),
             onDismiss = { editingColorTarget = null },
             onSave = { color ->
                 val nextBackground = if (target == ReaderThemeColorTarget.BACKGROUND) color else backgroundColor
@@ -1816,8 +1862,8 @@ fun SharedReaderThemeControls(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Text("Live preview", fontWeight = FontWeight.Bold)
-                    Text("Page and text colors", style = MaterialTheme.typography.bodySmall)
+                    Text(readerString("theme_color_live_preview", "Live preview"), fontWeight = FontWeight.Bold)
+                    Text(readerString("desktop_page_and_text_colors", "Page and text colors"), style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -1826,9 +1872,17 @@ fun SharedReaderThemeControls(
 
 private const val ReaderCustomThemeId = "custom_reader"
 
-private enum class ReaderThemeColorTarget(val title: String) {
-    BACKGROUND("Page color"),
-    TEXT("Text color")
+private enum class ReaderThemeColorTarget {
+    BACKGROUND,
+    TEXT
+}
+
+@Composable
+private fun ReaderThemeColorTarget.localizedTitle(): String {
+    return when (this) {
+        ReaderThemeColorTarget.BACKGROUND -> readerString("theme_page_color", "Page color")
+        ReaderThemeColorTarget.TEXT -> readerString("theme_text_color", "Text color")
+    }
 }
 
 @Composable
@@ -1875,25 +1929,25 @@ fun SharedReaderVisualOptionsControls(
     onReaderAction: (ReaderAction) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        SharedReaderPanelSection("System UI") {
+        SharedReaderPanelSection(readerString("visual_options_system_ui", "System UI")) {
             SharedReaderChoiceRow {
                 SystemUiMode.entries.forEach { mode ->
                     FilterChip(
                         selected = settings.systemUiMode == mode,
                         onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(systemUiMode = mode))) },
-                        label = { Text(mode.title) }
+                        label = { Text(mode.localizedTitle()) }
                     )
                 }
             }
         }
 
-        SharedReaderPanelSection("Page Info") {
+        SharedReaderPanelSection(readerString("desktop_page_info", "Page Info")) {
             SharedReaderChoiceRow {
                 PageInfoMode.entries.forEach { mode ->
                     FilterChip(
                         selected = settings.pageInfoMode == mode,
                         onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoMode = mode))) },
-                        label = { Text(mode.title) }
+                        label = { Text(mode.localizedTitle()) }
                     )
                 }
             }
@@ -1902,19 +1956,19 @@ fun SharedReaderVisualOptionsControls(
                     FilterChip(
                         selected = settings.pageInfoPosition == position,
                         onClick = { onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageInfoPosition = position))) },
-                        label = { Text(position.title) }
+                        label = { Text(position.localizedTitle()) }
                     )
                 }
             }
         }
 
-        SharedReaderPanelSection("Chapter Turns") {
+        SharedReaderPanelSection(readerString("desktop_chapter_turns", "Chapter Turns")) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Seamless chapters", modifier = Modifier.weight(1f))
+                Text(readerString("visual_options_seamless_chapter", "Seamless chapters"), modifier = Modifier.weight(1f))
                 Switch(
                     checked = settings.seamlessChapterNavigation,
                     onCheckedChange = { enabled ->
@@ -1923,7 +1977,7 @@ fun SharedReaderVisualOptionsControls(
                 )
             }
             SharedReaderSettingSlider(
-                label = "Pull distance",
+                label = readerString("setting_pull_distance_change_chapter", "Pull distance"),
                 value = settings.chapterTurnDragMultiplier.coerceIn(0.5f, 2.0f),
                 onValueChange = { value ->
                     onReaderAction(ReaderAction.SettingsChanged(settings.copy(chapterTurnDragMultiplier = value)))
@@ -1934,6 +1988,32 @@ fun SharedReaderVisualOptionsControls(
                 formatValue = { "${it.formatTwoDecimals()}x" }
             )
         }
+    }
+}
+
+@Composable
+private fun SystemUiMode.localizedTitle(): String {
+    return when (this) {
+        SystemUiMode.DEFAULT -> readerString("label_always_show", "Always Show")
+        SystemUiMode.SYNC -> readerString("label_sync_with_menus", "Sync with Menus")
+        SystemUiMode.HIDDEN -> readerString("label_always_hide", "Always Hide")
+    }
+}
+
+@Composable
+private fun PageInfoMode.localizedTitle(): String {
+    return when (this) {
+        PageInfoMode.DEFAULT -> readerString("label_always_show", "Always Show")
+        PageInfoMode.SYNC -> readerString("label_sync_with_menus", "Sync with Menus")
+        PageInfoMode.HIDDEN -> readerString("label_always_hide", "Always Hide")
+    }
+}
+
+@Composable
+private fun PageInfoPosition.localizedTitle(): String {
+    return when (this) {
+        PageInfoPosition.BOTTOM -> readerString("label_bottom", "Bottom")
+        PageInfoPosition.TOP -> readerString("label_top", "Top")
     }
 }
 
@@ -1957,21 +2037,21 @@ private fun SharedReaderExtrasControls(
     val currentPageText = ReaderContextExtractor.currentPageText(session)
 
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        SharedReaderPanelSection("Auto Scroll") {
+        SharedReaderPanelSection(readerString("menu_auto_scroll", "Auto Scroll")) {
             val autoScroll = extrasState.autoScroll.sanitized()
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Auto scroll", modifier = Modifier.weight(1f))
+                Text(readerString("menu_auto_scroll", "Auto Scroll"), modifier = Modifier.weight(1f))
                 Switch(
                     checked = autoScroll.enabled,
                     onCheckedChange = { enabled -> onAutoScrollChange(autoScroll.copy(enabled = enabled)) }
                 )
             }
             SharedReaderSettingSlider(
-                label = "Speed",
+                label = readerString("desktop_speed", "Speed"),
                 value = autoScroll.speed,
                 onValueChange = { speed -> onAutoScrollChange(autoScroll.copy(speed = speed).sanitized()) },
                 valueRange = 12f..160f,
@@ -1982,7 +2062,7 @@ private fun SharedReaderExtrasControls(
         }
 
         if (cloudTtsControlsAvailable) {
-            SharedReaderPanelSection("Cloud TTS") {
+            SharedReaderPanelSection(readerString("credits_cloud_tts_title", "Cloud TTS")) {
                 val ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1992,12 +2072,12 @@ private fun SharedReaderExtrasControls(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             when {
-                                extrasState.cloudTts.isLoading -> "Preparing audio"
-                                extrasState.cloudTts.isPaused -> "Paused"
-                                extrasState.cloudTts.isPlaying -> "Reading"
-                                settings.isCloudTtsAvailable -> "Ready"
-                                settings.serverBackedReaderAiFeatures -> "Needs signed-in credits"
-                                else -> "Needs Gemini key"
+                                extrasState.cloudTts.isLoading -> readerString("desktop_preparing_audio", "Preparing audio")
+                                extrasState.cloudTts.isPaused -> readerString("desktop_paused", "Paused")
+                                extrasState.cloudTts.isPlaying -> readerString("label_reading", "Reading")
+                                settings.isCloudTtsAvailable -> readerString("desktop_cloud_tts_ready", "Ready")
+                                settings.serverBackedReaderAiFeatures -> readerString("desktop_cloud_tts_needs_signed_in_credits", "Needs signed-in credits")
+                                else -> readerString("desktop_cloud_tts_needs_gemini", "Needs Gemini key")
                             },
                             fontWeight = FontWeight.SemiBold
                         )
@@ -2022,7 +2102,7 @@ private fun SharedReaderExtrasControls(
                             }
                         }
                     ) {
-                        Text(if (ttsBusy) "Stop" else "Read")
+                        Text(if (ttsBusy) readerString("action_stop", "Stop") else readerString("action_read", "Read"))
                     }
                 }
             }
@@ -2037,7 +2117,7 @@ private fun SharedReaderExtrasControls(
         }
 
         if (settings.areReaderAiFeaturesAvailable) {
-            SharedReaderPanelSection("AI") {
+            SharedReaderPanelSection(readerString("desktop_ai", "AI")) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2045,14 +2125,14 @@ private fun SharedReaderExtrasControls(
                 ) {
                     onOpenAiHub?.let { openAiHub ->
                         TextButton(onClick = openAiHub) {
-                            Text("AI hub")
+                            Text(readerString("desktop_ai_hub", "AI hub"))
                         }
                     }
                     TextButton(
                         enabled = currentPageText.isNotBlank() && !extrasState.aiResult.isLoading,
                         onClick = { onAiAction(ReaderAiFeature.DEFINE, currentPageText.take(1200)) }
                     ) {
-                        Text("Define page")
+                        Text(readerString("desktop_define_page", "Define page"))
                     }
                 }
             }
@@ -2080,16 +2160,16 @@ fun SharedReaderTtsReplacementControls(
     val bookSettings = preferences.settingsForBook(bookId)
     val bookRules = preferences.rulesForBook(bookId)
 
-    SharedReaderPanelSection("TTS Word Replacements") {
+    SharedReaderPanelSection(readerString("menu_tts_word_replacements", "TTS Word Replacements")) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Replace only what is spoken", fontWeight = FontWeight.SemiBold)
+                Text(readerString("tts_replacements_replace_only_spoken", "Replace only what is spoken"), fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Reader text, highlights, and locations stay unchanged.",
+                    readerString("tts_replacements_replace_only_spoken_desc", "Reader text, highlights, and locations stay unchanged."),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2109,7 +2189,7 @@ fun SharedReaderTtsReplacementControls(
                         editingRuleId = null
                         isAddingRule = false
                     },
-                    label = { Text("Global") }
+                    label = { Text(readerString("tts_replacements_tab_global", "Global")) }
                 )
                 FilterChip(
                     selected = selectedScope == SharedTtsReplacementScope.BOOK,
@@ -2118,7 +2198,7 @@ fun SharedReaderTtsReplacementControls(
                         editingRuleId = null
                         isAddingRule = false
                     },
-                    label = { Text("This book") }
+                    label = { Text(readerString("tts_replacements_tab_this_book", "This book")) }
                 )
             }
         }
@@ -2138,7 +2218,7 @@ fun SharedReaderTtsReplacementControls(
                 TextButton(onClick = { isAddingRule = true; editingRuleId = null }) {
                     Icon(Icons.Default.Add, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Add rule")
+                    Text(readerString("tts_replacements_add_rule", "Add rule"))
                 }
                 val editingRule = editingRuleId?.let { id -> preferences.globalRules.firstOrNull { it.id == id } }
                 if (isAddingRule || editingRule != null) {
@@ -2160,7 +2240,7 @@ fun SharedReaderTtsReplacementControls(
                 }
                 SharedTtsReplacementRuleList(
                     rules = preferences.globalRules,
-                    emptyText = "No global rules yet.",
+                    emptyText = readerString("tts_replacements_empty_global", "No global replacement rules yet."),
                     onToggle = { rule, enabled ->
                         onPreferencesChange(
                             preferences.copy(
@@ -2201,7 +2281,7 @@ fun SharedReaderTtsReplacementControls(
                 TextButton(onClick = { isAddingRule = true; editingRuleId = null }) {
                     Icon(Icons.Default.Add, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Add book rule")
+                    Text(readerString("tts_replacements_add_book_rule", "Add book rule"))
                 }
                 val editingRule = editingRuleId?.let { id -> bookRules.firstOrNull { it.id == id } }
                 if (isAddingRule || editingRule != null) {
@@ -2223,7 +2303,7 @@ fun SharedReaderTtsReplacementControls(
                 }
                 SharedTtsReplacementRuleList(
                     rules = bookRules,
-                    emptyText = "No book rules yet.",
+                    emptyText = readerString("tts_replacements_empty_book", "No book-specific rules yet."),
                     onToggle = { rule, enabled ->
                         onPreferencesChange(
                             preferences.withBookRules(
@@ -2247,7 +2327,7 @@ private fun SharedTtsReplacementSuggestionsRow(
     onSuggestionClick: (ReaderTtsReplacementRule) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Suggestions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(readerString("tts_replacements_suggestions", "Suggestions"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.horizontalScroll(rememberScrollState())
@@ -2270,14 +2350,14 @@ private fun SharedTtsBookReplacementSettings(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Use global rules here", modifier = Modifier.weight(1f))
+            Text(readerString("tts_replacements_use_global_here", "Use global rules here"), modifier = Modifier.weight(1f))
             Switch(
                 checked = settings.globalRulesEnabled,
                 onCheckedChange = { onSettingsChange(settings.copy(globalRulesEnabled = it)) }
             )
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Enable book rules", modifier = Modifier.weight(1f))
+            Text(readerString("tts_replacements_enable_book_rules", "Enable book rules"), modifier = Modifier.weight(1f))
             Switch(
                 checked = settings.localRulesEnabled,
                 onCheckedChange = { onSettingsChange(settings.copy(localRulesEnabled = it)) }
@@ -2293,9 +2373,9 @@ private fun SharedTtsInheritedGlobalRules(
     onSettingsChange: (ReaderTtsReplacementBookSettings) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Inherited global rules", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(readerString("tts_replacements_inherited_global_rules", "Inherited global rules"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (globalRules.isEmpty()) {
-            Text("No global rules to inherit.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(readerString("tts_replacements_no_global_rules", "No global rules to inherit."), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             globalRules.forEach { rule ->
                 Row(
@@ -2306,7 +2386,11 @@ private fun SharedTtsInheritedGlobalRules(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(rule.desktopSummary(), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            if (rule.id in settings.disabledGlobalRuleIds) "Disabled for this book" else "Enabled for this book",
+                            if (rule.id in settings.disabledGlobalRuleIds) {
+                                readerString("tts_replacements_disabled_for_book", "Disabled for this book")
+                            } else {
+                                readerString("tts_replacements_allowed_in_book", "Allowed in this book")
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2342,7 +2426,10 @@ private fun SharedTtsReplacementRuleEditor(
     var isRegex by remember(seedId) { mutableStateOf(seedRule?.isRegex ?: false) }
     var wholeWord by remember(seedId) { mutableStateOf(seedRule?.wholeWord ?: true) }
     var matchCase by remember(seedId) { mutableStateOf(seedRule?.matchCase ?: false) }
-    var previewText by remember(seedId) { mutableStateOf(seedRule?.from?.takeIf { it.isNotBlank() } ?: "Dr. Smith met NASA.") }
+    val defaultPreviewText = readerString("tts_replacements_preview_default", "Dr. Smith met NASA.")
+    var previewText by remember(seedId, defaultPreviewText) {
+        mutableStateOf(seedRule?.from?.takeIf { it.isNotBlank() } ?: defaultPreviewText)
+    }
     val draft = ReaderTtsReplacementRule(
         id = seedId,
         from = from,
@@ -2368,11 +2455,18 @@ private fun SharedTtsReplacementRuleEditor(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(if (seedRule == null) "New rule" else "Edit rule", fontWeight = FontWeight.SemiBold)
+            Text(
+                if (seedRule == null) {
+                    readerString("tts_replacements_new_replacement", "New replacement")
+                } else {
+                    readerString("tts_replacements_edit_replacement", "Edit replacement")
+                },
+                fontWeight = FontWeight.SemiBold
+            )
             SharedStableOutlinedTextField(
                 value = from,
                 onValueChange = { from = it },
-                label = { Text("Replace") },
+                label = { Text(readerString("tts_replacements_label_replace", "Replace")) },
                 modifier = Modifier.fillMaxWidth(),
                 isError = !validation.isValid
             )
@@ -2382,25 +2476,25 @@ private fun SharedTtsReplacementRuleEditor(
             SharedStableOutlinedTextField(
                 value = to,
                 onValueChange = { to = it },
-                label = { Text("Speak as") },
+                label = { Text(readerString("tts_replacements_label_speak_as", "Speak as")) },
                 modifier = Modifier.fillMaxWidth()
             )
             SharedReaderChoiceRow {
-                FilterChip(selected = enabled, onClick = { enabled = !enabled }, label = { Text("Enabled") })
-                FilterChip(selected = isRegex, onClick = { isRegex = !isRegex }, label = { Text("Regex") })
-                FilterChip(selected = wholeWord, onClick = { wholeWord = !wholeWord }, label = { Text("Whole word") })
-                FilterChip(selected = matchCase, onClick = { matchCase = !matchCase }, label = { Text("Match case") })
+                FilterChip(selected = enabled, onClick = { enabled = !enabled }, label = { Text(readerString("tts_replacements_chip_enabled", "Enabled")) })
+                FilterChip(selected = isRegex, onClick = { isRegex = !isRegex }, label = { Text(readerString("tts_replacements_chip_regex", "Regex")) })
+                FilterChip(selected = wholeWord, onClick = { wholeWord = !wholeWord }, label = { Text(readerString("tts_replacements_chip_whole_word", "Whole word")) })
+                FilterChip(selected = matchCase, onClick = { matchCase = !matchCase }, label = { Text(readerString("tts_replacements_chip_match_case", "Match case")) })
             }
             SharedStableOutlinedTextField(
                 value = previewText,
                 onValueChange = { previewText = it },
-                label = { Text("Preview") },
+                label = { Text(readerString("tts_replacements_label_preview_input", "Preview input")) },
                 modifier = Modifier.fillMaxWidth()
             )
             Text(previewOutput, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onCancel) { Text("Cancel") }
-                TextButton(enabled = validation.isValid, onClick = { onSave(draft) }) { Text("Save") }
+                TextButton(onClick = onCancel) { Text(readerString("action_cancel", "Cancel")) }
+                TextButton(enabled = validation.isValid, onClick = { onSave(draft) }) { Text(readerString("action_save", "Save")) }
             }
         }
     }
@@ -2432,8 +2526,8 @@ private fun SharedTtsReplacementRuleList(
                         Switch(checked = rule.enabled, onCheckedChange = { onToggle(rule, it) })
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { onEdit(rule) }) { Text("Edit") }
-                        TextButton(onClick = { onDelete(rule) }) { Text("Delete") }
+                        TextButton(onClick = { onEdit(rule) }) { Text(readerString("action_edit", "Edit")) }
+                        TextButton(onClick = { onDelete(rule) }) { Text(readerString("action_delete", "Delete")) }
                     }
                     HorizontalDivider()
                 }
@@ -2452,16 +2546,24 @@ private fun ReaderTtsReplacementRule.asDesktopEditableRule(
     )
 }
 
+@Composable
 private fun ReaderTtsReplacementRule.desktopSummary(): String {
-    val replacement = to.ifBlank { "silence" }
-    return "$from -> $replacement"
+    val replacement = to.ifBlank { readerString("tts_replacements_silence", "silence") }
+    return readerString("tts_replacements_summary_format", "%1\$s -> %2\$s", from, replacement)
 }
 
+@Composable
 private fun ReaderTtsReplacementRule.desktopOptions(): String {
     val options = buildList {
-        add(if (isRegex) "Regex" else "Plain text")
-        if (wholeWord) add("whole word")
-        if (matchCase) add("case-sensitive")
+        add(
+            if (isRegex) {
+                readerString("tts_replacements_chip_regex", "Regex")
+            } else {
+                readerString("tts_replacements_plain_text", "Plain text")
+            }
+        )
+        if (wholeWord) add(readerString("tts_replacements_chip_whole_word", "whole word"))
+        if (matchCase) add(readerString("tts_replacements_case_sensitive", "case-sensitive"))
     }
     return options.joinToString(" - ")
 }
@@ -2484,7 +2586,7 @@ fun SharedReaderToolbarControls(
     val moreTools = orderedTools.filter { it.category == "Overflow Menu" }
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         SharedToolbarSection(
-            title = "Top Bar",
+            title = readerString("toolbar_top_bar", "Top Bar"),
             tools = toolbarTools.filter {
                 toolbarPreferences.isVisible(it) && !toolbarPreferences.isBottom(it)
             },
@@ -2492,7 +2594,7 @@ fun SharedReaderToolbarControls(
             onToolbarPreferencesChange = onToolbarPreferencesChange
         )
         SharedToolbarSection(
-            title = "Bottom Bar",
+            title = readerString("toolbar_bottom_bar", "Bottom Bar"),
             tools = toolbarTools.filter {
                 toolbarPreferences.isVisible(it) && toolbarPreferences.isBottom(it)
             },
@@ -2500,13 +2602,13 @@ fun SharedReaderToolbarControls(
             onToolbarPreferencesChange = onToolbarPreferencesChange
         )
         SharedToolbarSection(
-            title = "More Menu",
+            title = readerString("toolbar_more_menu", "More menu"),
             tools = moreTools.filter { toolbarPreferences.isVisible(it) },
             toolbarPreferences = toolbarPreferences,
             onToolbarPreferencesChange = onToolbarPreferencesChange
         )
         SharedToolbarSection(
-            title = "Hidden Tools",
+            title = readerString("toolbar_hidden_tools", "Hidden Tools"),
             tools = orderedTools.filterNot { toolbarPreferences.isVisible(it) },
             toolbarPreferences = toolbarPreferences,
             onToolbarPreferencesChange = onToolbarPreferencesChange
@@ -2523,7 +2625,7 @@ private fun SharedToolbarSection(
 ) {
     SharedReaderPanelSection(title) {
         if (tools.isEmpty()) {
-            Text("No tools", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(readerString("toolbar_no_tools", "No tools"), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             tools.forEach { tool ->
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
@@ -2540,7 +2642,7 @@ private fun SharedToolbarSection(
                                     toolbarPreferences.withVisibility(tool, hidden = toolbarPreferences.isVisible(tool))
                                 )
                             },
-                            label = { Text("Visible") }
+                            label = { Text(readerString("toolbar_visible", "Visible")) }
                         )
                         FilterChip(
                             selected = toolbarPreferences.isBottom(tool),
@@ -2550,19 +2652,19 @@ private fun SharedToolbarSection(
                                     toolbarPreferences.withBottomPlacement(tool, bottom = !toolbarPreferences.isBottom(tool))
                                 )
                             },
-                            label = { Text("Bottom") }
+                            label = { Text(readerString("label_bottom", "Bottom")) }
                         )
                         TextButton(
                             enabled = toolbarPreferences.toolOrder.indexOf(tool) > 0,
                             onClick = { onToolbarPreferencesChange(toolbarPreferences.moveTool(tool, -1)) }
                         ) {
-                            Text("Up")
+                            Text(readerString("action_up", "Up"))
                         }
                         TextButton(
                             enabled = toolbarPreferences.toolOrder.indexOf(tool) in 0 until toolbarPreferences.toolOrder.lastIndex,
                             onClick = { onToolbarPreferencesChange(toolbarPreferences.moveTool(tool, 1)) }
                         ) {
-                            Text("Down")
+                            Text(readerString("action_down", "Down"))
                         }
                     }
                 }
@@ -2693,7 +2795,7 @@ private fun SharedReaderSettingSlider(
             ) {
                 Icon(
                     Icons.Default.Remove,
-                    contentDescription = "Decrease $label",
+                    contentDescription = readerString("desktop_decrease_format", "Decrease %1\$s", label),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(18.dp)
                 )
@@ -2724,7 +2826,7 @@ private fun SharedReaderSettingSlider(
             ) {
                 Icon(
                     Icons.Default.Add,
-                    contentDescription = "Increase $label",
+                    contentDescription = readerString("desktop_increase_format", "Increase %1\$s", label),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(18.dp)
                 )
@@ -2847,7 +2949,7 @@ private fun SharedReaderCompactNavigation(
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.NavigateBefore,
-                contentDescription = "Previous page",
+                contentDescription = readerString("desktop_previous_page", "Previous page"),
                 tint = contentColor.copy(alpha = if (canGoPrevious) 0.78f else 0.32f),
                 modifier = Modifier.size(22.dp)
             )
@@ -2875,7 +2977,7 @@ private fun SharedReaderCompactNavigation(
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.NavigateNext,
-                contentDescription = "Next page",
+                contentDescription = readerString("desktop_next_page", "Next page"),
                 tint = contentColor.copy(alpha = if (canGoNext) 0.78f else 0.32f),
                 modifier = Modifier.size(22.dp)
             )
@@ -2935,7 +3037,7 @@ private fun SharedReaderFullscreenNavigation(
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = "Previous page",
+                        contentDescription = readerString("desktop_previous_page", "Previous page"),
                         tint = contentColor.copy(alpha = if (readerState.canGoPrevious) 0.78f else 0.32f),
                         modifier = Modifier.size(22.dp)
                     )
@@ -2964,7 +3066,7 @@ private fun SharedReaderFullscreenNavigation(
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = "Next page",
+                        contentDescription = readerString("desktop_next_page", "Next page"),
                         tint = contentColor.copy(alpha = if (readerState.canGoNext) 0.78f else 0.32f),
                         modifier = Modifier.size(22.dp)
                     )
@@ -3102,7 +3204,7 @@ private fun SharedReaderSidebar(
                     onDownloadImage = onDownloadImage,
                     imagePreviewContent = imagePreviewContent
                 )
-                else -> SharedReaderEmptyNavigation("No navigation items")
+                else -> SharedReaderEmptyNavigation(readerString("desktop_no_navigation_items", "No navigation items"))
             }
         }
     }
@@ -3141,7 +3243,7 @@ private fun SharedReaderTocTab(
         }
     }
     if (tocEntries.isEmpty()) {
-        SharedReaderEmptyNavigation("No table of contents")
+        SharedReaderEmptyNavigation(readerString("desktop_no_table_of_contents", "No table of contents"))
         return
     }
 
@@ -3215,13 +3317,13 @@ private fun SharedReaderTocTab(
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             TextButton(onClick = { expandedEntryIndices = allParentIndices }) {
-                Text("Expand all")
+                Text(readerString("action_expand_all", "Expand all"))
             }
             TextButton(onClick = { expandedEntryIndices = emptySet() }) {
-                Text("Collapse all")
+                Text(readerString("action_collapse_all", "Collapse all"))
             }
             TextButton(onClick = ::locateCurrent, enabled = activeOriginalIndex != null) {
-                Text("Locate")
+                Text(readerString("action_locate", "Locate"))
             }
         }
         HorizontalDivider()
@@ -3247,7 +3349,7 @@ private fun SharedReaderTocTab(
 
                     SharedReaderTocTreeItem(
                         title = entry.label,
-                        pageLabel = targetChapterIndex?.let { "Ch. ${it + 1}" },
+                        pageLabel = targetChapterIndex?.let { readerString("desktop_chapter_short_format", "Ch. %1\$d", it + 1) },
                         depth = entry.depth,
                         isExpanded = isExpanded,
                         hasChildren = hasChildren,
@@ -3367,7 +3469,7 @@ private fun SharedReaderBookmarksTab(
     onGoToBookmark: (ReaderBookmark) -> Unit
 ) {
     if (session.bookmarks.isEmpty()) {
-        SharedReaderEmptyNavigation("No bookmarks yet")
+        SharedReaderEmptyNavigation(readerString("desktop_no_bookmarks_yet", "No bookmarks yet"))
     } else {
         val listState = rememberLazyListState()
         Box(modifier = Modifier.fillMaxSize()) {
@@ -3415,7 +3517,7 @@ private fun SharedReaderImagesTab(
         session.reader.book.readerImageReferences(session.reader.pages)
     }
     if (images.isEmpty()) {
-        SharedReaderEmptyNavigation("No images found")
+        SharedReaderEmptyNavigation(readerString("no_images_found", "No images found."))
     } else {
         val listState = rememberLazyListState()
         Box(modifier = Modifier.fillMaxSize()) {
@@ -3482,7 +3584,7 @@ private fun SharedReaderImagesTab(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Download,
-                                        contentDescription = "Download image"
+                                        contentDescription = readerString("content_desc_download_image", "Download image")
                                     )
                                 }
                             }
@@ -3508,7 +3610,7 @@ private fun SharedReaderAnnotationsTab(
     onDeleteHighlight: (UserHighlight) -> Unit
 ) {
     if (session.highlights.isEmpty()) {
-        SharedReaderEmptyNavigation("No annotations yet")
+        SharedReaderEmptyNavigation(readerString("desktop_no_annotations_yet", "No annotations yet"))
     } else {
         val listState = rememberLazyListState()
         var menuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
@@ -3533,8 +3635,8 @@ private fun SharedReaderAnnotationsTab(
                         val chapterTitle = session.reader.book.chapters
                             .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
                             ?.title
-                            ?: "Chapter ${(locator.chapterIndex ?: highlight.chapterIndex) + 1}"
-                        val pageLabel = locator.pageIndex?.let { "Page ${it + 1}" }
+                            ?: readerString("chapter_number_format", "Chapter %1\$d", (locator.chapterIndex ?: highlight.chapterIndex) + 1)
+                        val pageLabel = locator.pageIndex?.let { readerString("pdf_page_short", "Page %1\$d", it + 1) }
                         Surface(
                             color = MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(6.dp),
@@ -3568,7 +3670,7 @@ private fun SharedReaderAnnotationsTab(
                                     }
                                     Box {
                                         IconButton(onClick = { menuExpandedFor = highlight }) {
-                                            Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                            Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_annotation_options", "Annotation options"))
                                         }
                                         DropdownMenu(
                                             expanded = menuExpandedFor == highlight,
@@ -3605,14 +3707,22 @@ private fun SharedReaderAnnotationsTab(
                                             }
                                             HorizontalDivider()
                                             DropdownMenuItem(
-                                                text = { Text(if (highlight.note.isNullOrBlank()) "Add note" else "Edit note") },
+                                                text = {
+                                                    Text(
+                                                        if (highlight.note.isNullOrBlank()) {
+                                                            readerString("menu_add_note", "Add note")
+                                                        } else {
+                                                            readerString("menu_edit_note", "Edit note")
+                                                        }
+                                                    )
+                                                },
                                                 onClick = {
                                                     menuExpandedFor = null
                                                     onEditHighlight(highlight)
                                                 }
                                             )
                                             DropdownMenuItem(
-                                                text = { Text("Delete") },
+                                                text = { Text(readerString("action_delete", "Delete")) },
                                                 onClick = {
                                                     menuExpandedFor = null
                                                     deleteConfirmFor = highlight
@@ -3644,8 +3754,8 @@ private fun SharedReaderAnnotationsTab(
             deleteConfirmFor?.let { highlight ->
                 AlertDialog(
                     onDismissRequest = { deleteConfirmFor = null },
-                    title = { Text("Delete annotation?") },
-                    text = { Text("This removes the highlight and its note.") },
+                    title = { Text(readerString("desktop_delete_annotation_title", "Delete annotation?")) },
+                    text = { Text(readerString("desktop_delete_highlight_desc", "This removes the highlight and its note.")) },
                     confirmButton = {
                         TextButton(
                             onClick = {
@@ -3653,12 +3763,12 @@ private fun SharedReaderAnnotationsTab(
                                 onDeleteHighlight(highlight)
                             }
                         ) {
-                            Text("Delete", color = MaterialTheme.colorScheme.error)
+                            Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { deleteConfirmFor = null }) {
-                            Text("Cancel")
+                            Text(readerString("action_cancel", "Cancel"))
                         }
                     }
                 )
@@ -3677,14 +3787,15 @@ private fun SharedReaderEmptyNavigation(message: String) {
     }
 }
 
+@Composable
 private fun ReaderWorkspaceLeftSection.readerNavigationTabLabel(): String {
     return when (this) {
-        ReaderWorkspaceLeftSection.CONTENTS -> "TOC"
-        ReaderWorkspaceLeftSection.IMAGES -> "Images"
-        ReaderWorkspaceLeftSection.NOTES -> "Annotations"
-        ReaderWorkspaceLeftSection.BOOKMARKS -> "Bookmarks"
-        ReaderWorkspaceLeftSection.PAGES -> "Pages"
-        ReaderWorkspaceLeftSection.SEARCH -> "Search"
+        ReaderWorkspaceLeftSection.CONTENTS -> readerString("desktop_toc", "TOC")
+        ReaderWorkspaceLeftSection.IMAGES -> readerString("tab_images", "Images")
+        ReaderWorkspaceLeftSection.NOTES -> readerString("tab_annotations", "Annotations")
+        ReaderWorkspaceLeftSection.BOOKMARKS -> readerString("tab_bookmarks", "Bookmarks")
+        ReaderWorkspaceLeftSection.PAGES -> readerString("tab_pages", "Pages")
+        ReaderWorkspaceLeftSection.SEARCH -> readerString("action_search", "Search")
     }
 }
 
@@ -3711,7 +3822,7 @@ private fun SharedHighlightPaletteEditor(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Tap a slot, then pick a color.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(readerString("desktop_highlight_palette_hint", "Tap a slot, then pick a color."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -3801,7 +3912,7 @@ private fun SharedReaderJumpHistoryBar(
             enabled = back != null,
             modifier = Modifier.weight(1f)
         ) {
-            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Jump back")
+            Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = readerString("content_desc_jump_back", "Jump back"))
             Text(
                 back?.jumpLabel(session).orEmpty(),
                 maxLines = 1,
@@ -3812,8 +3923,8 @@ private fun SharedReaderJumpHistoryBar(
             onClick = onClear,
             modifier = Modifier.weight(1f)
         ) {
-            Icon(Icons.Default.Close, contentDescription = "Clear jump history")
-            Text("Clear", maxLines = 1)
+            Icon(Icons.Default.Close, contentDescription = readerString("desktop_clear_jump_history", "Clear jump history"))
+            Text(readerString("action_clear", "Clear"), maxLines = 1)
         }
         TextButton(
             onClick = onForward,
@@ -3825,22 +3936,24 @@ private fun SharedReaderJumpHistoryBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Jump forward")
+            Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = readerString("content_desc_jump_forward", "Jump forward"))
         }
     }
 }
 
+@Composable
 private fun ReaderLocator.jumpLabel(session: ReaderSessionState): String {
     val targetPageIndex = pageIndex
     val targetCfi = cfi.orEmpty()
     if (targetPageIndex != null && targetCfi.isBlank()) {
-        return "Page ${targetPageIndex + 1}"
+        return readerString("pdf_page_short", "Page %1\$d", targetPageIndex + 1)
     }
     val chapter = chapterIndex
     return if (chapter != null) {
-        session.reader.book.chapters.getOrNull(chapter)?.title?.takeIf { it.isNotBlank() } ?: "Chapter ${chapter + 1}"
+        session.reader.book.chapters.getOrNull(chapter)?.title?.takeIf { it.isNotBlank() }
+            ?: readerString("chapter_number_format", "Chapter %1\$d", chapter + 1)
     } else {
-        "Location"
+        readerString("location", "Location")
     }
 }
 
@@ -3853,13 +3966,19 @@ private fun Long.toComposeColor(): Color {
     return Color(red = red, green = green, blue = blue, alpha = alpha.takeIf { it > 0f } ?: 1f)
 }
 
+@Composable
 private fun PaginatedReaderState.pageInfoText(): String {
     val total = pages.size.coerceAtLeast(1)
     val percent = progress.roundToInt().coerceIn(0, 100)
-    val mode = if (settings.readingMode == ReaderReadingMode.VERTICAL) "Continuous" else "Page"
+    val mode = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+        readerString("desktop_continuous", "Continuous")
+    } else {
+        readerString("desktop_page", "Page")
+    }
     val current = ReaderSpreadLayout.pageRangeLabel(currentPageIndex, total, settings)
     val chapter = currentPage?.chapterTitle?.takeIf { it.isNotBlank() }
-    return listOfNotNull("$mode $current of $total ($percent%)", chapter).joinToString(" - ")
+    val pageInfo = readerString("desktop_reader_page_info_format", "%1\$s %2\$s of %3\$d (%4\$d%%)", mode, current, total, percent)
+    return listOfNotNull(pageInfo, chapter).joinToString(" - ")
 }
 
 private fun PaginatedReaderState.currentPageLocator(): ReaderLocator? {

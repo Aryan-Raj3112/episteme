@@ -59,6 +59,7 @@ import com.aryan.reader.shared.ui.SharedPdfInlineTextEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfPageNumberOverlay
 import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
@@ -151,6 +152,7 @@ internal fun DesktopVerticalPdfPage(
         activeStroke = emptyList()
         eraserPosition = null
     }
+    val failedRenderMessage = readerString("desktop_failed_render_page", "Failed to render page.")
 
     LaunchedEffect(documentHandleId, pageIndex, scale, shouldRender) {
         if (!shouldRender) {
@@ -168,7 +170,7 @@ internal fun DesktopVerticalPdfPage(
         val pageSize = document.pageSizes.getOrNull(pageIndex)
         if (pageSize == null) {
             renderedPage = null
-            renderError = "Failed to render page."
+            renderError = failedRenderMessage
             isRendering = false
             return@LaunchedEffect
         }
@@ -180,7 +182,7 @@ internal fun DesktopVerticalPdfPage(
         }
         result.getOrNull()?.let { renderedPage = it }
         renderError = result.exceptionOrNull()?.message
-            ?: if (renderedPage == null) "Failed to render page." else null
+            ?: if (renderedPage == null) failedRenderMessage else null
         isRendering = false
     }
 
@@ -631,7 +633,10 @@ internal fun DesktopVerticalPdfPage(
         ) {
             when {
                 !shouldRender -> {
-                    Text("Page ${pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        readerString("pdf_page_short", "Page %1\$d", pageIndex + 1),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 renderedPage != null -> {
                     val pageRender = renderedPage!!
@@ -714,7 +719,7 @@ internal fun DesktopVerticalPdfPage(
 
                     DesktopPdfThemedPageImage(
                         bitmap = pageRender.image,
-                        contentDescription = "PDF page ${pageIndex + 1}",
+                        contentDescription = readerString("desktop_pdf_page_content_desc", "PDF page %1\$d", pageIndex + 1),
                         themeStyle = themeStyle,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -839,7 +844,10 @@ internal fun DesktopVerticalPdfPage(
                     )
                 }
                 isRendering -> CircularProgressIndicator()
-                renderError != null -> Text(renderError ?: "Failed to render page.", color = MaterialTheme.colorScheme.error)
+                renderError != null -> Text(
+                    renderError ?: readerString("desktop_failed_render_page", "Failed to render page."),
+                    color = MaterialTheme.colorScheme.error
+                )
             }
         }
     }

@@ -240,7 +240,7 @@ fun SharedPdfAnnotationToolDock(
                 DockCircleButton(onClick = onUndo) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo annotation",
+                        contentDescription = readerString("desktop_undo_annotation", "Undo annotation"),
                         tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
@@ -248,7 +248,7 @@ fun SharedPdfAnnotationToolDock(
                 DockCircleButton(onClick = onClearPage) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "Clear page annotations",
+                        contentDescription = readerString("desktop_clear_page_annotations", "Clear page annotations"),
                         tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
@@ -543,7 +543,7 @@ fun SharedPdfHighlighterPaletteEditor(
         val initialColor = Color(sanitized.colors.getOrElse(slot) { SharedPdfHighlighterPalette.defaultColors.first() }).copy(alpha = 1f)
         SharedHsvColorPickerDialog(
             initialColor = initialColor,
-            title = "Highlight color ${slot + 1}",
+            title = readerString("desktop_highlight_color_format", "Highlight color %1\$d", slot + 1),
             onDismiss = { editingSlot = null },
             onSave = { color ->
                 onPaletteChange(
@@ -575,9 +575,9 @@ fun SharedPdfHighlighterPaletteEditor(
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("PDF highlighter", fontWeight = FontWeight.SemiBold)
+                    Text(readerString("desktop_pdf_highlighter", "PDF highlighter"), fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Saved with reader highlight transparency.",
+                        readerString("desktop_pdf_highlighter_alpha_desc", "Saved with reader highlight transparency."),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -860,7 +860,7 @@ fun SharedPdfTextStyleControls(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Font", color = labelColor, style = MaterialTheme.typography.labelMedium)
+            Text(readerString("select_font", "Font"), color = labelColor, style = MaterialTheme.typography.labelMedium)
             Box {
                 TextButton(onClick = { fontMenuExpanded = true }) {
                     Text(
@@ -944,7 +944,7 @@ fun SharedPdfTextStyleControls(
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Text", color = labelColor, style = MaterialTheme.typography.labelMedium)
+            Text(readerString("content_desc_text", "Text"), color = labelColor, style = MaterialTheme.typography.labelMedium)
             SharedTextColorSwatches(
                 palette = SharedPdfTextAnnotationDefaults.textColorPalette,
                 selectedArgb = style.colorArgb,
@@ -955,7 +955,7 @@ fun SharedPdfTextStyleControls(
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Fill", color = labelColor, style = MaterialTheme.typography.labelMedium)
+            Text(readerString("desktop_fill", "Fill"), color = labelColor, style = MaterialTheme.typography.labelMedium)
             SharedTextColorSwatches(
                 palette = SharedPdfTextAnnotationDefaults.backgroundColorPalette,
                 selectedArgb = style.backgroundColorArgb,
@@ -1154,13 +1154,13 @@ private fun SharedPdfToolButton(
         when (tool) {
             PdfInkTool.TEXT -> Icon(
                 imageVector = Icons.Default.TextFields,
-                contentDescription = "text",
+                contentDescription = readerString("content_desc_text", "text"),
                 tint = Color.White,
                 modifier = Modifier.size(20.dp)
             )
             PdfInkTool.ERASER -> Icon(
                 imageVector = Icons.Default.Remove,
-                contentDescription = "eraser",
+                contentDescription = readerString("content_desc_eraser", "eraser"),
                 tint = Color.White,
                 modifier = Modifier.size(20.dp)
             )

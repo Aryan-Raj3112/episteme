@@ -129,25 +129,30 @@ data class NonReaderLibraryOrganizationModel(
 )
 
 internal data class NonReaderLibraryFileTypeGroup(
-    val title: String,
+    val titleKey: String,
+    val titleFallback: String,
     val fileTypes: List<FileType>
 )
 
 private val LibraryFileTypeGroupTemplates = listOf(
     NonReaderLibraryFileTypeGroup(
-        title = "Books",
+        titleKey = "desktop_file_type_group_books",
+        titleFallback = "Books",
         fileTypes = listOf(FileType.EPUB, FileType.MOBI, FileType.FB2)
     ),
     NonReaderLibraryFileTypeGroup(
-        title = "Documents",
+        titleKey = "desktop_file_type_group_documents",
+        titleFallback = "Documents",
         fileTypes = listOf(FileType.PDF, FileType.PPTX, FileType.DOCX, FileType.ODT, FileType.FODT)
     ),
     NonReaderLibraryFileTypeGroup(
-        title = "Text and web",
+        titleKey = "desktop_file_type_group_text_web",
+        titleFallback = "Text and web",
         fileTypes = listOf(FileType.MD, FileType.TXT, FileType.HTML)
     ),
     NonReaderLibraryFileTypeGroup(
-        title = "Comics",
+        titleKey = "desktop_file_type_group_comics",
+        titleFallback = "Comics",
         fileTypes = listOf(FileType.CBZ, FileType.CBR, FileType.CB7)
     )
 )
@@ -207,7 +212,11 @@ internal fun nonReaderLibraryFileTypeGroups(
     return if (otherTypes.isEmpty()) {
         grouped
     } else {
-        grouped + NonReaderLibraryFileTypeGroup("Other", otherTypes)
+        grouped + NonReaderLibraryFileTypeGroup(
+            titleKey = "desktop_file_type_group_other",
+            titleFallback = "Other",
+            fileTypes = otherTypes
+        )
     }
 }
 

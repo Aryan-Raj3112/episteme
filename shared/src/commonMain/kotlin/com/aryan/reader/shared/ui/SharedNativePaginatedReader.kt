@@ -275,7 +275,7 @@ fun SharedNativePaginatedReader(
 
     if (visiblePages.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            Text("No page content", color = renderPlan.foreground.copy(alpha = 0.68f))
+            Text(readerString("desktop_no_page_content", "No page content"), color = renderPlan.foreground.copy(alpha = 0.68f))
         }
         return
     }

@@ -68,6 +68,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -106,12 +107,12 @@ internal fun DesktopPdfJumpHistoryControls(
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Jump back",
+                    contentDescription = readerString("content_desc_jump_back", "Jump back"),
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    backPage?.let { "P. ${it + 1}" } ?: "",
+                    backPage?.let { readerString("desktop_pdf_compact_page_number", "p. %1\$d", it + 1) } ?: "",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -123,11 +124,11 @@ internal fun DesktopPdfJumpHistoryControls(
             ) {
                 Icon(
                     Icons.Default.Close,
-                    contentDescription = "Clear jump history",
+                    contentDescription = readerString("desktop_clear_jump_history", "Clear jump history"),
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(4.dp))
-                Text("Clear", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(readerString("action_clear", "Clear"), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
 
             TextButton(
@@ -136,14 +137,14 @@ internal fun DesktopPdfJumpHistoryControls(
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    forwardPage?.let { "P. ${it + 1}" } ?: "",
+                    forwardPage?.let { readerString("desktop_pdf_compact_page_number", "p. %1\$d", it + 1) } ?: "",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.width(4.dp))
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "Jump forward",
+                    contentDescription = readerString("content_desc_jump_forward", "Jump forward"),
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -216,7 +217,12 @@ internal fun DesktopPdfNavigationSidebar(
     onEmbeddedAnnotationSelected: (SharedPdfEmbeddedAnnotation) -> Unit
 ) {
     val documentHandleId = document.handleId
-    val tabs = listOf("TOC", "Annotations", "Bookmarks", "Pages")
+    val tabs = listOf(
+        readerString("desktop_toc", "TOC"),
+        readerString("tab_annotations", "Annotations"),
+        readerString("tab_bookmarks", "Bookmarks"),
+        readerString("tab_pages", "Pages")
+    )
     var selectedTabIndex by remember(documentHandleId) { mutableStateOf(0) }
     val navigationScope = rememberCoroutineScope()
     val pdfTocParentIndices = remember(document.toc) { desktopPdfTocParentIndices(document.toc) }
@@ -255,7 +261,7 @@ internal fun DesktopPdfNavigationSidebar(
             when (selectedTabIndex) {
                 0 -> {
                     if (document.toc.isEmpty()) {
-                        DesktopPdfNavigationEmpty("No table of contents")
+                        DesktopPdfNavigationEmpty(readerString("desktop_no_table_of_contents", "No table of contents"))
                     } else {
                         val tocListState = rememberLazyListState()
                         val visibleTocItems by remember(document.toc, expandedPdfTocEntryIndices) {
@@ -287,13 +293,13 @@ internal fun DesktopPdfNavigationSidebar(
                                 horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
                                 TextButton(onClick = { expandedPdfTocEntryIndices = pdfTocParentIndices }) {
-                                    Text("Expand all")
+                                    Text(readerString("action_expand_all", "Expand all"))
                                 }
                                 TextButton(onClick = { expandedPdfTocEntryIndices = emptySet() }) {
-                                    Text("Collapse all")
+                                    Text(readerString("action_collapse_all", "Collapse all"))
                                 }
                                 TextButton(onClick = ::locateCurrentTocEntry, enabled = currentOriginalIndex != null) {
-                                    Text("Locate")
+                                    Text(readerString("action_locate", "Locate"))
                                 }
                             }
                             HorizontalDivider()
@@ -339,7 +345,7 @@ internal fun DesktopPdfNavigationSidebar(
                 }
                 1 -> {
                     if (sortedAnnotations.isEmpty() && sortedEmbeddedAnnotations.isEmpty()) {
-                        DesktopPdfNavigationEmpty("No annotations yet")
+                        DesktopPdfNavigationEmpty(readerString("desktop_no_annotations_yet", "No annotations yet"))
                     } else {
                         val annotationsListState = rememberLazyListState()
                         var annotationMenuExpandedFor by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
@@ -379,7 +385,7 @@ internal fun DesktopPdfNavigationSidebar(
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
-                                                    "Page ${annotation.pageIndex + 1}",
+                                                    readerString("pdf_page_short", "Page %1\$d", annotation.pageIndex + 1),
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     style = MaterialTheme.typography.bodySmall
                                                 )
@@ -395,7 +401,7 @@ internal fun DesktopPdfNavigationSidebar(
                                             }
                                             Box {
                                                 IconButton(onClick = { annotationMenuExpandedFor = annotation }) {
-                                                    Icon(Icons.Default.MoreVert, contentDescription = "Annotation options")
+                                                    Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_annotation_options", "Annotation options"))
                                                 }
                                                 DropdownMenu(
                                                     expanded = annotationMenuExpandedFor == annotation,
@@ -407,9 +413,9 @@ internal fun DesktopPdfNavigationSidebar(
                                                                 if (annotation.note.isNullOrBlank() &&
                                                                     annotation.kind != PdfAnnotationKind.TEXT
                                                                 ) {
-                                                                    "Add note"
+                                                                    readerString("menu_add_note", "Add note")
                                                                 } else {
-                                                                    "Edit"
+                                                                    readerString("action_edit", "Edit")
                                                                 }
                                                             )
                                                         },
@@ -419,7 +425,7 @@ internal fun DesktopPdfNavigationSidebar(
                                                         }
                                                     )
                                                     DropdownMenuItem(
-                                                        text = { Text("Delete") },
+                                                        text = { Text(readerString("action_delete", "Delete")) },
                                                         onClick = {
                                                             annotationMenuExpandedFor = null
                                                             deleteAnnotationConfirmFor = annotation
@@ -449,13 +455,13 @@ internal fun DesktopPdfNavigationSidebar(
                                                 verticalArrangement = Arrangement.spacedBy(3.dp)
                                             ) {
                                                 Text(
-                                                    annotation.author.ifBlank { "PDF comment" },
+                                                    annotation.author.ifBlank { readerString("desktop_pdf_comment", "PDF comment") },
                                                     fontWeight = FontWeight.SemiBold,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
                                                 Text(
-                                                    "Page ${annotation.pageIndex + 1}",
+                                                    readerString("pdf_page_short", "Page %1\$d", annotation.pageIndex + 1),
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     style = MaterialTheme.typography.bodySmall
                                                 )
@@ -471,14 +477,14 @@ internal fun DesktopPdfNavigationSidebar(
                                             }
                                             Box {
                                                 IconButton(onClick = { embeddedAnnotationMenuExpandedFor = annotation }) {
-                                                    Icon(Icons.Default.MoreVert, contentDescription = "Comment options")
+                                                    Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_comment_options", "Comment options"))
                                                 }
                                                 DropdownMenu(
                                                     expanded = embeddedAnnotationMenuExpandedFor == annotation,
                                                     onDismissRequest = { embeddedAnnotationMenuExpandedFor = null }
                                                 ) {
                                                     DropdownMenuItem(
-                                                        text = { Text("Open comment") },
+                                                        text = { Text(readerString("desktop_open_comment", "Open comment")) },
                                                         onClick = {
                                                             embeddedAnnotationMenuExpandedFor = null
                                                             onEmbeddedAnnotationSelected(annotation)
@@ -498,8 +504,8 @@ internal fun DesktopPdfNavigationSidebar(
                         deleteAnnotationConfirmFor?.let { annotation ->
                             AlertDialog(
                                 onDismissRequest = { deleteAnnotationConfirmFor = null },
-                                title = { Text("Delete annotation?") },
-                                text = { Text("This removes the annotation from this PDF.") },
+                                title = { Text(readerString("desktop_delete_annotation_title", "Delete annotation?")) },
+                                text = { Text(readerString("desktop_delete_annotation_desc", "This removes the annotation from this PDF.")) },
                                 confirmButton = {
                                     TextButton(
                                         onClick = {
@@ -507,12 +513,12 @@ internal fun DesktopPdfNavigationSidebar(
                                             onAnnotationDeleted(annotation)
                                         }
                                     ) {
-                                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                                        Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
                                     }
                                 },
                                 dismissButton = {
                                     TextButton(onClick = { deleteAnnotationConfirmFor = null }) {
-                                        Text("Cancel")
+                                        Text(readerString("action_cancel", "Cancel"))
                                     }
                                 }
                             )
@@ -521,7 +527,7 @@ internal fun DesktopPdfNavigationSidebar(
                 }
                 2 -> {
                     if (bookmarks.isEmpty()) {
-                        DesktopPdfNavigationEmpty("No bookmarks yet")
+                        DesktopPdfNavigationEmpty(readerString("desktop_no_bookmarks_yet", "No bookmarks yet"))
                     } else {
                         val bookmarksListState = rememberLazyListState()
                         Box(modifier = Modifier.fillMaxSize()) {
@@ -546,7 +552,9 @@ internal fun DesktopPdfNavigationSidebar(
                                             .clickable { onPageSelected(bookmark.pageIndex) }
                                     ) {
                                         Text(
-                                            bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" },
+                                            bookmark.label.ifBlank {
+                                                readerString("pdf_page_short", "Page %1\$d", bookmark.pageIndex + 1)
+                                            },
                                             modifier = Modifier.padding(8.dp)
                                         )
                                     }
@@ -577,7 +585,7 @@ internal fun DesktopPdfNavigationSidebar(
                                     }
                                 }
                             ) {
-                                Text("Locate")
+                                Text(readerString("action_locate", "Locate"))
                             }
                         }
                         HorizontalDivider()
@@ -653,7 +661,11 @@ internal fun DesktopPdfTocTreeItem(
                 if (hasChildren) {
                     Icon(
                         imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        contentDescription = if (isExpanded) {
+                            readerString("content_desc_collapse", "Collapse")
+                        } else {
+                            readerString("content_desc_expand", "Expand")
+                        },
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -667,7 +679,7 @@ internal fun DesktopPdfTocTreeItem(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                "p. ${entry.pageIndex + 1}",
+                readerString("desktop_pdf_compact_page_number", "p. %1\$d", entry.pageIndex + 1),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 8.dp)
@@ -734,7 +746,7 @@ internal fun DesktopPdfThumbnailTile(
             if (render != null) {
                 Image(
                     bitmap = render.image,
-                    contentDescription = "Page ${pageIndex + 1}",
+                    contentDescription = readerString("pdf_page_short", "Page %1\$d", pageIndex + 1),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize().padding(3.dp)
                 )
@@ -777,7 +789,12 @@ internal fun DesktopPdfPageScrubOverlay(
             shadowElevation = 8.dp
         ) {
             Text(
-                text = pageLabel ?: "Page ${pageIndex + 1} of $pageCount",
+                text = pageLabel ?: readerString(
+                    "desktop_pdf_page_of_count",
+                    "Page %1\$s of %2\$d",
+                    "${pageIndex + 1}",
+                    pageCount
+                ),
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
