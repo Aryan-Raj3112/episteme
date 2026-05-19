@@ -153,7 +153,10 @@ internal fun EpistemeDesktopApp(
     onReaderFullscreenChange: (Boolean) -> Unit
 ) {
     val desktopBuildProfile = remember { currentDesktopBuildProfile() }
-    val desktopStringResolver = remember { loadDesktopStringResolver() }
+    val desktopLanguageSettingsStore = remember { DesktopLanguageSettingsStore() }
+    var desktopLanguageTag by remember { mutableStateOf(desktopLanguageSettingsStore.load().languageTag) }
+    val desktopStringLocale = remember(desktopLanguageTag) { desktopLocaleForLanguageTag(desktopLanguageTag) }
+    val desktopStringResolver = remember(desktopStringLocale) { loadDesktopStringResolver(locale = desktopStringLocale) }
     fun desktopString(name: String, fallback: String, vararg args: Any?): String {
         return desktopStringResolver.string(name, fallback, *args)
     }
@@ -362,6 +365,7 @@ internal fun EpistemeDesktopApp(
     var showTagSelectionDialog by remember { mutableStateOf(false) }
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
+    var showDesktopLanguageDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
     var desktopFeatureNotice by remember { mutableStateOf<DesktopFeatureNotice?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
@@ -2909,7 +2913,7 @@ internal fun EpistemeDesktopApp(
                                     syncAvailable = desktopCloudSyncAvailable(),
                                     folderSyncAvailable = true,
                                     aiSettingsAvailable = desktopBuildProfile.byokAiAvailable,
-                                    includeLanguage = false,
+                                    includeLanguage = true,
                                     includeScreenCaptureProtection = false,
                                     includeExternalFileBehavior = false,
                                     includeStrictFileFilter = false,
@@ -2918,7 +2922,11 @@ internal fun EpistemeDesktopApp(
                                     isTabsEnabled = state.isTabsEnabled,
                                     isSyncEnabled = state.isSyncEnabled,
                                     isFolderSyncEnabled = state.isFolderSyncEnabled,
-                                    hideReaderAi = effectiveAiSettings().hideReaderAiFeatures
+                                    hideReaderAi = effectiveAiSettings().hideReaderAiFeatures,
+                                    languageTitle = desktopString("options_language", "Language"),
+                                    languageSummary = selectedDesktopLanguageOption(desktopLanguageTag).let { option ->
+                                        desktopString(option.labelKey, option.fallbackLabel)
+                                    }
                                 )
                             ),
                             query = settingsQuery,
@@ -2973,7 +2981,6 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.EXPORT_LOGS,
                                     SharedSettingsAction.DEBUG_ACTIONS,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
-                                    SharedSettingsAction.LANGUAGE,
                                     SharedSettingsAction.RECENT_LIMIT,
                                     SharedSettingsAction.STRICT_FILE_FILTER,
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,
@@ -2984,6 +2991,7 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.READER_TOOLBAR,
                                     SharedSettingsAction.TTS_REPLACEMENTS,
                                     SharedSettingsAction.LOCAL_OVERRIDE_NOTE -> Unit
+                                    SharedSettingsAction.LANGUAGE -> showDesktopLanguageDialog = true
                                     SharedSettingsAction.CLOUD_SYNC -> setDesktopCloudSyncEnabled(!state.isSyncEnabled)
                                 }
                             }
@@ -3523,6 +3531,17 @@ internal fun EpistemeDesktopApp(
                 onCustomThemeAdded = { theme -> updateState(state.reduce(AppAction.CustomAppThemeAdded(theme))) },
                 onCustomThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) },
                 onDismiss = { showDesktopAppThemeSettingsDialog = false }
+            )
+        }
+
+        if (showDesktopLanguageDialog) {
+            DesktopLanguageDialog(
+                selectedLanguageTag = desktopLanguageTag,
+                onLanguageSelected = { languageTag ->
+                    desktopLanguageTag = languageTag
+                    desktopLanguageSettingsStore.save(DesktopLanguageSettings(languageTag))
+                },
+                onDismiss = { showDesktopLanguageDialog = false }
             )
         }
 

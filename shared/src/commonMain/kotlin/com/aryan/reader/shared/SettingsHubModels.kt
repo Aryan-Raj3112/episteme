@@ -660,6 +660,8 @@ data class SharedSettingsHubInput(
     val includeHideReaderAi: Boolean = true,
     val includeCloudLocalDataClear: Boolean = false,
     val supportProjectAvailable: Boolean = true,
+    val languageTitle: String = "Language",
+    val languageSummary: String = "Choose the app language",
     val isTabsEnabled: Boolean = true,
     val isSyncEnabled: Boolean = false,
     val isFolderSyncEnabled: Boolean = false,
@@ -891,8 +893,8 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.LANGUAGE,
-                            title = "Language",
-                            summary = "Choose the app language"
+                            title = input.languageTitle,
+                            summary = input.languageSummary
                         )
                     )
                 }

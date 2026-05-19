@@ -99,6 +99,25 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `language setting can show current platform selection`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.DESKTOP,
+                includeLanguage = true,
+                languageTitle = "App language",
+                languageSummary = "Deutsch"
+            )
+        )
+
+        val item = model.page(SharedSettingsDestination.EXTRA)
+            .items
+            .single { it.action == SharedSettingsAction.LANGUAGE }
+
+        assertEquals("App language", item.title)
+        assertEquals("Deutsch", item.summary)
+    }
+
+    @Test
     fun `local override note appears on reader detail pages only`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(platform = SharedSettingsPlatform.DESKTOP)

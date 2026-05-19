@@ -35,4 +35,20 @@ class DesktopStringResourcesTest {
         assertEquals("Don't stop", parsed["quote"])
         assertTrue(parsed.containsKey("line"))
     }
+
+    @Test
+    fun normalizesDesktopLanguageTagsForAndroidResources() {
+        assertEquals(null, normalizeDesktopLanguageTag(null))
+        assertEquals("id", normalizeDesktopLanguageTag("in"))
+        assertEquals("pt-BR", normalizeDesktopLanguageTag("pt_br"))
+        assertEquals("zh-CN", normalizeDesktopLanguageTag("zh-cn"))
+    }
+
+    @Test
+    fun resolvesSelectedDesktopLanguageOptionByNormalizedTag() {
+        val option = selectedDesktopLanguageOption("pt_br")
+
+        assertEquals("pt-BR", option.normalizedTag)
+        assertEquals("language_portuguese_brazilian", option.labelKey)
+    }
 }

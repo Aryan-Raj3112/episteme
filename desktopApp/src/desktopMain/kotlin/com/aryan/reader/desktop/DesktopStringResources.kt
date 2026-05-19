@@ -61,6 +61,13 @@ internal fun currentDesktopStringsLocale(): Locale {
         ?: Locale.getDefault()
 }
 
+internal fun desktopLocaleForLanguageTag(languageTag: String?): Locale {
+    return normalizeDesktopLanguageTag(languageTag)
+        ?.let(Locale::forLanguageTag)
+        ?.takeUnless { it.language.isBlank() }
+        ?: currentDesktopStringsLocale()
+}
+
 internal fun parseAndroidStringXml(stream: InputStream): Map<String, String> {
     val factory = DocumentBuilderFactory.newInstance().apply {
         isIgnoringComments = true
@@ -88,6 +95,30 @@ private fun androidValuesFolderFor(language: String, country: String?): String {
         if (resourceLanguage == "en") "values" else "values-$resourceLanguage"
     } else {
         "values-$resourceLanguage-r${country.uppercase(Locale.ROOT)}"
+    }
+}
+
+internal fun normalizeDesktopLanguageTag(languageTag: String?): String? {
+    val normalizedInput = languageTag
+        ?.trim()
+        ?.replace('_', '-')
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    val canonicalInput = when {
+        normalizedInput.equals("in", ignoreCase = true) -> "id"
+        normalizedInput.startsWith("in-", ignoreCase = true) -> "id-${normalizedInput.substringAfter('-')}"
+        else -> normalizedInput
+    }
+    val locale = Locale.forLanguageTag(canonicalInput).takeUnless { it.language.isBlank() } ?: return null
+    val language = when (locale.language) {
+        "in" -> "id"
+        else -> locale.language
+    }
+    val country = locale.country.takeIf { it.isNotBlank() }
+    return if (country == null) {
+        language
+    } else {
+        "$language-${country.uppercase(Locale.ROOT)}"
     }
 }
 
