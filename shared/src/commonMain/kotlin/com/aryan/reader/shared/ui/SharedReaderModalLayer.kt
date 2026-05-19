@@ -49,6 +49,12 @@ internal expect fun SharedReaderModalLayer(
 internal expect fun sharedReaderModalLayerUsesSizedEdgeWindow(level: SharedReaderModalLevel): Boolean
 
 @Composable
+expect fun SharedReaderModalOwnerWindowProvider(
+    ownerWindow: Any?,
+    content: @Composable () -> Unit
+)
+
+@Composable
 fun SharedReaderPopupLayer(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit

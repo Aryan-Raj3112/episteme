@@ -1,11 +1,17 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPosition
@@ -14,7 +20,24 @@ import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.delay
 import java.awt.EventQueue
 import java.awt.KeyboardFocusManager
+import java.awt.Point
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
 import java.awt.Window as AwtWindow
+import javax.swing.RootPaneContainer
+
+private val LocalSharedReaderModalOwnerWindow = compositionLocalOf<AwtWindow?> { null }
+
+@Composable
+actual fun SharedReaderModalOwnerWindowProvider(
+    ownerWindow: Any?,
+    content: @Composable () -> Unit
+) {
+    CompositionLocalProvider(
+        LocalSharedReaderModalOwnerWindow provides (ownerWindow as? AwtWindow),
+        content = content
+    )
+}
 
 @Composable
 internal actual fun SharedReaderModalLayer(
@@ -24,7 +47,9 @@ internal actual fun SharedReaderModalLayer(
 ) {
     val anchor = LocalSharedReaderModalAnchorBounds.current
     val density = LocalDensity.current
-    val ownerWindow = remember { currentNonModalOwnerWindow() }
+    val explicitOwnerWindow = LocalSharedReaderModalOwnerWindow.current
+    val fallbackOwnerWindow = remember { currentNonModalOwnerWindow() }
+    val ownerWindow = explicitOwnerWindow ?: fallbackOwnerWindow
     val dialogSize = with(density) {
         anchor?.let {
             when {
@@ -49,9 +74,141 @@ internal actual fun SharedReaderModalLayer(
             }
         } ?: DpSize(720.dp, 620.dp)
     }
-    val dialogPosition = with(density) {
+    val dialogPosition = sharedReaderModalLayerPosition(
+        anchor = anchor,
+        ownerWindow = ownerWindow,
+        dialogSize = dialogSize,
+        level = level,
+        density = density
+    )
+    val state = rememberWindowState(position = dialogPosition, size = dialogSize)
+    val windowTitle = when (level) {
+        SharedReaderModalLevel.Panel -> "Reader Panel"
+        SharedReaderModalLevel.PanelLeft -> "Reader Navigation"
+        SharedReaderModalLevel.PanelRight -> "Reader Tools"
+        SharedReaderModalLevel.Popup -> "Reader Popup"
+        SharedReaderModalLevel.ChromeTop -> "Reader Chrome Top"
+        SharedReaderModalLevel.ChromeBottom -> "Reader Chrome Bottom"
+    }
+    var modalVisible by remember(ownerWindow, explicitOwnerWindow, level) {
+        mutableStateOf(sharedReaderModalLayerVisible(ownerWindow, explicitOwnerWindow, level))
+    }
+
+    LaunchedEffect(dialogPosition, dialogSize) {
+        if (state.position != dialogPosition) {
+            state.position = dialogPosition
+        }
+        if (state.size != dialogSize) {
+            state.size = dialogSize
+        }
+    }
+    if (!level.isChromeLayer()) {
+        DisposableEffect(ownerWindow) {
+            onDispose {
+                ownerWindow?.restoreFocusAfterSharedReaderModal()
+            }
+        }
+    }
+    DisposableEffect(ownerWindow, explicitOwnerWindow, level) {
+        if (ownerWindow == null || explicitOwnerWindow == null || !level.isChromeLayer()) {
+            modalVisible = true
+            onDispose {}
+        } else {
+            fun syncVisibility() {
+                modalVisible = sharedReaderModalLayerVisible(ownerWindow, explicitOwnerWindow, level)
+            }
+            val listener = object : WindowAdapter() {
+                override fun windowActivated(e: WindowEvent?) = syncVisibility()
+                override fun windowDeactivated(e: WindowEvent?) = syncVisibility()
+                override fun windowGainedFocus(e: WindowEvent?) = syncVisibility()
+                override fun windowLostFocus(e: WindowEvent?) = syncVisibility()
+                override fun windowIconified(e: WindowEvent?) = syncVisibility()
+                override fun windowDeiconified(e: WindowEvent?) = syncVisibility()
+                override fun windowClosed(e: WindowEvent?) = syncVisibility()
+            }
+            ownerWindow.addWindowListener(listener)
+            ownerWindow.addWindowFocusListener(listener)
+            syncVisibility()
+            onDispose {
+                ownerWindow.removeWindowListener(listener)
+                ownerWindow.removeWindowFocusListener(listener)
+            }
+        }
+    }
+
+    if (modalVisible) {
+        ComposeWindow(
+            onCloseRequest = onDismiss,
+            state = state,
+            title = windowTitle,
+            undecorated = true,
+            transparent = true,
+            resizable = false,
+            alwaysOnTop = true,
+            focusable = !level.isChromeLayer()
+        ) {
+            val modalWindow = window
+            LaunchedEffect(modalWindow, level) {
+                modalWindow.name = SharedReaderModalWindowNamePrefix + level.name
+                modalWindow.isAlwaysOnTop = true
+                val frontAttempts = when (level) {
+                    SharedReaderModalLevel.Popup -> 4
+                    SharedReaderModalLevel.Panel,
+                    SharedReaderModalLevel.PanelLeft,
+                    SharedReaderModalLevel.PanelRight -> 3
+                    SharedReaderModalLevel.ChromeTop,
+                    SharedReaderModalLevel.ChromeBottom -> 1
+                }
+                repeat(frontAttempts) { attempt ->
+                    delay(if (attempt == 0) 30L else 80L)
+                    modalWindow.isAlwaysOnTop = true
+                    modalWindow.toFront()
+                    if (!level.isChromeLayer()) {
+                        modalWindow.requestFocus()
+                        modalWindow.requestFocusInWindow()
+                    }
+                }
+            }
+            content()
+        }
+    }
+}
+
+internal actual fun sharedReaderModalLayerUsesSizedEdgeWindow(level: SharedReaderModalLevel): Boolean {
+    return level.isEdgePanelLayer()
+}
+
+private const val SharedReaderModalWindowNamePrefix = "shared-reader-modal:"
+private val SharedReaderChromeTopLayerHeight = 104.dp
+private val SharedReaderChromeBottomLayerHeight = 164.dp
+private val SharedReaderLeftPanelWidth = 340.dp
+private val SharedReaderRightPanelWidth = 380.dp
+private val SharedReaderLeftNarrowPanelMaxWidth = 320.dp
+private val SharedReaderRightNarrowPanelMaxWidth = 360.dp
+private val SharedReaderNarrowPanelFraction = 0.92f
+private val SharedReaderWidePanelBreakpoint = 1120.dp
+
+private fun sharedReaderModalLayerVisible(
+    ownerWindow: AwtWindow?,
+    explicitOwnerWindow: AwtWindow?,
+    level: SharedReaderModalLevel
+): Boolean {
+    if (explicitOwnerWindow == null || !level.isChromeLayer()) return true
+    return ownerWindow?.let { window ->
+        window.isShowing && window.isDisplayable && (window.isActive || window.isFocused)
+    } == true
+}
+
+private fun sharedReaderModalLayerPosition(
+    anchor: SharedReaderModalAnchorBounds?,
+    ownerWindow: AwtWindow?,
+    dialogSize: DpSize,
+    level: SharedReaderModalLevel,
+    density: Density
+): WindowPosition {
+    return with(density) {
         val ownerLocation = ownerWindow?.let { window ->
-            runCatching { window.locationOnScreen }.getOrNull()
+            runCatching { window.sharedReaderModalContentLocationOnScreen() }.getOrNull()
         }
         if (anchor != null && ownerLocation != null) {
             val topPx = when (level) {
@@ -70,77 +227,15 @@ internal actual fun SharedReaderModalLayer(
             WindowPosition(Alignment.Center)
         }
     }
-    val state = rememberWindowState(position = dialogPosition, size = dialogSize)
-    val windowTitle = when (level) {
-        SharedReaderModalLevel.Panel -> "Reader Panel"
-        SharedReaderModalLevel.PanelLeft -> "Reader Navigation"
-        SharedReaderModalLevel.PanelRight -> "Reader Tools"
-        SharedReaderModalLevel.Popup -> "Reader Popup"
-        SharedReaderModalLevel.ChromeTop -> "Reader Chrome Top"
-        SharedReaderModalLevel.ChromeBottom -> "Reader Chrome Bottom"
-    }
-
-    LaunchedEffect(dialogPosition, dialogSize) {
-        state.position = dialogPosition
-        state.size = dialogSize
-    }
-    if (!level.isChromeLayer()) {
-        DisposableEffect(ownerWindow) {
-            onDispose {
-                ownerWindow?.restoreFocusAfterSharedReaderModal()
-            }
-        }
-    }
-
-    ComposeWindow(
-        onCloseRequest = onDismiss,
-        state = state,
-        title = windowTitle,
-        undecorated = true,
-        transparent = true,
-        resizable = false,
-        alwaysOnTop = true,
-        focusable = !level.isChromeLayer()
-    ) {
-        val modalWindow = window
-        LaunchedEffect(modalWindow, level) {
-            modalWindow.name = SharedReaderModalWindowNamePrefix + level.name
-            modalWindow.isAlwaysOnTop = true
-            val frontAttempts = when (level) {
-                SharedReaderModalLevel.Popup -> 4
-                SharedReaderModalLevel.Panel,
-                SharedReaderModalLevel.PanelLeft,
-                SharedReaderModalLevel.PanelRight -> 3
-                SharedReaderModalLevel.ChromeTop,
-                SharedReaderModalLevel.ChromeBottom -> 1
-            }
-            repeat(frontAttempts) { attempt ->
-                delay(if (attempt == 0) 30L else 80L)
-                modalWindow.isAlwaysOnTop = true
-                modalWindow.toFront()
-                if (!level.isChromeLayer()) {
-                    modalWindow.requestFocus()
-                    modalWindow.requestFocusInWindow()
-                }
-            }
-        }
-        content()
-    }
 }
 
-internal actual fun sharedReaderModalLayerUsesSizedEdgeWindow(level: SharedReaderModalLevel): Boolean {
-    return level.isEdgePanelLayer()
+private fun AwtWindow.sharedReaderModalContentLocationOnScreen(): Point {
+    val contentPane = (this as? RootPaneContainer)?.contentPane
+    if (contentPane != null && contentPane.isShowing) {
+        return contentPane.locationOnScreen
+    }
+    return locationOnScreen
 }
-
-private const val SharedReaderModalWindowNamePrefix = "shared-reader-modal:"
-private val SharedReaderChromeTopLayerHeight = 104.dp
-private val SharedReaderChromeBottomLayerHeight = 164.dp
-private val SharedReaderLeftPanelWidth = 340.dp
-private val SharedReaderRightPanelWidth = 380.dp
-private val SharedReaderLeftNarrowPanelMaxWidth = 320.dp
-private val SharedReaderRightNarrowPanelMaxWidth = 360.dp
-private val SharedReaderNarrowPanelFraction = 0.92f
-private val SharedReaderWidePanelBreakpoint = 1120.dp
 
 private fun SharedReaderModalLevel.isChromeLayer(): Boolean {
     return this == SharedReaderModalLevel.ChromeTop || this == SharedReaderModalLevel.ChromeBottom

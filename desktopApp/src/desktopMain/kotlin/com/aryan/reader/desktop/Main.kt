@@ -99,6 +99,7 @@ import com.aryan.reader.shared.ui.SharedConfirmDialog
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
 import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.SharedOpdsScreen
+import com.aryan.reader.shared.ui.SharedReaderModalOwnerWindowProvider
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
@@ -3095,12 +3096,13 @@ internal fun EpistemeDesktopApp(
                             textColor = MaterialTheme.colorScheme.onSurface,
                             borderColor = MaterialTheme.colorScheme.background
                         )
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .background(MaterialTheme.colorScheme.background)
-                        ) {
-                            when (val content = readerWindow.content) {
+                        SharedReaderModalOwnerWindowProvider(ownerWindow = readerAwtWindow) {
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.background)
+                            ) {
+                                when (val content = readerWindow.content) {
                                 DesktopReaderWindowContent.Opening -> {
                                     DesktopReaderOpeningScreen(opening = readerWindow.opening)
                                 }
@@ -3330,8 +3332,8 @@ internal fun EpistemeDesktopApp(
                                         webViewNetworkAccessEnabled = featurePolicy.networkAccess,
                                         epubPaginationCache = desktopEpubPaginationCache,
                                         epubPaginationCacheGeneration = epubPaginationCacheGeneration,
-                                        useDetachedChromeLayer = false,
-                                        useDetachedPanelLayer = false
+                                        useDetachedChromeLayer = true,
+                                        useDetachedPanelLayer = true
                                     )
 
                                     if (content.showAiHub) {
@@ -3362,6 +3364,7 @@ internal fun EpistemeDesktopApp(
                                         )
                                     }
                                 }
+                            }
                             }
                         }
                     }
