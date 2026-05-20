@@ -653,6 +653,9 @@ internal fun PdfPageComposable(
     activeTextureAlpha: Float = 0.55f,
     excludeImages: Boolean = false,
     onDoubleTap: ((Offset) -> Unit)? = null,
+    onDoubleTapDragZoomStart: ((Offset) -> Unit)? = null,
+    onDoubleTapDragZoom: ((Offset, Float) -> Unit)? = null,
+    onDoubleTapDragZoomEnd: (() -> Unit)? = null,
     isEditMode: Boolean = false,
     drawingState: PdfDrawingState? = null,
     pageAnnotations: () -> List<PdfAnnotation> = { emptyList() },
@@ -755,9 +758,14 @@ internal fun PdfPageComposable(
     val currentOnSingleTap by rememberUpdatedState(onSingleTap)
     val currentOnPreSingleTap by rememberUpdatedState(onPreSingleTap)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
+    val currentOnDoubleTapDragZoomStart by rememberUpdatedState(onDoubleTapDragZoomStart)
+    val currentOnDoubleTapDragZoom by rememberUpdatedState(onDoubleTapDragZoom)
+    val currentOnDoubleTapDragZoomEnd by rememberUpdatedState(onDoubleTapDragZoomEnd)
 
     val effectiveScale = if (isZoomEnabled && !isVerticalScroll) scale else externalScale
     val effectiveOffset = if (isZoomEnabled && !isVerticalScroll) offset else Offset.Zero
+    val latestScale by rememberUpdatedState(scale)
+    val latestOffset by rememberUpdatedState(offset)
 
     var eraserPosition by remember { mutableStateOf<Offset?>(null) }
 
@@ -922,6 +930,7 @@ internal fun PdfPageComposable(
 
     val inputScale = if (isZoomEnabled && !isVerticalScroll) scale else 1f
     val inputOffset = if (isZoomEnabled && !isVerticalScroll) offset else Offset.Zero
+    val latestInputScale by rememberUpdatedState(inputScale)
 
     val screenToContentCoordinates: (Offset) -> Offset = { screenOffset ->
         val screenCenter = Offset(canvasWidthPx.floatValue / 2f, canvasHeightPx.floatValue / 2f)
@@ -936,6 +945,9 @@ internal fun PdfPageComposable(
         val screenOffset = (pCanvas - screenCenter) * inputScale + screenCenter + inputOffset
         screenOffset
     }
+    val latestScreenToContentCoordinates by rememberUpdatedState(screenToContentCoordinates)
+    var isOneHandZooming by remember(targetPageId) { mutableStateOf(false) }
+    val latestIsOneHandZooming by rememberUpdatedState(isOneHandZooming)
 
     var detectedBubbles by remember(targetPageId) { mutableStateOf<List<SpeechBubble>>(emptyList()) }
     var expandedBubbleIndex by remember(targetPageId) { mutableIntStateOf(-1) }
@@ -2703,6 +2715,10 @@ internal fun PdfPageComposable(
                                 waitForUpOrCancellation()
                             }
                         } catch (_: PointerEventTimeoutCancellationException) {
+                            if (latestIsOneHandZooming) {
+                                waitForUpOrCancellation()?.consume()
+                                return@awaitEachGesture
+                            }
                             down.consume()
                             Timber.d(
                                 "PointerInput: Long press detected at screen position ${down.position}"
@@ -2984,8 +3000,6 @@ internal fun PdfPageComposable(
             .pointerInput(
                 actualBitmapWidthPx,
                 actualBitmapHeightPx,
-                scale,
-                offset,
                 customMenuState,
                 selectionCharRange.value,
                 pageLinks,
@@ -3004,14 +3018,52 @@ internal fun PdfPageComposable(
                         selectedTool == InkType.TEXT ||
                         isStylusOnlyMode
 
-                if (!isTapDetectionAllowed) return@pointerInput
+                if (!isTapDetectionAllowed) {
+                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                        "page.detector.disabled page=$pageIndex vertical=$isVerticalScroll edit=$isEditMode " +
+                            "tool=$selectedTool stylusOnly=$isStylusOnlyMode"
+                    )
+                    return@pointerInput
+                }
 
-                detectTapGestures(onTap = { tapOffset ->
+                val oneHandZoomDistancePx = with(density) {
+                    PDF_ONE_HAND_ZOOM_DRAG_DISTANCE_FOR_DOUBLE_DP.dp.toPx()
+                }
+                var oneHandZoomStartScale = 1f
+                var oneHandZoomStartOffset = Offset.Zero
+
+                fun canZoomByDoubleTap(): Boolean {
+                    return (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) ||
+                        (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null)
+                }
+
+                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                    "page.detector.enabled page=$pageIndex vertical=$isVerticalScroll zoomEnabled=$isZoomEnabled " +
+                        "scrollLocked=$isScrollLocked bitmap=${actualBitmapWidthPx}x$actualBitmapHeightPx " +
+                        "scale=$latestScale offset=$latestOffset hasDoubleTap=${currentOnDoubleTap != null} " +
+                        "hasDragZoom=${currentOnDoubleTapDragZoom != null}"
+                )
+
+                detectPdfTapAndOneHandZoomGestures(
+                    viewConfiguration = viewConfiguration,
+                    canStartOneHandZoom = {
+                        (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) ||
+                            (isVerticalScroll && !isScrollLocked && currentOnDoubleTapDragZoom != null)
+                    },
+                    canHandleQuickDoubleTap = { canZoomByDoubleTap() },
+                    consumeSingleTap = true,
+                    onTap = tapDetector@{ tapOffset ->
+                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                        "page.onTap page=$pageIndex vertical=$isVerticalScroll offset=$tapOffset"
+                    )
                     if (currentOnPreSingleTap?.invoke(tapOffset) == true) {
-                        return@detectTapGestures
+                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                            "page.onTap.preSingleTapConsumed page=$pageIndex vertical=$isVerticalScroll"
+                        )
+                        return@tapDetector
                     }
 
-                    val tapInContentCoords = screenToContentCoordinates(tapOffset)
+                    val tapInContentCoords = latestScreenToContentCoordinates(tapOffset)
                     val tapXInBitmap = tapInContentCoords.x
                     val tapYInBitmap = tapInContentCoords.y
                     val isWithinContentBounds =
@@ -3019,8 +3071,12 @@ internal fun PdfPageComposable(
                             tapYInBitmap in 0f..actualBitmapHeightPx.toFloat()
 
                     if (!isWithinContentBounds) {
+                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                            "page.onTap.outsideContent page=$pageIndex vertical=$isVerticalScroll " +
+                                "bitmapTap=(${tapXInBitmap.toInt()},${tapYInBitmap.toInt()})"
+                        )
                         currentOnSingleTap(tapOffset)
-                        return@detectTapGestures
+                        return@tapDetector
                     }
 
                     Timber.tag("BubbleZoom").d("Tap inside bounds. modeActive=$currentBubbleZoomModeActive, detectedBubbles=${currentDetectedBubbles.size}, tapPos=($tapXInBitmap, $tapYInBitmap)")
@@ -3043,10 +3099,10 @@ internal fun PdfPageComposable(
                             } else {
                                 tappedBubbleIndex
                             }
-                            return@detectTapGestures
+                            return@tapDetector
                         } else if (currentExpandedBubbleIndex != -1) {
                             expandedBubbleIndex = -1
-                            return@detectTapGestures
+                            return@tapDetector
                         }
                     }
 
@@ -3095,6 +3151,9 @@ internal fun PdfPageComposable(
                         }
 
                         if (nativeResult == 2) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.onTap.nativeAction page=$pageIndex vertical=$isVerticalScroll"
+                            )
                             Timber.tag("PdfInteraction").i("Action detected. Refreshing page.")
                             tiles = emptyList()
                             bitmapState = null
@@ -3102,11 +3161,14 @@ internal fun PdfPageComposable(
                             currentRenderedPageId = "ACTION_${System.currentTimeMillis()}"
                             return@launch
                         } else if (nativeResult == 1) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.onTap.nativeLink page=$pageIndex vertical=$isVerticalScroll"
+                            )
                             return@launch
                         }
 
-                        val annotHitTolerance = with(density) { 24.dp.toPx() } / inputScale
-                        val hitTolerance = with(density) { 16.dp.toPx() } / inputScale
+                        val annotHitTolerance = with(density) { 24.dp.toPx() } / latestInputScale
+                        val hitTolerance = with(density) { 16.dp.toPx() } / latestInputScale
 
                         Timber.d("detectTapGestures: Tap at bitmap coords (${tapXInBitmap.toInt()}, ${tapYInBitmap.toInt()})")
 
@@ -3145,6 +3207,9 @@ internal fun PdfPageComposable(
                         }
 
                         if (standardHit != null) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.onTap.annotationHit page=$pageIndex vertical=$isVerticalScroll"
+                            )
                             val (annot, screenRect) = standardHit
                             customMenuState = CustomPdfMenuState(
                                 selectedText = annot.contents ?: "No comment",
@@ -3158,6 +3223,9 @@ internal fun PdfPageComposable(
                         }
 
                         if (hitHighlightPair != null && tappedRect != null) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.onTap.highlightHit page=$pageIndex vertical=$isVerticalScroll"
+                            )
                             val hitHighlight = hitHighlightPair.first
                             onNoteRequested(hitHighlight.id)
                             return@launch
@@ -3168,6 +3236,10 @@ internal fun PdfPageComposable(
                         }
 
                         if (clickedLink != null) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.onTap.fallbackLink page=$pageIndex vertical=$isVerticalScroll " +
+                                    "dest=${clickedLink.destPageIdx} url=${clickedLink.url != null}"
+                            )
                             Timber.d("PdfPageComposable: Fallback pageLinks intercepted click.")
                             if (clickedLink.destPageIdx != null && clickedLink.destPageIdx >= 0) {
                                 onInternalLinkClicked(clickedLink.destPageIdx)
@@ -3181,6 +3253,10 @@ internal fun PdfPageComposable(
                         val wasSelectionVisible = selectionCharRange.value != null || ocrSelectionSymbolIndices != null
 
                         if (wasMenuVisible || wasSelectionVisible) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.onTap.clearSelectionOrMenu page=$pageIndex vertical=$isVerticalScroll " +
+                                    "menu=$wasMenuVisible selection=$wasSelectionVisible"
+                            )
                             customMenuState = null
                             selectionCharRange.value = null
                             ocrSelectionSymbolIndices = null
@@ -3193,39 +3269,49 @@ internal fun PdfPageComposable(
                                 currentPageRotation,
                             )
                         } else {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.onTap.singleTap page=$pageIndex vertical=$isVerticalScroll"
+                            )
                             currentOnSingleTap(tapOffset)
                         }
                     }
-                }, onDoubleTap = { tapOffset ->
+                },
+                    onQuickDoubleTap = quickDoubleTap@{ tapOffset ->
+                    if (!canZoomByDoubleTap()) {
+                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                            "page.quickDoubleTap.blocked page=$pageIndex vertical=$isVerticalScroll " +
+                                "zoomEnabled=$isZoomEnabled scrollLocked=$isScrollLocked bitmapWidth=$actualBitmapWidthPx"
+                        )
+                        return@quickDoubleTap
+                    }
+                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                        "page.quickDoubleTap page=$pageIndex vertical=$isVerticalScroll offset=$tapOffset " +
+                            "scale=$latestScale"
+                    )
                     if (isZoomEnabled && !isVerticalScroll && !isScrollLocked) {
-                        if (actualBitmapWidthPx == 0) return@detectTapGestures
+                        if (actualBitmapWidthPx == 0) return@quickDoubleTap
                         coroutineScope.launch {
-                            val startScale = scale
+                            val startScale = latestScale
                             val targetScale = if (startScale > 1.1f) 1f else 2.5f
 
-                            val startOffset = offset
-                            val targetOffsetUnbounded = if (targetScale <= 1.1f) {
+                            val startOffset = latestOffset
+                            val viewportSize = Size(size.width.toFloat(), size.height.toFloat())
+                            val contentSize = Size(
+                                actualBitmapWidthPx.toFloat(),
+                                actualBitmapHeightPx.toFloat()
+                            )
+                            val targetOffset = if (targetScale <= 1.1f) {
                                 Offset.Zero
                             } else {
-                                val ratio = targetScale / startScale
-                                val screenCenter = Offset(
-                                    size.width / 2f, size.height / 2f
+                                centeredPdfCameraOffsetForScaleChange(
+                                    previousScale = startScale,
+                                    nextScale = targetScale,
+                                    previousOffset = startOffset,
+                                    pivot = tapOffset,
+                                    viewportSize = viewportSize,
+                                    contentSize = contentSize
                                 )
-                                startOffset * ratio + (tapOffset - screenCenter) * (1 - ratio)
                             }
-
-                            val contentWidth = actualBitmapWidthPx * targetScale
-                            val contentHeight = actualBitmapHeightPx * targetScale
-                            val maxOffsetX = (contentWidth - size.width).coerceAtLeast(0f) / 2f
-                            val maxOffsetY = (contentHeight - size.height).coerceAtLeast(0f) / 2f
-
-                            val targetOffset = Offset(
-                                x = targetOffsetUnbounded.x.coerceIn(
-                                    -maxOffsetX, maxOffsetX
-                                ), y = targetOffsetUnbounded.y.coerceIn(
-                                    -maxOffsetY, maxOffsetY
-                                )
-                            )
 
                             try {
                                 isTransforming = true
@@ -3255,7 +3341,75 @@ internal fun PdfPageComposable(
                     } else if (isVerticalScroll && !isScrollLocked && currentOnDoubleTap != null) {
                         currentOnDoubleTap!!(tapOffset)
                     }
-                })
+                },
+                    onOneHandZoomHoldStart = { _ ->
+                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                            "page.oneHandHoldStart page=$pageIndex vertical=$isVerticalScroll " +
+                                "scale=$latestScale offset=$latestOffset scrollLocked=$isScrollLocked"
+                        )
+                        isOneHandZooming = true
+                        if (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) {
+                            paginationPanFlingJob?.cancel()
+                            paginationPanFlingJob = null
+                            oneHandZoomStartScale = latestScale
+                            oneHandZoomStartOffset = latestOffset
+                            isPaginationPageGestureActive = true
+                        } else if (isVerticalScroll && !isScrollLocked) {
+                            currentOnDoubleTapDragZoomStart?.invoke(Offset(size.width / 2f, size.height / 2f))
+                        }
+                    },
+                    onOneHandZoom = { _, totalDragY ->
+                        if (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) {
+                            val pivot = Offset(size.width / 2f, size.height / 2f)
+                            val newScale = pdfOneHandZoomScale(
+                                startScale = oneHandZoomStartScale,
+                                totalDragY = totalDragY,
+                                dragDistanceForDoublePx = oneHandZoomDistancePx,
+                                minScale = 1f,
+                                maxScale = 4f
+                            )
+                            val viewportSize = Size(size.width.toFloat(), size.height.toFloat())
+                            val contentSize = Size(
+                                actualBitmapWidthPx.toFloat(),
+                                actualBitmapHeightPx.toFloat()
+                            )
+                            scale = newScale
+                            offset = centeredPdfCameraOffsetForScaleChange(
+                                previousScale = oneHandZoomStartScale,
+                                nextScale = newScale,
+                                previousOffset = oneHandZoomStartOffset,
+                                pivot = pivot,
+                                viewportSize = viewportSize,
+                                contentSize = contentSize
+                            )
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).v(
+                                "page.oneHandUpdate page=$pageIndex dragY=$totalDragY scale=$newScale offset=$offset"
+                            )
+                            onScaleChanged(scale)
+                        } else if (isVerticalScroll && !isScrollLocked) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).v(
+                                "page.oneHandUpdate.verticalForward page=$pageIndex dragY=$totalDragY"
+                            )
+                            currentOnDoubleTapDragZoom?.invoke(Offset(size.width / 2f, size.height / 2f), totalDragY)
+                        }
+                    },
+                    onOneHandZoomEnd = { _ ->
+                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                            "page.oneHandEnd page=$pageIndex vertical=$isVerticalScroll scale=$scale offset=$offset"
+                        )
+                        if (isZoomEnabled && !isVerticalScroll && !isScrollLocked && actualBitmapWidthPx > 0) {
+                            if (scale > 1f && scale < 1.05f) {
+                                scale = 1f
+                                offset = Offset.Zero
+                                onScaleChanged(scale)
+                            }
+                            isPaginationPageGestureActive = false
+                        } else if (isVerticalScroll && !isScrollLocked) {
+                            currentOnDoubleTapDragZoomEnd?.invoke()
+                        }
+                        isOneHandZooming = false
+                    }
+                )
             }
             .pointerInput(
                 actualBitmapWidthPx,
@@ -3265,9 +3419,10 @@ internal fun PdfPageComposable(
                 isVerticalScroll,
                 isEditMode,
                 onTwoFingerSwipe,
-                isScrollLocked
+                isScrollLocked,
+                isOneHandZooming
             ) {
-                if (!isZoomEnabled || isVerticalScroll || actualBitmapWidthPx == 0 || activeDraggingHandle != null) return@pointerInput
+                if (!isZoomEnabled || isVerticalScroll || actualBitmapWidthPx == 0 || activeDraggingHandle != null || isOneHandZooming) return@pointerInput
 
                 val decay = splineBasedDecay<Float>(this)
                 val velocityTracker = VelocityTracker()
@@ -3276,6 +3431,10 @@ internal fun PdfPageComposable(
                 awaitEachGesture {
                     @Suppress("UnusedVariable", "Unused") val down =
                         awaitFirstDown(requireUnconsumed = false)
+                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                        "page.panDetector.down page=$pageIndex consumed=${down.isConsumed} " +
+                            "scale=$scale offset=$offset scrollLocked=$isScrollLocked"
+                    )
                     isPaginationPageGestureActive = true
                     try {
                     paginationPanFlingJob?.cancel()
@@ -3293,6 +3452,15 @@ internal fun PdfPageComposable(
                         val canceled = event.changes.any { it.isConsumed }
                         val pointerCount = event.changes.size
 
+                        if (canceled) {
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "page.panDetector.canceledByConsumed page=$pageIndex mode=$mode scale=$scale " +
+                                    "pointerCount=$pointerCount changes=${event.changes.joinToString { change ->
+                                        "pressed=${change.pressed},consumed=${change.isConsumed},moved=${change.positionChanged()}"
+                                    }}"
+                            )
+                        }
+
                         if (!canceled) {
                             val rawPanChange = event.calculatePan()
                             val panChange = if (isScrollLocked && pointerCount == 1) {
@@ -3308,6 +3476,9 @@ internal fun PdfPageComposable(
                                         accumulatedPan += panChange
                                         if (accumulatedPan.getDistance() > touchSlop) {
                                             mode = 1
+                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                "page.panDetector.modePanSingle page=$pageIndex accumulatedPan=$accumulatedPan scale=$scale"
+                                            )
                                             Timber.tag("PdfZoomDebug").d("Mode Change: PAN (Single Pointer)")
                                         }
                                     } else if (pointerCount > 1) {
@@ -3319,9 +3490,15 @@ internal fun PdfPageComposable(
 
                                         if (zoomDiff > 0.05f) {
                                             mode = 2
+                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                "page.panDetector.modeZoomMulti page=$pageIndex zoomDiff=$zoomDiff panDist=$panDist scale=$scale"
+                                            )
                                             Timber.tag("PdfZoomDebug").d("Mode Change: ZOOM (Multi Pointer)")
                                         } else if (panDist > touchSlop) {
                                             mode = 1
+                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                "page.panDetector.modePanMulti page=$pageIndex zoomDiff=$zoomDiff panDist=$panDist scale=$scale"
+                                            )
                                             Timber.tag("PdfZoomDebug").d("Mode Change: PAN (Multi Pointer)")
                                         }
                                     }

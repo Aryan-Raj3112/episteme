@@ -42,7 +42,6 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateCentroidSize
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -457,6 +456,14 @@ internal fun PdfVerticalReader(
         val dragCameraUpdates = remember {
             Channel<Triple<Float, Float, Float>>(Channel.CONFLATED)
         }
+        val oneHandZoomDistancePx = with(density) {
+            PDF_ONE_HAND_ZOOM_DRAG_DISTANCE_FOR_DOUBLE_DP.dp.toPx()
+        }
+        var oneHandZoomStartZoom by remember { mutableFloatStateOf(fitZoom) }
+        var oneHandZoomStartPan by remember { mutableStateOf(Offset.Zero) }
+        var oneHandZoomPivotScreen by remember { mutableStateOf(Offset.Zero) }
+        var isVerticalOneHandZooming by remember { mutableStateOf(false) }
+        val latestIsVerticalOneHandZooming by rememberUpdatedState(isVerticalOneHandZooming)
 
         DisposableEffect(dragCameraUpdates) {
             onDispose {
@@ -656,6 +663,21 @@ internal fun PdfVerticalReader(
             targetZoom: Float, targetPanX: Float, targetPanY: Float
         ): Triple<Float, Float, Float> {
             return clampValues(targetZoom, targetPanX, targetPanY)
+        }
+
+        fun updatePanBoundsForZoom(finalZoom: Float) {
+            val zoomedDocWidth = screenWidth * finalZoom
+            val (finalMinX, finalMaxX) = if (zoomedDocWidth < screenWidth) {
+                val centeredX = (screenWidth - zoomedDocWidth) / 2f
+                centeredX to centeredX
+            } else {
+                -(zoomedDocWidth - screenWidth) to 0f
+            }
+            panXAnimatable.updateBounds(lowerBound = finalMinX, upperBound = finalMaxX)
+
+            val zoomedDocHeight = totalDocHeight * finalZoom
+            val minPanY = (screenHeight - footerHeightPx - zoomedDocHeight).coerceAtMost(headerHeightPx)
+            panYAnimatable.updateBounds(lowerBound = minPanY, upperBound = headerHeightPx)
         }
 
         LaunchedEffect(resetZoomTrigger) {
@@ -1144,6 +1166,91 @@ internal fun PdfVerticalReader(
             }
         }
 
+        val onDoubleTapDragZoomStart: (Offset) -> Unit = {
+            if (!isScrollLocked) {
+                isVerticalOneHandZooming = true
+                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                    "vertical.oneHandStart requestedPivot=$it center=(${(screenWidth / 2f).toInt()},${(screenHeight / 2f).toInt()}) " +
+                        "zoom=${zoomAnimatable.value} pan=(${panXAnimatable.value},${panYAnimatable.value})"
+                )
+                oneHandZoomPivotScreen = Offset(screenWidth / 2f, screenHeight / 2f)
+                oneHandZoomStartZoom = zoomAnimatable.value
+                oneHandZoomStartPan = Offset(panXAnimatable.value, panYAnimatable.value)
+                isInteracting = true
+                isDragging = true
+                scope.launch {
+                    zoomAnimatable.stop()
+                    panXAnimatable.stop()
+                    panYAnimatable.stop()
+                    panXAnimatable.updateBounds(null, null)
+                    panYAnimatable.updateBounds(null, null)
+                }
+            }
+        }
+
+        val onDoubleTapDragZoom: (Offset, Float) -> Unit = { _, totalDragY ->
+            if (!isScrollLocked) {
+                val screenDragY = totalDragY * oneHandZoomStartZoom
+                val targetZoom = pdfOneHandZoomScale(
+                    startScale = oneHandZoomStartZoom,
+                    totalDragY = screenDragY,
+                    dragDistanceForDoublePx = oneHandZoomDistancePx,
+                    minScale = fitZoom,
+                    maxScale = 5f
+                )
+                val rawPan = topLeftPdfPanForScaleChange(
+                    previousScale = oneHandZoomStartZoom,
+                    nextScale = targetZoom,
+                    previousPan = oneHandZoomStartPan,
+                    pivot = oneHandZoomPivotScreen
+                )
+                val (finalZoom, finalX, finalY) = clampCamera(targetZoom, rawPan.x, rawPan.y)
+                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).v(
+                    "vertical.oneHandUpdate dragY=$totalDragY screenDragY=$screenDragY " +
+                        "targetZoom=$targetZoom finalZoom=$finalZoom pan=($finalX,$finalY)"
+                )
+                onZoomChange(finalZoom)
+                dragCameraUpdates.trySend(Triple(finalZoom, finalX, finalY))
+            }
+        }
+
+        val onDoubleTapDragZoomEnd: () -> Unit = {
+            val wasOneHandZooming = isVerticalOneHandZooming
+            isVerticalOneHandZooming = false
+            if (!isScrollLocked || wasOneHandZooming) {
+                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                    "vertical.oneHandEnd zoom=${zoomAnimatable.value} pan=(${panXAnimatable.value},${panYAnimatable.value})"
+                )
+                isInteracting = false
+                isDragging = false
+                val currentZoom = zoomAnimatable.value
+                if (currentZoom > fitZoom && currentZoom < fitZoom * 1.05f) {
+                    scope.launch {
+                        val (finalZoom, finalX, finalY) = clampCamera(
+                            fitZoom,
+                            panXAnimatable.value,
+                            panYAnimatable.value
+                        )
+                        coroutineScope {
+                            launch { zoomAnimatable.animateTo(finalZoom, animationSpec = tween(180, easing = FastOutSlowInEasing)) }
+                            launch { panXAnimatable.animateTo(finalX, animationSpec = tween(180, easing = FastOutSlowInEasing)) }
+                            launch { panYAnimatable.animateTo(finalY, animationSpec = tween(180, easing = FastOutSlowInEasing)) }
+                        }
+                        onZoomChange(finalZoom)
+                        updatePanBoundsForZoom(finalZoom)
+                    }
+                } else {
+                    updatePanBoundsForZoom(currentZoom)
+                }
+            }
+        }
+
+        val currentOnPageClick by rememberUpdatedState(onPageClick)
+        val currentOnDoubleTapToZoom by rememberUpdatedState(onDoubleTapToZoom)
+        val currentOnDoubleTapDragZoomStart by rememberUpdatedState(onDoubleTapDragZoomStart)
+        val currentOnDoubleTapDragZoom by rememberUpdatedState(onDoubleTapDragZoom)
+        val currentOnDoubleTapDragZoomEnd by rememberUpdatedState(onDoubleTapDragZoomEnd)
+
         val globalDrawingModifier = Modifier.pointerInput(
             isEditMode,
             layoutInfo,
@@ -1253,31 +1360,86 @@ internal fun PdfVerticalReader(
                 .fillMaxSize()
                 .background(if (showPageGap) Color.Transparent else verticalPageBackgroundColor)
                 .then(globalDrawingModifier)
-                .pointerInput(isEditMode, selectedTool, isStylusOnlyMode, isScrollLocked) {
-                    Timber.tag("PdfTouchDebug").v(
-                        "VerticalReader: TapPointerInput init. isEditMode=$isEditMode"
-                    )
-
+                // Vertical zoom gestures live here so page tap handlers do not steal
+                // alternating double-tap-hold attempts.
+                .pointerInput(
+                    layoutInfo,
+                    isEditMode,
+                    selectedTool,
+                    isStylusOnlyMode,
+                    isScrollLocked
+                ) {
                     val isTapDetectionAllowed = !isEditMode ||
                             selectedTool == InkType.TEXT ||
                             isStylusOnlyMode
 
-                    if (!isTapDetectionAllowed) return@pointerInput
+                    if (!isTapDetectionAllowed) {
+                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                            "vertical.rootDetector.disabled edit=$isEditMode tool=$selectedTool stylusOnly=$isStylusOnlyMode"
+                        )
+                        return@pointerInput
+                    }
 
-                    detectTapGestures(onTap = {
-                        if (!isEditMode) {
-                            Timber.tag("PdfTouchDebug").d("VerticalReader: Tap detected")
-                            selectionClearTrigger++
-                            onPageClick()
-                        } else if (selectedTool == InkType.TEXT) {
-                            onPageClick()
+                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                        "vertical.rootDetector.enabled scrollLocked=$isScrollLocked edit=$isEditMode " +
+                            "tool=$selectedTool pages=${layoutInfo.size} zoom=${zoomAnimatable.value}"
+                    )
+
+                    fun isOverPage(screenOffset: Offset): Boolean {
+                        val zoom = zoomAnimatable.value.takeIf { it > 0f } ?: fitZoom
+                        val docX = (screenOffset.x - panXAnimatable.value) / zoom
+                        val docY = (screenOffset.y - panYAnimatable.value) / zoom
+                        return layoutInfo.any { page ->
+                            docX >= 0f &&
+                                docX <= page.width &&
+                                docY >= page.y &&
+                                docY <= page.y + page.height
                         }
-                    }, onDoubleTap = { offset ->
-                        if (!isScrollLocked) {
-                            Timber.tag("PdfTouchDebug").d("VerticalReader: DoubleTap detected")
-                            onDoubleTapToZoom(offset)
+                    }
+
+                    detectPdfTapAndOneHandZoomGestures(
+                        viewConfiguration = viewConfiguration,
+                        canStartOneHandZoom = { !isScrollLocked },
+                        canHandleQuickDoubleTap = { !isScrollLocked },
+                        consumeSingleTap = false,
+                        onTap = { offset ->
+                            val overPage = isOverPage(offset)
+                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                "vertical.rootTap offset=$offset overPage=$overPage"
+                            )
+                            if (!overPage) {
+                                selectionClearTrigger++
+                                currentOnPageClick()
+                            }
+                        },
+                        onQuickDoubleTap = { offset ->
+                            if (!isScrollLocked) {
+                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                    "vertical.rootQuickDoubleTap offset=$offset zoom=${zoomAnimatable.value}"
+                                )
+                                currentOnDoubleTapToZoom(offset)
+                            }
+                        },
+                        onOneHandZoomHoldStart = { offset ->
+                            if (!isScrollLocked) {
+                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                    "vertical.rootOneHandHoldStart offset=$offset"
+                                )
+                                currentOnDoubleTapDragZoomStart(offset)
+                            }
+                        },
+                        onOneHandZoom = { offset, totalDragY ->
+                            if (!isScrollLocked) {
+                                currentOnDoubleTapDragZoom(offset, totalDragY)
+                            }
+                        },
+                        onOneHandZoomEnd = { _ ->
+                            if (!isScrollLocked || latestIsVerticalOneHandZooming) {
+                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d("vertical.rootOneHandEnd")
+                                currentOnDoubleTapDragZoomEnd()
+                            }
                         }
-                    })
+                    )
                 }
                 .pointerInput(
                     totalDocHeight,
@@ -1297,6 +1459,10 @@ internal fun PdfVerticalReader(
                         )
 
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                            "vertical.scrollDetector.down consumed=${down.isConsumed} pos=${down.position} " +
+                                "zoom=${zoomAnimatable.value} pan=(${panXAnimatable.value},${panYAnimatable.value})"
+                        )
                         isInteracting = true
                         isDragging = false
                         val gestureStartNanos = PdfVerticalPerfLog.nowNanos()
@@ -1372,8 +1538,24 @@ internal fun PdfVerticalReader(
                             val isMultiTouch = event.changes.size > 1
                             val canceled = event.changes.any { it.isConsumed } && !isMultiTouch
 
+                            if (latestIsVerticalOneHandZooming && !isMultiTouch) {
+                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).v(
+                                    "vertical.scrollDetector.skipOneHandActive events=$gestureEventCount " +
+                                        "changes=${event.changes.joinToString { change ->
+                                            "pressed=${change.pressed},consumed=${change.isConsumed},moved=${change.positionChanged()}"
+                                        }}"
+                                )
+                                continue
+                            }
+
                             if (canceled) {
                                 gestureCanceledEventCount++
+                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                    "vertical.scrollDetector.canceledByConsumed mode=$gestureDisambiguationMode " +
+                                        "events=$gestureEventCount changes=${event.changes.joinToString { change ->
+                                            "pressed=${change.pressed},consumed=${change.isConsumed},moved=${change.positionChanged()}"
+                                        }}"
+                                )
                                 Timber.tag("PdfTouchDebug").v(
                                     "VerticalReader: Event Canceled (Child consumed?)."
                                 )
@@ -1412,11 +1594,17 @@ internal fun PdfVerticalReader(
                                     if (isPanPastSlop || isZoomPastSlop) {
                                         if (spanMagnitude > panMagnitude * 1.5f) {
                                             gestureDisambiguationMode = 2
+                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                "vertical.scrollDetector.modeZoom span=$spanMagnitude pan=$panMagnitude totalPan=$totalPanDistance"
+                                            )
                                             Timber.tag("PdfTouchDebug").d(
                                                 "Locked to ZOOM (Span > Pan * 1.5)"
                                             )
                                         } else {
                                             gestureDisambiguationMode = 1
+                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                "vertical.scrollDetector.modePan span=$spanMagnitude pan=$panMagnitude totalPan=$totalPanDistance"
+                                            )
                                             Timber.tag("PdfTouchDebug").d(
                                                 "Locked to PAN (Pan Dominant)"
                                             )
@@ -1425,6 +1613,9 @@ internal fun PdfVerticalReader(
                                 } else if (gestureDisambiguationMode == 1) {
                                     if (spanMagnitude > (panMagnitude * 3f) && spanMagnitude > 4f) {
                                         gestureDisambiguationMode = 2
+                                        Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                            "vertical.scrollDetector.modePanToZoom span=$spanMagnitude pan=$panMagnitude"
+                                        )
                                         Timber.tag("PdfTouchDebug").d(
                                             "Breakout: Switching PAN -> ZOOM"
                                         )
@@ -1820,24 +2011,6 @@ internal fun PdfVerticalReader(
                                 { text: String -> onSearchText(text) }
                             }
 
-                            val currentOnDoubleTapToZoom by rememberUpdatedState(onDoubleTapToZoom)
-                            val onDoubleTapLambda = remember(page, screenWidth, screenHeight) {
-                                { localOffset: Offset ->
-                                    Timber.tag("PdfZoomDebug").d(
-                                        "Page ${page.index} Double Tap: Local=$localOffset, PageY=${page.y}"
-                                    )
-                                    val contentX = localOffset.x
-                                    val contentY = localOffset.y + page.y
-                                    val currentZ = zoomAnimatable.value
-                                    val panX = panXAnimatable.value
-                                    val panY = panYAnimatable.value
-                                    val screenX = contentX * currentZ + panX
-                                    val screenY = contentY * currentZ + panY
-                                    Timber.tag("PdfZoomDebug").d("Mapped to Screen: ($screenX, $screenY)") // Added log
-                                    currentOnDoubleTapToZoom(Offset(screenX, screenY))
-                                }
-                            }
-
                             val onTtsHighlightCenter: (Float) -> Unit =
                                 remember(page.index, ttsReadingPage) {
                                     { highlightCenterY ->
@@ -1942,7 +2115,6 @@ internal fun PdfVerticalReader(
                                     showPageNumberOverlay = showPageNumberOverlay,
                                     isScrollLocked = isScrollLocked,
                                     visualScaleProvider = currentScaleProvider,
-                                    onDoubleTap = onDoubleTapLambda,
                                     clearSelectionTrigger = selectionClearTrigger,
                                     onTtsHighlightCenterCalculated = onTtsHighlightCenter,
                                     onSearchHighlightCenterCalculated = onSearchHighlightCenter,

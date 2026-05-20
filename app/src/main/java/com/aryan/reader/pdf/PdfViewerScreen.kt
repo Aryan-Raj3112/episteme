@@ -4592,6 +4592,141 @@ fun PdfViewerScreen(
                                                                     totalDisplayPages
                                                                 ) {
                                                                     if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
+                                                                    val oneHandZoomDistancePx = with(density) {
+                                                                        PDF_ONE_HAND_ZOOM_DRAG_DISTANCE_FOR_DOUBLE_DP.dp.toPx()
+                                                                    }
+                                                                    var oneHandZoomStartScale = 1f
+                                                                    var oneHandZoomStartOffset = Offset.Zero
+                                                                    Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                        "spread.detector.enabled scrollLocked=$isScrollLocked drawing=$isDrawingActive " +
+                                                                            "pages=$totalDisplayPages scale=${latestSpreadScale.value} offset=${latestSpreadOffset.value}"
+                                                                    )
+
+                                                                    fun spreadTargetOffset(
+                                                                        startScale: Float,
+                                                                        targetScale: Float,
+                                                                        startOffset: Offset,
+                                                                        pivot: Offset
+                                                                    ): Offset {
+                                                                        if (targetScale <= 1.1f) return Offset.Zero
+                                                                        val viewportSize = Size(size.width.toFloat(), size.height.toFloat())
+                                                                        return centeredPdfCameraOffsetForScaleChange(
+                                                                            previousScale = startScale,
+                                                                            nextScale = targetScale,
+                                                                            previousOffset = startOffset,
+                                                                            pivot = pivot,
+                                                                            viewportSize = viewportSize,
+                                                                            contentSize = viewportSize
+                                                                        )
+                                                                    }
+
+                                                                    detectPdfTapAndOneHandZoomGestures(
+                                                                        viewConfiguration = viewConfiguration,
+                                                                        canStartOneHandZoom = {
+                                                                            useSharedSpreadZoom && !isDrawingActive && !isScrollLocked
+                                                                        },
+                                                                        canHandleQuickDoubleTap = { !isScrollLocked },
+                                                                        consumeSingleTap = false,
+                                                                        onTap = { offset ->
+                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                "spread.tap passthrough offset=$offset"
+                                                                            )
+                                                                        },
+                                                                        onQuickDoubleTap = quickDoubleTap@{ tapOffset ->
+                                                                            if (isScrollLocked) {
+                                                                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                    "spread.quickDoubleTap.blocked scrollLocked=true offset=$tapOffset"
+                                                                                )
+                                                                                return@quickDoubleTap
+                                                                            }
+                                                                            val startScale = latestSpreadScale.value
+                                                                            val startOffset = latestSpreadOffset.value
+                                                                            val targetScale = if (startScale > 1.1f) 1f else 2.5f
+                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                "spread.quickDoubleTap offset=$tapOffset startScale=$startScale " +
+                                                                                    "targetScale=$targetScale startOffset=$startOffset"
+                                                                            )
+                                                                            val targetOffset = spreadTargetOffset(
+                                                                                startScale = startScale,
+                                                                                targetScale = targetScale,
+                                                                                startOffset = startOffset,
+                                                                                pivot = tapOffset
+                                                                            )
+                                                                            coroutineScope.launch {
+                                                                                Animatable(0f).animateTo(
+                                                                                    1f,
+                                                                                    animationSpec = tween(durationMillis = 300)
+                                                                                ) {
+                                                                                    currentActiveScale = androidx.compose.ui.util.lerp(
+                                                                                        startScale,
+                                                                                        targetScale,
+                                                                                        value
+                                                                                    )
+                                                                                    currentActiveOffset = lerp(
+                                                                                        startOffset,
+                                                                                        targetOffset,
+                                                                                        value
+                                                                                    )
+                                                                                    currentPageScale = currentActiveScale
+                                                                                }
+                                                                                if (currentActiveScale <= 1.05f) {
+                                                                                    currentActiveScale = 1f
+                                                                                    currentActiveOffset = Offset.Zero
+                                                                                    currentPageScale = 1f
+                                                                                }
+                                                                            }
+                                                                        },
+                                                                        onOneHandZoomHoldStart = { _ ->
+                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                "spread.oneHandHoldStart scale=${latestSpreadScale.value} " +
+                                                                                    "offset=${latestSpreadOffset.value}"
+                                                                            )
+                                                                            spreadPanFlingJob?.cancel()
+                                                                            spreadPanFlingJob = null
+                                                                            oneHandZoomStartScale = latestSpreadScale.value
+                                                                            oneHandZoomStartOffset = latestSpreadOffset.value
+                                                                        },
+                                                                        onOneHandZoom = { _, totalDragY ->
+                                                                            val viewportCenter = Offset(size.width / 2f, size.height / 2f)
+                                                                            val nextScale = pdfOneHandZoomScale(
+                                                                                startScale = oneHandZoomStartScale,
+                                                                                totalDragY = totalDragY,
+                                                                                dragDistanceForDoublePx = oneHandZoomDistancePx,
+                                                                                minScale = 1f,
+                                                                                maxScale = 4f
+                                                                            )
+                                                                            currentActiveScale = nextScale
+                                                                            currentActiveOffset = spreadTargetOffset(
+                                                                                startScale = oneHandZoomStartScale,
+                                                                                targetScale = nextScale,
+                                                                                startOffset = oneHandZoomStartOffset,
+                                                                                pivot = viewportCenter
+                                                                            )
+                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).v(
+                                                                                "spread.oneHandUpdate dragY=$totalDragY startScale=$oneHandZoomStartScale " +
+                                                                                    "nextScale=$nextScale offset=$currentActiveOffset"
+                                                                            )
+                                                                            currentPageScale = currentActiveScale
+                                                                        },
+                                                                        onOneHandZoomEnd = { _ ->
+                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                "spread.oneHandEnd scale=$currentActiveScale offset=$currentActiveOffset"
+                                                                            )
+                                                                            if (currentActiveScale > 1f && currentActiveScale < 1.05f) {
+                                                                                currentActiveScale = 1f
+                                                                                currentActiveOffset = Offset.Zero
+                                                                                currentPageScale = 1f
+                                                                            }
+                                                                        }
+                                                                    )
+                                                                }
+                                                                .pointerInput(
+                                                                    useSharedSpreadZoom,
+                                                                    isDrawingActive,
+                                                                    isScrollLocked,
+                                                                    totalDisplayPages
+                                                                ) {
+                                                                    if (!useSharedSpreadZoom || isDrawingActive) return@pointerInput
                                                                     val touchSlop = viewConfiguration.touchSlop
                                                                     val decay = splineBasedDecay<Float>(this)
                                                                     val velocityTracker = VelocityTracker()
@@ -4613,6 +4748,14 @@ fun PdfViewerScreen(
                                                                         do {
                                                                             val event = awaitPointerEvent()
                                                                             val canceled = event.changes.any { it.isConsumed }
+                                                                            if (canceled) {
+                                                                                Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                    "spread.panDetector.canceledByConsumed mode=$mode scale=$gestureScale " +
+                                                                                        "changes=${event.changes.joinToString { change ->
+                                                                                            "pressed=${change.pressed},consumed=${change.isConsumed},moved=${change.positionChanged()}"
+                                                                                        }}"
+                                                                                )
+                                                                            }
                                                                             if (!canceled) {
                                                                                 val pointerCount = event.changes.count { it.pressed }
                                                                                 val rawPanChange = event.calculatePan()
@@ -4628,8 +4771,14 @@ fun PdfViewerScreen(
                                                                                 if (gestureScale > 1f) {
                                                                                     if (mode == 0) {
                                                                                         mode = if (pointerCount > 1 && abs(accumulatedZoom - 1f) > 0.025f) {
+                                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                                "spread.panDetector.modeZoom scale=$gestureScale accumulatedZoom=$accumulatedZoom"
+                                                                                            )
                                                                                             2
                                                                                         } else if (accumulatedPan.getDistance() > touchSlop) {
+                                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                                "spread.panDetector.modePan scale=$gestureScale accumulatedPan=$accumulatedPan"
+                                                                                            )
                                                                                             1
                                                                                         } else {
                                                                                             0
@@ -4677,6 +4826,9 @@ fun PdfViewerScreen(
                                                                                 } else if (pointerCount > 1) {
                                                                                     if (mode == 0) {
                                                                                         mode = if (abs(accumulatedZoom - 1f) > 0.025f) {
+                                                                                            Timber.tag(PDF_ONE_HAND_ZOOM_TRACE_TAG).d(
+                                                                                                "spread.panDetector.modeZoomAtBase accumulatedZoom=$accumulatedZoom"
+                                                                                            )
                                                                                             2
                                                                                         } else {
                                                                                             0
