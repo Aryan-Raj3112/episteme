@@ -67,6 +67,15 @@
 
 -keep class com.aryan.reader.paginatedreader.Woff2Converter { *; }
 
+# R8 can fold the large EPUB Scaffold content lambda into ChapterWebViewKt with
+# hundreds of captured Compose state parameters. ART rejects that release-only
+# synthetic method when opening EPUBs, so keep these file facades out of those
+# optimizer passes while leaving the rest of the app minified.
+-keep class com.aryan.reader.epubreader.EpubReaderScreenKt { *; }
+-keep class com.aryan.reader.epubreader.EpubReaderScreenKt$* { *; }
+-keep class com.aryan.reader.epubreader.ChapterWebViewKt { *; }
+-keep class com.aryan.reader.epubreader.ChapterWebViewKt$* { *; }
+
 -dontwarn com.gemalto.jp2.**
 
 # Flexmark Markdown parser rules
