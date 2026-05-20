@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
@@ -33,6 +34,12 @@ import androidx.compose.ui.unit.isSpecified
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationExportMapper
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -111,7 +118,8 @@ internal object PdfiumAnnotationExporter {
                     textBoxes = emptyList(),
                     highlights = highlights.orEmpty(),
                     richTextPageLayouts = emptyList(),
-                    rasterOverlays = rasterOverlays
+                    rasterOverlays = rasterOverlays,
+                    pageSizes = pageSizes
                 )
 
                 if (!payload.hasAnnotations()) {
@@ -129,6 +137,8 @@ internal object PdfiumAnnotationExporter {
                     inkPointOffsets = payload.inkPointOffsets,
                     inkPointCounts = payload.inkPointCounts,
                     inkPoints = payload.inkPoints,
+                    inkNames = payload.inkNames,
+                    inkContents = payload.inkContents,
                     textPageIndices = payload.textPageIndices,
                     textBounds = payload.textBounds,
                     textColors = payload.textColors,
@@ -149,6 +159,7 @@ internal object PdfiumAnnotationExporter {
                     highlightRectOffsets = payload.highlightRectOffsets,
                     highlightRectCounts = payload.highlightRectCounts,
                     highlightRects = payload.highlightRects,
+                    highlightNames = payload.highlightNames,
                     highlightContents = payload.highlightContents
                 )
 
@@ -183,15 +194,17 @@ internal object PdfiumAnnotationExporter {
         highlights: List<PdfUserHighlight>,
         richTextPageLayouts: List<PageTextLayout> = emptyList(),
         fontPathResolver: (String?) -> String? = { it },
-        rasterOverlays: List<PdfiumRasterOverlay> = emptyList()
+        rasterOverlays: List<PdfiumRasterOverlay> = emptyList(),
+        pageSizes: List<PdfiumPageSize> = emptyList()
     ): PdfiumAnnotationExportPayload {
-        val inkItems = inkAnnotations.entries
-            .flatMap { (pageIndex, annotations) -> annotations.map { pageIndex to it } }
-            .filter { (_, annotation) ->
-                annotation.points.size >= 2 &&
-                    annotation.inkType != InkType.ERASER &&
-                    annotation.inkType != InkType.TEXT
-            }
+        val exportPayload = SharedPdfAnnotationExportMapper.build(
+            sharedExportAnnotations(
+                inkAnnotations = inkAnnotations,
+                highlights = highlights,
+                pageSizes = pageSizes
+            )
+        )
+        val inkItems = exportPayload.inkAnnotations
 
         val inkPageIndices = IntArray(inkItems.size)
         val inkTypes = IntArray(inkItems.size)
@@ -199,16 +212,20 @@ internal object PdfiumAnnotationExporter {
         val inkStrokeWidths = FloatArray(inkItems.size)
         val inkPointOffsets = IntArray(inkItems.size)
         val inkPointCounts = IntArray(inkItems.size)
-        val inkPoints = FloatArray(inkItems.sumOf { it.second.points.size } * 2)
+        val inkPoints = FloatArray(inkItems.sumOf { it.points.size } * 2)
+        val inkNames = Array(inkItems.size) { "" }
+        val inkContents = Array(inkItems.size) { "" }
 
         var inkPointCursor = 0
-        inkItems.forEachIndexed { index, (pageIndex, annotation) ->
-            inkPageIndices[index] = pageIndex
-            inkTypes[index] = annotation.inkType.ordinal
-            inkColors[index] = annotation.color.toArgb()
+        inkItems.forEachIndexed { index, annotation ->
+            inkPageIndices[index] = annotation.pageIndex
+            inkTypes[index] = annotation.tool.toAndroidInkTypeOrdinal()
+            inkColors[index] = annotation.colorArgb
             inkStrokeWidths[index] = annotation.strokeWidth
             inkPointOffsets[index] = inkPointCursor / 2
             inkPointCounts[index] = annotation.points.size
+            inkNames[index] = annotation.id
+            inkContents[index] = annotation.contents
             annotation.points.forEach { point ->
                 inkPoints[inkPointCursor++] = point.x
                 inkPoints[inkPointCursor++] = point.y
@@ -246,22 +263,24 @@ internal object PdfiumAnnotationExporter {
             rasterPixelCursor += overlay.pixels.size
         }
 
-        val boundedHighlights = highlights.filter { it.bounds.isNotEmpty() }
+        val boundedHighlights = exportPayload.highlightAnnotations
         val highlightPageIndices = IntArray(boundedHighlights.size)
         val highlightColors = IntArray(boundedHighlights.size)
         val highlightRectOffsets = IntArray(boundedHighlights.size)
         val highlightRectCounts = IntArray(boundedHighlights.size)
-        val highlightRects = FloatArray(boundedHighlights.sumOf { it.bounds.size } * 4)
+        val highlightRects = FloatArray(boundedHighlights.sumOf { it.boundsList.size } * 4)
+        val highlightNames = Array(boundedHighlights.size) { "" }
         val highlightContents = Array(boundedHighlights.size) { "" }
 
         var highlightRectCursor = 0
         boundedHighlights.forEachIndexed { index, highlight ->
             highlightPageIndices[index] = highlight.pageIndex
-            highlightColors[index] = highlight.color.color.toArgb()
+            highlightColors[index] = highlight.colorArgb
             highlightRectOffsets[index] = highlightRectCursor / 4
-            highlightRectCounts[index] = highlight.bounds.size
-            highlightContents[index] = highlight.note?.takeIf { it.isNotBlank() } ?: highlight.text
-            highlight.bounds.forEach { rect ->
+            highlightRectCounts[index] = highlight.boundsList.size
+            highlightNames[index] = highlight.id
+            highlightContents[index] = highlight.contents
+            highlight.boundsList.forEach { rect ->
                 highlightRects[highlightRectCursor++] = rect.left
                 highlightRects[highlightRectCursor++] = rect.top
                 highlightRects[highlightRectCursor++] = rect.right
@@ -277,6 +296,8 @@ internal object PdfiumAnnotationExporter {
             inkPointOffsets = inkPointOffsets,
             inkPointCounts = inkPointCounts,
             inkPoints = inkPoints,
+            inkNames = inkNames,
+            inkContents = inkContents,
             textPageIndices = textPageIndices,
             textBounds = textBounds,
             textColors = textColors,
@@ -297,7 +318,94 @@ internal object PdfiumAnnotationExporter {
             highlightRectOffsets = highlightRectOffsets,
             highlightRectCounts = highlightRectCounts,
             highlightRects = highlightRects,
+            highlightNames = highlightNames,
             highlightContents = highlightContents
+        )
+    }
+
+    private fun sharedExportAnnotations(
+        inkAnnotations: Map<Int, List<PdfAnnotation>>,
+        highlights: List<PdfUserHighlight>,
+        pageSizes: List<PdfiumPageSize>
+    ): List<SharedPdfAnnotation> {
+        val annotations = mutableListOf<SharedPdfAnnotation>()
+        inkAnnotations.entries.forEach { (pageIndex, pageAnnotations) ->
+            pageAnnotations.forEach { annotation ->
+                if (annotation.type != AnnotationType.INK) return@forEach
+                annotations += SharedPdfAnnotation(
+                    id = annotation.id,
+                    pageIndex = pageIndex,
+                    kind = PdfAnnotationKind.INK,
+                    tool = annotation.inkType.toSharedPdfInkTool(),
+                    points = annotation.points.map { point ->
+                        PdfPagePoint(point.x, point.y, point.timestamp)
+                    },
+                    note = annotation.note,
+                    colorArgb = annotation.color.toArgb(),
+                    strokeWidth = annotation.strokeWidth
+                )
+            }
+        }
+        highlights.forEach { highlight ->
+            val boundsList = highlight.bounds.mapNotNull { rect ->
+                rect.toNormalizedPdfPageBounds(pageSizeFor(pageSizes, highlight.pageIndex))
+            }
+            annotations += SharedPdfAnnotation(
+                id = highlight.id,
+                pageIndex = highlight.pageIndex,
+                kind = PdfAnnotationKind.HIGHLIGHT,
+                tool = PdfInkTool.HIGHLIGHTER,
+                bounds = boundsList.firstOrNull(),
+                boundsList = boundsList,
+                text = highlight.text,
+                note = highlight.note,
+                colorArgb = highlight.color.color.toArgb(),
+                rangeStartIndex = highlight.range.first,
+                rangeEndIndex = (highlight.range.second - 1).coerceAtLeast(highlight.range.first)
+            )
+        }
+        return annotations
+    }
+
+    private fun InkType.toSharedPdfInkTool(): PdfInkTool {
+        return when (this) {
+            InkType.PEN -> PdfInkTool.PEN
+            InkType.HIGHLIGHTER -> PdfInkTool.HIGHLIGHTER
+            InkType.HIGHLIGHTER_ROUND -> PdfInkTool.HIGHLIGHTER_ROUND
+            InkType.ERASER -> PdfInkTool.ERASER
+            InkType.FOUNTAIN_PEN -> PdfInkTool.FOUNTAIN_PEN
+            InkType.PENCIL -> PdfInkTool.PENCIL
+            InkType.TEXT -> PdfInkTool.TEXT
+        }
+    }
+
+    private fun PdfInkTool.toAndroidInkTypeOrdinal(): Int {
+        return when (this) {
+            PdfInkTool.HIGHLIGHTER -> InkType.HIGHLIGHTER.ordinal
+            PdfInkTool.HIGHLIGHTER_ROUND -> InkType.HIGHLIGHTER_ROUND.ordinal
+            PdfInkTool.FOUNTAIN_PEN -> InkType.FOUNTAIN_PEN.ordinal
+            PdfInkTool.PENCIL -> InkType.PENCIL.ordinal
+            PdfInkTool.TEXT -> InkType.TEXT.ordinal
+            PdfInkTool.ERASER -> InkType.ERASER.ordinal
+            PdfInkTool.NONE,
+            PdfInkTool.PEN -> InkType.PEN.ordinal
+        }
+    }
+
+    private fun RectF.toNormalizedPdfPageBounds(pageSize: PdfiumPageSize): PdfPageBounds? {
+        val pageWidth = pageSize.width.takeIf { it > 0 }?.toFloat() ?: return null
+        val pageHeight = pageSize.height.takeIf { it > 0 }?.toFloat() ?: return null
+        val pdfLeft = minOf(left, right)
+        val pdfRight = maxOf(left, right)
+        val pdfTop = maxOf(top, bottom)
+        val pdfBottom = minOf(top, bottom)
+        if (pdfRight <= pdfLeft || pdfTop <= pdfBottom) return null
+
+        return PdfPageBounds(
+            left = pdfLeft / pageWidth,
+            top = (pageHeight - pdfTop) / pageHeight,
+            right = pdfRight / pageWidth,
+            bottom = (pageHeight - pdfBottom) / pageHeight
         )
     }
 
@@ -694,7 +802,7 @@ internal data class PdfiumRasterOverlay(
     val pixels: IntArray
 )
 
-private data class PdfiumPageSize(
+internal data class PdfiumPageSize(
     val width: Int,
     val height: Int
 ) {
@@ -738,6 +846,8 @@ internal data class PdfiumAnnotationExportPayload(
     val inkPointOffsets: IntArray,
     val inkPointCounts: IntArray,
     val inkPoints: FloatArray,
+    val inkNames: Array<String>,
+    val inkContents: Array<String>,
     val textPageIndices: IntArray,
     val textBounds: FloatArray,
     val textColors: IntArray,
@@ -758,6 +868,7 @@ internal data class PdfiumAnnotationExportPayload(
     val highlightRectOffsets: IntArray,
     val highlightRectCounts: IntArray,
     val highlightRects: FloatArray,
+    val highlightNames: Array<String>,
     val highlightContents: Array<String>
 ) {
     fun hasAnnotations(): Boolean =

@@ -9,14 +9,16 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsStreamReference
-import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.PdfiumAnnotationSubtype
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationExportMapper
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotationThreads
+import com.aryan.reader.shared.pdf.SharedPdfHighlightAnnotationExport
+import com.aryan.reader.shared.pdf.SharedPdfInkAnnotationExport
 import com.aryan.reader.shared.pdf.SharedPdfIndexedPage
 import com.aryan.reader.shared.pdf.SharedPdfReflowImageElement
 import com.aryan.reader.shared.pdf.SharedPdfReflowPage
@@ -441,17 +443,35 @@ object DesktopPdfium {
             richTextPageLayouts = richTextPageLayouts,
             pageSizes = document.pageSizes
         )
+        val exportPayload = SharedPdfAnnotationExportMapper.build(
+            annotations = annotations,
+            resolveHighlightBounds = resolver@ { annotation ->
+                val startIndex = annotation.rangeStartIndex ?: return@resolver emptyList()
+                val endIndex = annotation.rangeEndIndex ?: return@resolver emptyList()
+                val pageSize = document.pageSizes.getOrNull(annotation.pageIndex) ?: return@resolver emptyList()
+                if (endIndex < startIndex) return@resolver emptyList()
+                textRectsForRange(
+                    document = document,
+                    pageIndex = annotation.pageIndex,
+                    startIndex = startIndex,
+                    endIndex = endIndex,
+                    viewportWidth = pageSize.width.roundToInt().coerceAtLeast(1),
+                    viewportHeight = pageSize.height.roundToInt().coerceAtLeast(1)
+                ).map { it.toPdfPageBounds() }
+                    .filter { it.right > it.left && it.bottom > it.top }
+                    .mergePdfBoundsByLine()
+            }
+        )
         val rasterResources = mutableListOf<DesktopPdfRasterResource>()
         try {
             val nativeDocument = exportDocument.pointer
             val pageCount = api.FPDF_GetPageCount(nativeDocument)
             var insertedAny = false
-            annotations.forEach { annotation ->
-                insertedAny = when (annotation.kind) {
-                    PdfAnnotationKind.INK -> insertInkAnnotation(nativeDocument, pageCount, annotation)
-                    PdfAnnotationKind.HIGHLIGHT -> insertHighlightAnnotation(nativeDocument, pageCount, annotation)
-                    PdfAnnotationKind.TEXT -> false
-                } || insertedAny
+            exportPayload.inkAnnotations.forEach { annotation ->
+                insertedAny = insertInkAnnotation(nativeDocument, pageCount, annotation) || insertedAny
+            }
+            exportPayload.highlightAnnotations.forEach { annotation ->
+                insertedAny = insertHighlightAnnotation(nativeDocument, pageCount, annotation) || insertedAny
             }
             rasterOverlays.forEach { overlay ->
                 insertedAny = insertRasterOverlay(nativeDocument, pageCount, overlay, rasterResources) || insertedAny
@@ -1499,12 +1519,10 @@ object DesktopPdfium {
     private fun insertInkAnnotation(
         document: Pointer,
         pageCount: Int,
-        annotation: SharedPdfAnnotation
+        annotation: SharedPdfInkAnnotationExport
     ): Boolean {
         if (annotation.pageIndex !in 0 until pageCount ||
-            annotation.points.size < 2 ||
-            annotation.tool == PdfInkTool.ERASER ||
-            annotation.tool == PdfInkTool.TEXT
+            annotation.points.size < 2
         ) return false
 
         return runCatching {
@@ -1541,7 +1559,8 @@ object DesktopPdfium {
                     api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
                     api.FPDFAnnot_SetBorder(annot, 0f, 0f, strokeWidth)
                     runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
-                    setPdfiumAnnotationString(annot, "Contents", "Ink")
+                    setPdfiumAnnotationString(annot, "NM", annotation.id)
+                    setPdfiumAnnotationString(annot, "Contents", annotation.contents)
                     val added = api.FPDFAnnot_AddInkStroke(
                         annot,
                         nativePoints.first(),
@@ -1559,10 +1578,10 @@ object DesktopPdfium {
     private fun insertHighlightAnnotation(
         document: Pointer,
         pageCount: Int,
-        annotation: SharedPdfAnnotation
+        annotation: SharedPdfHighlightAnnotationExport
     ): Boolean {
         if (annotation.pageIndex !in 0 until pageCount) return false
-        val bounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
+        val bounds = annotation.boundsList
         if (bounds.isEmpty()) return false
 
         return runCatching {
@@ -1601,10 +1620,8 @@ object DesktopPdfium {
                     val color = annotation.colorArgb.toPdfiumRgba().withDefaultAlpha(102)
                     api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
                     runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
-                    val contents = annotation.note?.takeIf { it.isNotBlank() } ?: annotation.text
-                    if (contents.isNotBlank()) {
-                        setPdfiumAnnotationString(annot, "Contents", contents)
-                    }
+                    setPdfiumAnnotationString(annot, "NM", annotation.id)
+                    setPdfiumAnnotationString(annot, "Contents", annotation.contents)
                     runCatching { api.FPDFPage_GenerateContent(page) }
                     appendedAll
                 } finally {

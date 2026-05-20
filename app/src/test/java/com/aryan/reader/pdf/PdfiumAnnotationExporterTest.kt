@@ -19,7 +19,7 @@ import org.robolectric.RobolectricTestRunner
 class PdfiumAnnotationExporterTest {
 
     @Test
-    fun `buildPayload flattens ink annotations and skips unsupported ink tools`() {
+    fun `buildPayload flattens ink annotations and skips unsupported ink and text annotations`() {
         val payload = PdfiumAnnotationExporter.buildPayload(
             inkAnnotations = mapOf(
                 2 to listOf(
@@ -29,13 +29,22 @@ class PdfiumAnnotationExporterTest {
                         pageIndex = 99,
                         points = listOf(PdfPoint(0.1f, 0.2f), PdfPoint(0.3f, 0.4f)),
                         color = Color(0xFF336699),
-                        strokeWidth = 0.0125f
+                        strokeWidth = 0.0125f,
+                        id = "ink-1"
                     ),
                     PdfAnnotation(
                         type = AnnotationType.INK,
                         inkType = InkType.ERASER,
                         pageIndex = 2,
                         points = listOf(PdfPoint(0.5f, 0.6f), PdfPoint(0.7f, 0.8f)),
+                        color = Color.Black,
+                        strokeWidth = 0.1f
+                    ),
+                    PdfAnnotation(
+                        type = AnnotationType.TEXT,
+                        inkType = InkType.PEN,
+                        pageIndex = 2,
+                        points = listOf(PdfPoint(0.2f, 0.3f), PdfPoint(0.4f, 0.5f)),
                         color = Color.Black,
                         strokeWidth = 0.1f
                     )
@@ -52,10 +61,12 @@ class PdfiumAnnotationExporterTest {
         assertArrayEquals(intArrayOf(0), payload.inkPointOffsets)
         assertArrayEquals(intArrayOf(2), payload.inkPointCounts)
         assertArrayEquals(floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f), payload.inkPoints, 0.0001f)
+        assertEquals("Ink", payload.inkContents.single())
+        assertEquals("ink-1", payload.inkNames.single())
     }
 
     @Test
-    fun `buildPayload preserves highlight pdf rects and content notes`() {
+    fun `buildPayload normalizes highlight rects and preserves names and content notes`() {
         val payload = PdfiumAnnotationExporter.buildPayload(
             inkAnnotations = emptyMap(),
             textBoxes = emptyList(),
@@ -69,6 +80,10 @@ class PdfiumAnnotationExporterTest {
                     range = 0 to 13,
                     note = "Important"
                 )
+            ),
+            pageSizes = listOf(
+                PdfiumPageSize(width = 612, height = 792),
+                PdfiumPageSize(width = 100, height = 100)
             )
         )
 
@@ -77,10 +92,11 @@ class PdfiumAnnotationExporterTest {
         assertArrayEquals(intArrayOf(0), payload.highlightRectOffsets)
         assertArrayEquals(intArrayOf(2), payload.highlightRectCounts)
         assertArrayEquals(
-            floatArrayOf(10f, 90f, 40f, 80f, 50f, 70f, 60f, 65f),
+            floatArrayOf(0.1f, 0.1f, 0.4f, 0.2f, 0.5f, 0.3f, 0.6f, 0.35f),
             payload.highlightRects,
             0.0001f
         )
+        assertEquals("highlight-1", payload.highlightNames.single())
         assertEquals("Important", payload.highlightContents.single())
     }
 

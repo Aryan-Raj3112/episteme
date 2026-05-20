@@ -685,6 +685,18 @@ static bool set_annot_string_from_jstring(JNIEnv* env, void* annot, const char* 
     return set_annot_string_value_func(annot, key, wide.data()) != 0;
 }
 
+static bool set_annot_string_from_array(JNIEnv* env, void* annot, const char* key, jobjectArray array, size_t index) {
+    if (!array) return false;
+    jsize length = env->GetArrayLength(array);
+    if (index >= static_cast<size_t>(length)) return false;
+
+    auto value = static_cast<jstring>(env->GetObjectArrayElement(array, static_cast<jsize>(index)));
+    if (!value) return false;
+    bool result = set_annot_string_from_jstring(env, annot, key, value);
+    env->DeleteLocalRef(value);
+    return result;
+}
+
 static bool set_annot_string_from_ascii(void* annot, const char* key, const std::string& value) {
     if (!set_annot_string_value_func || !annot || !key) return false;
     std::vector<unsigned short> wide(value.size() + 1);
@@ -1066,6 +1078,8 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         jintArray inkPointOffsetsArray,
         jintArray inkPointCountsArray,
         jfloatArray inkPointsArray,
+        jobjectArray inkNamesArray,
+        jobjectArray inkContentsArray,
         jintArray textPageIndicesArray,
         jfloatArray textBoundsArray,
         jintArray textColorsArray,
@@ -1086,6 +1100,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         jintArray highlightRectOffsetsArray,
         jintArray highlightRectCountsArray,
         jfloatArray highlightRectsArray,
+        jobjectArray highlightNamesArray,
         jobjectArray highlightContentsArray) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
 
@@ -1247,7 +1262,10 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             hadFailure = true;
         }
 
-        set_annot_string_from_ascii(annot, "Contents", "Ink");
+        set_annot_string_from_array(env, annot, "NM", inkNamesArray, i);
+        if (!set_annot_string_from_array(env, annot, "Contents", inkContentsArray, i)) {
+            set_annot_string_from_ascii(annot, "Contents", "Ink");
+        }
         if (generate_content_func) generate_content_func(page);
         close_annot_func(annot);
         close_page_func(page);
@@ -1268,6 +1286,20 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             continue;
         }
 
+        void* page = load_page_func(document, pageIndex);
+        if (!page) {
+            hadFailure = true;
+            continue;
+        }
+
+        float pageWidth = get_page_width_bridge(page);
+        float pageHeight = get_page_height_bridge(page);
+        if (pageWidth <= 0.0f || pageHeight <= 0.0f) {
+            close_page_func(page);
+            hadFailure = true;
+            continue;
+        }
+
         std::vector<FS_QUADPOINTSF_BRIDGE> quads;
         quads.reserve(static_cast<size_t>(rectCount));
         float unionLeft = 0.0f;
@@ -1279,31 +1311,32 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             int sourceIndex = (rectOffset + j) * 4;
             float left = std::min(highlightRects[sourceIndex], highlightRects[sourceIndex + 2]);
             float right = std::max(highlightRects[sourceIndex], highlightRects[sourceIndex + 2]);
-            float top = std::max(highlightRects[sourceIndex + 1], highlightRects[sourceIndex + 3]);
-            float bottom = std::min(highlightRects[sourceIndex + 1], highlightRects[sourceIndex + 3]);
-            if (right <= left || top <= bottom) continue;
+            float top = std::min(highlightRects[sourceIndex + 1], highlightRects[sourceIndex + 3]);
+            float bottom = std::max(highlightRects[sourceIndex + 1], highlightRects[sourceIndex + 3]);
+            if (right <= left || bottom <= top) continue;
 
-            quads.push_back(FS_QUADPOINTSF_BRIDGE{left, top, right, top, left, bottom, right, bottom});
+            float pdfLeft = clamp_unit(left) * pageWidth;
+            float pdfRight = clamp_unit(right) * pageWidth;
+            float pdfTop = (1.0f - clamp_unit(top)) * pageHeight;
+            float pdfBottom = (1.0f - clamp_unit(bottom)) * pageHeight;
+            if (pdfRight <= pdfLeft || pdfTop <= pdfBottom) continue;
+
+            quads.push_back(FS_QUADPOINTSF_BRIDGE{pdfLeft, pdfTop, pdfRight, pdfTop, pdfLeft, pdfBottom, pdfRight, pdfBottom});
             if (quads.size() == 1) {
-                unionLeft = left;
-                unionRight = right;
-                unionTop = top;
-                unionBottom = bottom;
+                unionLeft = pdfLeft;
+                unionRight = pdfRight;
+                unionTop = pdfTop;
+                unionBottom = pdfBottom;
             } else {
-                unionLeft = std::min(unionLeft, left);
-                unionRight = std::max(unionRight, right);
-                unionTop = std::max(unionTop, top);
-                unionBottom = std::min(unionBottom, bottom);
+                unionLeft = std::min(unionLeft, pdfLeft);
+                unionRight = std::max(unionRight, pdfRight);
+                unionTop = std::max(unionTop, pdfTop);
+                unionBottom = std::min(unionBottom, pdfBottom);
             }
         }
 
         if (quads.empty()) {
-            hadFailure = true;
-            continue;
-        }
-
-        void* page = load_page_func(document, pageIndex);
-        if (!page) {
+            close_page_func(page);
             hadFailure = true;
             continue;
         }
@@ -1329,12 +1362,9 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         set_annot_color_func(annot, kAnnotColor, r, g, b, a);
         if (set_annot_flags_func) set_annot_flags_func(annot, kAnnotFlagPrint);
 
-        if (highlightContentsArray && i < static_cast<size_t>(env->GetArrayLength(highlightContentsArray))) {
-            auto content = static_cast<jstring>(env->GetObjectArrayElement(highlightContentsArray, static_cast<jsize>(i)));
-            if (content) {
-                set_annot_string_from_jstring(env, annot, "Contents", content);
-                env->DeleteLocalRef(content);
-            }
+        set_annot_string_from_array(env, annot, "NM", highlightNamesArray, i);
+        if (!set_annot_string_from_array(env, annot, "Contents", highlightContentsArray, i)) {
+            set_annot_string_from_ascii(annot, "Contents", "Highlight");
         }
 
         if (generate_content_func) generate_content_func(page);

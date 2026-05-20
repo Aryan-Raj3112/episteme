@@ -9,9 +9,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.isSpecified
 import com.aryan.reader.shared.SaveMode
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
-import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SHARED_PDF_PAGE_BREAK_CHAR
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationExportMapper
 import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
 import com.aryan.reader.shared.pdf.sharedPdfTextPageRelativeFontSize
 import java.awt.FileDialog
@@ -76,19 +76,23 @@ internal fun hasExportableDesktopPdfAnnotations(
     annotations: List<SharedPdfAnnotation>,
     richTextPageLayouts: List<SharedPdfRichPageLayout>
 ): Boolean {
-    return annotations.any { annotation ->
-        when (annotation.kind) {
-            PdfAnnotationKind.INK -> annotation.points.size >= 2 &&
-                annotation.tool != PdfInkTool.ERASER &&
-                annotation.tool != PdfInkTool.TEXT
-            PdfAnnotationKind.HIGHLIGHT -> annotation.boundsList.isNotEmpty() || annotation.bounds != null
-            PdfAnnotationKind.TEXT -> annotation.bounds != null && annotation.text.isNotBlank()
+    return SharedPdfAnnotationExportMapper.build(annotations).hasPdfAnnotations ||
+        annotations.any { annotation ->
+            if (annotation.kind != PdfAnnotationKind.HIGHLIGHT) return@any false
+            val startIndex = annotation.rangeStartIndex ?: return@any false
+            val endIndex = annotation.rangeEndIndex ?: return@any false
+            endIndex >= startIndex
+        } ||
+        annotations.any { annotation ->
+            annotation.kind == PdfAnnotationKind.TEXT &&
+                annotation.bounds != null &&
+                annotation.text.isNotBlank()
+        } ||
+        richTextPageLayouts.any { layout ->
+            layout.visibleText.text
+                .replace(SHARED_PDF_PAGE_BREAK_CHAR.toString(), "")
+                .isNotBlank()
         }
-    } || richTextPageLayouts.any { layout ->
-        layout.visibleText.text
-            .replace(SHARED_PDF_PAGE_BREAK_CHAR.toString(), "")
-            .isNotBlank()
-    }
 }
 
 internal fun shouldShowDesktopPdfAnnotationExportChoice(

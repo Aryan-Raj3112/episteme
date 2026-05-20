@@ -42,6 +42,8 @@ object NativePdfiumBridge {
         inkPointOffsets: IntArray,
         inkPointCounts: IntArray,
         inkPoints: FloatArray,
+        inkNames: Array<String>,
+        inkContents: Array<String>,
         textPageIndices: IntArray,
         textBounds: FloatArray,
         textColors: IntArray,
@@ -62,6 +64,7 @@ object NativePdfiumBridge {
         highlightRectOffsets: IntArray,
         highlightRectCounts: IntArray,
         highlightRects: FloatArray,
+        highlightNames: Array<String>,
         highlightContents: Array<String>
     ): Boolean
 
