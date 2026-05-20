@@ -253,6 +253,7 @@ import com.aryan.reader.pdf.data.TextStyleConfig
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.readerSliderBookmarkPosition
+import com.aryan.reader.readerSliderChromeColors
 import com.aryan.reader.readerSliderToggleState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
@@ -5864,6 +5865,13 @@ fun PdfViewerScreen(
                 val isPdfJumpHistoryVisible = showStandardBars && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
                 val pdfBottomChromePadding = 56.dp + effectiveNavBarForJumpBar
                 val pdfSliderBottomPadding = pdfBottomChromePadding + if (isPdfJumpHistoryVisible) 40.dp else 0.dp
+                val pdfSliderPageBackground = if (activeTheme.backgroundColor == Color.Unspecified) Color.White else activeTheme.backgroundColor
+                val pdfSliderPageText = if (activeTheme.textColor == Color.Unspecified) Color.Black else activeTheme.textColor
+                val pdfReaderSliderColors = readerSliderChromeColors(
+                    pageBackground = pdfSliderPageBackground,
+                    pageText = pdfSliderPageText,
+                    themePrimary = MaterialTheme.colorScheme.primary
+                )
 
                 // --- Slider UI attached to the bottom chrome ---
                 AnimatedVisibility(
@@ -5921,7 +5929,7 @@ fun PdfViewerScreen(
                                             Surface(
                                                 modifier = Modifier.size(20.dp),
                                                 shape = CircleShape,
-                                                color = MaterialTheme.colorScheme.primary,
+                                                color = pdfReaderSliderColors.thumbColor,
                                                 tonalElevation = 0.dp,
                                                 shadowElevation = 0.dp
                                             ) {}
@@ -5939,7 +5947,7 @@ fun PdfViewerScreen(
                                                     .fillMaxWidth()
                                                     .height(trackHeight)
                                                     .background(
-                                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                                        color = pdfReaderSliderColors.inactiveTrackColor,
                                                         shape = trackShape
                                                     )
                                             ) {
@@ -5948,7 +5956,7 @@ fun PdfViewerScreen(
                                                         .fillMaxWidth(fraction)
                                                         .fillMaxHeight()
                                                         .background(
-                                                            color = MaterialTheme.colorScheme.primary,
+                                                            color = pdfReaderSliderColors.activeTrackColor,
                                                             shape = trackShape
                                                         )
                                                 )
@@ -5974,12 +5982,13 @@ fun PdfViewerScreen(
                                             .offset(x = indicatorOffset)
                                             .size(indicatorSize),
                                         shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = pdfReaderSliderColors.bookmarkColor
                                     ) {}
 
                                     startPageThumbnail?.let { thumbnail ->
                                         ThumbnailWithIndicator(
                                             thumbnail = thumbnail,
+                                            borderColor = pdfReaderSliderColors.bookmarkColor,
                                             modifier = Modifier
                                                 .graphicsLayer { clip = false }
                                                 .align(Alignment.TopStart)
@@ -6009,7 +6018,7 @@ fun PdfViewerScreen(
                                         settings = pdfSpreadSettings
                                     ),
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
+                                    color = pdfReaderSliderColors.contentColor,
                                     fontSize = 18.sp
                                 )
                             }

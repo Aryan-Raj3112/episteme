@@ -1,5 +1,6 @@
 package com.aryan.reader
 
+import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -77,5 +78,29 @@ class ReaderSliderChromeStateTest {
             "reader_slider_toggle_book-123",
             readerSliderTogglePreferenceKey("book-123")
         )
+    }
+
+    @Test
+    fun `slider content color falls back on light page when theme text is low contrast`() {
+        val colors = readerSliderChromeColors(
+            pageBackground = Color.White,
+            pageText = Color.White,
+            themePrimary = Color(0xFF6750A4)
+        )
+
+        assertEquals(Color.Black, colors.contentColor)
+    }
+
+    @Test
+    fun `slider accent falls back when primary is low contrast against page`() {
+        val colors = readerSliderChromeColors(
+            pageBackground = Color.Black,
+            pageText = Color.White,
+            themePrimary = Color(0xFF050505)
+        )
+
+        assertEquals(Color.White, colors.activeTrackColor)
+        assertEquals(Color.White, colors.thumbColor)
+        assertEquals(Color.White, colors.bookmarkColor)
     }
 }

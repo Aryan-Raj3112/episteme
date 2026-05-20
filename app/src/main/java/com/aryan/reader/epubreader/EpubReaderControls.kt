@@ -119,6 +119,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -1147,8 +1148,39 @@ fun EpubReaderPageSlider(
     chapters: List<EpubChapter>,
     onScrub: (Float) -> Unit,
     onJumpToPage: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    activeColor: Color = Color.Unspecified,
+    inactiveColor: Color = Color.Unspecified,
+    contentColor: Color = Color.Unspecified,
+    thumbnailSurfaceColor: Color = Color.Unspecified,
+    thumbnailContentColor: Color = Color.Unspecified
 ) {
+    val effectiveActiveColor = if (activeColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        activeColor
+    }
+    val effectiveInactiveColor = if (inactiveColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        inactiveColor
+    }
+    val effectiveContentColor = if (contentColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        contentColor
+    }
+    val effectiveThumbnailSurfaceColor = if (thumbnailSurfaceColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        thumbnailSurfaceColor
+    }
+    val effectiveThumbnailContentColor = if (thumbnailContentColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        thumbnailContentColor
+    }
+
     AnimatedVisibility(
         visible = isVisible,
         enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
@@ -1184,7 +1216,7 @@ fun EpubReaderPageSlider(
                                 Surface(
                                     modifier = Modifier.size(20.dp),
                                     shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = effectiveActiveColor,
                                     tonalElevation = 0.dp,
                                     shadowElevation = 0.dp
                                 ) {}
@@ -1201,7 +1233,7 @@ fun EpubReaderPageSlider(
                                         .fillMaxWidth()
                                         .height(trackHeight)
                                         .background(
-                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                                            color = effectiveInactiveColor,
                                             shape = trackShape
                                         )
                                 ) {
@@ -1210,7 +1242,7 @@ fun EpubReaderPageSlider(
                                             .fillMaxWidth(fraction)
                                             .fillMaxHeight()
                                             .background(
-                                                color = MaterialTheme.colorScheme.primary,
+                                                color = effectiveActiveColor,
                                                 shape = trackShape
                                             )
                                     )
@@ -1239,6 +1271,7 @@ fun EpubReaderPageSlider(
                             startPageThumbnail?.let { thumbnail ->
                                 ThumbnailWithIndicator(
                                     modifier = thumbnailModifier,
+                                    borderColor = effectiveActiveColor,
                                     onClick = { onJumpToPage(sliderStartPage) }
                                 ) {
                                     Image(
@@ -1258,11 +1291,14 @@ fun EpubReaderPageSlider(
                             }
                             ThumbnailWithIndicator(
                                 modifier = thumbnailModifier,
+                                borderColor = effectiveActiveColor,
                                 onClick = { onJumpToPage(sliderStartPage) }
                             ) {
                                 PaginatedThumbnailContent(
                                     pageNumber = sliderStartPage,
-                                    chapterTitle = startPageChapterTitle
+                                    chapterTitle = startPageChapterTitle,
+                                    surfaceColor = effectiveThumbnailSurfaceColor,
+                                    contentColor = effectiveThumbnailContentColor
                                 )
                             }
                         }
@@ -1271,7 +1307,7 @@ fun EpubReaderPageSlider(
                     Text(
                         text = "${sliderCurrentPage.roundToInt()} / $totalPages",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = effectiveContentColor,
                         fontSize = 18.sp
                     )
                 }
@@ -1316,8 +1352,17 @@ fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
 }
 
 @Composable
-internal fun ThumbnailWithIndicator(modifier: Modifier = Modifier, onClick: () -> Unit, content: @Composable () -> Unit) {
-    val borderColor = MaterialTheme.colorScheme.primary
+internal fun ThumbnailWithIndicator(
+    modifier: Modifier = Modifier,
+    borderColor: Color = Color.Unspecified,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val effectiveBorderColor = if (borderColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        borderColor
+    }
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -1328,7 +1373,7 @@ internal fun ThumbnailWithIndicator(modifier: Modifier = Modifier, onClick: () -
                 .height(64.dp)
                 .clickable(onClick = onClick),
             shape = RoundedCornerShape(4.dp),
-            border = BorderStroke(2.dp, borderColor)
+            border = BorderStroke(2.dp, effectiveBorderColor)
         ) {
             content()
         }
@@ -1337,17 +1382,32 @@ internal fun ThumbnailWithIndicator(modifier: Modifier = Modifier, onClick: () -
                 .offset(y = (-4).dp)
                 .size(8.dp)
                 .rotate(45f)
-                .background(borderColor)
+                .background(effectiveBorderColor)
         )
     }
 }
 
 @Composable
-private fun PaginatedThumbnailContent(pageNumber: Int, chapterTitle: String?) {
+private fun PaginatedThumbnailContent(
+    pageNumber: Int,
+    chapterTitle: String?,
+    surfaceColor: Color = Color.Unspecified,
+    contentColor: Color = Color.Unspecified
+) {
+    val effectiveSurfaceColor = if (surfaceColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        surfaceColor
+    }
+    val effectiveContentColor = if (contentColor == Color.Unspecified) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        contentColor
+    }
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+        color = effectiveSurfaceColor,
+        contentColor = effectiveContentColor
     ) {
         Column(
             modifier = Modifier.padding(4.dp),

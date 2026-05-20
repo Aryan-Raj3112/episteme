@@ -186,6 +186,7 @@ import com.aryan.reader.loadReaderSliderToggled
 import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.readerSliderBookmarkPosition
+import com.aryan.reader.readerSliderChromeColors
 import com.aryan.reader.readerSliderToggleState
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.HeaderBlock
@@ -1339,6 +1340,11 @@ fun EpubReaderHost(
             if (systemIsDark) Color(0xFFE0E0E0) else Color(0xFF000000)
         } else activeTheme.textColor
     }
+    val epubReaderSliderColors = readerSliderChromeColors(
+        pageBackground = effectiveBg,
+        pageText = effectiveText,
+        themePrimary = MaterialTheme.colorScheme.primary
+    )
     val activeTextureId = activeTheme.textureId
     val activeTextureAlpha = 1f - globalTextureTransparency
     val activeTextureBitmap = remember(activeTextureId) {
@@ -6151,7 +6157,12 @@ fun EpubReaderHost(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding + 45.dp + if (isEpubJumpHistoryVisible) 40.dp else 0.dp)
+                        .padding(bottom = bottomPadding + 45.dp + if (isEpubJumpHistoryVisible) 40.dp else 0.dp),
+                    activeColor = epubReaderSliderColors.activeTrackColor,
+                    inactiveColor = epubReaderSliderColors.inactiveTrackColor,
+                    contentColor = epubReaderSliderColors.contentColor,
+                    thumbnailSurfaceColor = epubReaderSliderColors.thumbnailSurfaceColor,
+                    thumbnailContentColor = epubReaderSliderColors.thumbnailContentColor
                 )
 
                 if (epubSliderChromeVisible && isFastScrubbing) {
