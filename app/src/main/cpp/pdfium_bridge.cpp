@@ -1436,7 +1436,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
                     unionTop,
                     pageWidth,
                     pageHeight,
-                    commentIndex
+                    0
             );
             set_annot_rect_func(commentAnnot, &commentRect);
             set_annot_color_func(commentAnnot, kAnnotColor, r, g, b, 255);

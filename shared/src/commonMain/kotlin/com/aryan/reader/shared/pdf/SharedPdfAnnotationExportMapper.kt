@@ -2,6 +2,8 @@ package com.aryan.reader.shared.pdf
 
 import kotlin.math.sqrt
 
+private const val DEFAULT_PDF_COMMENT_AUTHOR = "Reader"
+
 data class SharedPdfAnnotationExportPayload(
     val inkAnnotations: List<SharedPdfInkAnnotationExport> = emptyList(),
     val highlightAnnotations: List<SharedPdfHighlightAnnotationExport> = emptyList()
@@ -148,7 +150,7 @@ object SharedPdfAnnotationExportMapper {
                 appendThread(root.id, setOf(root.id))
             }
         }
-        return result
+        return result.toSingleVisiblePdfCommentThread(highlightId)
     }
 
     private fun PdfPageBounds.normalizedForExportOrNull(): PdfPageBounds? {
@@ -186,11 +188,69 @@ private fun String.uniqueCommentId(usedIds: MutableSet<String>, index: Int): Str
     return candidate
 }
 
+private fun List<SharedPdfHighlightCommentExport>.toSingleVisiblePdfCommentThread(
+    highlightId: String
+): List<SharedPdfHighlightCommentExport> {
+    if (isEmpty()) return emptyList()
+
+    val threadContents = formatAsPdfCommentThread()
+    if (threadContents.isBlank()) return emptyList()
+
+    val createdAt = mapNotNull { it.createdAt.takeIf { timestamp -> timestamp > 0L } }
+        .minOrNull()
+        ?: 0L
+    val modifiedAt = mapNotNull { comment ->
+        (comment.modifiedAt.takeIf { it > 0L } ?: comment.createdAt).takeIf { it > 0L }
+    }.maxOrNull() ?: createdAt
+    val root = firstOrNull { it.parentId == null } ?: first()
+
+    return listOf(
+        SharedPdfHighlightCommentExport(
+            id = "${highlightId}_comments",
+            parentId = null,
+            author = root.author.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR },
+            contents = threadContents,
+            createdAt = createdAt,
+            modifiedAt = modifiedAt
+        )
+    )
+}
+
+private fun List<SharedPdfHighlightCommentExport>.formatAsPdfCommentThread(): String {
+    val commentsByParent = groupBy { it.parentId }
+    val ids = map { it.id }.toSet()
+    val roots = filter { it.parentId == null || it.parentId !in ids }
+    val visitedIds = mutableSetOf<String>()
+    val lines = mutableListOf<String>()
+
+    fun appendComment(comment: SharedPdfHighlightCommentExport, depth: Int) {
+        if (!visitedIds.add(comment.id)) return
+
+        if (lines.isNotEmpty()) lines += ""
+        val indent = "  ".repeat(depth)
+        val author = comment.author.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR }
+        lines += "$indent$author:"
+        comment.contents.lines().forEach { line ->
+            lines += "$indent$line"
+        }
+        commentsByParent[comment.id].orEmpty().forEach { child ->
+            appendComment(child, depth + 1)
+        }
+    }
+
+    roots.forEach { appendComment(it, 0) }
+    forEach { comment ->
+        if (comment.id !in visitedIds) appendComment(comment, 0)
+    }
+
+    return lines.joinToString("\n").trim()
+}
+
 fun SharedPdfInkAnnotationExport.pdfInkAppearancePoints(pageWidth: Float, pageHeight: Float): List<PdfPagePoint> {
     if (tool != PdfInkTool.HIGHLIGHTER || points.size < 2 || pageWidth <= 0f || pageHeight <= 0f) return points
 
     // PDF ink annotations are usually rendered with rounded caps; trim chisel highlighter endpoints to match our butt-cap UI.
-    val trimPdfUnits = (strokeWidth * pageWidth) / 2f
+    val trimPdfUnits = (strokeWidth * pageWidth) * 0.65f
     if (trimPdfUnits <= 0f) return points
 
     val firstTargetIndex = points.firstDistinctIndexAfter(index = 0, pageWidth = pageWidth, pageHeight = pageHeight)
@@ -247,7 +307,7 @@ private fun PdfPagePoint.movedToward(
     val length = pdfDistanceTo(target, pageWidth, pageHeight)
     if (length <= 0f) return this
 
-    val trim = minOf(distancePdfUnits, length * 0.45f)
+    val trim = minOf(distancePdfUnits, length * 0.49f)
     return copy(
         x = x + (dx / length) * (trim / pageWidth),
         y = y + (dy / length) * (trim / pageHeight)

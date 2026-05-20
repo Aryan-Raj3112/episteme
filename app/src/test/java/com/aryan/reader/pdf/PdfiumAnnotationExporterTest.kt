@@ -87,7 +87,7 @@ class PdfiumAnnotationExporterTest {
             pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
         )
 
-        assertArrayEquals(floatArrayOf(0.15f, 0.2f, 0.85f, 0.2f), payload.inkPoints, 0.0001f)
+        assertArrayEquals(floatArrayOf(0.165f, 0.2f, 0.835f, 0.2f), payload.inkPoints, 0.0001f)
     }
 
     @Test
@@ -114,9 +114,8 @@ class PdfiumAnnotationExporterTest {
                         ),
                         SharedPdfAnnotationComment(
                             id = "comment-2",
-                            parentId = "comment-1",
                             author = "Bea",
-                            contents = "Nested reply",
+                            contents = "Second top-level comment",
                             createdAt = 1_700_000_020_000L
                         )
                     )
@@ -140,14 +139,16 @@ class PdfiumAnnotationExporterTest {
         assertEquals("highlight-1", payload.highlightNames.single())
         assertEquals("Important", payload.highlightContents.single())
         assertArrayEquals(intArrayOf(0), payload.highlightCommentOffsets)
-        assertArrayEquals(intArrayOf(2), payload.highlightCommentCounts)
-        assertArrayEquals(intArrayOf(-1, 0), payload.highlightCommentParentIndices)
-        assertEquals(listOf("comment-1", "comment-2"), payload.highlightCommentNames.toList())
-        assertEquals(listOf("Ada", "Bea"), payload.highlightCommentAuthors.toList())
-        assertEquals(listOf("First comment", "Nested reply"), payload.highlightCommentContents.toList())
+        assertArrayEquals(intArrayOf(1), payload.highlightCommentCounts)
+        assertArrayEquals(intArrayOf(-1), payload.highlightCommentParentIndices)
+        assertEquals(listOf("highlight-1_comments"), payload.highlightCommentNames.toList())
+        assertEquals(listOf("Ada"), payload.highlightCommentAuthors.toList())
+        assertEquals(
+            listOf("Ada:\nFirst comment\n\nBea:\nSecond top-level comment"),
+            payload.highlightCommentContents.toList()
+        )
         assertEquals("D:20231114221320Z", payload.highlightCommentCreatedDates[0])
-        assertEquals("D:20231114221330Z", payload.highlightCommentModifiedDates[0])
-        assertEquals("D:20231114221340Z", payload.highlightCommentModifiedDates[1])
+        assertEquals("D:20231114221340Z", payload.highlightCommentModifiedDates[0])
     }
 
     @Test

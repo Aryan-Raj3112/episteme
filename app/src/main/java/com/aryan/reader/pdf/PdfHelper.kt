@@ -721,6 +721,7 @@ fun PdfAnnotationBottomSheet(
     onColorChange: (PdfHighlightColor) -> Unit,
     onDismiss: () -> Unit,
     onSave: (String, List<SharedPdfAnnotationComment>) -> Unit,
+    onUpdate: (String, List<SharedPdfAnnotationComment>) -> Unit = { _, _ -> },
     onDelete: () -> Unit,
     onCopy: () -> Unit,
     onDictionary: () -> Unit,
@@ -734,6 +735,19 @@ fun PdfAnnotationBottomSheet(
     var commentText by remember(highlight.id) { mutableStateOf("") }
     var replyTargetId by remember(highlight.id) { mutableStateOf<String?>(null) }
     var editingCommentId by remember(highlight.id) { mutableStateOf<String?>(null) }
+    var commentAuthor by remember(highlight.id) {
+        mutableStateOf(
+            highlight.comments
+                .lastOrNull { it.author.isNotBlank() }
+                ?.author
+                ?: DEFAULT_PDF_COMMENT_AUTHOR
+        )
+    }
+
+    fun persistComments(nextComments: List<SharedPdfAnnotationComment>) {
+        comments = nextComments
+        onUpdate(noteText, nextComments)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -814,10 +828,12 @@ fun PdfAnnotationBottomSheet(
                 PdfHighlightCommentsEditor(
                     comments = comments,
                     commentText = commentText,
+                    commentAuthor = commentAuthor,
                     replyTargetId = replyTargetId,
                     editingCommentId = editingCommentId,
                     effectiveText = effectiveText,
                     onCommentTextChange = { commentText = it },
+                    onCommentAuthorChange = { commentAuthor = it },
                     onReply = {
                         editingCommentId = null
                         replyTargetId = it.id
@@ -828,17 +844,19 @@ fun PdfAnnotationBottomSheet(
                         editingCommentId = comment.id
                         replyTargetId = null
                         commentText = comment.contents
+                        commentAuthor = comment.author.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR }
                     },
                     onCancelEdit = {
                         editingCommentId = null
                         commentText = ""
                     },
                     onDelete = { comment ->
-                        comments = comments.withoutCommentThread(comment.id)
-                        if (replyTargetId != null && (replyTargetId == comment.id || comments.none { it.id == replyTargetId })) {
+                        val nextComments = comments.withoutCommentThread(comment.id)
+                        persistComments(nextComments)
+                        if (replyTargetId != null && (replyTargetId == comment.id || nextComments.none { it.id == replyTargetId })) {
                             replyTargetId = null
                         }
-                        if (editingCommentId != null && (editingCommentId == comment.id || comments.none { it.id == editingCommentId })) {
+                        if (editingCommentId != null && (editingCommentId == comment.id || nextComments.none { it.id == editingCommentId })) {
                             editingCommentId = null
                             commentText = ""
                         }
@@ -847,10 +865,15 @@ fun PdfAnnotationBottomSheet(
                         val contents = commentText.trim()
                         if (contents.isNotBlank()) {
                             val now = System.currentTimeMillis()
-                            comments = if (editingCommentId != null) {
+                            val author = commentAuthor.trim().ifBlank { DEFAULT_PDF_COMMENT_AUTHOR }
+                            val nextComments = if (editingCommentId != null) {
                                 comments.map { comment ->
                                     if (comment.id == editingCommentId) {
-                                        comment.copy(contents = contents, modifiedAt = now)
+                                        comment.copy(
+                                            author = author,
+                                            contents = contents,
+                                            modifiedAt = now
+                                        )
                                     } else {
                                         comment
                                     }
@@ -859,12 +882,13 @@ fun PdfAnnotationBottomSheet(
                                 comments + SharedPdfAnnotationComment(
                                     id = UUID.randomUUID().toString(),
                                     parentId = replyTargetId,
-                                    author = DEFAULT_PDF_COMMENT_AUTHOR,
+                                    author = author,
                                     contents = contents,
                                     createdAt = now,
                                     modifiedAt = now
                                 )
                             }
+                            persistComments(nextComments)
                             commentText = ""
                             replyTargetId = null
                             editingCommentId = null
@@ -898,7 +922,7 @@ fun PdfAnnotationBottomSheet(
                         contentColor = MaterialTheme.colorScheme.onPrimary
                     )
                 ) {
-                    Text(stringResource(R.string.action_save_annotation))
+                    Text(stringResource(R.string.action_done))
                 }
             }
         }
@@ -968,10 +992,12 @@ private fun PdfAnnotationSheetTab(
 private fun PdfHighlightCommentsEditor(
     comments: List<SharedPdfAnnotationComment>,
     commentText: String,
+    commentAuthor: String,
     replyTargetId: String?,
     editingCommentId: String?,
     effectiveText: Color,
     onCommentTextChange: (String) -> Unit,
+    onCommentAuthorChange: (String) -> Unit,
     onReply: (SharedPdfAnnotationComment) -> Unit,
     onCancelReply: () -> Unit,
     onEdit: (SharedPdfAnnotationComment) -> Unit,
@@ -1034,6 +1060,18 @@ private fun PdfHighlightCommentsEditor(
                 }
             }
         }
+
+        OutlinedTextField(
+            value = commentAuthor,
+            onValueChange = onCommentAuthorChange,
+            label = { Text(stringResource(R.string.author)) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            colors = pdfAnnotationTextFieldColors(effectiveText),
+            shape = RoundedCornerShape(12.dp)
+        )
+
+        Spacer(Modifier.height(8.dp))
 
         OutlinedTextField(
             value = commentText,

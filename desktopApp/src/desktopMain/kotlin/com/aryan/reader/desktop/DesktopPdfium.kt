@@ -1679,11 +1679,11 @@ object DesktopPdfium {
         val commentAnnotsById = mutableMapOf<String, Pointer>()
         var insertedAll = true
         try {
-            annotation.comments.forEachIndexed { index, comment ->
+            annotation.comments.forEach { comment ->
                 val commentAnnot = api.FPDFPage_CreateAnnot(page, FPDF_ANNOT_TEXT)
                 if (commentAnnot == null) {
                     insertedAll = false
-                    return@forEachIndexed
+                    return@forEach
                 }
                 commentAnnots += commentAnnot
                 commentAnnotsById[comment.id] = commentAnnot
@@ -1695,7 +1695,7 @@ object DesktopPdfium {
                         anchorTop = unionTop,
                         pageWidth = pageWidth,
                         pageHeight = pageHeight,
-                        commentIndex = index
+                        commentIndex = 0
                     )
                 )
                 val color = annotation.colorArgb.toPdfiumRgba().copy(a = 255)

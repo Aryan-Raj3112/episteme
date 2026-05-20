@@ -99,13 +99,44 @@ class SharedPdfAnnotationExportMapperTest {
             .single()
             .comments
 
-        assertEquals(listOf("root-1", "reply-1"), comments.map { it.id })
-        assertEquals(null, comments[0].parentId)
-        assertEquals("root-1", comments[1].parentId)
-        assertEquals("Root body", comments[0].contents)
-        assertEquals("Reply body", comments[1].contents)
-        assertEquals(15L, comments[0].modifiedAt)
-        assertEquals(20L, comments[1].modifiedAt)
+        val comment = comments.single()
+        assertEquals("highlight-1_comments", comment.id)
+        assertEquals(null, comment.parentId)
+        assertEquals("Ada", comment.author)
+        assertEquals(
+            "Ada:\nRoot body\n\n  Bea:\n  Reply body",
+            comment.contents
+        )
+        assertEquals(10L, comment.createdAt)
+        assertEquals(20L, comment.modifiedAt)
+    }
+
+    @Test
+    fun `mapper folds multiple top level highlight comments into one export thread`() {
+        val highlight = SharedPdfAnnotation(
+            id = "highlight-1",
+            pageIndex = 1,
+            kind = PdfAnnotationKind.HIGHLIGHT,
+            tool = PdfInkTool.HIGHLIGHTER,
+            boundsList = listOf(PdfPageBounds(0.1f, 0.2f, 0.4f, 0.25f)),
+            text = "Selected text",
+            comments = listOf(
+                SharedPdfAnnotationComment(id = "root-1", contents = "First"),
+                SharedPdfAnnotationComment(id = "root-2", contents = "Second")
+            ),
+            colorArgb = 0x8C64B5F6.toInt()
+        )
+
+        val comments = SharedPdfAnnotationExportMapper.build(listOf(highlight))
+            .highlightAnnotations
+            .single()
+            .comments
+
+        val comment = comments.single()
+        assertEquals("highlight-1_comments", comment.id)
+        assertEquals(null, comment.parentId)
+        assertEquals("Reader", comment.author)
+        assertEquals("Reader:\nFirst\n\nReader:\nSecond", comment.contents)
     }
 
     @Test
@@ -196,12 +227,12 @@ class SharedPdfAnnotationExportMapperTest {
             )
         ).pdfInkAppearancePoints(pageWidth = 100f, pageHeight = 100f)
 
-        assertEquals(0.15f, trimmed.first().x, 0.0001f)
+        assertEquals(0.165f, trimmed.first().x, 0.0001f)
         assertEquals(0.2f, trimmed.first().y, 0.0001f)
-        assertEquals(0.85f, trimmed.last().x, 0.0001f)
+        assertEquals(0.835f, trimmed.last().x, 0.0001f)
         assertEquals(0.2f, trimmed.last().y, 0.0001f)
-        assertEquals(0.15f, duplicatedEndpointTrimmed[1].x, 0.0001f)
-        assertEquals(0.85f, duplicatedEndpointTrimmed[2].x, 0.0001f)
+        assertEquals(0.165f, duplicatedEndpointTrimmed[1].x, 0.0001f)
+        assertEquals(0.835f, duplicatedEndpointTrimmed[2].x, 0.0001f)
         assertEquals(round.points, round.pdfInkAppearancePoints(pageWidth = 100f, pageHeight = 100f))
     }
 }

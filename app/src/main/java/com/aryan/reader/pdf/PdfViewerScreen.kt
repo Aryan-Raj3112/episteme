@@ -7815,12 +7815,23 @@ fun PdfViewerScreen(
                         userHighlights.indexOfFirst { it.id == targetHighlight.id }
                     if (index != -1) {
                         userHighlights[index] =
-                            targetHighlight.copy(
+                            userHighlights[index].copy(
                                 note = noteText.takeIf { it.isNotBlank() },
                                 comments = comments
                             )
                     }
                     highlightToNoteId = null
+                },
+                onUpdate = { noteText, comments ->
+                    val index =
+                        userHighlights.indexOfFirst { it.id == targetHighlight.id }
+                    if (index != -1) {
+                        userHighlights[index] =
+                            userHighlights[index].copy(
+                                note = noteText.takeIf { it.isNotBlank() },
+                                comments = comments
+                            )
+                    }
                 },
                 onDelete = {
                     onHighlightDelete(targetHighlight.id)
