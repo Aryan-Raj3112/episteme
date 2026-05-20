@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.pdf
 
+import kotlin.math.sqrt
+
 data class SharedPdfAnnotationExportPayload(
     val inkAnnotations: List<SharedPdfInkAnnotationExport> = emptyList(),
     val highlightAnnotations: List<SharedPdfHighlightAnnotationExport> = emptyList()
@@ -23,7 +25,17 @@ data class SharedPdfHighlightAnnotationExport(
     val pageIndex: Int,
     val boundsList: List<PdfPageBounds>,
     val colorArgb: Int,
-    val contents: String
+    val contents: String,
+    val comments: List<SharedPdfHighlightCommentExport> = emptyList()
+)
+
+data class SharedPdfHighlightCommentExport(
+    val id: String,
+    val parentId: String?,
+    val author: String,
+    val contents: String,
+    val createdAt: Long,
+    val modifiedAt: Long
 )
 
 object SharedPdfAnnotationExportMapper {
@@ -52,7 +64,7 @@ object SharedPdfAnnotationExportMapper {
             points = points,
             colorArgb = colorArgb,
             strokeWidth = strokeWidth,
-            contents = note?.trim()?.takeIf { it.isNotBlank() } ?: "Ink"
+            contents = note?.trim().orEmpty()
         )
     }
 
@@ -73,10 +85,70 @@ object SharedPdfAnnotationExportMapper {
             pageIndex = pageIndex,
             boundsList = exportBounds,
             colorArgb = colorArgb,
-            contents = note?.trim()?.takeIf { it.isNotBlank() }
-                ?: text.trim().takeIf { it.isNotBlank() }
-                ?: "Highlight"
+            contents = note?.trim().orEmpty(),
+            comments = comments.toHighlightCommentExports(highlightId = id)
         )
+    }
+
+    private fun List<SharedPdfAnnotationComment>.toHighlightCommentExports(
+        highlightId: String
+    ): List<SharedPdfHighlightCommentExport> {
+        val sourceItems = mapIndexedNotNull { index, comment ->
+            val contents = comment.contents.trim()
+            if (contents.isBlank()) return@mapIndexedNotNull null
+            val sourceId = comment.id.takeIf { it.isNotBlank() }
+            val exportId = sourceId ?: "${highlightId}_comment_$index"
+            IndexedExportComment(
+                sourceId = sourceId,
+                sourceParentId = comment.parentId?.takeIf { it.isNotBlank() },
+                export = SharedPdfHighlightCommentExport(
+                    id = exportId,
+                    parentId = null,
+                    author = comment.author.trim(),
+                    contents = contents,
+                    createdAt = comment.createdAt,
+                    modifiedAt = comment.modifiedAt.takeIf { it > 0L } ?: comment.createdAt
+                )
+            )
+        }
+        if (sourceItems.isEmpty()) return emptyList()
+
+        val stableIds = mutableSetOf<String>()
+        val sourceIdToExportId = mutableMapOf<String, String>()
+        val uniqueItems = sourceItems.mapIndexed { index, item ->
+            val uniqueId = item.export.id.uniqueCommentId(stableIds, index)
+            item.sourceId?.let { sourceIdToExportId.putIfAbsent(it, uniqueId) }
+            item.copy(export = item.export.copy(id = uniqueId))
+        }
+        val parentAwareItems = uniqueItems.map { item ->
+            val parentId = item.sourceParentId?.let(sourceIdToExportId::get)
+            item.copy(export = item.export.copy(parentId = parentId))
+        }
+
+        val byParent = parentAwareItems.groupBy { it.export.parentId }
+        val result = mutableListOf<SharedPdfHighlightCommentExport>()
+        val emittedIds = mutableSetOf<String>()
+
+        fun appendThread(parentId: String?, visitedIds: Set<String>) {
+            byParent[parentId].orEmpty().forEach { item ->
+                val export = item.export
+                if (export.id in emittedIds || export.id in visitedIds) return@forEach
+                emittedIds += export.id
+                result += export
+                appendThread(export.id, visitedIds + export.id)
+            }
+        }
+
+        appendThread(parentId = null, visitedIds = emptySet())
+        parentAwareItems.forEach { item ->
+            if (item.export.id !in emittedIds) {
+                val root = item.export.copy(parentId = null)
+                emittedIds += root.id
+                result += root
+                appendThread(root.id, setOf(root.id))
+            }
+        }
+        return result
     }
 
     private fun PdfPageBounds.normalizedForExportOrNull(): PdfPageBounds? {
@@ -95,4 +167,95 @@ object SharedPdfAnnotationExportMapper {
                 it.bottom > it.top
         }
     }
+}
+
+private data class IndexedExportComment(
+    val sourceId: String?,
+    val sourceParentId: String?,
+    val export: SharedPdfHighlightCommentExport
+)
+
+private fun String.uniqueCommentId(usedIds: MutableSet<String>, index: Int): String {
+    val base = ifBlank { "comment_$index" }
+    var candidate = base
+    var suffix = 2
+    while (!usedIds.add(candidate)) {
+        candidate = "${base}_$suffix"
+        suffix += 1
+    }
+    return candidate
+}
+
+fun SharedPdfInkAnnotationExport.pdfInkAppearancePoints(pageWidth: Float, pageHeight: Float): List<PdfPagePoint> {
+    if (tool != PdfInkTool.HIGHLIGHTER || points.size < 2 || pageWidth <= 0f || pageHeight <= 0f) return points
+
+    // PDF ink annotations are usually rendered with rounded caps; trim chisel highlighter endpoints to match our butt-cap UI.
+    val trimPdfUnits = (strokeWidth * pageWidth) / 2f
+    if (trimPdfUnits <= 0f) return points
+
+    val firstTargetIndex = points.firstDistinctIndexAfter(index = 0, pageWidth = pageWidth, pageHeight = pageHeight)
+        ?: return points
+    val lastIndex = points.lastIndex
+    val lastTargetIndex = points.lastDistinctIndexBefore(index = lastIndex, pageWidth = pageWidth, pageHeight = pageHeight)
+        ?: return points
+    val adjusted = points.toMutableList()
+    val adjustedStart = adjusted[0].movedToward(points[firstTargetIndex], trimPdfUnits, pageWidth, pageHeight)
+    for (pointIndex in 0 until firstTargetIndex) {
+        adjusted[pointIndex] = adjustedStart
+    }
+    val adjustedEnd = adjusted[lastIndex].movedToward(points[lastTargetIndex], trimPdfUnits, pageWidth, pageHeight)
+    for (pointIndex in lastTargetIndex + 1..lastIndex) {
+        adjusted[pointIndex] = adjustedEnd
+    }
+    return adjusted
+}
+
+private fun List<PdfPagePoint>.firstDistinctIndexAfter(
+    index: Int,
+    pageWidth: Float,
+    pageHeight: Float
+): Int? {
+    val source = getOrNull(index) ?: return null
+    for (targetIndex in index + 1..lastIndex) {
+        val target = this[targetIndex]
+        if (source.pdfDistanceTo(target, pageWidth, pageHeight) > 0f) return targetIndex
+    }
+    return null
+}
+
+private fun List<PdfPagePoint>.lastDistinctIndexBefore(
+    index: Int,
+    pageWidth: Float,
+    pageHeight: Float
+): Int? {
+    val source = getOrNull(index) ?: return null
+    for (targetIndex in index - 1 downTo 0) {
+        val target = this[targetIndex]
+        if (source.pdfDistanceTo(target, pageWidth, pageHeight) > 0f) return targetIndex
+    }
+    return null
+}
+
+private fun PdfPagePoint.movedToward(
+    target: PdfPagePoint,
+    distancePdfUnits: Float,
+    pageWidth: Float,
+    pageHeight: Float
+): PdfPagePoint {
+    val dx = (target.x - x) * pageWidth
+    val dy = (target.y - y) * pageHeight
+    val length = pdfDistanceTo(target, pageWidth, pageHeight)
+    if (length <= 0f) return this
+
+    val trim = minOf(distancePdfUnits, length * 0.45f)
+    return copy(
+        x = x + (dx / length) * (trim / pageWidth),
+        y = y + (dy / length) * (trim / pageHeight)
+    )
+}
+
+private fun PdfPagePoint.pdfDistanceTo(target: PdfPagePoint, pageWidth: Float, pageHeight: Float): Float {
+    val dx = (target.x - x) * pageWidth
+    val dy = (target.y - y) * pageHeight
+    return sqrt((dx * dx + dy * dy).toDouble()).toFloat()
 }

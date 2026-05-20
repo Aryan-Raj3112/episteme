@@ -9,6 +9,7 @@ import com.aryan.reader.pdf.data.HighlightSerializer
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.TextBoxSerializer
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -168,7 +169,23 @@ class PdfReaderSerializerTest {
                 color = PdfHighlightColor.BLUE,
                 text = "Selected text",
                 range = 7 to 20,
-                note = "Important"
+                note = "Important",
+                comments = listOf(
+                    SharedPdfAnnotationComment(
+                        id = "comment-1",
+                        author = "Ada",
+                        contents = "First comment",
+                        createdAt = 100L,
+                        modifiedAt = 120L
+                    ),
+                    SharedPdfAnnotationComment(
+                        id = "comment-2",
+                        parentId = "comment-1",
+                        author = "Bea",
+                        contents = "Nested reply",
+                        createdAt = 130L
+                    )
+                )
             )
         )
 
@@ -180,6 +197,10 @@ class PdfReaderSerializerTest {
         assertEquals("Selected text", decoded.text)
         assertEquals(7 to 20, decoded.range)
         assertEquals("Important", decoded.note)
+        assertEquals(listOf("comment-1", "comment-2"), decoded.comments.map { it.id })
+        assertEquals("comment-1", decoded.comments[1].parentId)
+        assertEquals("Ada", decoded.comments[0].author)
+        assertEquals(120L, decoded.comments[0].modifiedAt)
         assertEquals(1, decoded.bounds.size)
         assertRectFEquals(RectF(0f, 0f, 1f, 1f), decoded.bounds.single())
 

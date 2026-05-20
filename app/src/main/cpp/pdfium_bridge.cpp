@@ -155,9 +155,11 @@ static FPDFAnnot_SetFlags_t set_annot_flags_func = nullptr;
 static FPDFAnnot_GetFormFieldName_t get_form_field_name_func = nullptr;
 
 typedef void* (*FPDFAnnot_GetLinkedAnnot_t)(void* annot, const char* key);
+typedef int (*FPDFAnnot_SetLinkedAnnot_t)(void* annot, const char* key, void* linked_annot);
 typedef void (*FPDFPage_CloseAnnot_t)(void* annot);
 
 static FPDFAnnot_GetLinkedAnnot_t get_linked_annot_func = nullptr;
+static FPDFAnnot_SetLinkedAnnot_t set_linked_annot_func = nullptr;
 static FPDFPage_CloseAnnot_t close_annot_func = nullptr;
 static FPDF_LoadDocument_t load_document_func = nullptr;
 static FPDF_CloseDocument_t close_document_func = nullptr;
@@ -219,6 +221,7 @@ static bool init_pdfium() {
     get_annot_string_func  = (FPDFAnnot_GetStringValue_t) dlsym(pdfium_handle, "FPDFAnnot_GetStringValue");
     get_annot_color_func   = (FPDFAnnot_GetColor_t)       dlsym(pdfium_handle, "FPDFAnnot_GetColor");
     get_linked_annot_func  = (FPDFAnnot_GetLinkedAnnot_t) dlsym(pdfium_handle, "FPDFAnnot_GetLinkedAnnot");
+    set_linked_annot_func  = (FPDFAnnot_SetLinkedAnnot_t) dlsym(pdfium_handle, "FPDFAnnot_SetLinkedAnnot");
     close_annot_func       = (FPDFPage_CloseAnnot_t)      dlsym(pdfium_handle, "FPDFPage_CloseAnnot");
     get_annot_flags_func   = (FPDFAnnot_GetFlags_t)       dlsym(pdfium_handle, "FPDFAnnot_GetFlags");
     set_annot_flags_func   = (FPDFAnnot_SetFlags_t)       dlsym(pdfium_handle, "FPDFAnnot_SetFlags");
@@ -605,6 +608,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_extractImagePixels(JNIEnv *env, jcl
     return result;
 }
 
+static constexpr int kPdfAnnotText = 1;
 static constexpr int kPdfAnnotHighlight = 9;
 static constexpr int kPdfAnnotInk = 15;
 static constexpr int kAnnotColor = 0;
@@ -669,6 +673,10 @@ static std::vector<std::string> read_string_array(JNIEnv* env, jobjectArray arra
     return values;
 }
 
+static int object_array_length(JNIEnv* env, jobjectArray array) {
+    return array ? env->GetArrayLength(array) : 0;
+}
+
 static bool set_annot_string_from_jstring(JNIEnv* env, void* annot, const char* key, jstring value) {
     if (!set_annot_string_value_func || !annot || !key || !value) return false;
     jsize length = env->GetStringLength(value);
@@ -692,6 +700,10 @@ static bool set_annot_string_from_array(JNIEnv* env, void* annot, const char* ke
 
     auto value = static_cast<jstring>(env->GetObjectArrayElement(array, static_cast<jsize>(index)));
     if (!value) return false;
+    if (env->GetStringLength(value) <= 0) {
+        env->DeleteLocalRef(value);
+        return false;
+    }
     bool result = set_annot_string_from_jstring(env, annot, key, value);
     env->DeleteLocalRef(value);
     return result;
@@ -728,6 +740,20 @@ static FS_RECTF_BRIDGE make_pdf_rect(float left, float top, float right, float b
     float t = std::max(top, bottom) + padding;
     float b = std::min(top, bottom) - padding;
     return FS_RECTF_BRIDGE{l, t, r, b};
+}
+
+static FS_RECTF_BRIDGE make_pdf_comment_rect(
+        float anchorRight,
+        float anchorTop,
+        float pageWidth,
+        float pageHeight,
+        int commentIndex) {
+    float iconSize = std::min(18.0f, std::max(10.0f, pageWidth * 0.03f));
+    float left = std::min(std::max(anchorRight + 2.0f, 0.0f), std::max(0.0f, pageWidth - iconSize));
+    float top = anchorTop - static_cast<float>(commentIndex) * (iconSize + 2.0f);
+    if (top > pageHeight) top = pageHeight;
+    if (top - iconSize < 0.0f) top = std::min(pageHeight, iconSize);
+    return make_pdf_rect(left, top, left + iconSize, top - iconSize, 0.0f);
 }
 
 static float get_page_width_bridge(void* page) {
@@ -1101,7 +1127,15 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         jintArray highlightRectCountsArray,
         jfloatArray highlightRectsArray,
         jobjectArray highlightNamesArray,
-        jobjectArray highlightContentsArray) {
+        jobjectArray highlightContentsArray,
+        jintArray highlightCommentOffsetsArray,
+        jintArray highlightCommentCountsArray,
+        jintArray highlightCommentParentIndicesArray,
+        jobjectArray highlightCommentNamesArray,
+        jobjectArray highlightCommentAuthorsArray,
+        jobjectArray highlightCommentContentsArray,
+        jobjectArray highlightCommentCreatedDatesArray,
+        jobjectArray highlightCommentModifiedDatesArray) {
     std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
 
     if (!init_pdfium() || !validate_export_functions()) {
@@ -1157,6 +1191,14 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
     std::vector<jint> highlightRectOffsets = read_int_array(env, highlightRectOffsetsArray);
     std::vector<jint> highlightRectCounts = read_int_array(env, highlightRectCountsArray);
     std::vector<jfloat> highlightRects = read_float_array(env, highlightRectsArray);
+    std::vector<jint> highlightCommentOffsets = read_int_array(env, highlightCommentOffsetsArray);
+    std::vector<jint> highlightCommentCounts = read_int_array(env, highlightCommentCountsArray);
+    std::vector<jint> highlightCommentParentIndices = read_int_array(env, highlightCommentParentIndicesArray);
+    const int highlightCommentNamesLength = object_array_length(env, highlightCommentNamesArray);
+    const int highlightCommentAuthorsLength = object_array_length(env, highlightCommentAuthorsArray);
+    const int highlightCommentContentsLength = object_array_length(env, highlightCommentContentsArray);
+    const int highlightCommentCreatedDatesLength = object_array_length(env, highlightCommentCreatedDatesArray);
+    const int highlightCommentModifiedDatesLength = object_array_length(env, highlightCommentModifiedDatesArray);
 
     void* document = load_document_func(source.c_str(), nullptr);
     if (!document) {
@@ -1263,9 +1305,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         }
 
         set_annot_string_from_array(env, annot, "NM", inkNamesArray, i);
-        if (!set_annot_string_from_array(env, annot, "Contents", inkContentsArray, i)) {
-            set_annot_string_from_ascii(annot, "Contents", "Ink");
-        }
+        set_annot_string_from_array(env, annot, "Contents", inkContentsArray, i);
         if (generate_content_func) generate_content_func(page);
         close_annot_func(annot);
         close_page_func(page);
@@ -1363,11 +1403,65 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         if (set_annot_flags_func) set_annot_flags_func(annot, kAnnotFlagPrint);
 
         set_annot_string_from_array(env, annot, "NM", highlightNamesArray, i);
-        if (!set_annot_string_from_array(env, annot, "Contents", highlightContentsArray, i)) {
-            set_annot_string_from_ascii(annot, "Contents", "Highlight");
+        set_annot_string_from_array(env, annot, "Contents", highlightContentsArray, i);
+
+        int commentOffset = i < highlightCommentOffsets.size() ? highlightCommentOffsets[i] : 0;
+        int commentCount = i < highlightCommentCounts.size() ? highlightCommentCounts[i] : 0;
+        bool commentPayloadValid = commentCount <= 0 ||
+            (commentOffset >= 0 &&
+             commentOffset + commentCount <= static_cast<int>(highlightCommentParentIndices.size()) &&
+             commentOffset + commentCount <= highlightCommentNamesLength &&
+             commentOffset + commentCount <= highlightCommentAuthorsLength &&
+             commentOffset + commentCount <= highlightCommentContentsLength &&
+             commentOffset + commentCount <= highlightCommentCreatedDatesLength &&
+             commentOffset + commentCount <= highlightCommentModifiedDatesLength);
+        if (!commentPayloadValid) {
+            hadFailure = true;
+            commentCount = 0;
+        }
+
+        std::vector<void*> commentAnnots;
+        commentAnnots.resize(static_cast<size_t>(std::max(0, commentCount)), nullptr);
+        for (int commentIndex = 0; commentIndex < commentCount; commentIndex++) {
+            int globalCommentIndex = commentOffset + commentIndex;
+            void* commentAnnot = create_annot_func(page, kPdfAnnotText);
+            if (!commentAnnot) {
+                hadFailure = true;
+                continue;
+            }
+            commentAnnots[static_cast<size_t>(commentIndex)] = commentAnnot;
+
+            FS_RECTF_BRIDGE commentRect = make_pdf_comment_rect(
+                    unionRight,
+                    unionTop,
+                    pageWidth,
+                    pageHeight,
+                    commentIndex
+            );
+            set_annot_rect_func(commentAnnot, &commentRect);
+            set_annot_color_func(commentAnnot, kAnnotColor, r, g, b, 255);
+            if (set_annot_flags_func) set_annot_flags_func(commentAnnot, kAnnotFlagPrint);
+            set_annot_string_from_array(env, commentAnnot, "NM", highlightCommentNamesArray, globalCommentIndex);
+            set_annot_string_from_array(env, commentAnnot, "T", highlightCommentAuthorsArray, globalCommentIndex);
+            set_annot_string_from_array(env, commentAnnot, "Contents", highlightCommentContentsArray, globalCommentIndex);
+            set_annot_string_from_array(env, commentAnnot, "CreationDate", highlightCommentCreatedDatesArray, globalCommentIndex);
+            set_annot_string_from_array(env, commentAnnot, "M", highlightCommentModifiedDatesArray, globalCommentIndex);
+
+            int parentIndex = highlightCommentParentIndices[static_cast<size_t>(globalCommentIndex)];
+            void* parentAnnot = annot;
+            if (parentIndex >= 0 && parentIndex < commentIndex) {
+                void* candidate = commentAnnots[static_cast<size_t>(parentIndex)];
+                if (candidate) parentAnnot = candidate;
+            }
+            if (set_linked_annot_func && parentAnnot) {
+                set_linked_annot_func(commentAnnot, "IRT", parentAnnot);
+            }
         }
 
         if (generate_content_func) generate_content_func(page);
+        for (void* commentAnnot : commentAnnots) {
+            if (commentAnnot) close_annot_func(commentAnnot);
+        }
         close_annot_func(annot);
         close_page_func(page);
     }

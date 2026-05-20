@@ -39,6 +39,16 @@ data class PdfPageBounds(
 )
 
 @Serializable
+data class SharedPdfAnnotationComment(
+    val id: String,
+    val parentId: String? = null,
+    val author: String = "",
+    val contents: String = "",
+    val createdAt: Long = 0L,
+    val modifiedAt: Long = 0L
+)
+
+@Serializable
 data class SharedPdfAnnotation(
     val id: String,
     val pageIndex: Int,
@@ -49,6 +59,7 @@ data class SharedPdfAnnotation(
     val boundsList: List<PdfPageBounds> = emptyList(),
     val text: String = "",
     val note: String? = null,
+    val comments: List<SharedPdfAnnotationComment> = emptyList(),
     val colorArgb: Int,
     val backgroundArgb: Int = 0x00FFFFFF,
     val strokeWidth: Float = 2f,

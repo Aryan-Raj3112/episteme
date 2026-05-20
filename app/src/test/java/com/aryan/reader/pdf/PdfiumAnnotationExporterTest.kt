@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -61,8 +62,32 @@ class PdfiumAnnotationExporterTest {
         assertArrayEquals(intArrayOf(0), payload.inkPointOffsets)
         assertArrayEquals(intArrayOf(2), payload.inkPointCounts)
         assertArrayEquals(floatArrayOf(0.1f, 0.2f, 0.3f, 0.4f), payload.inkPoints, 0.0001f)
-        assertEquals("Ink", payload.inkContents.single())
+        assertEquals("", payload.inkContents.single())
         assertEquals("ink-1", payload.inkNames.single())
+    }
+
+    @Test
+    fun `buildPayload trims chisel highlighter endpoints for pdf ink caps`() {
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = mapOf(
+                0 to listOf(
+                    PdfAnnotation(
+                        type = AnnotationType.INK,
+                        inkType = InkType.HIGHLIGHTER,
+                        pageIndex = 0,
+                        points = listOf(PdfPoint(0.1f, 0.2f), PdfPoint(0.9f, 0.2f)),
+                        color = Color(0x8CFFEB3B.toInt()),
+                        strokeWidth = 0.1f,
+                        id = "highlighter"
+                    )
+                )
+            ),
+            textBoxes = emptyList(),
+            highlights = emptyList(),
+            pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
+        )
+
+        assertArrayEquals(floatArrayOf(0.15f, 0.2f, 0.85f, 0.2f), payload.inkPoints, 0.0001f)
     }
 
     @Test
@@ -78,7 +103,23 @@ class PdfiumAnnotationExporterTest {
                     color = PdfHighlightColor.BLUE,
                     text = "Selected text",
                     range = 0 to 13,
-                    note = "Important"
+                    note = "Important",
+                    comments = listOf(
+                        SharedPdfAnnotationComment(
+                            id = "comment-1",
+                            author = "Ada",
+                            contents = "First comment",
+                            createdAt = 1_700_000_000_000L,
+                            modifiedAt = 1_700_000_010_000L
+                        ),
+                        SharedPdfAnnotationComment(
+                            id = "comment-2",
+                            parentId = "comment-1",
+                            author = "Bea",
+                            contents = "Nested reply",
+                            createdAt = 1_700_000_020_000L
+                        )
+                    )
                 )
             ),
             pageSizes = listOf(
@@ -98,6 +139,15 @@ class PdfiumAnnotationExporterTest {
         )
         assertEquals("highlight-1", payload.highlightNames.single())
         assertEquals("Important", payload.highlightContents.single())
+        assertArrayEquals(intArrayOf(0), payload.highlightCommentOffsets)
+        assertArrayEquals(intArrayOf(2), payload.highlightCommentCounts)
+        assertArrayEquals(intArrayOf(-1, 0), payload.highlightCommentParentIndices)
+        assertEquals(listOf("comment-1", "comment-2"), payload.highlightCommentNames.toList())
+        assertEquals(listOf("Ada", "Bea"), payload.highlightCommentAuthors.toList())
+        assertEquals(listOf("First comment", "Nested reply"), payload.highlightCommentContents.toList())
+        assertEquals("D:20231114221320Z", payload.highlightCommentCreatedDates[0])
+        assertEquals("D:20231114221330Z", payload.highlightCommentModifiedDates[0])
+        assertEquals("D:20231114221340Z", payload.highlightCommentModifiedDates[1])
     }
 
     @Test

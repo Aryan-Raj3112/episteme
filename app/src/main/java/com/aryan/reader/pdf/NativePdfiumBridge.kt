@@ -65,7 +65,15 @@ object NativePdfiumBridge {
         highlightRectCounts: IntArray,
         highlightRects: FloatArray,
         highlightNames: Array<String>,
-        highlightContents: Array<String>
+        highlightContents: Array<String>,
+        highlightCommentOffsets: IntArray,
+        highlightCommentCounts: IntArray,
+        highlightCommentParentIndices: IntArray,
+        highlightCommentNames: Array<String>,
+        highlightCommentAuthors: Array<String>,
+        highlightCommentContents: Array<String>,
+        highlightCommentCreatedDates: Array<String>,
+        highlightCommentModifiedDates: Array<String>
     ): Boolean
 
     const val ANNOT_TEXT = PdfiumAnnotationSubtype.TEXT

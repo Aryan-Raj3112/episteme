@@ -28,6 +28,7 @@ import com.aryan.reader.pdf.InkType
 import com.aryan.reader.pdf.PdfHighlightColor
 import com.aryan.reader.pdf.PdfPoint
 import com.aryan.reader.pdf.PdfUserHighlight
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -237,6 +238,10 @@ object HighlightSerializer {
             if (!h.note.isNullOrBlank()) {
                 obj.put("note", h.note)
             }
+            val commentsArray = h.comments.toJsonArray()
+            if (commentsArray.length() > 0) {
+                obj.put("comments", commentsArray)
+            }
 
             val boundsArray = JSONArray()
             h.bounds.forEach { r ->
@@ -279,7 +284,8 @@ object HighlightSerializer {
                         color = try { PdfHighlightColor.valueOf(obj.getString("color")) } catch(_: Exception) { PdfHighlightColor.YELLOW },
                         text = obj.optString("text", ""),
                         range = Pair(obj.optInt("rangeStart", 0), obj.optInt("rangeEnd", 0)),
-                        note = obj.optString("note").takeIf { !it.isNullOrBlank() }
+                        note = obj.optString("note").takeIf { !it.isNullOrBlank() },
+                        comments = obj.optJSONArray("comments").toSharedPdfAnnotationComments()
                     )
                 )
             }
@@ -287,5 +293,51 @@ object HighlightSerializer {
             e.printStackTrace()
         }
         return result
+    }
+
+    private fun List<SharedPdfAnnotationComment>.toJsonArray(): JSONArray {
+        val array = JSONArray()
+        forEach { comment ->
+            val contents = comment.contents.trim()
+            if (contents.isBlank()) return@forEach
+            val obj = JSONObject()
+            obj.put("id", comment.id)
+            comment.parentId?.takeIf { it.isNotBlank() }?.let { obj.put("parentId", it) }
+            comment.author.takeIf { it.isNotBlank() }?.let { obj.put("author", it) }
+            obj.put("contents", contents)
+            if (comment.createdAt > 0L) obj.put("createdAt", comment.createdAt)
+            val modifiedAt = comment.modifiedAt.takeIf { it > 0L } ?: comment.createdAt
+            if (modifiedAt > 0L) obj.put("modifiedAt", modifiedAt)
+            array.put(obj)
+        }
+        return array
+    }
+
+    private fun JSONArray?.toSharedPdfAnnotationComments(): List<SharedPdfAnnotationComment> {
+        if (this == null) return emptyList()
+        val comments = mutableListOf<SharedPdfAnnotationComment>()
+        for (index in 0 until length()) {
+            val obj = optJSONObject(index) ?: continue
+            val contents = obj.optString("contents")
+                .ifBlank { obj.optString("text") }
+                .ifBlank { obj.optString("comment") }
+                .trim()
+            if (contents.isBlank()) continue
+            val createdAt = obj.optLong("createdAt", obj.optLong("created", 0L))
+            comments += SharedPdfAnnotationComment(
+                id = obj.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
+                parentId = obj.optString("parentId")
+                    .ifBlank { obj.optString("inReplyTo") }
+                    .takeIf { it.isNotBlank() },
+                author = obj.optString("author").trim(),
+                contents = contents,
+                createdAt = createdAt,
+                modifiedAt = obj.optLong(
+                    "modifiedAt",
+                    obj.optLong("modified", createdAt)
+                )
+            )
+        }
+        return comments
     }
 }

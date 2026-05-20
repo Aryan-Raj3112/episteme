@@ -33,7 +33,7 @@ class SharedPdfAnnotationExportMapperTest {
     }
 
     @Test
-    fun `mapper preserves highlight bounds order and selected text contents`() {
+    fun `mapper preserves highlight bounds order without adding fake contents`() {
         val highlight = SharedPdfAnnotation(
             id = "highlight-1",
             pageIndex = 1,
@@ -51,7 +51,61 @@ class SharedPdfAnnotationExportMapperTest {
 
         assertEquals(listOf("highlight-1"), payload.highlightAnnotations.map { it.id })
         assertEquals(highlight.boundsList, payload.highlightAnnotations.single().boundsList)
-        assertEquals("Selected text", payload.highlightAnnotations.single().contents)
+        assertEquals("", payload.highlightAnnotations.single().contents)
+        assertEquals(
+            "Actual note",
+            SharedPdfAnnotationExportMapper.build(listOf(highlight.copy(note = " Actual note ")))
+                .highlightAnnotations
+                .single()
+                .contents
+        )
+    }
+
+    @Test
+    fun `mapper exports text highlight comment threads with stable ids and parent order`() {
+        val highlight = SharedPdfAnnotation(
+            id = "highlight-1",
+            pageIndex = 1,
+            kind = PdfAnnotationKind.HIGHLIGHT,
+            tool = PdfInkTool.HIGHLIGHTER,
+            boundsList = listOf(PdfPageBounds(0.1f, 0.2f, 0.4f, 0.25f)),
+            text = "Selected text",
+            comments = listOf(
+                SharedPdfAnnotationComment(
+                    id = "reply-1",
+                    parentId = "root-1",
+                    author = "Bea",
+                    contents = " Reply body ",
+                    createdAt = 20L
+                ),
+                SharedPdfAnnotationComment(
+                    id = "blank",
+                    author = "Nope",
+                    contents = " "
+                ),
+                SharedPdfAnnotationComment(
+                    id = "root-1",
+                    author = "Ada",
+                    contents = "Root body",
+                    createdAt = 10L,
+                    modifiedAt = 15L
+                )
+            ),
+            colorArgb = 0x8C64B5F6.toInt()
+        )
+
+        val comments = SharedPdfAnnotationExportMapper.build(listOf(highlight))
+            .highlightAnnotations
+            .single()
+            .comments
+
+        assertEquals(listOf("root-1", "reply-1"), comments.map { it.id })
+        assertEquals(null, comments[0].parentId)
+        assertEquals("root-1", comments[1].parentId)
+        assertEquals("Root body", comments[0].contents)
+        assertEquals("Reply body", comments[1].contents)
+        assertEquals(15L, comments[0].modifiedAt)
+        assertEquals(20L, comments[1].modifiedAt)
     }
 
     @Test
@@ -118,5 +172,36 @@ class SharedPdfAnnotationExportMapperTest {
             PdfPageBounds(0.2f, 0.3f, 0.6f, 0.4f),
             payload.highlightAnnotations.single().boundsList.single()
         )
+    }
+
+    @Test
+    fun `ink appearance trims chisel highlighter endpoints only`() {
+        val chisel = SharedPdfInkAnnotationExport(
+            id = "highlight",
+            pageIndex = 0,
+            tool = PdfInkTool.HIGHLIGHTER,
+            points = listOf(PdfPagePoint(0.1f, 0.2f), PdfPagePoint(0.9f, 0.2f)),
+            colorArgb = 0x8CFFEB3B.toInt(),
+            strokeWidth = 0.1f,
+            contents = ""
+        )
+        val round = chisel.copy(tool = PdfInkTool.HIGHLIGHTER_ROUND)
+        val trimmed = chisel.pdfInkAppearancePoints(pageWidth = 100f, pageHeight = 100f)
+        val duplicatedEndpointTrimmed = chisel.copy(
+            points = listOf(
+                PdfPagePoint(0.1f, 0.2f),
+                PdfPagePoint(0.1f, 0.2f),
+                PdfPagePoint(0.9f, 0.2f),
+                PdfPagePoint(0.9f, 0.2f)
+            )
+        ).pdfInkAppearancePoints(pageWidth = 100f, pageHeight = 100f)
+
+        assertEquals(0.15f, trimmed.first().x, 0.0001f)
+        assertEquals(0.2f, trimmed.first().y, 0.0001f)
+        assertEquals(0.85f, trimmed.last().x, 0.0001f)
+        assertEquals(0.2f, trimmed.last().y, 0.0001f)
+        assertEquals(0.15f, duplicatedEndpointTrimmed[1].x, 0.0001f)
+        assertEquals(0.85f, duplicatedEndpointTrimmed[2].x, 0.0001f)
+        assertEquals(round.points, round.pdfInkAppearancePoints(pageWidth = 100f, pageHeight = 100f))
     }
 }

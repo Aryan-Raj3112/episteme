@@ -7810,12 +7810,15 @@ fun PdfViewerScreen(
                     )
                 },
                 onDismiss = { highlightToNoteId = null },
-                onSave = { noteText ->
+                onSave = { noteText, comments ->
                     val index =
                         userHighlights.indexOfFirst { it.id == targetHighlight.id }
                     if (index != -1) {
                         userHighlights[index] =
-                            targetHighlight.copy(note = noteText.takeIf { it.isNotBlank() })
+                            targetHighlight.copy(
+                                note = noteText.takeIf { it.isNotBlank() },
+                                comments = comments
+                            )
                     }
                     highlightToNoteId = null
                 },

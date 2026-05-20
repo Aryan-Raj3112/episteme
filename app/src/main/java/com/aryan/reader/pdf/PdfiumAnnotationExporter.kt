@@ -40,12 +40,16 @@ import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationExportMapper
+import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -160,7 +164,15 @@ internal object PdfiumAnnotationExporter {
                     highlightRectCounts = payload.highlightRectCounts,
                     highlightRects = payload.highlightRects,
                     highlightNames = payload.highlightNames,
-                    highlightContents = payload.highlightContents
+                    highlightContents = payload.highlightContents,
+                    highlightCommentOffsets = payload.highlightCommentOffsets,
+                    highlightCommentCounts = payload.highlightCommentCounts,
+                    highlightCommentParentIndices = payload.highlightCommentParentIndices,
+                    highlightCommentNames = payload.highlightCommentNames,
+                    highlightCommentAuthors = payload.highlightCommentAuthors,
+                    highlightCommentContents = payload.highlightCommentContents,
+                    highlightCommentCreatedDates = payload.highlightCommentCreatedDates,
+                    highlightCommentModifiedDates = payload.highlightCommentModifiedDates
                 )
 
                 if (!exported) {
@@ -205,6 +217,10 @@ internal object PdfiumAnnotationExporter {
             )
         )
         val inkItems = exportPayload.inkAnnotations
+        val inkPointsForExport = inkItems.map { annotation ->
+            val pageSize = pageSizeFor(pageSizes, annotation.pageIndex)
+            annotation.pdfInkAppearancePoints(pageSize.width.toFloat(), pageSize.height.toFloat())
+        }
 
         val inkPageIndices = IntArray(inkItems.size)
         val inkTypes = IntArray(inkItems.size)
@@ -212,21 +228,22 @@ internal object PdfiumAnnotationExporter {
         val inkStrokeWidths = FloatArray(inkItems.size)
         val inkPointOffsets = IntArray(inkItems.size)
         val inkPointCounts = IntArray(inkItems.size)
-        val inkPoints = FloatArray(inkItems.sumOf { it.points.size } * 2)
+        val inkPoints = FloatArray(inkPointsForExport.sumOf { it.size } * 2)
         val inkNames = Array(inkItems.size) { "" }
         val inkContents = Array(inkItems.size) { "" }
 
         var inkPointCursor = 0
         inkItems.forEachIndexed { index, annotation ->
+            val points = inkPointsForExport[index]
             inkPageIndices[index] = annotation.pageIndex
             inkTypes[index] = annotation.tool.toAndroidInkTypeOrdinal()
             inkColors[index] = annotation.colorArgb
             inkStrokeWidths[index] = annotation.strokeWidth
             inkPointOffsets[index] = inkPointCursor / 2
-            inkPointCounts[index] = annotation.points.size
+            inkPointCounts[index] = points.size
             inkNames[index] = annotation.id
             inkContents[index] = annotation.contents
-            annotation.points.forEach { point ->
+            points.forEach { point ->
                 inkPoints[inkPointCursor++] = point.x
                 inkPoints[inkPointCursor++] = point.y
             }
@@ -271,8 +288,18 @@ internal object PdfiumAnnotationExporter {
         val highlightRects = FloatArray(boundedHighlights.sumOf { it.boundsList.size } * 4)
         val highlightNames = Array(boundedHighlights.size) { "" }
         val highlightContents = Array(boundedHighlights.size) { "" }
+        val highlightCommentCount = boundedHighlights.sumOf { it.comments.size }
+        val highlightCommentOffsets = IntArray(boundedHighlights.size)
+        val highlightCommentCounts = IntArray(boundedHighlights.size)
+        val highlightCommentParentIndices = IntArray(highlightCommentCount)
+        val highlightCommentNames = Array(highlightCommentCount) { "" }
+        val highlightCommentAuthors = Array(highlightCommentCount) { "" }
+        val highlightCommentContents = Array(highlightCommentCount) { "" }
+        val highlightCommentCreatedDates = Array(highlightCommentCount) { "" }
+        val highlightCommentModifiedDates = Array(highlightCommentCount) { "" }
 
         var highlightRectCursor = 0
+        var highlightCommentCursor = 0
         boundedHighlights.forEachIndexed { index, highlight ->
             highlightPageIndices[index] = highlight.pageIndex
             highlightColors[index] = highlight.colorArgb
@@ -280,6 +307,21 @@ internal object PdfiumAnnotationExporter {
             highlightRectCounts[index] = highlight.boundsList.size
             highlightNames[index] = highlight.id
             highlightContents[index] = highlight.contents
+            highlightCommentOffsets[index] = highlightCommentCursor
+            highlightCommentCounts[index] = highlight.comments.size
+            val localCommentIndices = mutableMapOf<String, Int>()
+            highlight.comments.forEachIndexed { localIndex, comment ->
+                val globalIndex = highlightCommentCursor + localIndex
+                highlightCommentParentIndices[globalIndex] = comment.parentId?.let(localCommentIndices::get) ?: -1
+                localCommentIndices[comment.id] = localIndex
+                highlightCommentNames[globalIndex] = comment.id
+                highlightCommentAuthors[globalIndex] = comment.author
+                highlightCommentContents[globalIndex] = comment.contents
+                highlightCommentCreatedDates[globalIndex] = comment.createdAt.toPdfDateString()
+                highlightCommentModifiedDates[globalIndex] = comment.modifiedAt.toPdfDateString()
+                    .ifBlank { comment.createdAt.toPdfDateString() }
+            }
+            highlightCommentCursor += highlight.comments.size
             highlight.boundsList.forEach { rect ->
                 highlightRects[highlightRectCursor++] = rect.left
                 highlightRects[highlightRectCursor++] = rect.top
@@ -319,7 +361,15 @@ internal object PdfiumAnnotationExporter {
             highlightRectCounts = highlightRectCounts,
             highlightRects = highlightRects,
             highlightNames = highlightNames,
-            highlightContents = highlightContents
+            highlightContents = highlightContents,
+            highlightCommentOffsets = highlightCommentOffsets,
+            highlightCommentCounts = highlightCommentCounts,
+            highlightCommentParentIndices = highlightCommentParentIndices,
+            highlightCommentNames = highlightCommentNames,
+            highlightCommentAuthors = highlightCommentAuthors,
+            highlightCommentContents = highlightCommentContents,
+            highlightCommentCreatedDates = highlightCommentCreatedDates,
+            highlightCommentModifiedDates = highlightCommentModifiedDates
         )
     }
 
@@ -359,6 +409,7 @@ internal object PdfiumAnnotationExporter {
                 boundsList = boundsList,
                 text = highlight.text,
                 note = highlight.note,
+                comments = highlight.comments,
                 colorArgb = highlight.color.color.toArgb(),
                 rangeStartIndex = highlight.range.first,
                 rangeEndIndex = (highlight.range.second - 1).coerceAtLeast(highlight.range.first)
@@ -789,6 +840,13 @@ internal object PdfiumAnnotationExporter {
     private fun String.sanitizeRasterTextPreservingLength(): String =
         replace(PAGE_BREAK_CHAR, '\n')
             .replace('\r', ' ')
+
+    private fun Long.toPdfDateString(): String {
+        if (this <= 0L) return ""
+        return SimpleDateFormat("'D:'yyyyMMddHHmmss'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(this))
+    }
 }
 
 internal data class PdfiumRasterOverlay(
@@ -869,7 +927,15 @@ internal data class PdfiumAnnotationExportPayload(
     val highlightRectCounts: IntArray,
     val highlightRects: FloatArray,
     val highlightNames: Array<String>,
-    val highlightContents: Array<String>
+    val highlightContents: Array<String>,
+    val highlightCommentOffsets: IntArray,
+    val highlightCommentCounts: IntArray,
+    val highlightCommentParentIndices: IntArray,
+    val highlightCommentNames: Array<String>,
+    val highlightCommentAuthors: Array<String>,
+    val highlightCommentContents: Array<String>,
+    val highlightCommentCreatedDates: Array<String>,
+    val highlightCommentModifiedDates: Array<String>
 ) {
     fun hasAnnotations(): Boolean =
         inkPageIndices.isNotEmpty() ||

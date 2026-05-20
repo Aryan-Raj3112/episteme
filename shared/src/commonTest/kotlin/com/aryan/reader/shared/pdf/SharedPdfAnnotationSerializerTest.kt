@@ -71,6 +71,22 @@ class SharedPdfAnnotationSerializerTest {
                   "rangeStart": 4,
                   "rangeEnd": 18,
                   "note": "Keep this",
+                  "comments": [
+                    {
+                      "id": "comment-1",
+                      "author": "Ada",
+                      "contents": "First comment",
+                      "createdAt": 100,
+                      "modifiedAt": 120
+                    },
+                    {
+                      "id": "comment-2",
+                      "parentId": "comment-1",
+                      "author": "Bea",
+                      "contents": "Reply",
+                      "createdAt": 130
+                    }
+                  ],
                   "bounds": []
                 }
               ]
@@ -90,6 +106,10 @@ class SharedPdfAnnotationSerializerTest {
         assertEquals(0.032f, annotations[1].pageRelativeFontSize ?: 0f, 0.0001f)
         assertTrue(annotations[1].isBold)
         assertEquals("Keep this", annotations[2].note)
+        assertEquals(listOf("comment-1", "comment-2"), annotations[2].comments.map { it.id })
+        assertEquals("comment-1", annotations[2].comments[1].parentId)
+        assertEquals("Ada", annotations[2].comments[0].author)
+        assertEquals(120L, annotations[2].comments[0].modifiedAt)
         assertEquals(4, annotations[2].rangeStartIndex)
         assertEquals(17, annotations[2].rangeEndIndex)
     }
@@ -125,6 +145,22 @@ class SharedPdfAnnotationSerializerTest {
                 tool = PdfInkTool.HIGHLIGHTER,
                 text = "Desktop highlight",
                 note = "Synced note",
+                comments = listOf(
+                    SharedPdfAnnotationComment(
+                        id = "comment-1",
+                        author = "Ada",
+                        contents = "Sidecar comment",
+                        createdAt = 100L,
+                        modifiedAt = 110L
+                    ),
+                    SharedPdfAnnotationComment(
+                        id = "comment-2",
+                        parentId = "comment-1",
+                        author = "Bea",
+                        contents = "Nested reply",
+                        createdAt = 120L
+                    )
+                ),
                 colorArgb = 0x8C64B5F6.toInt(),
                 rangeStartIndex = 7,
                 rangeEndIndex = 21
@@ -155,6 +191,11 @@ class SharedPdfAnnotationSerializerTest {
         assertEquals("BLUE", legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("color").jsonPrimitive.content)
         assertEquals("Synced note", legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("note").jsonPrimitive.content)
         assertEquals(22, legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("rangeEnd").jsonPrimitive.content.toInt())
+        val comments = legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("comments").jsonArray
+        assertEquals(2, comments.size)
+        assertEquals("comment-1", comments[0].jsonObject.getValue("id").jsonPrimitive.content)
+        assertEquals("comment-1", comments[1].jsonObject.getValue("parentId").jsonPrimitive.content)
+        assertEquals("Nested reply", comments[1].jsonObject.getValue("contents").jsonPrimitive.content)
     }
 
     @Test

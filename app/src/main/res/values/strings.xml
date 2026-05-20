@@ -922,13 +922,21 @@
 
     <!-- Annotations & Notes -->
     <string name="action_save_note">Save Note</string>
+    <string name="action_save_annotation">Save</string>
+    <string name="action_save_comment">Save Comment</string>
+    <string name="action_add_comment">Add Comment</string>
+    <string name="action_reply">Reply</string>
     <string name="placeholder_add_note">Add a note…</string>
+    <string name="placeholder_add_comment">Add a comment…</string>
     <!-- Short label for the dictionary action in a text-selection popup. -->
     <string name="label_dict">Dict</string>
     <!-- Short label for the speak/TTS action in a text-selection popup. -->
     <string name="label_speak">Speak</string>
     <!-- Short label for the note action in a text-selection popup. -->
     <string name="label_note">Note</string>
+    <string name="label_comments">Comments</string>
+    <string name="label_editing_comment">Editing comment</string>
+    <string name="label_replying_to">Replying to %1$s</string>
     <!-- Short label for the edit action in a text-selection popup. -->
     <string name="label_edit">Edit</string>
 

@@ -189,6 +189,7 @@ object SharedPdfAnnotationSidecarCodec {
                 boundsList = boundsList,
                 text = obj.string("text").orEmpty(),
                 note = obj.string("note"),
+                comments = obj.array("comments").toSharedPdfAnnotationComments(),
                 colorArgb = SharedPdfAndroidHighlightColors.argbForName(colorName),
                 rangeStartIndex = rangeStart,
                 rangeEndIndex = inclusiveRangeEnd
@@ -270,6 +271,7 @@ object SharedPdfAnnotationSidecarCodec {
                             put("rangeStart", JsonPrimitive(rangeStart))
                             put("rangeEnd", JsonPrimitive(rangeEnd))
                             annotation.note?.takeIf { it.isNotBlank() }?.let { put("note", JsonPrimitive(it)) }
+                            annotation.comments.toJsonArrayOrNull()?.let { put("comments", it) }
                             put("bounds", JsonArray(emptyList()))
                         }
                     )
@@ -325,6 +327,47 @@ object SharedPdfAnnotationSidecarCodec {
     private fun JsonObject.array(name: String): JsonArray? = this[name]?.jsonArrayOrNull()
 
     private fun JsonObject.objectValue(name: String): JsonObject? = this[name]?.jsonObjectOrNull()
+
+    private fun JsonArray?.toSharedPdfAnnotationComments(): List<SharedPdfAnnotationComment> {
+        return this?.mapNotNull { element ->
+            val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
+            val contents = obj.string("contents")
+                ?: obj.string("text")
+                ?: obj.string("comment")
+                ?: return@mapNotNull null
+            SharedPdfAnnotationComment(
+                id = obj.string("id") ?: stableAnnotationId("comment", element),
+                parentId = obj.string("parentId") ?: obj.string("inReplyTo"),
+                author = obj.string("author").orEmpty(),
+                contents = contents,
+                createdAt = obj.long("createdAt") ?: obj.long("created") ?: 0L,
+                modifiedAt = obj.long("modifiedAt")
+                    ?: obj.long("modified")
+                    ?: obj.long("createdAt")
+                    ?: obj.long("created")
+                    ?: 0L
+            )
+        }.orEmpty()
+    }
+
+    private fun List<SharedPdfAnnotationComment>.toJsonArrayOrNull(): JsonArray? {
+        val comments = mapNotNull { comment ->
+            val contents = comment.contents.trim()
+            if (contents.isBlank()) return@mapNotNull null
+            JsonObject(
+                buildMap {
+                    put("id", JsonPrimitive(comment.id))
+                    comment.parentId?.takeIf { it.isNotBlank() }?.let { put("parentId", JsonPrimitive(it)) }
+                    comment.author.takeIf { it.isNotBlank() }?.let { put("author", JsonPrimitive(it)) }
+                    put("contents", JsonPrimitive(contents))
+                    if (comment.createdAt > 0L) put("createdAt", JsonPrimitive(comment.createdAt))
+                    val modifiedAt = comment.modifiedAt.takeIf { it > 0L } ?: comment.createdAt
+                    if (modifiedAt > 0L) put("modifiedAt", JsonPrimitive(modifiedAt))
+                }
+            )
+        }
+        return JsonArray(comments).takeIf { comments.isNotEmpty() }
+    }
 
     private fun JsonObject.string(name: String): String? {
         return runCatching { this[name]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull }

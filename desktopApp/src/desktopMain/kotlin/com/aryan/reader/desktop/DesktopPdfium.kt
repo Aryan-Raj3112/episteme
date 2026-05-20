@@ -29,6 +29,7 @@ import com.aryan.reader.shared.pdf.SharedPdfReflowTextSpan
 import com.aryan.reader.shared.pdf.SharedPdfRichPageLayout
 import com.aryan.reader.shared.pdf.SharedPdfSearchIndex
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
+import com.aryan.reader.shared.pdf.pdfInkAppearancePoints
 import com.sun.jna.Callback
 import com.sun.jna.Library
 import com.sun.jna.Memory
@@ -42,7 +43,11 @@ import java.awt.image.BufferedImage
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteOrder
+import java.text.SimpleDateFormat
 import java.util.Base64
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 
@@ -176,6 +181,7 @@ object DesktopPdfium {
     private const val FPDF_RENDER_NO_SMOOTHTEXT = 0x1000
     private const val FPDF_BITMAP_BGRA = 4
     private const val FPDF_ANNOT_COLOR = 0
+    private const val FPDF_ANNOT_TEXT = 1
     private const val FPDF_ANNOT_HIGHLIGHT = 9
     private const val FPDF_ANNOT_INK = 15
     private const val FPDF_ANNOT_FLAG_PRINT = 1 shl 2
@@ -1461,7 +1467,7 @@ object DesktopPdfium {
                 contents = contents,
                 author = annotationStringValue(annotation, "T"),
                 name = name,
-                inReplyTo = annotationStringValue(annotation, "IRT")
+                inReplyTo = annotationReplyToValue(annotation)
             )
         } finally {
             api.FPDFPage_CloseAnnot(annotation)
@@ -1507,6 +1513,18 @@ object DesktopPdfium {
             .cleanEmbeddedAnnotationText()
     }
 
+    private fun annotationReplyToValue(annotation: Pointer): String {
+        val parent = runCatching { api.FPDFAnnot_GetLinkedAnnot(annotation, "IRT") }.getOrNull()
+        if (parent != null) {
+            return try {
+                annotationStringValue(parent, "NM")
+            } finally {
+                runCatching { api.FPDFPage_CloseAnnot(parent) }
+            }
+        }
+        return annotationStringValue(annotation, "IRT")
+    }
+
     private fun String.cleanEmbeddedAnnotationText(): String {
         return replace(Regex("<[^>]+>"), "")
             .replace("&nbsp;", " ")
@@ -1529,12 +1547,14 @@ object DesktopPdfium {
             loadPage(document, annotation.pageIndex).usePointer { page ->
                 val pageWidth = api.FPDF_GetPageWidthF(page).takeIf { it > 0f } ?: return@usePointer false
                 val pageHeight = api.FPDF_GetPageHeightF(page).takeIf { it > 0f } ?: return@usePointer false
-                val nativePoints = FsPointF().toArray(annotation.points.size) as Array<FsPointF>
+                val exportPoints = annotation.pdfInkAppearancePoints(pageWidth, pageHeight)
+                if (exportPoints.size < 2) return@usePointer false
+                val nativePoints = FsPointF().toArray(exportPoints.size) as Array<FsPointF>
                 var minX = pageWidth
                 var maxX = 0f
                 var minY = pageHeight
                 var maxY = 0f
-                annotation.points.forEachIndexed { index, point ->
+                exportPoints.forEachIndexed { index, point ->
                     val x = point.x.coerceIn(0f, 1f) * pageWidth
                     val y = (1f - point.y.coerceIn(0f, 1f)) * pageHeight
                     nativePoints[index].x = x
@@ -1560,11 +1580,13 @@ object DesktopPdfium {
                     api.FPDFAnnot_SetBorder(annot, 0f, 0f, strokeWidth)
                     runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
                     setPdfiumAnnotationString(annot, "NM", annotation.id)
-                    setPdfiumAnnotationString(annot, "Contents", annotation.contents)
+                    annotation.contents.takeIf { it.isNotBlank() }?.let { contents ->
+                        setPdfiumAnnotationString(annot, "Contents", contents)
+                    }
                     val added = api.FPDFAnnot_AddInkStroke(
                         annot,
                         nativePoints.first(),
-                        NativeLong(annotation.points.size.toLong())
+                        NativeLong(exportPoints.size.toLong())
                     ) >= 0
                     runCatching { api.FPDFPage_GenerateContent(page) }
                     added
@@ -1621,14 +1643,83 @@ object DesktopPdfium {
                     api.FPDFAnnot_SetColor(annot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
                     runCatching { api.FPDFAnnot_SetFlags(annot, FPDF_ANNOT_FLAG_PRINT) }
                     setPdfiumAnnotationString(annot, "NM", annotation.id)
-                    setPdfiumAnnotationString(annot, "Contents", annotation.contents)
+                    annotation.contents.takeIf { it.isNotBlank() }?.let { contents ->
+                        setPdfiumAnnotationString(annot, "Contents", contents)
+                    }
+                    val insertedComments = insertHighlightComments(
+                        page = page,
+                        highlightAnnot = annot,
+                        annotation = annotation,
+                        unionRight = unionRight,
+                        unionTop = unionTop,
+                        pageWidth = pageWidth,
+                        pageHeight = pageHeight
+                    )
                     runCatching { api.FPDFPage_GenerateContent(page) }
-                    appendedAll
+                    appendedAll && insertedComments
                 } finally {
                     api.FPDFPage_CloseAnnot(annot)
                 }
             }
         }.getOrDefault(false)
+    }
+
+    private fun insertHighlightComments(
+        page: Pointer,
+        highlightAnnot: Pointer,
+        annotation: SharedPdfHighlightAnnotationExport,
+        unionRight: Float,
+        unionTop: Float,
+        pageWidth: Float,
+        pageHeight: Float
+    ): Boolean {
+        if (annotation.comments.isEmpty()) return true
+
+        val commentAnnots = mutableListOf<Pointer>()
+        val commentAnnotsById = mutableMapOf<String, Pointer>()
+        var insertedAll = true
+        try {
+            annotation.comments.forEachIndexed { index, comment ->
+                val commentAnnot = api.FPDFPage_CreateAnnot(page, FPDF_ANNOT_TEXT)
+                if (commentAnnot == null) {
+                    insertedAll = false
+                    return@forEachIndexed
+                }
+                commentAnnots += commentAnnot
+                commentAnnotsById[comment.id] = commentAnnot
+
+                api.FPDFAnnot_SetRect(
+                    commentAnnot,
+                    pdfCommentRect(
+                        anchorRight = unionRight,
+                        anchorTop = unionTop,
+                        pageWidth = pageWidth,
+                        pageHeight = pageHeight,
+                        commentIndex = index
+                    )
+                )
+                val color = annotation.colorArgb.toPdfiumRgba().copy(a = 255)
+                api.FPDFAnnot_SetColor(commentAnnot, FPDF_ANNOT_COLOR, color.r, color.g, color.b, color.a)
+                runCatching { api.FPDFAnnot_SetFlags(commentAnnot, FPDF_ANNOT_FLAG_PRINT) }
+                setPdfiumAnnotationString(commentAnnot, "NM", comment.id)
+                comment.author.takeIf { it.isNotBlank() }?.let { setPdfiumAnnotationString(commentAnnot, "T", it) }
+                setPdfiumAnnotationString(commentAnnot, "Contents", comment.contents)
+                comment.createdAt.toPdfDateString().takeIf { it.isNotBlank() }?.let {
+                    setPdfiumAnnotationString(commentAnnot, "CreationDate", it)
+                }
+                val modifiedDate = comment.modifiedAt.toPdfDateString()
+                    .ifBlank { comment.createdAt.toPdfDateString() }
+                modifiedDate.takeIf { it.isNotBlank() }?.let { setPdfiumAnnotationString(commentAnnot, "M", it) }
+
+                val parent = comment.parentId?.let(commentAnnotsById::get) ?: highlightAnnot
+                runCatching { api.FPDFAnnot_SetLinkedAnnot(commentAnnot, "IRT", parent) }
+            }
+        } finally {
+            commentAnnots.forEach { commentAnnot ->
+                runCatching { api.FPDFPage_CloseAnnot(commentAnnot) }
+            }
+        }
+        return insertedAll
     }
 
     private fun insertRasterOverlay(
@@ -1746,6 +1837,28 @@ object DesktopPdfium {
             right = maxOf(left, right) + padding,
             bottom = minOf(top, bottom) - padding
         ).also { it.write() }
+    }
+
+    private fun pdfCommentRect(
+        anchorRight: Float,
+        anchorTop: Float,
+        pageWidth: Float,
+        pageHeight: Float,
+        commentIndex: Int
+    ): FsRectF {
+        val iconSize = minOf(18f, maxOf(10f, pageWidth * 0.03f))
+        val left = (anchorRight + 2f).coerceIn(0f, (pageWidth - iconSize).coerceAtLeast(0f))
+        var top = anchorTop - commentIndex * (iconSize + 2f)
+        if (top > pageHeight) top = pageHeight
+        if (top - iconSize < 0f) top = minOf(pageHeight, iconSize)
+        return pdfRect(left, top, left + iconSize, top - iconSize, 0f)
+    }
+
+    private fun Long.toPdfDateString(): String {
+        if (this <= 0L) return ""
+        return SimpleDateFormat("'D:'yyyyMMddHHmmss'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(this))
     }
 
     private fun Int.toPdfiumRgba(): PdfiumRgba {
@@ -2176,10 +2289,12 @@ object DesktopPdfium {
         fun FPDFAnnot_GetSubtype(annotation: Pointer): Int
         fun FPDFAnnot_GetRect(annotation: Pointer, rect: Pointer): Int
         fun FPDFAnnot_GetStringValue(annotation: Pointer, key: String, buffer: Pointer?, buflen: Int): Int
+        fun FPDFAnnot_GetLinkedAnnot(annotation: Pointer, key: String): Pointer?
         fun FPDFAnnot_SetRect(annotation: Pointer, rect: FsRectF): Int
         fun FPDFAnnot_SetColor(annotation: Pointer, type: Int, r: Int, g: Int, b: Int, a: Int): Int
         fun FPDFAnnot_SetBorder(annotation: Pointer, horizontalRadius: Float, verticalRadius: Float, borderWidth: Float): Int
         fun FPDFAnnot_SetStringValue(annotation: Pointer, key: String, value: Pointer): Int
+        fun FPDFAnnot_SetLinkedAnnot(annotation: Pointer, key: String, linkedAnnotation: Pointer): Int
         fun FPDFAnnot_AddInkStroke(annotation: Pointer, points: FsPointF, pointCount: NativeLong): Int
         fun FPDFAnnot_AppendAttachmentPoints(annotation: Pointer, quadPoints: FsQuadPointsF): Int
         fun FPDFAnnot_SetFlags(annotation: Pointer, flags: Int): Int
