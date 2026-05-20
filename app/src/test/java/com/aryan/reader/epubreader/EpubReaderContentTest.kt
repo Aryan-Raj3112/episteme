@@ -47,7 +47,36 @@ class EpubReaderContentTest {
         assertFalse(result.chunks.joinToString().contains("<script>"))
         assertTrue(result.chunks[0].contains("Paragraph 20"))
         assertTrue(result.chunks[1].contains("Paragraph 21"))
+        assertEquals(listOf(0, 20), result.chunkElementStartIndices)
+        assertEquals(listOf(20, 1), result.chunkElementCounts)
         assertEquals(0, result.startChunkIndex)
+    }
+
+    @Test
+    fun `loadChapterContent records element starts independently from whitespace text nodes`() = runTest {
+        val root = temp.newFolder("content-whitespace")
+        val body = (1..25).joinToString(separator = "\n", prefix = "\n", postfix = "\n") { index ->
+            "<p>Paragraph $index</p>"
+        }
+        writeChapter(root, "chapter.xhtml", "<html><body>$body</body></html>")
+        val book = epubBook(root, listOf(chapter("chapter.xhtml")))
+
+        val result = loadChapterContent(
+            context = contextWithStrings(),
+            epubBook = book,
+            chapterIndex = 0,
+            chunkTargetOverride = null,
+            isInitialCfiLoad = false,
+            cfiToLoad = null,
+            locatorConverter = mockk()
+        )
+
+        assertEquals(listOf(0, 10, 20), result.chunkElementStartIndices)
+        assertEquals(listOf(10, 10, 5), result.chunkElementCounts)
+        assertEquals(
+            "data-chunk-index='1' data-element-start-index='10' data-element-count='10'",
+            readerChunkContainerAttributes(1, result.chunkElementStartIndices, result.chunkElementCounts)
+        )
     }
 
     @Test

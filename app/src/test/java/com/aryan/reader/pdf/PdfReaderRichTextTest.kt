@@ -249,7 +249,7 @@ class PdfReaderRichTextTest {
 
         val remapped = remapAndroidRichTextForLayoutChange(currentLayout, updatedLayout, pageLayouts)
 
-        assertEquals("Page 1$PAGE_BREAK_CHAR$PAGE_BREAK_CHARPage 2", remapped.text)
+        assertEquals("Page 1${PAGE_BREAK_CHAR}${PAGE_BREAK_CHAR}Page 2", remapped.text)
     }
 
     @Test

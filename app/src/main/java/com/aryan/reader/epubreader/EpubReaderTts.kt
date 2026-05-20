@@ -327,11 +327,16 @@ private fun handleVerticalAutoAdvance(
             Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d("Vertical: Loading remaining text of current chapter natively.")
             val nativeChunks = locatorConverter.getTtsChunksForChapter(epubBook, currentTtsChapterIndex)
 
-            if (!nativeChunks.isNullOrEmpty() && lastReadCfi != null) {
-                val lastCfiPath = lastReadCfi.split(":")[0]
-                val resumeIdx = nativeChunks.indexOfLast { it.sourceCfi.split(":")[0] == lastCfiPath }
+            if (!nativeChunks.isNullOrEmpty()) {
+                val resumeIdx = findTtsChunkResumeIndex(
+                    chunks = nativeChunks,
+                    sourceCfi = lastReadCfi,
+                    startOffsetInSource = currentState.startOffsetInSource,
+                    currentText = currentState.currentText,
+                    currentChunkIndexFallback = currentState.currentChunkIndex
+                )
 
-                if (resumeIdx != -1 && resumeIdx + 1 < nativeChunks.size) {
+                if (resumeIdx != null && resumeIdx + 1 < nativeChunks.size) {
                     val startChunkIndex = resumeIdx + 1
                     val token = getAuthToken()
                     ttsController.start(

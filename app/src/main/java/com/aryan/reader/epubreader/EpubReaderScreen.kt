@@ -270,31 +270,6 @@ private fun epubHighlightDiagSnippet(text: String, maxLength: Int = 80): String 
         .take(maxLength)
 }
 
-private fun sameTtsChunkSource(first: String, second: String): Boolean {
-    if (first.isBlank() || second.isBlank()) return first == second
-    return CfiUtils.getPath(first) == CfiUtils.getPath(second)
-}
-
-private fun findTtsChunkStartIndex(
-    chunks: List<TtsChunk>,
-    target: TtsChunk?
-): Int? {
-    if (target == null) return null
-
-    val exactIndex = chunks.indexOfFirst {
-        sameTtsChunkSource(it.sourceCfi, target.sourceCfi) &&
-            it.startOffsetInSource == target.startOffsetInSource &&
-            it.text == target.text
-    }
-    if (exactIndex >= 0) return exactIndex
-
-    return chunks.indexOfFirst {
-        sameTtsChunkSource(it.sourceCfi, target.sourceCfi) &&
-            target.startOffsetInSource >= it.startOffsetInSource &&
-            target.startOffsetInSource < it.startOffsetInSource + it.text.length
-    }.takeIf { it >= 0 }
-}
-
 private fun List<TtsChunk>.withInitialChunkOverride(
     startChunkIndex: Int,
     initialChunk: TtsChunk?
@@ -1121,6 +1096,8 @@ fun EpubReaderHost(
     var loadUpToChunkIndex by remember(currentChapterIndex) { mutableIntStateOf(0) }
 
     var chapterChunks by remember(currentChapterIndex) { mutableStateOf<List<String>>(emptyList()) }
+    var chapterChunkElementStartIndices by remember(currentChapterIndex) { mutableStateOf<List<Int>>(emptyList()) }
+    var chapterChunkElementCounts by remember(currentChapterIndex) { mutableStateOf<List<Int>>(emptyList()) }
     var chapterHead by remember(currentChapterIndex) { mutableStateOf("") }
     var isChapterParsing by remember(currentChapterIndex) { mutableStateOf(true) }
 
@@ -2067,6 +2044,8 @@ fun EpubReaderHost(
             webViewRefForTts = null
             chapterHead = ""
             chapterChunks = emptyList()
+            chapterChunkElementStartIndices = emptyList()
+            chapterChunkElementCounts = emptyList()
             startPageThumbnail?.recycle()
             startPageThumbnail = null
             autoScrollResumeJob.value?.cancel()
@@ -2144,6 +2123,8 @@ fun EpubReaderHost(
 
         chapterHead = result.head
         chapterChunks = result.chunks
+        chapterChunkElementStartIndices = result.chunkElementStartIndices
+        chapterChunkElementCounts = result.chunkElementCounts
         isChapterParsing = false
 
         if (initialScrollTargetForChapter == ChapterScrollPosition.END) {
@@ -3747,16 +3728,26 @@ fun EpubReaderHost(
                                     } else if (chapterChunks.isNotEmpty()) {
                                         var hasRequestedExtractionForThisChapter by remember(targetChapterIndex) { mutableStateOf(false) }
 
-                                        val initialContentToLoad = remember(loadUpToChunkIndex, chapterChunks) {
+                                        val initialContentToLoad = remember(
+                                            loadUpToChunkIndex,
+                                            chapterChunks,
+                                            chapterChunkElementStartIndices,
+                                            chapterChunkElementCounts
+                                        ) {
                                             val targetIdx = loadUpToChunkIndex
                                             val startIdx = 0
                                             val endIdx = minOf(chapterChunks.lastIndex, targetIdx + 1)
 
                                             chapterChunks.indices.joinToString(separator = "\n") { index ->
+                                                val attributes = readerChunkContainerAttributes(
+                                                    index,
+                                                    chapterChunkElementStartIndices,
+                                                    chapterChunkElementCounts
+                                                )
                                                 if (index in startIdx..endIdx) {
-                                                    "<div class='chunk-container' data-chunk-index='$index'>${chapterChunks[index]}</div>"
+                                                    "<div class='chunk-container' $attributes>${chapterChunks[index]}</div>"
                                                 } else {
-                                                    "<div class='chunk-container' data-chunk-index='$index'></div>"
+                                                    "<div class='chunk-container' $attributes></div>"
                                                 }
                                             }
                                         }

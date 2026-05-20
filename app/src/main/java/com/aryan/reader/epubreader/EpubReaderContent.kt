@@ -27,6 +27,8 @@ import com.aryan.reader.paginatedreader.LocatorConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
 import java.io.File
 
 data class ChapterLoadingResult(
@@ -34,8 +36,43 @@ data class ChapterLoadingResult(
     val chunks: List<String>,
     val startChunkIndex: Int,
     val isSuccess: Boolean,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val chunkElementStartIndices: List<Int> = emptyList(),
+    val chunkElementCounts: List<Int> = emptyList()
 )
+
+internal data class ReaderHtmlChunk(
+    val html: String,
+    val elementStartIndex: Int,
+    val elementCount: Int
+)
+
+internal fun splitBodyNodesIntoReaderChunks(
+    bodyNodes: List<Node>,
+    chunkSize: Int = 20
+): List<ReaderHtmlChunk> {
+    var elementStartIndex = 0
+    return bodyNodes.chunked(chunkSize).map { nodes ->
+        val elementCount = nodes.count { it is Element }
+        ReaderHtmlChunk(
+            html = nodes.joinToString(separator = "\n") { it.outerHtml() },
+            elementStartIndex = elementStartIndex,
+            elementCount = elementCount
+        ).also {
+            elementStartIndex += elementCount
+        }
+    }
+}
+
+internal fun readerChunkContainerAttributes(
+    index: Int,
+    chunkElementStartIndices: List<Int>,
+    chunkElementCounts: List<Int>
+): String {
+    val startIndex = chunkElementStartIndices.getOrElse(index) { index * 20 }
+    val elementCount = chunkElementCounts.getOrElse(index) { 20 }
+    return "data-chunk-index='$index' data-element-start-index='$startIndex' data-element-count='$elementCount'"
+}
 
 /**
  * loads the chapter HTML, splits it into chunks, and calculates
@@ -59,21 +96,34 @@ suspend fun loadChapterContent(
         val fullPath = "${epubBook.extractionBasePath}/${chapter.htmlFilePath}"
         val htmlFile = File(fullPath)
 
-        val (headContent, chunks) = if (htmlFile.exists()) {
+        val (headContent, chunks, chunkElementStartIndices, chunkElementCounts) = if (htmlFile.exists()) {
             val doc = Jsoup.parse(htmlFile, "UTF-8")
             val head = doc.head().html()
             doc.select("script").remove()
             val bodyNodes = doc.body().childNodes().toList()
-            val chunkedList = bodyNodes.chunked(20).map { chunkOfNodes ->
-                chunkOfNodes.joinToString(separator = "\n") { it.outerHtml() }
-            }
-            if (chunkedList.isEmpty()) {
-                head to listOf("<body><p>${context.getString(R.string.chapter_empty)}</p></body>")
+            val htmlChunks = splitBodyNodesIntoReaderChunks(bodyNodes)
+            if (htmlChunks.isEmpty()) {
+                ChapterHtmlPayload(
+                    head = head,
+                    chunks = listOf("<body><p>${context.getString(R.string.chapter_empty)}</p></body>"),
+                    chunkElementStartIndices = listOf(0),
+                    chunkElementCounts = listOf(1)
+                )
             } else {
-                head to chunkedList
+                ChapterHtmlPayload(
+                    head = head,
+                    chunks = htmlChunks.map { it.html },
+                    chunkElementStartIndices = htmlChunks.map { it.elementStartIndex },
+                    chunkElementCounts = htmlChunks.map { it.elementCount }
+                )
             }
         } else {
-            "" to listOf("<h1>${context.getString(R.string.chapter_not_found)}</h1>")
+            ChapterHtmlPayload(
+                head = "",
+                chunks = listOf("<h1>${context.getString(R.string.chapter_not_found)}</h1>"),
+                chunkElementStartIndices = listOf(0),
+                chunkElementCounts = listOf(1)
+            )
         }
 
         var targetChunk = 0
@@ -101,7 +151,9 @@ suspend fun loadChapterContent(
             head = headContent,
             chunks = chunks,
             startChunkIndex = targetChunk,
-            isSuccess = true
+            isSuccess = true,
+            chunkElementStartIndices = chunkElementStartIndices,
+            chunkElementCounts = chunkElementCounts
         )
 
     } catch (e: Exception) {
@@ -115,3 +167,10 @@ suspend fun loadChapterContent(
         )
     }
 }
+
+private data class ChapterHtmlPayload(
+    val head: String,
+    val chunks: List<String>,
+    val chunkElementStartIndices: List<Int>,
+    val chunkElementCounts: List<Int>
+)

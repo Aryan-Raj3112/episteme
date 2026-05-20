@@ -2043,6 +2043,56 @@
         `);
     }
 
+    function parseReaderChunkInt(value, fallback) {
+        const parsed = parseInt(value, 10);
+        return isNaN(parsed) ? fallback : parsed;
+    }
+
+    function getReaderChunkIndex(chunkElement) {
+        return parseReaderChunkInt(chunkElement && chunkElement.dataset ? chunkElement.dataset.chunkIndex : null, 0);
+    }
+
+    function getReaderChunkElementStartIndex(chunkElement) {
+        const chunkIndex = getReaderChunkIndex(chunkElement);
+        return parseReaderChunkInt(
+            chunkElement && chunkElement.dataset ? chunkElement.dataset.elementStartIndex : null,
+            chunkIndex * 20
+        );
+    }
+
+    function getReaderChunkElementCount(chunkElement) {
+        return parseReaderChunkInt(
+            chunkElement && chunkElement.dataset ? chunkElement.dataset.elementCount : null,
+            20
+        );
+    }
+
+    function findReaderChunkForElementIndex(container, childNodeIndex) {
+        const chunks = Array.from(container.querySelectorAll(".chunk-container"));
+        for (let i = 0; i < chunks.length; i++) {
+            const chunkElement = chunks[i];
+            const elementStartIndex = getReaderChunkElementStartIndex(chunkElement);
+            const elementCount = getReaderChunkElementCount(chunkElement);
+            if (elementCount <= 0) continue;
+            if (childNodeIndex >= elementStartIndex && childNodeIndex < elementStartIndex + elementCount) {
+                return {
+                    chunkElement: chunkElement,
+                    chunkIndex: getReaderChunkIndex(chunkElement),
+                    indexInChunk: childNodeIndex - elementStartIndex
+                };
+            }
+        }
+
+        const fallbackChunkIndex = Math.floor(childNodeIndex / 20);
+        const fallbackChunkElement = container.querySelector(`.chunk-container[data-chunk-index="${fallbackChunkIndex}"]`);
+        if (!fallbackChunkElement) return null;
+        return {
+            chunkElement: fallbackChunkElement,
+            chunkIndex: fallbackChunkIndex,
+            indexInChunk: childNodeIndex % 20
+        };
+    }
+
     function resolveCfiPath(rootElement, path, requestChunkIfMissing = false) {
         let currentNode = rootElement;
         const steps = path.substring(1).split("/").map(Number);
@@ -2054,10 +2104,12 @@
             // Handle virtualized content container specially
             if (currentNode.id === 'content-container') {
                 const childNodeIndex = (cfiIndex - 2) / 2;
-                let chunkIndex = Math.floor(childNodeIndex / 20);
-                let indexInChunk = childNodeIndex % 20;
+                const chunkLookup = findReaderChunkForElementIndex(currentNode, childNodeIndex);
+                if (!chunkLookup) return null;
 
-                let chunkElement = currentNode.querySelector(`.chunk-container[data-chunk-index="${chunkIndex}"]`);
+                let chunkIndex = chunkLookup.chunkIndex;
+                let indexInChunk = chunkLookup.indexInChunk;
+                let chunkElement = chunkLookup.chunkElement;
                 if (chunkElement) {
                     if (chunkElement.innerHTML === "") {
                         if (window.virtualization && window.virtualization.chunksData[chunkIndex]) {
@@ -2179,8 +2231,8 @@
                         continue;
                     }
 
-                    let chunkIndex = parseInt(parentNode.dataset.chunkIndex, 10);
-                    let elementsInPrecedingChunks = chunkIndex * 20;
+                    let chunkIndex = getReaderChunkIndex(parentNode);
+                    let elementsInPrecedingChunks = getReaderChunkElementStartIndex(parentNode);
 
                     let trueIndex = elementsInPrecedingChunks + indexInChunk;
                     let cfiIndex = trueIndex * 2 + 2;
