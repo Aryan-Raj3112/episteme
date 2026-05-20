@@ -81,6 +81,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -165,6 +166,7 @@ enum class ReaderTool(@StringRes val titleRes: Int, val category: String) {
     SEARCH(R.string.action_search, "Bottom Bar"),
     AI_FEATURES(R.string.ai_features_title, "Bottom Bar"),
     TTS_CONTROLS(R.string.tool_tts_controls, "Bottom Bar"),
+    FILE_INFO(R.string.file_information, "Overflow Menu"),
     READING_MODE(R.string.tool_reading_mode, "Overflow Menu"),
     BOOKMARK(R.string.content_desc_bookmark, "Overflow Menu"),
     TAP_TO_TURN(R.string.menu_tap_to_turn_pages, "Overflow Menu"),
@@ -284,14 +286,16 @@ internal enum class EpubOverflowMenuSection {
     KEEP_SCREEN_ON,
     VISUAL_OPTIONS,
     AUTO_SCROLL,
-    TTS_SETTINGS
+    TTS_SETTINGS,
+    FILE_INFO
 }
 
 internal fun epubOverflowMenuSections(
     hiddenTools: Set<String>,
     hasHiddenToolbarTools: Boolean,
     hasToggleReflow: Boolean,
-    hasDeleteReflow: Boolean
+    hasDeleteReflow: Boolean,
+    hasFileInfo: Boolean = true
 ): List<EpubOverflowMenuSection> = buildList {
     add(EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR)
     if (hasHiddenToolbarTools) add(EpubOverflowMenuSection.HIDDEN_TOOLS)
@@ -310,6 +314,9 @@ internal fun epubOverflowMenuSections(
         !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
     ) {
         add(EpubOverflowMenuSection.TTS_SETTINGS)
+    }
+    if (hasFileInfo && !hiddenTools.contains(ReaderTool.FILE_INFO.name)) {
+        add(EpubOverflowMenuSection.FILE_INFO)
     }
 }
 
@@ -398,6 +405,7 @@ fun EpubReaderTopBar(
     onToggleSearch: () -> Unit,
     onOpenAiHub: () -> Unit,
     onToggleTts: () -> Unit,
+    onOpenFileInfo: () -> Unit,
     searchFocusRequester: androidx.compose.ui.focus.FocusRequester,
     hiddenTools: Set<String>,
     toolOrder: List<ReaderTool>,
@@ -627,6 +635,22 @@ fun EpubReaderTopBar(
                                                 )
                                             }
                                         }
+                                    }
+                                    EpubOverflowMenuSection.FILE_INFO -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.file_information)) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onOpenFileInfo()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Default.Info,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
                                     }
                                     EpubOverflowMenuSection.VIEW_ORIGINAL_PDF -> {
                                         DropdownMenuItem(
@@ -2180,6 +2204,7 @@ private fun ToolPreviewIcon(tool: ReaderTool, isSliderActive: Boolean = false) {
         ReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.FILE_INFO -> Icon(Icons.Default.Info, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = title, modifier = Modifier.size(20.dp))
         else -> Icon(Icons.Default.MoreVert, contentDescription = title, modifier = Modifier.size(20.dp))
     }

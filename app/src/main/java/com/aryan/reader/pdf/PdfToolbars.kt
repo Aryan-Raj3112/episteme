@@ -77,14 +77,16 @@ internal enum class PdfOverflowMenuSection {
     BOOKMARK,
     PAGE_MANAGEMENT,
     REFLOW,
-    FILE_ACTIONS
+    FILE_ACTIONS,
+    FILE_INFO
 }
 
 internal fun pdfOverflowMenuSections(
     hiddenTools: Set<String>,
     hasHiddenToolbarTools: Boolean,
     isPro: Boolean,
-    effectiveFileType: FileType
+    effectiveFileType: FileType,
+    hasFileInfo: Boolean = true
 ): List<PdfOverflowMenuSection> = buildList {
     add(PdfOverflowMenuSection.CUSTOMIZE_TOOLBAR)
     if (hasHiddenToolbarTools) add(PdfOverflowMenuSection.HIDDEN_TOOLS)
@@ -111,6 +113,9 @@ internal fun pdfOverflowMenuSections(
         (effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.PRINT.name))
     ) {
         add(PdfOverflowMenuSection.FILE_ACTIONS)
+    }
+    if (hasFileInfo && !hiddenTools.contains(PdfReaderTool.FILE_INFO.name)) {
+        add(PdfOverflowMenuSection.FILE_INFO)
     }
 }
 
@@ -179,6 +184,7 @@ internal fun PdfTopBar(
     onShowTtsSettings: () -> Unit,
     onShowTtsReplacements: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onShowFileInfo: () -> Unit,
     onInsertPage: () -> Unit,
     onDeletePage: () -> Unit,
     onReflowAction: () -> Unit,
@@ -448,6 +454,13 @@ internal fun PdfTopBar(
                                                     )
                                                 }
                                             }
+                                        }
+                                        PdfOverflowMenuSection.FILE_INFO -> {
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.file_information)) },
+                                                onClick = { showMoreMenu = false; onShowFileInfo() },
+                                                leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                                            )
                                         }
                                         PdfOverflowMenuSection.OCR_LANGUAGE -> {
                                             DropdownMenuItem(

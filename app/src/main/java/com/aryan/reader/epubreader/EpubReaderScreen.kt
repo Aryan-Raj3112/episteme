@@ -159,6 +159,7 @@ import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.ReaderBrightnessEffect
+import com.aryan.reader.ReaderFileInfoDialogs
 import com.aryan.reader.ReaderBrightnessSheet
 import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
@@ -681,6 +682,7 @@ fun EpubReaderHost(
 ) {
     val view = LocalView.current
     val context = LocalContext.current
+    val uiState by viewModel.uiState.collectAsState()
     val window = (view.context as? Activity)?.window
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
@@ -709,6 +711,7 @@ fun EpubReaderHost(
     var isNavigatingToPosition by remember { mutableStateOf(false) }
     var isSeamlessTransitioning by remember { mutableStateOf(false) }
     var showInsufficientCreditsDialog by remember { mutableStateOf(false) }
+    var showFileInfoDialog by remember { mutableStateOf(false) }
 
     var sliderCurrentPage by remember { mutableFloatStateOf(0f) }
     var isFastScrubbing by remember { mutableStateOf(false) }
@@ -5630,6 +5633,7 @@ fun EpubReaderHost(
                             }
                         }
                     },
+                    onOpenFileInfo = { showFileInfoDialog = true },
                     onToggleReflow = if (onToggleReflow != null) {
                         {
                             val activeChapter = if (currentRenderMode == RenderMode.PAGINATED) {
@@ -6199,6 +6203,15 @@ fun EpubReaderHost(
             preferences = ttsReplacementPreferences,
             onPreferencesChange = updateTtsReplacementPreferences,
             onDismiss = { showTtsReplacementsSheet = false },
+        )
+
+        ReaderFileInfoDialogs(
+            isFileInfoVisible = showFileInfoDialog,
+            onFileInfoVisibleChange = { showFileInfoDialog = it },
+            uiState = uiState,
+            primaryBookId = uiState.selectedBookId ?: stableBookId,
+            uriString = uiState.selectedEpubUri?.toString(),
+            viewModel = viewModel
         )
 
         if (showCustomizeToolsSheet) {

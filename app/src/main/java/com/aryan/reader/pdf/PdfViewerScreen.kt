@@ -213,6 +213,7 @@ import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
 import com.aryan.reader.ReaderBrightnessEffect
 import com.aryan.reader.ReaderBrightnessSheet
+import com.aryan.reader.ReaderFileInfoDialogs
 import com.aryan.reader.ReaderScreenOrientationEffect
 import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
@@ -465,7 +466,6 @@ fun PdfViewerScreen(
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
     var rightToLeftPagination by remember { mutableStateOf(loadPdfRightToLeftPagination(context)) }
     var showScreenOrientationSheet by remember { mutableStateOf(false) }
-    var isFullScreen by remember { mutableStateOf(false) }
     var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRestorePage by rememberSaveable { mutableStateOf(initialPage) }
     var isScrollLocked by remember { mutableStateOf(false) }
@@ -527,6 +527,7 @@ fun PdfViewerScreen(
     val isComicFile = effectiveFileType == FileType.CBZ || effectiveFileType == FileType.CBR || effectiveFileType == FileType.CB7
 
     var showNewTabSheet by remember { mutableStateOf(false) }
+    var showFileInfoDialog by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
 
     val isTabsEnabled = uiState.isTabsEnabled
@@ -6385,6 +6386,7 @@ fun PdfViewerScreen(
                     onShowTtsSettings = { showTtsSettingsSheet = true },
                     onShowTtsReplacements = { showTtsReplacementsSheet = true },
                     onToggleBookmark = onBookmarkClick,
+                    onShowFileInfo = { showFileInfoDialog = true },
                     onInsertPage = onInsertPage,
                     onDeletePage = onDeletePage,
                     onReflowAction = {
@@ -8231,6 +8233,15 @@ fun PdfViewerScreen(
             onDismiss = { showScreenOrientationSheet = false }
         )
     }
+    ReaderFileInfoDialogs(
+        isFileInfoVisible = showFileInfoDialog,
+        onFileInfoVisibleChange = { showFileInfoDialog = it },
+        uiState = uiState,
+        primaryBookId = uiState.selectedBookId,
+        secondaryBookId = currentBookId ?: activeTabBookId,
+        uriString = effectivePdfUri.toString(),
+        viewModel = viewModel
+    )
     if (showCustomizeToolsSheet) {
         PdfCustomizeToolsSheet(
             hiddenTools = hiddenTools,

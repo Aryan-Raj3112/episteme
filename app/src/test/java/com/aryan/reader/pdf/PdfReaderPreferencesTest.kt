@@ -27,10 +27,11 @@ class PdfReaderPreferencesTest {
         val context = contextWithPrefs(prefs)
 
         val order = loadPdfToolOrder(context)
+        val expectedTools = PdfReaderTool.entries.filter(::isPdfReaderToolAvailable)
 
         assertEquals(listOf(PdfReaderTool.SEARCH, PdfReaderTool.TOC), order.take(2))
-        assertEquals(PdfReaderTool.entries.size, order.size)
-        assertEquals(PdfReaderTool.entries.toSet(), order.toSet())
+        assertEquals(expectedTools.size, order.size)
+        assertEquals(expectedTools.toSet(), order.toSet())
         assertEquals(setOf(PdfReaderTool.SEARCH.name, PdfReaderTool.TOC.name), loadPdfBottomTools(context))
         assertEquals(
             setOf(

@@ -249,10 +249,11 @@ class EpubReaderBridgeAndControlsTest {
             ToolbarSection.BOTTOM,
             defaultItems.single { it.tool == ReaderTool.SLIDER }.section
         )
+        assertTrue(defaultItems.any { it.type == FlatItemType.MORE_TOOL && it.tool == ReaderTool.FILE_INFO })
     }
 
     @Test
-    fun `epub overflow sections end at auto scroll when tts submenu is hidden`() {
+    fun `epub overflow sections end at auto scroll when tts submenu and file info are hidden`() {
         val sections = epubOverflowMenuSections(
             hiddenTools = setOf(
                 ReaderTool.TTS_SETTINGS.name,
@@ -260,10 +261,41 @@ class EpubReaderBridgeAndControlsTest {
             ),
             hasHiddenToolbarTools = false,
             hasToggleReflow = false,
-            hasDeleteReflow = false
+            hasDeleteReflow = false,
+            hasFileInfo = false
         )
 
         assertEquals(EpubOverflowMenuSection.AUTO_SCROLL, sections.last())
         assertTrue(EpubOverflowMenuSection.TTS_SETTINGS !in sections)
+    }
+
+    @Test
+    fun `epub overflow sections expose file info only when available and visible`() {
+        val visibleSections = epubOverflowMenuSections(
+            hiddenTools = emptySet(),
+            hasHiddenToolbarTools = false,
+            hasToggleReflow = false,
+            hasDeleteReflow = false,
+            hasFileInfo = true
+        )
+        val missingItemSections = epubOverflowMenuSections(
+            hiddenTools = emptySet(),
+            hasHiddenToolbarTools = false,
+            hasToggleReflow = false,
+            hasDeleteReflow = false,
+            hasFileInfo = false
+        )
+        val hiddenSections = epubOverflowMenuSections(
+            hiddenTools = setOf(ReaderTool.FILE_INFO.name),
+            hasHiddenToolbarTools = false,
+            hasToggleReflow = false,
+            hasDeleteReflow = false,
+            hasFileInfo = true
+        )
+
+        assertTrue(EpubOverflowMenuSection.FILE_INFO in visibleSections)
+        assertEquals(EpubOverflowMenuSection.FILE_INFO, visibleSections.last())
+        assertFalse(EpubOverflowMenuSection.FILE_INFO in missingItemSections)
+        assertFalse(EpubOverflowMenuSection.FILE_INFO in hiddenSections)
     }
 }

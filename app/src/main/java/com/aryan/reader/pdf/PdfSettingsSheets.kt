@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -128,11 +129,12 @@ internal fun buildPdfToolbarItems(
     toolOrder: List<PdfReaderTool>,
     bottomTools: Set<String>
 ): List<PdfFlatToolItem> {
-    val toolbarTools = toolOrder.filter { it in pdfReorderableToolbarTools }
+    val availableToolOrder = toolOrder.filter(::isPdfReaderToolAvailable)
+    val toolbarTools = availableToolOrder.filter { it in pdfReorderableToolbarTools }
     val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
     val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
     val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
-    val moreTools = toolOrder.filter { it !in pdfReorderableToolbarTools }
+    val moreTools = availableToolOrder.filter { it !in pdfReorderableToolbarTools }
 
     val list = mutableListOf<PdfFlatToolItem>()
 
@@ -545,6 +547,7 @@ private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
         PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.LOCK_PANNING -> Icon(Icons.Default.LockOpen, contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.FILE_INFO -> Icon(Icons.Default.Info, contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = title, modifier = Modifier.size(20.dp))
