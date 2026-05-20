@@ -127,6 +127,7 @@ android {
             initWith(getByName("release"))
             matchingFallbacks += listOf("release")
             buildConfigField("boolean", "IS_OFFLINE", "true")
+            buildConfigField("String", "TTS_WORKER_URL", "\"\"")
         }
     }
 

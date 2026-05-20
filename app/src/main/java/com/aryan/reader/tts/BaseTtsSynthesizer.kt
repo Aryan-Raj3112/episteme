@@ -23,6 +23,8 @@ import android.content.Context
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
+import com.aryan.reader.BuildConfig
 import com.aryan.reader.epubreader.loadTtsPitch
 import com.aryan.reader.epubreader.loadTtsSpeechRate
 import com.aryan.reader.loadNativeVoice
@@ -46,6 +48,38 @@ private const val START_TIMEOUT_FAST_MS = 3000L
 private const val START_TIMEOUT_RETRY_MS = 4000L
 private const val PROCESS_TIMEOUT_MS = 15000L
 private const val MAX_RETRY_ATTEMPTS = 3
+
+internal fun resolveNativeTtsVoiceForBuild(
+    preferredVoiceName: String?,
+    defaultVoice: Voice?,
+    availableVoices: Collection<Voice>?,
+    defaultLocale: Locale,
+    isOfflineBuild: Boolean
+): Voice? {
+    val voices = availableVoices.orEmpty()
+    val preferredVoice = preferredVoiceName
+        ?.takeIf { it.isNotBlank() }
+        ?.let { name -> voices.firstOrNull { it.name == name } }
+
+    if (preferredVoice != null && (!isOfflineBuild || !preferredVoice.isNetworkConnectionRequired)) {
+        return preferredVoice
+    }
+
+    val localeOfflineVoice = voices.firstOrNull { voice ->
+        voice.locale == defaultLocale && !voice.isNetworkConnectionRequired
+    }
+    val anyOfflineVoice = voices.firstOrNull { voice -> !voice.isNetworkConnectionRequired }
+
+    return if (isOfflineBuild) {
+        localeOfflineVoice
+            ?: anyOfflineVoice
+            ?: defaultVoice?.takeUnless { it.isNetworkConnectionRequired }
+    } else {
+        defaultVoice
+            ?: localeOfflineVoice
+            ?: voices.firstOrNull { voice -> voice.locale == defaultLocale }
+    }
+}
 
 class BaseTtsSynthesizer(private val context: Context) {
 
@@ -149,51 +183,39 @@ class BaseTtsSynthesizer(private val context: Context) {
 
         try {
             val preferredVoiceName = loadNativeVoice(context)
+            val defaultLocale = Locale.getDefault()
+            val defaultVoice = tts?.defaultVoice
+            val availableVoices = tts?.voices
+            val targetVoice = resolveNativeTtsVoiceForBuild(
+                preferredVoiceName = preferredVoiceName,
+                defaultVoice = defaultVoice,
+                availableVoices = availableVoices,
+                defaultLocale = defaultLocale,
+                isOfflineBuild = BuildConfig.IS_OFFLINE
+            )
 
-            if (preferredVoiceName.isNullOrBlank()) {
-                val defaultLocale = Locale.getDefault()
-                try {
-                    tts?.language = defaultLocale
-                } catch (e: Exception) {
-                    Timber.e(e, "BaseTts: Failed to restore default language")
-                }
-
-                val defaultVoice = try {
-                    tts?.defaultVoice ?: tts?.voices?.firstOrNull { voice ->
-                        voice.locale == defaultLocale && !voice.isNetworkConnectionRequired
-                    } ?: tts?.voices?.firstOrNull { voice ->
-                        voice.locale == defaultLocale
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "BaseTts: Failed to query default voice")
-                    null
-                }
-
-                if (defaultVoice != null && tts?.voice?.name != defaultVoice.name) {
-                    Timber.d("BaseTts: Restoring system default voice to ${defaultVoice.name} (${defaultVoice.locale})")
-                    tts?.voice = defaultVoice
-                } else {
-                    Timber.d("BaseTts: Using engine default voice for locale $defaultLocale")
-                }
+            if (targetVoice == null) {
+                tts?.language = defaultLocale
+                Timber.w("BaseTts: No suitable local voice found for locale $defaultLocale.")
                 return
             }
 
-            if (tts?.voice?.name == preferredVoiceName) return
+            if (
+                !preferredVoiceName.isNullOrBlank() &&
+                targetVoice.name != preferredVoiceName &&
+                BuildConfig.IS_OFFLINE
+            ) {
+                Timber.w("BaseTts: Saved voice '$preferredVoiceName' requires network or is unavailable in offline build. Using ${targetVoice.name}.")
+            }
 
-            val availableVoices = tts?.voices
-            if (availableVoices != null) {
-                val targetVoice = availableVoices.find { it.name == preferredVoiceName }
-                if (targetVoice != null) {
-                    Timber.d("BaseTts: Setting preferred voice to ${targetVoice.name} (${targetVoice.locale})")
-                    try {
-                        tts?.language = targetVoice.locale
-                    } catch (e: Exception) {
-                        Timber.e(e, "BaseTts: Failed to set language for voice")
-                    }
-                    tts?.voice = targetVoice
-                } else {
-                    Timber.w("BaseTts: Preferred voice '$preferredVoiceName' not found in current engine.")
+            if (tts?.voice?.name != targetVoice.name) {
+                Timber.d("BaseTts: Setting native voice to ${targetVoice.name} (${targetVoice.locale})")
+                try {
+                    tts?.language = targetVoice.locale
+                } catch (e: Exception) {
+                    Timber.e(e, "BaseTts: Failed to set language for voice")
                 }
+                tts?.voice = targetVoice
             }
         } catch (e: Exception) {
             Timber.e(e, "BaseTts: Failed to apply preferred voice")

@@ -1891,6 +1891,7 @@ fun DeviceVoicesTab(
     val allLanguagesLabel = stringResource(R.string.filter_all)
     var selectedLanguage by remember { mutableStateOf(allLanguagesLabel) }
     var languageMenuExpanded by remember { mutableStateOf(false) }
+    val offlineNativeOnly = BuildConfig.IS_OFFLINE
 
     DisposableEffect(Unit) {
         val tts = TextToSpeech(context) { status ->
@@ -1903,20 +1904,35 @@ fun DeviceVoicesTab(
         onDispose { tts.shutdown() }
     }
 
+    LaunchedEffect(allVoices, savedVoiceName, offlineNativeOnly) {
+        if (
+            offlineNativeOnly &&
+            savedVoiceName != null &&
+            allVoices.any { voice -> voice.name == savedVoiceName && voice.isNetworkConnectionRequired }
+        ) {
+            savedVoiceName = null
+            saveNativeVoice(context, null)
+        }
+    }
+
     if (isTtsLoading) {
         Box(modifier = Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
 
-    val languages = remember(allVoices) {
-        val list = listOf(allLanguagesLabel) + allVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
+    val selectableVoices = remember(allVoices, offlineNativeOnly) {
+        if (offlineNativeOnly) allVoices.filter { voice -> !voice.isNetworkConnectionRequired } else allVoices
+    }
+
+    val languages = remember(selectableVoices) {
+        val list = listOf(allLanguagesLabel) + selectableVoices.map { it.locale.displayLanguage }.filter { it.isNotBlank() }.distinct().sorted()
         Timber.tag("TTS_DIAGNOSE").d("Languages list updated: size=${list.size}, items=$list")
         list
     }
 
-    val filteredVoices = remember(allVoices, selectedLanguage) {
-        if (selectedLanguage == allLanguagesLabel) allVoices
-        else allVoices.filter { it.locale.displayLanguage == selectedLanguage }
+    val filteredVoices = remember(selectableVoices, selectedLanguage) {
+        if (selectedLanguage == allLanguagesLabel) selectableVoices
+        else selectableVoices.filter { it.locale.displayLanguage == selectedLanguage }
     }
 
     val isBaseMode = currentMode == TtsPlaybackManager.TtsMode.BASE
@@ -1934,12 +1950,19 @@ fun DeviceVoicesTab(
                     try {
                         val defaultLocale = Locale.getDefault()
                         language = defaultLocale
-                        val fallbackVoice =
+                        val fallbackVoice = if (offlineNativeOnly) {
+                            voices.firstOrNull { voice ->
+                                voice.locale == defaultLocale && !voice.isNetworkConnectionRequired
+                            } ?: voices.firstOrNull { voice ->
+                                !voice.isNetworkConnectionRequired
+                            }
+                        } else {
                             defaultVoice ?: voices.firstOrNull { voice ->
                                 voice.locale == defaultLocale && !voice.isNetworkConnectionRequired
                             } ?: voices.firstOrNull { voice ->
                                 voice.locale == defaultLocale
                             }
+                        }
                         fallbackVoice?.let { voice = it }
                     } catch (e: Exception) {
                         Timber.tag("TTS_DIAGNOSE").w(e, "Failed to reset preview engine to system default voice")

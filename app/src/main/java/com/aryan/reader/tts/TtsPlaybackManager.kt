@@ -444,7 +444,7 @@ class TtsPlaybackManager(
                 val startChunkIndex = args.getInt(KEY_START_CHUNK_INDEX, 0)
                 val ttsModeName = args.getString(KEY_TTS_MODE, TtsMode.CLOUD.name)
                 val playbackSource = args.getString(KEY_PLAYBACK_SOURCE)
-                val ttsMode = try { TtsMode.valueOf(ttsModeName ?: TtsMode.CLOUD.name) } catch (_: Exception) { TtsMode.CLOUD }
+                val ttsMode = resolveTtsModeForCurrentBuild(appContext, ttsModeName)
 
                 val richChunks = if (cfis != null && offsets != null && chunks.size == cfis.size && chunks.size == offsets.size) {
                     chunks.mapIndexed { index, text ->
@@ -483,7 +483,7 @@ class TtsPlaybackManager(
             }
             CHANGE_TTS_MODE_COMMAND -> {
                 val newModeName = args.getString(KEY_TTS_MODE, TtsMode.CLOUD.name)
-                val newMode = try { TtsMode.valueOf(newModeName) } catch (_: Exception) { TtsMode.CLOUD }
+                val newMode = resolveTtsModeForCurrentBuild(appContext, newModeName)
                 handleChangeTtsMode(newMode)
             }
             FLUSH_PREFETCH_COMMAND -> {

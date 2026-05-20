@@ -58,17 +58,64 @@ fun loadTtsMode(context: Context): TtsPlaybackManager.TtsMode {
     val savedModeName = prefs.getString("tts_mode", TtsPlaybackManager.TtsMode.BASE.name)
         ?: TtsPlaybackManager.TtsMode.BASE.name
 
-    val isCloudAllowed = BuildConfig.TTS_WORKER_URL.isNotBlank() || isByokCloudTtsAvailable(context)
+    return resolveTtsModeForCurrentBuild(context, savedModeName)
+}
 
-    return if (isCloudAllowed) {
-        try {
-            TtsPlaybackManager.TtsMode.valueOf(savedModeName)
-        } catch (_: Exception) {
-            TtsPlaybackManager.TtsMode.BASE
-        }
+@OptIn(UnstableApi::class)
+internal fun resolveTtsModeForCurrentBuild(
+    context: Context,
+    requestedModeName: String?
+): TtsPlaybackManager.TtsMode {
+    return resolveTtsModeForBuild(
+        requestedModeName = requestedModeName,
+        isOfflineBuild = BuildConfig.IS_OFFLINE,
+        isProBuild = BuildConfig.IS_PRO,
+        workerUrl = BuildConfig.TTS_WORKER_URL,
+        byokCloudAvailable = isByokCloudTtsAvailable(context)
+    )
+}
+
+@OptIn(UnstableApi::class)
+internal fun resolveTtsModeForBuild(
+    requestedModeName: String?,
+    isOfflineBuild: Boolean,
+    isProBuild: Boolean,
+    workerUrl: String,
+    byokCloudAvailable: Boolean
+): TtsPlaybackManager.TtsMode {
+    val requestedMode = try {
+        TtsPlaybackManager.TtsMode.valueOf(
+            requestedModeName ?: TtsPlaybackManager.TtsMode.BASE.name
+        )
+    } catch (_: Exception) {
+        TtsPlaybackManager.TtsMode.BASE
+    }
+
+    if (requestedMode != TtsPlaybackManager.TtsMode.CLOUD) {
+        return requestedMode
+    }
+
+    return if (isCloudTtsAllowedForBuild(
+            isOfflineBuild = isOfflineBuild,
+            isProBuild = isProBuild,
+            workerUrl = workerUrl,
+            byokCloudAvailable = byokCloudAvailable
+        )
+    ) {
+        TtsPlaybackManager.TtsMode.CLOUD
     } else {
         TtsPlaybackManager.TtsMode.BASE
     }
+}
+
+internal fun isCloudTtsAllowedForBuild(
+    isOfflineBuild: Boolean,
+    isProBuild: Boolean,
+    workerUrl: String,
+    byokCloudAvailable: Boolean
+): Boolean {
+    if (isOfflineBuild) return false
+    return (isProBuild && workerUrl.isNotBlank()) || byokCloudAvailable
 }
 
 @UnstableApi
@@ -168,9 +215,10 @@ class TtsController(context: Context) : Player.Listener {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("TtsController.start aborted because chunks is empty.")
             return
         }
-        Timber.d("UI sending START command with mode: $ttsMode")
+        val effectiveTtsMode = resolveTtsModeForCurrentBuild(context, ttsMode.name)
+        Timber.d("UI sending START command with mode: $effectiveTtsMode")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
-            "TtsController.start. hasController=${mediaController != null}, chunks=${chunks.size}, continueSession=$continueSession, source=$playbackSource, mode=$ttsMode, book='${bookTitle.take(60)}', chapter='${chapterTitle.orEmpty().take(60)}', chapterIndex=$chapterIndex, totalChapters=$totalChapters"
+            "TtsController.start. hasController=${mediaController != null}, chunks=${chunks.size}, continueSession=$continueSession, source=$playbackSource, mode=$effectiveTtsMode, requestedMode=$ttsMode, book='${bookTitle.take(60)}', chapter='${chapterTitle.orEmpty().take(60)}', chapterIndex=$chapterIndex, totalChapters=$totalChapters"
         )
 
         val textList = ArrayList(chunks.map { it.text })
@@ -193,13 +241,13 @@ class TtsController(context: Context) : Player.Listener {
             pageIndex?.let { putInt(KEY_PAGE_INDEX, it) }
             putInt(KEY_START_CHUNK_INDEX, startChunkIndex)
             putBoolean(KEY_CONTINUE_SESSION, continueSession)
-            putString(KEY_TTS_MODE, ttsMode.name)
+            putString(KEY_TTS_MODE, effectiveTtsMode.name)
             putString(KEY_PLAYBACK_SOURCE, playbackSource)
             putString(KEY_AUTH_TOKEN, authToken)
             putFloat("playback_speed", loadTtsSpeechRate(context))
             putFloat("playback_pitch", loadTtsPitch(context))
         }
-        Timber.tag("TTS_CLOUD_DIAG").d("TtsController sending START. Mode: $ttsMode, Chunks: ${chunks.size}, Token present: ${!authToken.isNullOrBlank()}")
+        Timber.tag("TTS_CLOUD_DIAG").d("TtsController sending START. Mode: $effectiveTtsMode, Chunks: ${chunks.size}, Token present: ${!authToken.isNullOrBlank()}")
         val controller = mediaController
         if (controller == null) {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).e("Cannot send START command because MediaController is null.")
@@ -240,12 +288,13 @@ class TtsController(context: Context) : Player.Listener {
     @Suppress("unused")
     fun changeTtsMode(mode: String) {
         Timber.d("UI sending CHANGE_TTS_MODE command.")
+        val effectiveMode = resolveTtsModeForCurrentBuild(context, mode)
         val prefs = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
-        prefs.edit { putString("tts_mode", mode) }
-        _ttsState.value = _ttsState.value.copy(ttsMode = mode)
+        prefs.edit { putString("tts_mode", effectiveMode.name) }
+        _ttsState.value = _ttsState.value.copy(ttsMode = effectiveMode.name)
 
         val args = Bundle().apply {
-            putString(KEY_TTS_MODE, mode)
+            putString(KEY_TTS_MODE, effectiveMode.name)
         }
         mediaController?.sendCustomCommand(CHANGE_TTS_MODE_COMMAND, args)
     }
