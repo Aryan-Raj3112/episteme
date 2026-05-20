@@ -521,6 +521,27 @@ class LibraryStateProjectorTest {
     }
 
     @Test
+    fun `project preserves pdf filename display preference when reusing cached library projection`() {
+        val book = recentFile("book")
+        val projector = LibraryStateProjector()
+        val input = LibraryProjectionInput(
+            state = ReaderScreenState(),
+            recentFilesFromDb = listOf(book),
+            dbShelves = emptyList(),
+            shelfRefs = emptyList(),
+            dbTags = emptyList(),
+            tagRefs = emptyList()
+        )
+
+        projector.project(input)
+        val result = projector.project(
+            input.copy(state = input.state.copy(usePdfFileNameAsDisplayName = true))
+        )
+
+        assertTrue(result.usePdfFileNameAsDisplayName)
+    }
+
+    @Test
     fun `cardTitle can prefer PDF filename over embedded metadata title`() {
         val pdf = recentFile(
             id = "pdf",

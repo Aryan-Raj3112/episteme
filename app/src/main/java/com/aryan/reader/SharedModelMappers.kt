@@ -265,7 +265,6 @@ fun SharedReaderScreenState.toAndroidReaderScreenState(
         openTabIds = openTabIds,
         activeTabBookId = activeTabBookId,
         booksAvailableForAdding = booksAvailableForAdding.map { it.toAndroidBook() },
-        usePdfFileNameAsDisplayName = this.usePdfFileNameAsDisplayName,
         allTags = allTags.map { tag -> tagEntitiesById[tag.id] ?: tag.toTagEntity(createdAt = 0L) }
     )
 }
