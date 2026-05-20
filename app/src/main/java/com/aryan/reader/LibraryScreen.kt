@@ -344,7 +344,8 @@ fun LibraryScreen(
                 )
             },
             onDeleteCatalogStreams = viewModel::deleteStreamedBooksForCatalog,
-            onSettingsClick = { navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE) }
+            onSettingsClick = { navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE) },
+            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
         )
 
 
@@ -393,6 +394,7 @@ fun LibraryScreen(
             if (showInfoDialog) {
                 FileInfoDialog(
                     item = item,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     onDismiss = {
                         showInfoDialog = false
                         itemForInfoDialog = null
@@ -459,7 +461,8 @@ fun ShelfScreen(
                     onBookClick = { item -> viewModel.toggleBookSelectionForAdding(item.bookId) },
                     onBack = viewModel::dismissAddBooksToShelf,
                     onAddSelectedBooks = { viewModel.addBooksToShelf(viewingShelfId) },
-                    downloadingBookIds = uiState.downloadingBookIds
+                    downloadingBookIds = uiState.downloadingBookIds,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
                 )
             } else {
                 ShelfDetailScreen(
@@ -484,7 +487,8 @@ fun ShelfScreen(
                     onDeleteClick = { showRemoveFromShelfDialog = true },
                     onRenameShelf = { viewModel.showRenameShelfDialog(currentShelf.id) },
                     onDeleteShelf = { viewModel.showDeleteShelfDialog(currentShelf.id) },
-                    downloadingBookIds = uiState.downloadingBookIds
+                    downloadingBookIds = uiState.downloadingBookIds,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
                 )
             }
         }
@@ -524,6 +528,7 @@ fun ShelfScreen(
             if (showInfoDialog) {
                 FileInfoDialog(
                     item = item,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     onDismiss = { showInfoDialog = false; itemForInfoDialog = null },
                     onSaveMetadata = { metadata -> viewModel.updateBookMetadata(item.bookId, metadata) },
                     onSaveDisplayName = { name -> viewModel.updateCustomName(item.bookId, name) },
@@ -589,6 +594,7 @@ fun LibraryScreenContent(
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onDeleteCatalogStreams: (String) -> Unit,
     onSettingsClick: () -> Unit,
+    usePdfFileNameAsDisplayName: Boolean,
 ) {
     val isBookContextualModeActive = selectedItems.isNotEmpty()
     val isShelfContextualModeActive = selectedShelves.isNotEmpty()
@@ -861,7 +867,8 @@ fun LibraryScreenContent(
                                     isPinned = item.bookId in pinnedLibraryBookIds,
                                     onItemClick = { onItemClick(item) },
                                     onItemLongClick = { onItemLongClick(item) },
-                                    isDownloading = item.bookId in downloadingBookIds
+                                    isDownloading = item.bookId in downloadingBookIds,
+                                    usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                                 )
                             }
                         }
@@ -1028,6 +1035,7 @@ private fun ShelfDetailScreen(
     onRenameShelf: () -> Unit,
     onDeleteShelf: () -> Unit,
     downloadingBookIds: Set<String>,
+    usePdfFileNameAsDisplayName: Boolean,
 ) {
     val isContextualModeActive = selectedItems.isNotEmpty()
     val isFolderShelf = shelf.type == ShelfType.FOLDER
@@ -1327,7 +1335,8 @@ private fun ShelfDetailScreen(
                             isSelected = selectedItems.any { it.bookId == item.bookId },
                             onItemClick = { onBookClick(item) },
                             onItemLongClick = { onBookLongClick(item) },
-                            isDownloading = item.bookId in downloadingBookIds
+                            isDownloading = item.bookId in downloadingBookIds,
+                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                         )
                     }
                 }
@@ -1349,6 +1358,7 @@ private fun AddBooksModeScreen(
     onBack: () -> Unit,
     onAddSelectedBooks: () -> Unit,
     downloadingBookIds: Set<String>,
+    usePdfFileNameAsDisplayName: Boolean,
 ) {
     var showSortMenu by remember { mutableStateOf(false) }
 
@@ -1450,7 +1460,8 @@ private fun AddBooksModeScreen(
                             isSelected = isSelected,
                             onItemClick = { onBookClick(item) },
                             onItemLongClick = { onBookClick(item) },
-                            isDownloading = item.bookId in downloadingBookIds
+                            isDownloading = item.bookId in downloadingBookIds,
+                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                         )
                     }
                 }
@@ -1636,6 +1647,7 @@ private fun LibraryListItem(
     onItemClick: () -> Unit,
     onItemLongClick: () -> Unit,
     isDownloading: Boolean,
+    usePdfFileNameAsDisplayName: Boolean = false,
 ) {
     androidx.compose.material3.ElevatedCard(
         shape = MaterialTheme.shapes.large,
@@ -1700,7 +1712,7 @@ private fun LibraryListItem(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = item.cardTitle(),
+                            text = item.cardTitle(usePdfFileNameAsDisplayName),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 2,

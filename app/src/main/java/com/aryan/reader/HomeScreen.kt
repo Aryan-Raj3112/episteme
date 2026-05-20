@@ -352,6 +352,9 @@ fun HomeScreen(
                                         showStrictFilterDialog = true
                                     }
                                 },
+                                onUsePdfFileNameAsDisplayNameToggle = {
+                                    viewModel.setUsePdfFileNameAsDisplayName(!uiState.usePdfFileNameAsDisplayName)
+                                },
                                 onAppThemeClick = { showAppThemePanel = true },
                                 onSettingsClick = {
                                     navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE)
@@ -433,7 +436,8 @@ fun HomeScreen(
                                     onRefresh = { viewModel.refreshLibrary() },
                                     isRefreshing = uiState.isRefreshing,
                                     isSyncEnabled = uiState.isSyncEnabled,
-                                    hasSyncedFolder = uiState.syncedFolders.isNotEmpty()
+                                    hasSyncedFolder = uiState.syncedFolders.isNotEmpty(),
+                                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
                                 )
                             }
                         }
@@ -501,6 +505,7 @@ fun HomeScreen(
                         if (showInfoDialog) {
                             FileInfoDialog(
                                 item = item,
+                                usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                                 onDismiss = {
                                     showInfoDialog = false
                                     itemForInfoDialog = null
@@ -630,7 +635,8 @@ private fun RecentFilesContent(
     onRefresh: () -> Unit,
     isRefreshing: Boolean,
     isSyncEnabled: Boolean,
-    hasSyncedFolder: Boolean
+    hasSyncedFolder: Boolean,
+    usePdfFileNameAsDisplayName: Boolean
 ) {
     val canRefresh = isSyncEnabled || hasSyncedFolder
     val selectedItemUris = remember(selectedContextItems) {
@@ -654,7 +660,8 @@ private fun RecentFilesContent(
                 onItemLongClick = onItemLongClick,
                 windowSizeClass = windowSizeClass,
                 contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
-                downloadingBookIds = downloadingBookIds
+                downloadingBookIds = downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
             )
 
             Row(
@@ -703,6 +710,7 @@ private fun RecentFilesGrid(
     windowSizeClass: WindowSizeClass,
     contentPadding: PaddingValues = PaddingValues(vertical = 8.dp),
     downloadingBookIds: Set<String>,
+    usePdfFileNameAsDisplayName: Boolean,
 ) {
     val gridCells = when (windowSizeClass.widthSizeClass) {
         WindowWidthSizeClass.Compact -> GridCells.Fixed(3)
@@ -742,7 +750,7 @@ private fun RecentFilesGrid(
                         onClick = { onItemClick(tab) },
                         label = {
                             Text(
-                                text = tab.customName ?: tab.title ?: tab.displayName,
+                                text = tab.cardTitle(usePdfFileNameAsDisplayName),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.widthIn(max = 150.dp)
@@ -784,7 +792,8 @@ private fun RecentFilesGrid(
                     isPinned = item.bookId in pinnedHomeBookIds,
                     onClick = { onItemClick(item) },
                     onLongClick = { onItemLongClick(item) },
-                    isDownloading = item.bookId in downloadingBookIds
+                    isDownloading = item.bookId in downloadingBookIds,
+                    usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                 )
             }
         }
@@ -801,6 +810,7 @@ fun RecentFileCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     isDownloading: Boolean,
+    usePdfFileNameAsDisplayName: Boolean = false,
 ) {
     val progressPercent = item.progressPercentage?.takeIf { it > 0f }?.coerceIn(0f, 100f)?.toInt()
     val authorText = item.author?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) } ?: " "
@@ -928,7 +938,7 @@ fun RecentFileCard(
                 horizontalAlignment = Alignment.Start
             ) {
                 Text(
-                    text = item.cardTitle(),
+                    text = item.cardTitle(usePdfFileNameAsDisplayName),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
@@ -1056,6 +1066,7 @@ fun DefaultTopAppBar(
     onTabsToggle: (Boolean) -> Unit,
     onExternalFileBehaviorClick: () -> Unit,
     onStrictFilterToggleClick: () -> Unit,
+    onUsePdfFileNameAsDisplayNameToggle: () -> Unit,
     onAppThemeClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onTestPanelDetectionClick: () -> Unit,
@@ -1160,6 +1171,15 @@ fun DefaultTopAppBar(
                     showOptionsMenu = false
                 }, trailingIcon = {
                     if (uiState.useStrictFileFilter) {
+                        Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+                    }
+                })
+
+                DropdownMenuItem(text = { Text(stringResource(R.string.options_use_pdf_filename_display_name)) }, onClick = {
+                    onUsePdfFileNameAsDisplayNameToggle()
+                    showOptionsMenu = false
+                }, trailingIcon = {
+                    if (uiState.usePdfFileNameAsDisplayName) {
                         Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
                     }
                 })

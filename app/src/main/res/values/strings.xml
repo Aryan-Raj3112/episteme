@@ -1140,6 +1140,8 @@
     <string name="options_enable_multi_tab_reading">Enable Multi-Tab Reading</string>
     <!-- Home overflow menu item: uses stricter MIME filters when choosing local files. -->
     <string name="options_use_strict_file_filter">Use Strict File Filter</string>
+    <!-- Home overflow menu item: prefers the PDF filename over embedded document metadata titles. -->
+    <string name="options_use_pdf_filename_display_name">Use PDF Filenames</string>
     <string name="options_language">Language</string>
     <!-- Debug-only menu item that runs local panel detection diagnostics. -->
     <string name="options_test_panel_ml_detection">Test Panel ML Detection</string>

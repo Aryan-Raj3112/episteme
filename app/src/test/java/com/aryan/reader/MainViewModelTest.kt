@@ -318,20 +318,23 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `strict file filter and external file behavior persist preferences`() = runTest {
+    fun `strict file filter pdf filename display and external file behavior persist preferences`() = runTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
 
         viewModel.setStrictFileFilter(true)
+        viewModel.setUsePdfFileNameAsDisplayName(true)
         viewModel.setExternalFileBehavior("KEEP")
 
         val state = viewModel.uiState.first {
-            it.useStrictFileFilter && it.externalFileBehavior == "KEEP"
+            it.useStrictFileFilter && it.usePdfFileNameAsDisplayName && it.externalFileBehavior == "KEEP"
         }
         assertTrue(state.useStrictFileFilter)
+        assertTrue(state.usePdfFileNameAsDisplayName)
         assertEquals("KEEP", state.externalFileBehavior)
         verify { mockEditor.putBoolean("use_strict_file_filter", true) }
+        verify { mockEditor.putBoolean("use_pdf_file_name_as_display_name", true) }
         verify { mockEditor.putString("external_file_behavior", "KEEP") }
     }
 

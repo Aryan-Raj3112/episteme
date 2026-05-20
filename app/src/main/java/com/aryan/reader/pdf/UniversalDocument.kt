@@ -116,7 +116,16 @@ object DocumentFactory {
             ArchiveDocumentWrapper(cacheFile)
         } else {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: throw Exception("Failed to open PDF")
-            PdfDocumentWrapper(PdfiumEngineProvider.withPdfium { pdfiumCore.newDocument(pfd, password) })
+            try {
+                PdfDocumentWrapper(PdfiumEngineProvider.withPdfium { pdfiumCore.newDocument(pfd, password) })
+            } catch (e: Throwable) {
+                try {
+                    pfd.close()
+                } catch (closeError: Exception) {
+                    e.addSuppressed(closeError)
+                }
+                throw e
+            }
         }
     }
 }

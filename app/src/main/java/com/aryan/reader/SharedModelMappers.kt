@@ -216,6 +216,7 @@ fun ReaderScreenState.toSharedReaderScreenState(
         showExternalFileSavePromptFor = showExternalFileSavePromptFor,
         externalFileBehavior = externalFileBehavior,
         useStrictFileFilter = useStrictFileFilter,
+        usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
         appThemeMode = appThemeMode,
         appContrastOption = appContrastOption,
         appTextDimFactorLight = appTextDimFactorLight,
@@ -264,6 +265,7 @@ fun SharedReaderScreenState.toAndroidReaderScreenState(
         openTabIds = openTabIds,
         activeTabBookId = activeTabBookId,
         booksAvailableForAdding = booksAvailableForAdding.map { it.toAndroidBook() },
+        usePdfFileNameAsDisplayName = this.usePdfFileNameAsDisplayName,
         allTags = allTags.map { tag -> tagEntitiesById[tag.id] ?: tag.toTagEntity(createdAt = 0L) }
     )
 }

@@ -24,7 +24,6 @@ import android.graphics.Bitmap
 import android.net.Uri
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
-import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -32,7 +31,6 @@ private const val TAG = "PdfCoverGenerator"
 
 class PdfCoverGenerator(context: Context) {
     private val appContext = context.applicationContext
-    private val pdfiumCore = PdfiumCoreKt(Dispatchers.IO)
 
     /**
      * Generates a Bitmap cover for the first page of a PDF.
@@ -48,37 +46,40 @@ class PdfCoverGenerator(context: Context) {
                 appContext.contentResolver.openFileDescriptor(pdfUri, "r").use { pfd ->
                     if (pfd == null) {
                         Timber.e("Failed to open ParcelFileDescriptor for URI: $pdfUri")
-                        return@withContext null
-                    }
-                    pdfiumCore.newDocument(pfd).use { doc ->
-                        if (doc.getPageCount() == 0) {
-                            Timber.w("PDF has no pages, cannot generate cover: $pdfUri")
-                            return@withContext null
-                        }
-                        doc.openPage(0)?.use { page ->
-                            val originalWidth = page.getPageWidthPoint()
-                            val originalHeight = page.getPageHeightPoint()
-                            if (originalWidth <= 0 || originalHeight <= 0) {
-                                Timber.e("Invalid page dimensions for cover: $pdfUri")
-                                return@withContext null
+                        null
+                    } else {
+                        PdfiumEngineProvider.withPdfium {
+                            PdfiumCoreProvider.core.newDocument(pfd).use { doc ->
+                                if (doc.getPageCount() == 0) {
+                                    Timber.w("PDF has no pages, cannot generate cover: $pdfUri")
+                                    return@withPdfium null
+                                }
+                                doc.openPage(0)?.use { page ->
+                                    val originalWidth = page.getPageWidthPoint()
+                                    val originalHeight = page.getPageHeightPoint()
+                                    if (originalWidth <= 0 || originalHeight <= 0) {
+                                        Timber.e("Invalid page dimensions for cover: $pdfUri")
+                                        return@withPdfium null
+                                    }
+
+                                    val aspectRatio = originalWidth.toFloat() / originalHeight.toFloat()
+                                    val targetWidth = (targetHeight * aspectRatio).toInt()
+
+                                    if (targetWidth <= 0) {
+                                        Timber.e("Calculated invalid bitmap width for cover: $targetWidth")
+                                        return@withPdfium null
+                                    }
+
+                                    val bitmap = createBitmap(targetWidth, targetHeight)
+                                    page.renderPageBitmap(
+                                        bitmap = bitmap,
+                                        startX = 0, startY = 0,
+                                        drawSizeX = targetWidth, drawSizeY = targetHeight,
+                                        renderAnnot = false
+                                    )
+                                    bitmap
+                                }
                             }
-
-                            val aspectRatio = originalWidth.toFloat() / originalHeight.toFloat()
-                            val targetWidth = (targetHeight * aspectRatio).toInt()
-
-                            if (targetWidth <= 0) {
-                                Timber.e("Calculated invalid bitmap width for cover: $targetWidth")
-                                return@withContext null
-                            }
-
-                            val bitmap = createBitmap(targetWidth, targetHeight)
-                            page.renderPageBitmap(
-                                bitmap = bitmap,
-                                startX = 0, startY = 0,
-                                drawSizeX = targetWidth, drawSizeY = targetHeight,
-                                renderAnnot = false
-                            )
-                            bitmap
                         }
                     }
                 }

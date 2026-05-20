@@ -44,6 +44,7 @@ import com.aryan.reader.SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.areReaderAiFeaturesEnabled
+import com.aryan.reader.cardTitle
 import com.aryan.reader.epubreader.SystemUiMode
 import kotlin.collections.isNotEmpty
 
@@ -153,6 +154,7 @@ internal fun PdfTopBar(
     isTabsEnabled: Boolean,
     openTabs: List<RecentFileItem>,
     activeTabBookId: String?,
+    usePdfFileNameAsDisplayName: Boolean,
     effectiveFileType: FileType,
     onNavigateBack: () -> Unit,
     onShowThemePanel: () -> Unit,
@@ -677,7 +679,7 @@ internal fun PdfTopBar(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = tab.customName ?: tab.title ?: tab.displayName,
+                                    text = tab.cardTitle(usePdfFileNameAsDisplayName),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.widthIn(max = 140.dp),

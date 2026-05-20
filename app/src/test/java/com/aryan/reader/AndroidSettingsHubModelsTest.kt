@@ -123,6 +123,7 @@ class AndroidSettingsHubModelsTest {
                 uiState = ReaderScreenState(
                     isTabsEnabled = true,
                     useStrictFileFilter = true,
+                    usePdfFileNameAsDisplayName = true,
                     isScreenCaptureProtectionEnabled = true
                 ),
                 isOssBuild = false,
@@ -134,6 +135,7 @@ class AndroidSettingsHubModelsTest {
 
         assertTrue(toggles.getValue(SharedSettingsAction.TABS_TOGGLE).checked == true)
         assertTrue(toggles.getValue(SharedSettingsAction.STRICT_FILE_FILTER).checked == true)
+        assertTrue(toggles.getValue(SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME).checked == true)
         assertTrue(toggles.getValue(SharedSettingsAction.SCREEN_CAPTURE_PROTECTION).checked == true)
     }
 
@@ -153,6 +155,7 @@ class AndroidSettingsHubModelsTest {
         assertTrue(SharedSettingsAction.LANGUAGE in extraActions)
         assertTrue(SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR in extraActions)
         assertTrue(SharedSettingsAction.STRICT_FILE_FILTER in extraActions)
+        assertTrue(SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME in extraActions)
         assertTrue(SharedSettingsAction.CLEAR_BOOK_CACHE in extraActions)
         assertTrue(SharedSettingsAction.CLEAR_REFLOW_CACHE in extraActions)
         assertTrue(SharedSettingsAction.TEST_PANEL_DETECTION in extraActions)

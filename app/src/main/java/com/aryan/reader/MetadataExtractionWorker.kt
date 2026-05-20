@@ -12,7 +12,8 @@ import androidx.work.WorkerParameters
 import androidx.work.WorkManager
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
-import io.legere.pdfiumandroid.PdfiumCore
+import com.aryan.reader.pdf.PdfiumCoreProvider
+import com.aryan.reader.pdf.PdfiumEngineProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -277,16 +278,14 @@ class MetadataExtractionWorker(
         return parseXmlTextMetadata(xml)
     }
 
-    private fun parsePdfTextMetadata(uri: android.net.Uri): TextMetadata {
+    private suspend fun parsePdfTextMetadata(uri: android.net.Uri): TextMetadata {
         return try {
-            val pdfiumCore = PdfiumCore(appContext)
             appContext.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                val pdfDocument = pdfiumCore.newDocument(pfd)
-                try {
-                    val meta = pdfiumCore.getDocumentMeta(pdfDocument)
-                    TextMetadata(title = meta.title, author = meta.author)
-                } finally {
-                    pdfiumCore.closeDocument(pdfDocument)
+                PdfiumEngineProvider.withPdfium {
+                    PdfiumCoreProvider.core.newDocument(pfd).use { pdfDocument ->
+                        val meta = pdfDocument.getDocumentMeta()
+                        TextMetadata(title = meta.title, author = meta.author)
+                    }
                 }
             } ?: TextMetadata()
         } catch (e: Exception) {

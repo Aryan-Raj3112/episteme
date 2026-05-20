@@ -82,6 +82,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
+import com.aryan.reader.cardTitle
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
 
@@ -321,7 +322,8 @@ private fun PdfTabsDrawerPage(
     onTabSelected: (String) -> Unit,
     onTabClosed: (String) -> Unit,
     onNewTabClick: () -> Unit,
-    onTopTabStripVisibilityChange: (Boolean) -> Unit
+    onTopTabStripVisibilityChange: (Boolean) -> Unit,
+    usePdfFileNameAsDisplayName: Boolean
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -407,7 +409,8 @@ private fun PdfTabsDrawerPage(
                         currentPage = currentPage,
                         totalPages = totalPages,
                         onTabSelected = onTabSelected,
-                        onTabClosed = onTabClosed
+                        onTabClosed = onTabClosed,
+                        usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                     )
                 }
             }
@@ -422,7 +425,8 @@ private fun PdfDrawerTabItem(
     currentPage: Int,
     totalPages: Int,
     onTabSelected: (String) -> Unit,
-    onTabClosed: (String) -> Unit
+    onTabClosed: (String) -> Unit,
+    usePdfFileNameAsDisplayName: Boolean
 ) {
     val shape = RoundedCornerShape(8.dp)
     val containerColor by animateColorAsState(
@@ -510,7 +514,7 @@ private fun PdfDrawerTabItem(
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = tab.customName ?: tab.title ?: tab.displayName,
+                    text = tab.cardTitle(usePdfFileNameAsDisplayName),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                     color = contentColor,
@@ -567,6 +571,7 @@ internal fun PdfNavigationDrawerContent(
     isTabsEnabled: Boolean = false,
     openTabs: List<RecentFileItem> = emptyList(),
     activeTabBookId: String? = null,
+    usePdfFileNameAsDisplayName: Boolean = false,
     isTopTabStripVisible: Boolean = true,
     customHighlightColors: Map<PdfHighlightColor, Color>,
     onPageSelected: (Int) -> Unit,
@@ -639,7 +644,8 @@ internal fun PdfNavigationDrawerContent(
                     },
                     onTabClosed = onTabClosed,
                     onNewTabClick = onNewTabClick,
-                    onTopTabStripVisibilityChange = onTopTabStripVisibilityChange
+                    onTopTabStripVisibilityChange = onTopTabStripVisibilityChange,
+                    usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                 )
 
                 PdfDrawerSection.CHAPTERS -> { // Chapters Page

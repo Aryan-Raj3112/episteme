@@ -76,6 +76,15 @@
 -keep class com.aryan.reader.epubreader.ChapterWebViewKt { *; }
 -keep class com.aryan.reader.epubreader.ChapterWebViewKt$* { *; }
 
+# The PDF reader is another very large Compose surface. Keeping its file facade
+# out of release optimizer folding avoids ART's compiler instruction-limit path
+# and preserves the private pdfium wrapper fields read for native pointer access.
+-keep class com.aryan.reader.pdf.PdfViewerScreenKt { *; }
+-keep class com.aryan.reader.pdf.PdfViewerScreenKt$* { *; }
+-keep class com.aryan.reader.pdf.PdfPageComposableKt { *; }
+-keep class com.aryan.reader.pdf.PdfPageComposableKt$* { *; }
+-keep class io.legere.pdfiumandroid.** { *; }
+
 -dontwarn com.gemalto.jp2.**
 
 # Flexmark Markdown parser rules

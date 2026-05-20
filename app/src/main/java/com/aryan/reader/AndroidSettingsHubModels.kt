@@ -37,6 +37,7 @@ fun androidSettingsHubInput(
         includeRecentLimit = true,
         includeCustomFonts = true,
         includeStrictFileFilter = true,
+        includePdfFileNameDisplayName = true,
         includeHideReaderAi = !isOfflineBuild,
         includeCloudLocalDataClear = supportsSync,
         supportProjectAvailable = isOssBuild,
@@ -44,6 +45,7 @@ fun androidSettingsHubInput(
         isSyncEnabled = uiState.isSyncEnabled,
         isFolderSyncEnabled = uiState.isFolderSyncEnabled,
         useStrictFileFilter = uiState.useStrictFileFilter,
+        usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
         isScreenCaptureProtectionEnabled = uiState.isScreenCaptureProtectionEnabled,
         hideReaderAi = hideReaderAi
     )

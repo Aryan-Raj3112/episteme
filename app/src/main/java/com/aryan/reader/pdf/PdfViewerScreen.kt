@@ -3539,22 +3539,15 @@ fun PdfViewerScreen(
         pfdState = null
         totalPages = 0
 
-        var currentPfdOpened: ParcelFileDescriptor? = null
         try {
             withContext(Dispatchers.IO) {
-                Timber.tag("PdfTabSync").v("UI: Opening PFD for $effectivePdfUri")
+                Timber.tag("PdfTabSync").v("UI: Opening document for $effectivePdfUri")
 
                 val selectedDocumentType = uiState.selectedFileType ?: FileType.PDF
-                if (pdfUri.scheme != "opds-pse" && selectedDocumentType == FileType.PDF) {
-                    currentPfdOpened = context.contentResolver.openFileDescriptor(effectivePdfUri, "r")
-                    if (currentPfdOpened == null) throw Exception("Failed to open ParcelFileDescriptor")
-                }
-
                 val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, pdfiumCore)
 
                 if (!isActive) {
                     doc.close()
-                    currentPfdOpened?.close()
                     return@withContext
                 }
 
@@ -3564,7 +3557,7 @@ fun PdfViewerScreen(
                         wrapper.pdfDocument.getDocumentMeta().title?.takeIf { it.isNotBlank() }
                     }
                 }
-                pfdState = currentPfdOpened
+                pfdState = null
                 val pagesCount = doc.getPageCount()
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                     "ui.open.documentLoaded bookId=$currentBookId uri=$effectivePdfUri pagesCount=$pagesCount " +
@@ -3652,7 +3645,7 @@ fun PdfViewerScreen(
                         currentBookId!!,
                         DocumentCacheItem(
                             doc = doc,
-                            pfd = currentPfdOpened,
+                            pfd = null,
                             totalPages = pagesCount,
                             pageAspectRatios = ratios,
                             flatTableOfContents = flatTableOfContents
@@ -3731,12 +3724,6 @@ fun PdfViewerScreen(
                 isLoadingDocument = false
             }
             if (pdfDocument == null) {
-                currentPfdOpened?.let {
-                    try {
-                        it.close()
-                    } catch (_: Exception) {
-                    }
-                }
                 pfdState = null
             }
         }
@@ -4234,6 +4221,7 @@ fun PdfViewerScreen(
                     isTabsEnabled = canShowPdfTabs,
                     openTabs = openTabs,
                     activeTabBookId = activeTabBookId,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     isTopTabStripVisible = showTopTabStrip,
                     customHighlightColors = customHighlightColors,
                     onPageSelected = { targetPage ->
@@ -6211,6 +6199,7 @@ fun PdfViewerScreen(
                     isTabsEnabled = isPdfTabStripVisible,
                     openTabs = openTabs,
                     activeTabBookId = activeTabBookId,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                     effectiveFileType = effectiveFileType,
                     onNavigateBack = { saveStateAndExit() },
                     onShowThemePanel = showPdfThemePanel,

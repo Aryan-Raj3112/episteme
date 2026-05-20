@@ -264,6 +264,7 @@ data class SharedReaderScreenState(
     val showExternalFileSavePromptFor: String? = null,
     val externalFileBehavior: String = "ASK",
     val useStrictFileFilter: Boolean = false,
+    val usePdfFileNameAsDisplayName: Boolean = false,
     val appThemeMode: AppThemeMode = AppThemeMode.SYSTEM,
     val appContrastOption: AppContrastOption = AppContrastOption.STANDARD,
     val appTextDimFactorLight: Float = 1.0f,

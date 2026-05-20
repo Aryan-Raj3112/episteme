@@ -88,6 +88,8 @@ import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PDF_BLANK_PAGE_PERSISTENCE_TAG
 import com.aryan.reader.pdf.PdfUserHighlight
+import com.aryan.reader.pdf.PdfiumCoreProvider
+import com.aryan.reader.pdf.PdfiumEngineProvider
 import com.aryan.reader.pdf.PdfiumAnnotationExporter
 import com.aryan.reader.pdf.ReflowWorker
 import com.aryan.reader.pdf.pdfLayoutDebugSummary
@@ -109,7 +111,6 @@ import com.aryan.reader.shared.SharedImportPlanner
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
-import io.legere.pdfiumandroid.PdfiumCore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Deferred
@@ -564,6 +565,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             activeTabBookId = prefs.getString(KEY_ACTIVE_TAB, null),
             externalFileBehavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK",
             useStrictFileFilter = prefs.getBoolean(KEY_USE_STRICT_FILE_FILTER, false),
+            usePdfFileNameAsDisplayName = prefs.getBoolean(KEY_USE_PDF_FILE_NAME_AS_DISPLAY_NAME, false),
             isScreenCaptureProtectionEnabled = prefs.getBoolean(KEY_SCREEN_CAPTURE_PROTECTION, false),
             appThemeMode = try {
                 AppThemeMode.valueOf(prefs.getString(KEY_APP_THEME_MODE, AppThemeMode.SYSTEM.name) ?: AppThemeMode.SYSTEM.name)
@@ -3573,22 +3575,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
             if (type == FileType.PDF) {
                 try {
-                    val pdfiumCore = PdfiumCore(appContext)
                     appContext.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                        val pdfDocument = pdfiumCore.newDocument(pfd)
-                        val meta = pdfiumCore.getDocumentMeta(pdfDocument)
+                        PdfiumEngineProvider.withPdfium {
+                            PdfiumCoreProvider.core.newDocument(pfd).use { pdfDocument ->
+                                val meta = pdfDocument.getDocumentMeta()
 
-                        val extractedTitle = meta.title
-                        if (!extractedTitle.isNullOrBlank() && title == displayName) {
-                            title = extractedTitle
+                                val extractedTitle = meta.title
+                                if (!extractedTitle.isNullOrBlank() && title == displayName) {
+                                    title = extractedTitle
+                                }
+
+                                val extractedAuthor = meta.author
+                                if (!extractedAuthor.isNullOrBlank() && author == null) {
+                                    author = extractedAuthor
+                                }
+                            }
                         }
-
-                        val extractedAuthor = meta.author
-                        if (!extractedAuthor.isNullOrBlank() && author == null) {
-                            author = extractedAuthor
-                        }
-
-                        pdfiumCore.closeDocument(pdfDocument)
                     }
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to extract PDF title using PdfiumCore")
@@ -5785,6 +5787,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(useStrictFileFilter = enabled) }
     }
 
+    fun setUsePdfFileNameAsDisplayName(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_USE_PDF_FILE_NAME_AS_DISPLAY_NAME, enabled) }
+        _internalState.update { it.copy(usePdfFileNameAsDisplayName = enabled) }
+    }
+
     fun setScreenCaptureProtectionEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_SCREEN_CAPTURE_PROTECTION, enabled) }
         _internalState.update { it.copy(isScreenCaptureProtectionEnabled = enabled) }
@@ -6102,6 +6109,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_LAST_OPEN_FILE_TYPE = "last_open_file_type"
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
         private const val KEY_USE_STRICT_FILE_FILTER = "use_strict_file_filter"
+        private const val KEY_USE_PDF_FILE_NAME_AS_DISPLAY_NAME = "use_pdf_file_name_as_display_name"
         private const val KEY_SCREEN_CAPTURE_PROTECTION = "screen_capture_protection_enabled"
         private const val KEY_APP_THEME_MODE = "app_theme_mode"
         private const val KEY_APP_CONTRAST_OPTION = "app_contrast_option"

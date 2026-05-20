@@ -68,6 +68,7 @@ internal fun ReaderFileInfoDialogs(
         if (isFileInfoVisible) {
             FileInfoDialog(
                 item = fileInfoItem,
+                usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                 onDismiss = { onFileInfoVisibleChange(false) },
                 onSaveMetadata = { metadata ->
                     viewModel.updateBookMetadata(fileInfoItem.bookId, metadata)

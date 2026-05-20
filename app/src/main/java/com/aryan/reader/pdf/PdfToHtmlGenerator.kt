@@ -133,22 +133,23 @@ object PdfToHtmlGenerator {
         headerFooterStrings: Set<String>
     ): String {
         return try {
-            doc.openPage(pageIdx)?.use { page ->
-                page.openTextPage().use { textPage ->
-                    val charCount = textPage.textPageCountChars()
+            PdfiumEngineProvider.withPdfium {
+                doc.openPage(pageIdx)?.use { page ->
+                    page.openTextPage().use { textPage ->
+                        val charCount = textPage.textPageCountChars()
 
                     val pagePtr = getNativePointer(page)
                     val textPagePtr = getNativePointer(textPage)
 
                     val imageElements = mutableListOf<ImageElement>()
-                    val objCount = PdfiumEngineProvider.bridge.getPageObjectCount(pagePtr)
+                    val objCount = NativePdfiumBridge.getPageObjectCount(pagePtr)
                     for (i in 0 until objCount) {
-                        if (PdfiumEngineProvider.bridge.getPageObjectType(pagePtr, i) == 3) {
+                        if (NativePdfiumBridge.getPageObjectType(pagePtr, i) == 3) {
                             val bbox = FloatArray(4)
-                            if (PdfiumEngineProvider.bridge.getPageObjectBoundingBox(pagePtr, i, bbox)) {
+                            if (NativePdfiumBridge.getPageObjectBoundingBox(pagePtr, i, bbox)) {
                                 val topY = bbox[3]
                                 val dimens = IntArray(2)
-                                val pixels = PdfiumEngineProvider.bridge.extractImagePixels(pagePtr, i, dimens)
+                                val pixels = NativePdfiumBridge.extractImagePixels(pagePtr, i, dimens)
                                 if (pixels != null && dimens[0] > 0 && dimens[1] > 0) {
                                     try {
                                         val bmp = Bitmap.createBitmap(pixels, dimens[0], dimens[1], Bitmap.Config.ARGB_8888)
@@ -179,12 +180,10 @@ object PdfToHtmlGenerator {
                     val flags: IntArray?
                     val charBoxes: FloatArray?
 
-                    synchronized(PdfiumEngineProvider.lock) {
-                        sizes     = PdfiumEngineProvider.bridge.getPageFontSizes(textPagePtr, actualCount)
-                        weights   = PdfiumEngineProvider.bridge.getPageFontWeights(textPagePtr, actualCount)
-                        flags     = PdfiumEngineProvider.bridge.getPageFontFlags(textPagePtr, actualCount)
-                        charBoxes = PdfiumEngineProvider.bridge.getPageCharBoxes(textPagePtr, actualCount)
-                    }
+                    sizes = NativePdfiumBridge.getPageFontSizes(textPagePtr, actualCount)
+                    weights = NativePdfiumBridge.getPageFontWeights(textPagePtr, actualCount)
+                    flags = NativePdfiumBridge.getPageFontFlags(textPagePtr, actualCount)
+                    charBoxes = NativePdfiumBridge.getPageCharBoxes(textPagePtr, actualCount)
 
                     if (sizes == null || weights == null || flags == null) {
                         return@use buildFallbackPageSection(pageNumber, rawText)
@@ -302,8 +301,9 @@ object PdfToHtmlGenerator {
                     }
 
                     buildPageHtml(pageNumber, finalElements, headerFooterStrings)
-                }
-            } ?: buildEmptyPageSection(pageNumber)
+                    }
+                } ?: buildEmptyPageSection(pageNumber)
+            }
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Error extracting page $pageIdx")
             buildEmptyPageSection(pageNumber)
@@ -506,17 +506,19 @@ object PdfToHtmlGenerator {
 
         for (pageIdx in samplePages) {
             try {
-                doc.openPage(pageIdx)?.use { page ->
-                    page.openTextPage().use { textPage ->
-                        val charCount = textPage.textPageCountChars()
-                        if (charCount <= 0) return@use
-                        val rawText = textPage.textPageGetText(0, charCount) ?: return@use
+                PdfiumEngineProvider.withPdfium {
+                    doc.openPage(pageIdx)?.use { page ->
+                        page.openTextPage().use { textPage ->
+                            val charCount = textPage.textPageCountChars()
+                            if (charCount <= 0) return@use
+                            val rawText = textPage.textPageGetText(0, charCount) ?: return@use
 
-                        val lines = rawText.split('\n').map { it.trim() }.filter { it.length > 2 }
-                        if (lines.isNotEmpty()) {
-                            val edgeLines = lines.take(2) + lines.takeLast(2)
-                            for (line in edgeLines) {
-                                frequency[line] = (frequency[line] ?: 0) + 1
+                            val lines = rawText.split('\n').map { it.trim() }.filter { it.length > 2 }
+                            if (lines.isNotEmpty()) {
+                                val edgeLines = lines.take(2) + lines.takeLast(2)
+                                for (line in edgeLines) {
+                                    frequency[line] = (frequency[line] ?: 0) + 1
+                                }
                             }
                         }
                     }

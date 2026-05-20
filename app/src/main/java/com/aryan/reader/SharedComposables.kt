@@ -385,6 +385,7 @@ fun DeleteConfirmationDialog(
 @Composable
 fun FileInfoDialog(
     item: RecentFileItem,
+    usePdfFileNameAsDisplayName: Boolean = false,
     onDismiss: () -> Unit,
     onSaveMetadata: (BookMetadataEdit) -> Unit,
     onSaveDisplayName: (String?) -> Unit,
@@ -401,8 +402,8 @@ fun FileInfoDialog(
         mutableStateOf(item.seriesIndex?.formatMetadataNumber().orEmpty())
     }
     var descriptionInput by remember(item.bookId, item.description) { mutableStateOf(item.description.orEmpty()) }
-    var displayNameInput by remember(item.bookId, item.customName, item.title, item.displayName) {
-        mutableStateOf(item.customName ?: item.cardTitle())
+    var displayNameInput by remember(item.bookId, item.customName, item.title, item.displayName, usePdfFileNameAsDisplayName) {
+        mutableStateOf(item.customName ?: item.cardTitle(usePdfFileNameAsDisplayName))
     }
     var showRestoreConfirmation by remember(item.bookId) { mutableStateOf(false) }
 
@@ -457,7 +458,7 @@ fun FileInfoDialog(
                     } else {
                         stringResource(R.string.file_information)
                     },
-                    subtitle = item.cardTitle(),
+                    subtitle = item.cardTitle(usePdfFileNameAsDisplayName),
                     onClose = {
                         if (isEditing) {
                             isEditing = false
@@ -500,6 +501,7 @@ fun FileInfoDialog(
                     } else {
                         BookMetadataInfoContent(
                             item = item,
+                            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
                             formattedDate = formattedDate,
                             lastModifiedDate = lastModifiedDate,
                             pathText = pathTextFinal,
@@ -613,6 +615,7 @@ private fun FileInfoTopBar(
 @Composable
 private fun BookMetadataInfoContent(
     item: RecentFileItem,
+    usePdfFileNameAsDisplayName: Boolean,
     formattedDate: String,
     lastModifiedDate: String?,
     pathText: String,
@@ -626,7 +629,7 @@ private fun BookMetadataInfoContent(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                item.cardTitle(),
+                item.cardTitle(usePdfFileNameAsDisplayName),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 maxLines = 3,
@@ -1534,8 +1537,12 @@ fun BookTagChipsRow(
 
 private const val UNKNOWN_AUTHOR_LABEL = "No author listed"
 
-fun RecentFileItem.cardTitle(): String {
-    return customName ?: title?.takeIf { it.isNotBlank() } ?: displayName
+fun RecentFileItem.cardTitle(usePdfFileNameAsDisplayName: Boolean = false): String {
+    customName?.takeIf { it.isNotBlank() }?.let { return it }
+    if (usePdfFileNameAsDisplayName && type == FileType.PDF) {
+        return displayName
+    }
+    return title?.takeIf { it.isNotBlank() } ?: displayName
 }
 
 fun RecentFileItem.cardAuthor(): String {

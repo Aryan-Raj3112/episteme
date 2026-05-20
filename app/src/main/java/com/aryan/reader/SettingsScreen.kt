@@ -200,6 +200,9 @@ fun SettingsScreen(
                         }
                     }
                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> showBehaviorDialog = true
+                    SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME -> {
+                        viewModel.setUsePdfFileNameAsDisplayName(!uiState.usePdfFileNameAsDisplayName)
+                    }
                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> {
                         val next = !uiState.isScreenCaptureProtectionEnabled
                         viewModel.setScreenCaptureProtectionEnabled(next)

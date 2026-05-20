@@ -372,43 +372,50 @@ class PdfTextRepository(context: Context) {
     ): List<RectF> {
         return withContext(Dispatchers.IO) {
             val rects = mutableListOf<RectF>()
+            var bitmap: android.graphics.Bitmap? = null
+            var targetWidth = 0
+            var targetHeight = 0
             try {
-                document.openPage(pageIndex)?.use { page ->
-                    val targetWidth = 1080
-                    val ptrWidth = page.getPageWidthPoint()
-                    val ptrHeight = page.getPageHeightPoint()
+                PdfiumEngineProvider.withPdfium {
+                    document.openPage(pageIndex)?.use { page ->
+                        targetWidth = 1080
+                        val ptrWidth = page.getPageWidthPoint()
+                        val ptrHeight = page.getPageHeightPoint()
 
-                    if (ptrWidth <= 0 || ptrHeight <= 0) return@use
+                        if (ptrWidth <= 0 || ptrHeight <= 0) return@use
 
-                    val aspectRatio = ptrWidth.toFloat() / ptrHeight.toFloat()
-                    val targetHeight = (targetWidth / aspectRatio).toInt().coerceAtLeast(1)
+                        val aspectRatio = ptrWidth.toFloat() / ptrHeight.toFloat()
+                        targetHeight = (targetWidth / aspectRatio).toInt().coerceAtLeast(1)
 
-                    val bitmap = createBitmap(targetWidth, targetHeight)
-                    page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, false)
+                        bitmap = createBitmap(targetWidth, targetHeight)
+                        page.renderPageBitmap(bitmap!!, 0, 0, targetWidth, targetHeight, false)
+                    }
+                }
 
-                    val visionText = OcrHelper.extractTextFromBitmap(bitmap, onModelDownloading)
+                val renderedBitmap = bitmap ?: return@withContext rects
+                val visionText = OcrHelper.extractTextFromBitmap(renderedBitmap, onModelDownloading)
 
-                    visionText?.textBlocks?.forEach { block ->
-                        block.lines.forEach { line ->
-                            line.elements.forEach { element ->
-                                if (element.text.contains(query, ignoreCase = true)) {
-                                    element.boundingBox?.let { box ->
-                                        val normalized = RectF(
-                                            box.left.toFloat() / targetWidth,
-                                            box.top.toFloat() / targetHeight,
-                                            box.right.toFloat() / targetWidth,
-                                            box.bottom.toFloat() / targetHeight
-                                        )
-                                        rects.add(normalized)
-                                    }
+                visionText?.textBlocks?.forEach { block ->
+                    block.lines.forEach { line ->
+                        line.elements.forEach { element ->
+                            if (element.text.contains(query, ignoreCase = true)) {
+                                element.boundingBox?.let { box ->
+                                    val normalized = RectF(
+                                        box.left.toFloat() / targetWidth,
+                                        box.top.toFloat() / targetHeight,
+                                        box.right.toFloat() / targetWidth,
+                                        box.bottom.toFloat() / targetHeight
+                                    )
+                                    rects.add(normalized)
                                 }
                             }
                         }
                     }
-                    bitmap.recycle()
                 }
             } catch (e: Exception) {
                 Timber.tag(TAG).e(e, "Failed to get OCR rects for page $pageIndex")
+            } finally {
+                bitmap?.recycle()
             }
             rects
         }
