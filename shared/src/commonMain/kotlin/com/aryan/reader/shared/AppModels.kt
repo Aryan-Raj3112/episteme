@@ -155,6 +155,44 @@ enum class AppContrastOption(val value: Double) {
     HIGH(1.0)
 }
 
+enum class AppFontPreferenceKind {
+    SYSTEM,
+    SERIF,
+    SANS_SERIF,
+    MONOSPACE,
+    CUSTOM
+}
+
+data class AppFontPreference(
+    val kind: AppFontPreferenceKind = AppFontPreferenceKind.SYSTEM,
+    val customFontId: String? = null
+) {
+    fun sanitized(): AppFontPreference {
+        return when (kind) {
+            AppFontPreferenceKind.CUSTOM -> customFontId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { copy(customFontId = it) }
+                ?: System
+            else -> copy(customFontId = null)
+        }
+    }
+
+    fun referencesCustomFont(fontId: String): Boolean {
+        return kind == AppFontPreferenceKind.CUSTOM && customFontId == fontId
+    }
+
+    companion object {
+        val System = AppFontPreference(AppFontPreferenceKind.SYSTEM)
+        val Serif = AppFontPreference(AppFontPreferenceKind.SERIF)
+        val SansSerif = AppFontPreference(AppFontPreferenceKind.SANS_SERIF)
+        val Monospace = AppFontPreference(AppFontPreferenceKind.MONOSPACE)
+
+        fun custom(customFontId: String): AppFontPreference {
+            return AppFontPreference(AppFontPreferenceKind.CUSTOM, customFontId).sanitized()
+        }
+    }
+}
+
 data class CustomAppTheme(
     val id: String,
     val name: String,
@@ -231,6 +269,7 @@ data class SharedReaderScreenState(
     val appTextDimFactorLight: Float = 1.0f,
     val appTextDimFactorDark: Float = 1.0f,
     val appSeedColor: Color? = null,
+    val appFontPreference: AppFontPreference = AppFontPreference.System,
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
     val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),

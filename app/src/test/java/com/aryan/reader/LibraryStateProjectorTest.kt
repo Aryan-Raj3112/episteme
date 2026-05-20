@@ -499,6 +499,27 @@ class LibraryStateProjectorTest {
         assertEquals(listOf("folder_book"), folderShelf.directBooks.ids())
     }
 
+    @Test
+    fun `project preserves app font preference when reusing cached library projection`() {
+        val book = recentFile("book")
+        val projector = LibraryStateProjector()
+        val input = LibraryProjectionInput(
+            state = ReaderScreenState(),
+            recentFilesFromDb = listOf(book),
+            dbShelves = emptyList(),
+            shelfRefs = emptyList(),
+            dbTags = emptyList(),
+            tagRefs = emptyList()
+        )
+
+        projector.project(input)
+        val result = projector.project(
+            input.copy(state = input.state.copy(appFontPreference = AppFontPreference.Monospace))
+        )
+
+        assertEquals(AppFontPreference.Monospace, result.appFontPreference)
+    }
+
     private fun recentFile(
         id: String,
         uriString: String? = "content://$id",

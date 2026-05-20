@@ -17,12 +17,14 @@ class SharedAppThemeReducerTest {
             .reduce(AppAction.AppTextDimFactorLightChanged(0.75f))
             .reduce(AppAction.AppTextDimFactorDarkChanged(0.65f))
             .reduce(AppAction.AppSeedColorChanged(seedColor))
+            .reduce(AppAction.AppFontPreferenceChanged(AppFontPreference.Monospace))
 
         assertEquals(AppThemeMode.DARK, state.appThemeMode)
         assertEquals(AppContrastOption.HIGH, state.appContrastOption)
         assertEquals(0.75f, state.appTextDimFactorLight)
         assertEquals(0.65f, state.appTextDimFactorDark)
         assertEquals(seedColor, state.appSeedColor)
+        assertEquals(AppFontPreference.Monospace, state.appFontPreference)
     }
 
     @Test
@@ -57,5 +59,13 @@ class SharedAppThemeReducerTest {
 
         assertEquals(0.3f, state.appTextDimFactorLight)
         assertEquals(1.0f, state.appTextDimFactorDark)
+    }
+
+    @Test
+    fun `custom app font preference without an id falls back to system`() {
+        val state = SharedReaderScreenState()
+            .reduce(AppAction.AppFontPreferenceChanged(AppFontPreference(AppFontPreferenceKind.CUSTOM)))
+
+        assertEquals(AppFontPreference.System, state.appFontPreference)
     }
 }

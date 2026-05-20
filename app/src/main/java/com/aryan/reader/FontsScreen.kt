@@ -61,6 +61,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.ui.SharedAppFontSelector
+import com.aryan.reader.shared.ui.SharedFontSettingsSection
+import com.aryan.reader.shared.ui.SharedFontSettingsTabs
 import com.aryan.reader.data.CustomFontEntity
 import java.io.File
 
@@ -80,6 +84,7 @@ fun FontsScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var fontToDelete by remember { mutableStateOf<CustomFontEntity?>(null) }
     var showGoogleFontsSheet by remember { mutableStateOf(false) }
+    var selectedSection by remember { mutableStateOf(SharedFontSettingsSection.READER_FONTS) }
 
     val pickFontLauncher = rememberFilePickerLauncher { uris ->
         uris.firstOrNull()?.let { viewModel.importFont(it) }
@@ -105,7 +110,7 @@ fun FontsScreen(
             )
         },
         floatingActionButton = {
-            if (fonts.isNotEmpty()) {
+            if (selectedSection == SharedFontSettingsSection.READER_FONTS && fonts.isNotEmpty()) {
                 Column(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -130,31 +135,61 @@ fun FontsScreen(
         }
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (fonts.isEmpty()) {
-                val secondaryText = if (showGoogleFontsOption) stringResource(R.string.action_browse_google_fonts) else null
-                val secondaryClick: (() -> Unit)? = if (showGoogleFontsOption) { { showGoogleFontsSheet = true } } else null
-
-                EmptyState(
-                    title = stringResource(R.string.no_custom_fonts),
-                    message = stringResource(R.string.import_fonts_desc),
-                    onSelectFileClick = { pickFontLauncher.launch(fontMimeTypes) },
-                    modifier = Modifier.fillMaxSize(),
-                    secondaryButtonText = secondaryText,
-                    onSecondaryClick = secondaryClick
+            val sharedFonts = remember(fonts) { fonts.toSharedCustomFontItems() }
+            Column(modifier = Modifier.fillMaxSize()) {
+                SharedFontSettingsTabs(
+                    selectedSection = selectedSection,
+                    onSectionChange = { selectedSection = it },
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)
                 )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(fonts, key = { it.id }) { font ->
-                        FontListItem(
-                            font = font,
-                            onDelete = {
-                                fontToDelete = font
-                                showDeleteDialog = true
+
+                when (selectedSection) {
+                    SharedFontSettingsSection.READER_FONTS -> {
+                        if (fonts.isEmpty()) {
+                            val secondaryText = if (showGoogleFontsOption) stringResource(R.string.action_browse_google_fonts) else null
+                            val secondaryClick: (() -> Unit)? = if (showGoogleFontsOption) { { showGoogleFontsSheet = true } } else null
+
+                            EmptyState(
+                                title = stringResource(R.string.no_custom_fonts),
+                                message = stringResource(R.string.import_fonts_desc),
+                                onSelectFileClick = { pickFontLauncher.launch(fontMimeTypes) },
+                                modifier = Modifier.weight(1f),
+                                secondaryButtonText = secondaryText,
+                                onSecondaryClick = secondaryClick
+                            )
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(fonts, key = { it.id }) { font ->
+                                    FontListItem(
+                                        font = font,
+                                        onDelete = {
+                                            fontToDelete = font
+                                            showDeleteDialog = true
+                                        }
+                                    )
+                                }
                             }
+                        }
+                    }
+
+                    SharedFontSettingsSection.APP_TEXT -> {
+                        SharedAppFontSelector(
+                            preference = uiState.appFontPreference,
+                            customFonts = sharedFonts,
+                            onPreferenceChange = viewModel::setAppFontPreference,
+                            fontFamilyForPreview = { font ->
+                                val file = File(font.path)
+                                if (file.isFile) {
+                                    runCatching { FontFamily(Font(file)) }.getOrNull()
+                                } else {
+                                    null
+                                }
+                            },
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)
                         )
                     }
                 }
@@ -422,6 +457,22 @@ fun FontListItem(
             )
         }
     }
+}
+
+private fun List<CustomFontEntity>.toSharedCustomFontItems(): List<CustomFontItem> {
+    return filterNot { it.isDeleted }
+        .sortedBy { it.displayName.lowercase() }
+        .map { font ->
+            CustomFontItem(
+                id = font.id,
+                displayName = font.displayName,
+                fileName = font.fileName,
+                fileExtension = font.fileExtension,
+                path = font.path,
+                timestamp = font.timestamp,
+                isDeleted = font.isDeleted
+            )
+        }
 }
 
 @Composable

@@ -30,6 +30,7 @@ import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import com.aryan.reader.shared.AppAction
+import com.aryan.reader.shared.AppFontPreference
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BookShelfRef
@@ -2156,6 +2157,7 @@ internal fun EpistemeDesktopApp(
     fun deleteCustomFont(font: CustomFontItem) {
         customFontStore.deleteFont(font)
         customFonts = customFonts.filterNot { it.id == font.id }
+        val resetAppFont = state.appFontPreference.referencesCustomFont(font.id)
         val clearedSettings = state.rawLibraryBooks.map { book ->
             val settings = book.readerSettings
             if (settings?.customFontPath == font.path) {
@@ -2176,7 +2178,11 @@ internal fun EpistemeDesktopApp(
                 content
             }
         }
-        updateState(state.copy(rawLibraryBooks = clearedSettings).withBanner("Deleted ${font.displayName}."))
+        val nextState = state.copy(
+            rawLibraryBooks = clearedSettings,
+            appFontPreference = if (resetAppFont) AppFontPreference.System else state.appFontPreference
+        )
+        updateState(nextState.withBanner("Deleted ${font.displayName}."))
         deleteCustomFontFromDesktopCloud(font)
     }
 
@@ -2901,13 +2907,18 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    val desktopAppFontFamily = remember(state.appFontPreference, customFonts) {
+        state.appFontPreference.toDesktopAppFontFamily(customFonts)
+    }
+
     CompositionLocalProvider(LocalSharedStringResolver provides desktopStringResolver) {
         SharedAppTheme(
             appThemeMode = state.appThemeMode,
             appContrastOption = state.appContrastOption,
             appTextDimFactorLight = state.appTextDimFactorLight,
             appTextDimFactorDark = state.appTextDimFactorDark,
-            appSeedColor = state.appSeedColor
+            appSeedColor = state.appSeedColor,
+            appFontFamily = desktopAppFontFamily
         ) {
         EpistemeDesktopWindowChromeEffect(
             window = window,
@@ -3194,6 +3205,10 @@ internal fun EpistemeDesktopApp(
 
                         SharedAppTab.CUSTOM_FONTS -> SharedCustomFontsScreen(
                             fonts = customFonts,
+                            appFontPreference = state.appFontPreference,
+                            onAppFontPreferenceChange = { preference ->
+                                updateState(state.reduce(AppAction.AppFontPreferenceChanged(preference)))
+                            },
                             onImportFont = { importCustomFont(chooseFontFile()) },
                             onDeleteFont = ::deleteCustomFont,
                             googleFontsAvailable = featurePolicy.googleFontsDownload,
@@ -3277,7 +3292,8 @@ internal fun EpistemeDesktopApp(
                         appContrastOption = state.appContrastOption,
                         appTextDimFactorLight = state.appTextDimFactorLight,
                         appTextDimFactorDark = state.appTextDimFactorDark,
-                        appSeedColor = state.appSeedColor
+                        appSeedColor = state.appSeedColor,
+                        appFontFamily = desktopAppFontFamily
                     ) {
                         EpistemeDesktopWindowChromeEffect(
                             window = readerAwtWindow,

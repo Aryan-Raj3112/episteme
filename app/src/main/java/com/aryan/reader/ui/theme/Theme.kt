@@ -29,8 +29,10 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import com.materialkolor.PaletteStyle
 import androidx.compose.ui.platform.LocalContext
+import com.aryan.reader.shared.ui.withAppFontFamily
 import com.materialkolor.dynamicColorScheme
 
 private val lightScheme = lightColorScheme(
@@ -116,6 +118,7 @@ fun AppTheme(
     seedColor: Color? = null,
     contrastLevel: Double = 0.0,
     textDimFactor: Float = 1.0f,
+    appFontFamily: FontFamily? = null,
     content: @Composable () -> Unit
 ) {
     val supportsDynamicColor = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -174,7 +177,7 @@ fun AppTheme(
 
     MaterialTheme(
         colorScheme = finalColorScheme,
-        typography = AppTypography,
+        typography = appFontFamily?.let { AppTypography.withAppFontFamily(it) } ?: AppTypography,
         content = content
     )
 }

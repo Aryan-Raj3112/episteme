@@ -73,6 +73,7 @@ sealed interface AppAction {
     data class AppTextDimFactorLightChanged(val factor: Float) : AppAction
     data class AppTextDimFactorDarkChanged(val factor: Float) : AppAction
     data class AppSeedColorChanged(val color: Color?) : AppAction
+    data class AppFontPreferenceChanged(val preference: AppFontPreference) : AppAction
     data class CustomAppThemeAdded(val theme: CustomAppTheme) : AppAction
     data class CustomAppThemeDeleted(val themeId: String) : AppAction
     data class SyncEnabledChanged(val enabled: Boolean) : AppAction

@@ -92,6 +92,7 @@ internal object AndroidSharedStateBridge {
             appTextDimFactorLight = reduced.appTextDimFactorLight,
             appTextDimFactorDark = reduced.appTextDimFactorDark,
             appSeedColor = reduced.appSeedColor,
+            appFontPreference = reduced.appFontPreference,
             customAppThemes = reduced.customAppThemes
         )
     }

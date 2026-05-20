@@ -145,6 +145,7 @@ class MainViewModelTest {
         coEvery { anyConstructed<RecentFilesRepository>().deleteShelf(any()) } just Runs
 
         every { anyConstructed<FontsRepository>().getAllFonts() } returns customFontsFlow
+        coEvery { anyConstructed<FontsRepository>().deleteFont(any()) } just Runs
 
         viewModel = MainViewModel(mockApplication)
     }
@@ -208,6 +209,37 @@ class MainViewModelTest {
         val state = viewModel.uiState.first { it.appThemeMode == AppThemeMode.DARK }
         assertEquals(AppThemeMode.DARK, state.appThemeMode)
         verify { mockEditor.putString("app_theme_mode", AppThemeMode.DARK.name) }
+    }
+
+    @Test
+    fun `setAppFontPreference persists app font preference`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        val preference = AppFontPreference.custom("font")
+        viewModel.setAppFontPreference(preference)
+
+        val state = viewModel.uiState.first { it.appFontPreference == preference }
+        assertEquals(preference, state.appFontPreference)
+        verify { mockEditor.putString("app_font_kind", AppFontPreferenceKind.CUSTOM.name) }
+        verify { mockEditor.putString("app_font_custom_id", "font") }
+    }
+
+    @Test
+    fun `deleteFont resets matching app custom font preference`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        viewModel.setAppFontPreference(AppFontPreference.custom("font"))
+        viewModel.deleteFont("font")
+        advanceUntilIdle()
+
+        assertEquals(AppFontPreference.System, viewModel.uiState.value.appFontPreference)
+        coVerify { anyConstructed<FontsRepository>().deleteFont("font") }
+        verify { mockEditor.putString("app_font_kind", AppFontPreferenceKind.SYSTEM.name) }
+        verify { mockEditor.remove("app_font_custom_id") }
     }
 
     @Test

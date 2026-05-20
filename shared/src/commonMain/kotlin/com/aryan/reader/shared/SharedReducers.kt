@@ -76,6 +76,7 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.AppTextDimFactorLightChanged -> copy(appTextDimFactorLight = action.factor.coerceIn(0.3f, 1.0f))
         is AppAction.AppTextDimFactorDarkChanged -> copy(appTextDimFactorDark = action.factor.coerceIn(0.3f, 1.0f))
         is AppAction.AppSeedColorChanged -> copy(appSeedColor = action.color)
+        is AppAction.AppFontPreferenceChanged -> copy(appFontPreference = action.preference.sanitized())
         is AppAction.CustomAppThemeAdded -> {
             val updatedThemes = customAppThemes.filterNot { it.id == action.theme.id } + action.theme
             copy(customAppThemes = updatedThemes, appSeedColor = action.theme.seedColor)

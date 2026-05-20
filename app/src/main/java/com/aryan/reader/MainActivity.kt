@@ -37,6 +37,7 @@ import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSiz
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
@@ -95,6 +96,7 @@ class MainActivity : AppCompatActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
 
             ScreenCaptureProtectionEffect(enabled = uiState.isScreenCaptureProtectionEnabled)
 
@@ -105,13 +107,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             val textDimFactor = if (darkTheme) uiState.appTextDimFactorDark else uiState.appTextDimFactorLight
+            val appFontFamily = remember(uiState.appFontPreference, customFonts) {
+                uiState.appFontPreference.toAndroidAppFontFamily(customFonts)
+            }
 
             AppTheme(
                 darkTheme = darkTheme,
                 dynamicColor = uiState.appSeedColor == null,
                 seedColor = uiState.appSeedColor,
                 contrastLevel = uiState.appContrastOption.value,
-                textDimFactor = textDimFactor
+                textDimFactor = textDimFactor,
+                appFontFamily = appFontFamily
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

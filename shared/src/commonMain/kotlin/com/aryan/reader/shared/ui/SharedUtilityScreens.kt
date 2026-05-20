@@ -16,9 +16,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -39,11 +41,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -59,11 +64,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.AppFontPreference
 import com.aryan.reader.shared.CustomFontItem
 
 @Composable
 fun SharedCustomFontsScreen(
     fonts: List<CustomFontItem>,
+    appFontPreference: AppFontPreference = AppFontPreference.System,
+    onAppFontPreferenceChange: (AppFontPreference) -> Unit = {},
     onImportFont: () -> Unit,
     onDeleteFont: (CustomFontItem) -> Unit,
     googleFontsAvailable: Boolean = false,
@@ -74,51 +82,73 @@ fun SharedCustomFontsScreen(
 ) {
     var fontPendingDelete by remember { mutableStateOf<CustomFontItem?>(null) }
     var showGoogleFontsDialog by remember { mutableStateOf(false) }
+    var selectedSection by remember { mutableStateOf(SharedFontSettingsSection.READER_FONTS) }
 
     SharedScreenScaffold(
         title = readerString("custom_fonts", "Custom fonts"),
         subtitle = readerString("desktop_custom_fonts_desc", "Imported fonts for the reader"),
         modifier = modifier,
         trailing = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (googleFontsAvailable) {
-                    Button(onClick = { showGoogleFontsDialog = true }) {
-                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(readerString("google_fonts", "Google Fonts"))
+            if (selectedSection == SharedFontSettingsSection.READER_FONTS) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (googleFontsAvailable) {
+                        Button(onClick = { showGoogleFontsDialog = true }) {
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(readerString("google_fonts", "Google Fonts"))
+                        }
                     }
-                }
-                Button(onClick = onImportFont) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(readerString("action_import", "Import"))
+                    Button(onClick = onImportFont) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(readerString("action_import", "Import"))
+                    }
                 }
             }
         }
     ) {
         val activeFonts = fonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() }
-        if (activeFonts.isEmpty()) {
-            SharedUtilityEmptyState(
-                icon = { Icon(Icons.Default.TextFields, contentDescription = null, modifier = Modifier.size(56.dp)) },
-                title = readerString("no_custom_fonts", "No custom fonts"),
-                body = readerString("desktop_no_custom_fonts_desc", "Import TTF, OTF, or WOFF2 files to use them in books."),
-                actionLabel = readerString("import_font", "Import font"),
-                onAction = onImportFont,
-                modifier = Modifier.weight(1f)
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(activeFonts, key = { it.id }) { font ->
-                    SharedFontListItem(
-                        font = font,
-                        onDelete = { fontPendingDelete = font },
-                        fontFamilyForPreview = fontFamilyForPreview
+        SharedFontSettingsTabs(
+            selectedSection = selectedSection,
+            onSectionChange = { selectedSection = it }
+        )
+
+        when (selectedSection) {
+            SharedFontSettingsSection.READER_FONTS -> {
+                if (activeFonts.isEmpty()) {
+                    SharedUtilityEmptyState(
+                        icon = { Icon(Icons.Default.TextFields, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                        title = readerString("no_custom_fonts", "No custom fonts"),
+                        body = readerString("desktop_no_custom_fonts_desc", "Import TTF, OTF, or WOFF2 files to use them in books."),
+                        actionLabel = readerString("import_font", "Import font"),
+                        onAction = onImportFont,
+                        modifier = Modifier.weight(1f)
                     )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(activeFonts, key = { it.id }) { font ->
+                            SharedFontListItem(
+                                font = font,
+                                onDelete = { fontPendingDelete = font },
+                                fontFamilyForPreview = fontFamilyForPreview
+                            )
+                        }
+                    }
                 }
+            }
+
+            SharedFontSettingsSection.APP_TEXT -> {
+                SharedAppFontSelector(
+                    preference = appFontPreference,
+                    customFonts = activeFonts,
+                    onPreferenceChange = onAppFontPreferenceChange,
+                    fontFamilyForPreview = fontFamilyForPreview,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
@@ -152,6 +182,34 @@ fun SharedCustomFontsScreen(
                     Text(readerString("action_cancel", "Cancel"))
                 }
             }
+        )
+    }
+}
+
+enum class SharedFontSettingsSection {
+    READER_FONTS,
+    APP_TEXT
+}
+
+@Composable
+fun SharedFontSettingsTabs(
+    selectedSection: SharedFontSettingsSection,
+    onSectionChange: (SharedFontSettingsSection) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TabRow(
+        selectedTabIndex = selectedSection.ordinal,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Tab(
+            selected = selectedSection == SharedFontSettingsSection.READER_FONTS,
+            onClick = { onSectionChange(SharedFontSettingsSection.READER_FONTS) },
+            text = { Text(readerString("reader_fonts", "Reader fonts")) }
+        )
+        Tab(
+            selected = selectedSection == SharedFontSettingsSection.APP_TEXT,
+            onClick = { onSectionChange(SharedFontSettingsSection.APP_TEXT) },
+            text = { Text(readerString("app_font_title", "App text font")) }
         )
     }
 }
@@ -558,6 +616,180 @@ private fun SharedUtilityOptionCard(
                 Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = readerString("action_open", "Open"))
+        }
+    }
+}
+
+@Composable
+fun SharedAppFontSelector(
+    preference: AppFontPreference,
+    customFonts: List<CustomFontItem>,
+    onPreferenceChange: (AppFontPreference) -> Unit,
+    fontFamilyForPreview: (CustomFontItem) -> FontFamily? = { null },
+    modifier: Modifier = Modifier
+) {
+    val sanitizedPreference = preference.sanitized()
+    val activeFonts = customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() }
+    OutlinedCard(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = readerString("app_font_title", "App text font"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = readerString("app_font_desc", "Applies to app navigation, settings, lists, dialogs, and reader chrome."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            listOf(
+                SharedAppFontOption(
+                    label = readerString("app_font_system", "System"),
+                    summary = readerString("app_font_system_desc", "Use the platform default"),
+                    preference = AppFontPreference.System,
+                    fontFamily = FontFamily.Default
+                ),
+                SharedAppFontOption(
+                    label = readerString("app_font_serif", "Serif"),
+                    summary = readerString("app_font_serif_desc", "Classic reading-style letterforms"),
+                    preference = AppFontPreference.Serif,
+                    fontFamily = FontFamily.Serif
+                ),
+                SharedAppFontOption(
+                    label = readerString("app_font_sans", "Sans"),
+                    summary = readerString("app_font_sans_desc", "Clean interface-style letterforms"),
+                    preference = AppFontPreference.SansSerif,
+                    fontFamily = FontFamily.SansSerif
+                ),
+                SharedAppFontOption(
+                    label = readerString("app_font_monospace", "Monospace"),
+                    summary = readerString("app_font_monospace_desc", "Fixed-width text"),
+                    preference = AppFontPreference.Monospace,
+                    fontFamily = FontFamily.Monospace
+                )
+            ).forEach { option ->
+                SharedAppFontOptionRow(
+                    label = option.label,
+                    summary = option.summary,
+                    selected = sanitizedPreference == option.preference,
+                    fontFamily = option.fontFamily,
+                    onClick = { onPreferenceChange(option.preference) }
+                )
+            }
+
+            HorizontalDivider()
+
+            Text(
+                text = readerString("app_font_imported_fonts", "Imported fonts"),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+            if (activeFonts.isEmpty()) {
+                Text(
+                    text = readerString("app_font_no_imported_fonts", "Import a font to use it for app text."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    activeFonts.forEach { font ->
+                        val previewFontFamily = remember(font.path) { fontFamilyForPreview(font) }
+                        val option = AppFontPreference.custom(font.id)
+                        SharedAppFontOptionRow(
+                            label = font.displayName,
+                            summary = font.fileExtension.uppercase(),
+                            selected = sanitizedPreference == option,
+                            fontFamily = previewFontFamily,
+                            onClick = { onPreferenceChange(option) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class SharedAppFontOption(
+    val label: String,
+    val summary: String,
+    val preference: AppFontPreference,
+    val fontFamily: FontFamily?
+)
+
+@Composable
+private fun SharedAppFontOptionRow(
+    label: String,
+    summary: String,
+    selected: Boolean,
+    fontFamily: FontFamily?,
+    onClick: () -> Unit
+) {
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerLow
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = containerColor,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            ) {
+                Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) {
+                    Text("Aa", fontFamily = fontFamily, fontWeight = FontWeight.Bold)
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontFamily = fontFamily),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (selected) {
+                Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected"), tint = MaterialTheme.colorScheme.primary)
+            }
         }
     }
 }

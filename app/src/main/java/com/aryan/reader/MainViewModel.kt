@@ -574,6 +574,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             appTextDimFactorLight = prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR_LIGHT, prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR, 1.0f)),
             appTextDimFactorDark = prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR_DARK, prefs.getFloat(KEY_APP_TEXT_DIM_FACTOR, 1.0f)),
             appSeedColor = if (prefs.contains(KEY_APP_SEED_COLOR)) androidx.compose.ui.graphics.Color(prefs.getInt(KEY_APP_SEED_COLOR, 0)) else null,
+            appFontPreference = loadAppFontPreference(prefs),
             customAppThemes = loadCustomAppThemes(prefs)
         )
     )
@@ -1647,7 +1648,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun deleteFont(fontId: String) {
-        viewModelScope.launch { fontsRepository.deleteFont(fontId) }
+        viewModelScope.launch {
+            fontsRepository.deleteFont(fontId)
+            if (_internalState.value.appFontPreference.referencesCustomFont(fontId)) {
+                setAppFontPreference(AppFontPreference.System)
+            }
+        }
     }
 
     fun deleteBookPermanently(bookId: String, onDeleted: () -> Unit = {}) {
@@ -5805,6 +5811,34 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return themes
     }
 
+    private fun loadAppFontPreference(prefs: SharedPreferences): AppFontPreference {
+        val kind = try {
+            AppFontPreferenceKind.valueOf(
+                prefs.getString(KEY_APP_FONT_KIND, AppFontPreferenceKind.SYSTEM.name)
+                    ?: AppFontPreferenceKind.SYSTEM.name
+            )
+        } catch (_: Exception) {
+            AppFontPreferenceKind.SYSTEM
+        }
+        return AppFontPreference(
+            kind = kind,
+            customFontId = prefs.getString(KEY_APP_FONT_CUSTOM_ID, null)
+        ).sanitized()
+    }
+
+    fun setAppFontPreference(preference: AppFontPreference) {
+        val sanitized = preference.sanitized()
+        _internalState.update { it.withSharedAppAction(SharedAppAction.AppFontPreferenceChanged(sanitized)) }
+        prefs.edit {
+            putString(KEY_APP_FONT_KIND, sanitized.kind.name)
+            if (sanitized.customFontId == null) {
+                remove(KEY_APP_FONT_CUSTOM_ID)
+            } else {
+                putString(KEY_APP_FONT_CUSTOM_ID, sanitized.customFontId)
+            }
+        }
+    }
+
     fun setAppThemeMode(mode: AppThemeMode) {
         _internalState.update { it.withSharedAppAction(SharedAppAction.AppThemeChanged(mode)) }
         prefs.edit { putString(KEY_APP_THEME_MODE, mode.name) }
@@ -6075,6 +6109,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_TEXT_DIM_FACTOR = "app_text_dim_factor"
         private const val KEY_APP_TEXT_DIM_FACTOR_LIGHT = "app_text_dim_factor_light"
         private const val KEY_APP_TEXT_DIM_FACTOR_DARK = "app_text_dim_factor_dark"
+        private const val KEY_APP_FONT_KIND = "app_font_kind"
+        private const val KEY_APP_FONT_CUSTOM_ID = "app_font_custom_id"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
 
         val SUPPORTED_MIME_TYPES = SharedFileCapabilities.androidFilePickerMimeTypes.toTypedArray()

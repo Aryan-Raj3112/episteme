@@ -4,6 +4,7 @@ import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.shared.AppAction as SharedAppAction
+import com.aryan.reader.shared.AppFontPreference as SharedAppFontPreference
 import com.aryan.reader.shared.AppThemeMode as SharedAppThemeMode
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import org.junit.Assert.assertEquals
@@ -76,6 +77,19 @@ class AndroidSharedStateBridgeTest {
         )
 
         assertEquals(AppThemeMode.DARK, result.appThemeMode)
+    }
+
+    @Test
+    fun `reduceAppAction applies shared app font preference back to Android fields`() {
+        val preference = SharedAppFontPreference.custom("font")
+
+        val result = AndroidSharedStateBridge.reduceAppAction(
+            current = ReaderScreenState(),
+            projectedState = ReaderScreenState(),
+            action = SharedAppAction.AppFontPreferenceChanged(preference)
+        )
+
+        assertEquals(preference, result.appFontPreference)
     }
 
     @Test

@@ -221,6 +221,7 @@ fun ReaderScreenState.toSharedReaderScreenState(
         appTextDimFactorLight = appTextDimFactorLight,
         appTextDimFactorDark = appTextDimFactorDark,
         appSeedColor = appSeedColor,
+        appFontPreference = appFontPreference,
         customAppThemes = customAppThemes,
         allTags = dbTags.map { it.toSharedTag() },
         showTagSelectionDialogFor = showTagSelectionDialogFor
