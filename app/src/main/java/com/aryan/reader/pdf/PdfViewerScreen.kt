@@ -48,11 +48,11 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.splineBasedDecay
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.splineBasedDecay
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -95,7 +95,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
@@ -161,8 +160,14 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.isBackPressed
+import androidx.compose.ui.input.pointer.isForwardPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -192,6 +197,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.createBitmap
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -203,8 +209,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.work.WorkInfo
 import com.aryan.reader.AiDefinitionPopup
-import com.aryan.reader.AiFeature
 import com.aryan.reader.AiDefinitionResult
+import com.aryan.reader.AiFeature
 import com.aryan.reader.AiHubBottomSheet
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.FileType
@@ -222,7 +228,8 @@ import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
-import com.aryan.reader.ml.SpeechBubble
+import com.aryan.reader.areReaderAiFeaturesEnabled
+import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
@@ -231,16 +238,15 @@ import com.aryan.reader.epubreader.TtsOverlayControls
 import com.aryan.reader.epubreader.loadTapToNavigateSetting
 import com.aryan.reader.epubreader.saveTapToNavigateSetting
 import com.aryan.reader.fetchAiDefinition
-import com.aryan.reader.areReaderAiFeaturesEnabled
-import com.aryan.reader.callByokGeminiInlineAi
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
+import com.aryan.reader.loadPdfRightToLeftPagination
 import com.aryan.reader.loadReaderBrightnessSettings
 import com.aryan.reader.loadReaderScreenOrientationMode
-import com.aryan.reader.loadPdfRightToLeftPagination
 import com.aryan.reader.loadReaderSliderToggled
 import com.aryan.reader.loadTtsReplacementPreferences
+import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -252,23 +258,22 @@ import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.SmartSearchResult
 import com.aryan.reader.pdf.data.TextStyleConfig
 import com.aryan.reader.pdf.data.VirtualPage
-import com.aryan.reader.rememberSearchState
 import com.aryan.reader.readerSliderBookmarkPosition
 import com.aryan.reader.readerSliderChromeColors
 import com.aryan.reader.readerSliderToggleState
+import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
+import com.aryan.reader.savePdfRightToLeftPagination
 import com.aryan.reader.saveReaderBrightnessSettings
 import com.aryan.reader.saveReaderScreenOrientationMode
-import com.aryan.reader.savePdfRightToLeftPagination
 import com.aryan.reader.saveReaderSliderToggled
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.scaledToCanvasLimit
-import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
-import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
@@ -293,7 +298,6 @@ import org.json.JSONObject
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.util.LinkedHashSet
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.PI
@@ -302,110 +306,9 @@ import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.pointer.isPrimaryPressed
-import androidx.compose.ui.input.pointer.isSecondaryPressed
-import androidx.compose.ui.input.pointer.isTertiaryPressed
-import androidx.compose.ui.input.pointer.isBackPressed
-import androidx.compose.ui.input.pointer.isForwardPressed
-
-internal fun resolveEraserStrokeWidth(
-    isEraserOverride: Boolean,
-    activeToolThickness: Float,
-    eraserToolThickness: Float
-): Float = if (isEraserOverride) eraserToolThickness else activeToolThickness
-
-internal fun canUsePdfSidecarsForBook(
-    activeBookId: String?,
-    loadedSidecarBookId: String?,
-    areSidecarsLoaded: Boolean
-): Boolean = activeBookId != null && areSidecarsLoaded && loadedSidecarBookId == activeBookId
-
-internal fun canManagePdfVirtualPages(
-    isDocumentReady: Boolean,
-    currentBookId: String?,
-    loadedPageLayoutBookId: String?,
-    virtualPageCount: Int
-): Boolean {
-    return isDocumentReady &&
-        currentBookId != null &&
-        loadedPageLayoutBookId == currentBookId &&
-        virtualPageCount > 0
-}
-
-internal fun currentPageScaleAfterPdfPageChange(
-    displayMode: DisplayMode,
-    isScrollLocked: Boolean,
-    lockedState: Triple<Float, Float, Float>?,
-    currentActiveScale: Float
-): Float {
-    return if (displayMode == DisplayMode.PAGINATION && isScrollLocked) {
-        lockedState?.first ?: currentActiveScale
-    } else {
-        1f
-    }
-}
-
-private fun pdfPageRangeText(
-    pageIndex: Int,
-    pageCount: Int,
-    displayMode: DisplayMode,
-    settings: ReaderSettings
-): String {
-    val pageRange = if (displayMode == DisplayMode.PAGINATION) {
-        PdfSpreadLayout.pageRangeLabel(pageIndex, pageCount, settings)
-    } else {
-        "${pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) + 1}"
-    }
-    return "$pageRange / $pageCount"
-}
-
-private fun pdfPageRangeLabel(
-    pageIndex: Int,
-    pageCount: Int,
-    displayMode: DisplayMode,
-    settings: ReaderSettings
-): String {
-    val pageRange = if (displayMode == DisplayMode.PAGINATION) {
-        PdfSpreadLayout.pageRangeLabel(pageIndex, pageCount, settings)
-    } else {
-        "${pageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) + 1}"
-    }
-    return if ('-' in pageRange) {
-        "Pages $pageRange of $pageCount"
-    } else {
-        "Page $pageRange of $pageCount"
-    }
-}
-
-private fun clampPdfSpreadCameraOffset(
-    scale: Float,
-    offset: Offset,
-    viewportWidth: Float,
-    viewportHeight: Float
-): Offset {
-    if (viewportWidth <= 0f || viewportHeight <= 0f || scale <= 1f) return Offset.Zero
-    val maxOffsetX = ((viewportWidth * scale) - viewportWidth).coerceAtLeast(0f) / 2f
-    val maxOffsetY = ((viewportHeight * scale) - viewportHeight).coerceAtLeast(0f) / 2f
-    return Offset(
-        x = offset.x.coerceIn(-maxOffsetX, maxOffsetX),
-        y = offset.y.coerceIn(-maxOffsetY, maxOffsetY)
-    )
-}
 
 private const val PDF_SPREAD_PAN_FLING_MIN_VELOCITY = 600f
 private const val PDF_SPREAD_PAN_FLING_MULTIPLIER = 0.72f
-
-internal fun activePdfCameraAfterLockPreferenceLoad(
-    isScrollLocked: Boolean,
-    lockedState: Triple<Float, Float, Float>?
-): Pair<Float, Offset> {
-    return if (isScrollLocked && lockedState != null) {
-        lockedState.first to Offset(lockedState.second, lockedState.third)
-    } else {
-        1f to Offset.Zero
-    }
-}
 
 @Suppress("KotlinConstantConditions")
 @SuppressLint("UnusedBoxWithConstraintsScope", "ObsoleteSdkInt", "LocalContextGetResourceValueCall")
@@ -1148,7 +1051,7 @@ fun PdfViewerScreen(
             val renderScale = (targetLongEdge / longEdge).coerceAtLeast(1f)
             val renderWidth = (pageWidth * renderScale).roundToInt().coerceAtLeast(1)
             val renderHeight = (pageHeight * renderScale).roundToInt().coerceAtLeast(1)
-            val renderBitmap = Bitmap.createBitmap(renderWidth, renderHeight, Bitmap.Config.ARGB_8888)
+            val renderBitmap = createBitmap(renderWidth, renderHeight)
 
             try {
                 page.renderPageBitmap(
@@ -3908,7 +3811,7 @@ fun PdfViewerScreen(
             val startOffset = currentActiveOffset
             Animatable(0f).animateTo(1f, animationSpec = tween(durationMillis = 300)) {
                 currentActiveScale = androidx.compose.ui.util.lerp(startScale, 1f, value)
-                currentActiveOffset = androidx.compose.ui.geometry.lerp(startOffset, Offset.Zero, value)
+                currentActiveOffset = lerp(startOffset, Offset.Zero, value)
                 currentPageScale = currentActiveScale
             }
             currentActiveScale = 1f

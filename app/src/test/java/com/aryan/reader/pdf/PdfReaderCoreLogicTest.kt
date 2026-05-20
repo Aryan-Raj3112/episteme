@@ -198,6 +198,29 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `embedded annotation grouping links replies by annotation id`() {
+        val root = embeddedAnnotation(index = 0, name = "root", contents = "Parent")
+        val reply = embeddedAnnotation(index = 1, name = "reply", inReplyTo = "root", contents = "Child")
+
+        val grouped = groupEmbeddedAnnotationsForDisplay(listOf(root, reply))
+
+        assertEquals(listOf(root), grouped)
+        assertEquals(listOf(reply), grouped.single().replies)
+    }
+
+    @Test
+    fun `embedded annotation grouping keeps geometric replies that provide visible content`() {
+        val blankRoot = embeddedAnnotation(index = 0, rect = RectF(0f, 0f, 20f, 20f), contents = "")
+        val nearbyReply = embeddedAnnotation(index = 1, rect = RectF(25f, 0f, 40f, 20f), contents = "Visible")
+        val emptyStandalone = embeddedAnnotation(index = 2, rect = RectF(200f, 0f, 220f, 20f), contents = "")
+
+        val grouped = groupEmbeddedAnnotationsForDisplay(listOf(blankRoot, nearbyReply, emptyStandalone))
+
+        assertEquals(listOf(blankRoot), grouped)
+        assertEquals(listOf(nearbyReply), grouped.single().replies)
+    }
+
+    @Test
     fun `layout remap keeps annotations on their virtual pages when inserting a blank page`() {
         val existingBlank = VirtualPage.BlankPage("existing-blank", 612, 792, wasManuallyAdded = true)
         val insertedBlank = VirtualPage.BlankPage("inserted-blank", 612, 792, wasManuallyAdded = true)
@@ -296,6 +319,68 @@ class PdfReaderCoreLogicTest {
         assertEquals(listOf(0, 1), buildPdfBubblePrefetchOrder(currentPage = -4, totalPages = 5))
         assertEquals(listOf(4, 3), buildPdfBubblePrefetchOrder(currentPage = 99, totalPages = 5))
         assertEquals(emptyList<Int>(), buildPdfBubblePrefetchOrder(currentPage = 0, totalPages = 0))
+    }
+
+    @Test
+    fun `bubble zoom factor fits bubble inside viewport target and clamps extremes`() {
+        assertEquals(
+            2f,
+            computeDynamicBubbleZoomFactor(
+                bubbleBounds = RectF(0f, 0f, 300f, 80f),
+                viewportWidth = 1_000f,
+                viewportHeight = 1_000f
+            ),
+            0.0001f
+        )
+        assertEquals(
+            1.5f,
+            computeDynamicBubbleZoomFactor(
+                bubbleBounds = RectF(0f, 0f, 0f, 80f),
+                viewportWidth = 1_000f,
+                viewportHeight = 1_000f
+            ),
+            0.0001f
+        )
+        assertEquals(
+            4.25f,
+            computeDynamicBubbleZoomFactor(
+                bubbleBounds = RectF(0f, 0f, 10f, 10f),
+                viewportWidth = 1_000f,
+                viewportHeight = 1_000f
+            ),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun `safe pdf bitmap render scale keeps small renders and limits large renders`() {
+        assertEquals(
+            2f,
+            safePdfBitmapRenderScale(
+                contentWidth = 100f,
+                contentHeight = 100f,
+                requestedScale = 2f
+            ),
+            0.0001f
+        )
+        assertEquals(
+            1f,
+            safePdfBitmapRenderScale(
+                contentWidth = 0f,
+                contentHeight = 100f,
+                requestedScale = 2f
+            ),
+            0.0001f
+        )
+
+        val limitedScale = safePdfBitmapRenderScale(
+            contentWidth = 10_000f,
+            contentHeight = 10_000f,
+            requestedScale = 2f
+        )
+
+        assertTrue(limitedScale < 2f)
+        assertTrue(limitedScale >= 0.01f)
     }
 
     @Test
@@ -523,6 +608,24 @@ class PdfReaderCoreLogicTest {
         )
         val block = OcrBlock(text = line.text, boundingBox = null, lines = listOf(line))
         return OcrResult(text = line.text, textBlocks = listOf(block))
+    }
+
+    private fun embeddedAnnotation(
+        index: Int,
+        rect: RectF = RectF(0f, 0f, 20f, 20f),
+        name: String? = null,
+        inReplyTo: String? = null,
+        contents: String? = null
+    ): EmbeddedAnnotation {
+        return EmbeddedAnnotation(
+            index = index,
+            subtype = 0,
+            rect = rect,
+            contents = contents,
+            author = null,
+            name = name,
+            inReplyTo = inReplyTo
+        )
     }
 
     private fun testInkAnnotation(id: String, pageIndex: Int): PdfAnnotation {

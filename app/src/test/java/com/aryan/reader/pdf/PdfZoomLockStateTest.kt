@@ -1,5 +1,8 @@
 package com.aryan.reader.pdf
 
+import androidx.compose.ui.geometry.Offset
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
+import com.aryan.reader.shared.reader.ReaderSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -126,6 +129,71 @@ class PdfZoomLockStateTest {
                 currentActiveScale = 2.25f
             ),
             0.0001f
+        )
+    }
+
+    @Test
+    fun `pdf page range labels preserve single page and spread wording`() {
+        val singlePageSettings = ReaderSettings()
+        val spreadSettings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+
+        assertEquals(
+            "5 / 5",
+            pdfPageRangeText(
+                pageIndex = 99,
+                pageCount = 5,
+                displayMode = DisplayMode.VERTICAL_SCROLL,
+                settings = singlePageSettings
+            )
+        )
+        assertEquals(
+            "Page 5 of 5",
+            pdfPageRangeLabel(
+                pageIndex = 99,
+                pageCount = 5,
+                displayMode = DisplayMode.VERTICAL_SCROLL,
+                settings = singlePageSettings
+            )
+        )
+        assertEquals(
+            "3-4 / 10",
+            pdfPageRangeText(
+                pageIndex = 2,
+                pageCount = 10,
+                displayMode = DisplayMode.PAGINATION,
+                settings = spreadSettings
+            )
+        )
+        assertEquals(
+            "Pages 3-4 of 10",
+            pdfPageRangeLabel(
+                pageIndex = 2,
+                pageCount = 10,
+                displayMode = DisplayMode.PAGINATION,
+                settings = spreadSettings
+            )
+        )
+    }
+
+    @Test
+    fun `spread camera clamp keeps offset inside scaled viewport bounds`() {
+        val clamped = clampPdfSpreadCameraOffset(
+            scale = 2f,
+            offset = Offset(100f, -100f),
+            viewportWidth = 100f,
+            viewportHeight = 80f
+        )
+
+        assertEquals(50f, clamped.x, 0.0001f)
+        assertEquals(-40f, clamped.y, 0.0001f)
+        assertEquals(
+            Offset.Zero,
+            clampPdfSpreadCameraOffset(
+                scale = 1f,
+                offset = Offset(20f, 20f),
+                viewportWidth = 100f,
+                viewportHeight = 80f
+            )
         )
     }
 }
