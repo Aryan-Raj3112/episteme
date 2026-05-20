@@ -41,6 +41,7 @@ import com.aryan.reader.SummarizationResult
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.callByokTextAi
 import com.aryan.reader.epub.EpubBook
+import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.fetchRecap
 import com.aryan.reader.paginatedreader.IPaginator
 import com.aryan.reader.summarizationUrl
@@ -209,8 +210,7 @@ suspend fun executeRecapLogic(
             val textToSummarize = paginator?.getPlainTextForChapter(i) ?: withContext(Dispatchers.IO) {
                 try {
                     val chapter = chapters[i]
-                    val fullPath = "${epubBook.extractionBasePath}/${chapter.htmlFilePath}"
-                    val doc = Jsoup.parse(File(fullPath), "UTF-8")
+                    val doc = Jsoup.parse(File(epubBook.extractionBasePath, chapter.contentFilePath()), "UTF-8")
                     doc.body().text()
                 } catch (_: Exception) { "" }
             }

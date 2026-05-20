@@ -188,7 +188,6 @@ import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.readerSliderBookmarkPosition
 import com.aryan.reader.readerSliderToggleState
 import com.aryan.reader.paginatedreader.BookPaginator
-import com.aryan.reader.paginatedreader.CfiUtils
 import com.aryan.reader.paginatedreader.HeaderBlock
 import com.aryan.reader.paginatedreader.IPaginator
 import com.aryan.reader.paginatedreader.ListItemBlock
@@ -1712,17 +1711,14 @@ fun EpubReaderHost(
                 val bookPaginator = paginator as? BookPaginator
                 val chapterIndex = currentChapterInPaginatedMode ?: return@launch
                 val chunks = bookPaginator?.getTtsChunksForChapter(chapterIndex) ?: return@launch
-
-                var foundIdx = -1
-                for (i in chunks.indices) {
-                    val c = chunks[i]
-                    val cPath = CfiUtils.getPath(c.sourceCfi)
-                    val bPath = CfiUtils.getPath(baseCfi)
-                    if (cPath == bPath && startOffset >= c.startOffsetInSource && startOffset < c.startOffsetInSource + c.text.length) {
-                        foundIdx = i
-                        break
-                    }
-                }
+                val foundIdx = findTtsChunkStartIndex(
+                    chunks = chunks,
+                    target = TtsChunk(
+                        text = "",
+                        sourceCfi = baseCfi,
+                        startOffsetInSource = startOffset
+                    )
+                ) ?: -1
 
                 if (foundIdx != -1) {
                     val target = chunks[foundIdx]

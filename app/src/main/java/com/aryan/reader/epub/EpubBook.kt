@@ -53,6 +53,10 @@ data class EpubBook(
     val description: String? = null,
 )
 
+fun epubContentFilePath(path: String): String = path.substringBefore('#').substringBefore('?')
+
+fun EpubChapter.contentFilePath(): String = epubContentFilePath(htmlFilePath)
+
 fun EpubBook.hasReadableExtractedContent(): Boolean {
     if (extractionBasePath.isBlank()) return false
     val extractionDir = File(extractionBasePath)
@@ -60,6 +64,6 @@ fun EpubBook.hasReadableExtractedContent(): Boolean {
     if (chapters.isEmpty()) return extractionDir.list()?.isNotEmpty() == true
 
     return chapters.all { chapter ->
-        File(extractionDir, chapter.htmlFilePath).isFile
+        File(extractionDir, chapter.contentFilePath()).isFile
     }
 }

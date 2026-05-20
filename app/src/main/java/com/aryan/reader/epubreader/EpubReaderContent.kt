@@ -23,6 +23,7 @@ import android.content.Context
 import com.aryan.reader.R
 import timber.log.Timber
 import com.aryan.reader.epub.EpubBook
+import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.LocatorConverter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,8 +94,7 @@ suspend fun loadChapterContent(
         )
 
     try {
-        val fullPath = "${epubBook.extractionBasePath}/${chapter.htmlFilePath}"
-        val htmlFile = File(fullPath)
+        val htmlFile = File(epubBook.extractionBasePath, chapter.contentFilePath())
 
         val (headContent, chunks, chunkElementStartIndices, chunkElementCounts) = if (htmlFile.exists()) {
             val doc = Jsoup.parse(htmlFile, "UTF-8")

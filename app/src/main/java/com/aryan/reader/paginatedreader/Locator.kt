@@ -25,6 +25,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import com.aryan.reader.epub.EpubBook
+import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.ProcessedChapter
 import kotlinx.coroutines.Dispatchers
@@ -67,7 +68,7 @@ class LocatorConverter(
 
             val htmlToParse = chapter.htmlContent.ifBlank {
                 try {
-                    val file = File(book.extractionBasePath, chapter.htmlFilePath)
+                    val file = File(book.extractionBasePath, chapter.contentFilePath())
                     if (file.exists()) {
                         val content = file.readText()
                         content

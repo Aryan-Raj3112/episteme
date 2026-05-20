@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import com.aryan.reader.SearchResult
 import com.aryan.reader.epub.EpubChapter
+import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.BookProcessingInput
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
@@ -402,7 +403,7 @@ class BookPaginator(
     }
 
     private fun chapterContentVersion(chapter: EpubChapter): Int {
-        val backingFile = java.io.File(extractionBasePath, chapter.htmlFilePath)
+        val backingFile = java.io.File(extractionBasePath, chapter.contentFilePath())
         return buildString {
             append(chapter.absPath)
             append('|')
@@ -811,7 +812,7 @@ class BookPaginator(
 
                     var shouldIgnoreCache = false
                     if (isCacheEmpty && isLazyChapter) {
-                        val file = java.io.File(extractionBasePath, chapter.htmlFilePath)
+                        val file = java.io.File(extractionBasePath, chapter.contentFilePath())
                         if (file.exists() && file.length() > 0) {
                             Timber.tag("ReflowPaginationDiag").w("getBlocksForChapter: Cache HIT but empty for lazy chapter $chapterIndex. Backing file exists (${file.length()} bytes). Ignoring cache.")
                             shouldIgnoreCache = true
@@ -834,7 +835,7 @@ class BookPaginator(
 
         var htmlToParse = chapter.htmlContent
         if (htmlToParse.isEmpty()) {
-            val file = java.io.File(extractionBasePath, chapter.htmlFilePath)
+            val file = java.io.File(extractionBasePath, chapter.contentFilePath())
             if (file.exists()) {
                 Timber.tag("ReflowPaginationDiag").d("getBlocksForChapter: Lazy loading content from disk for chapter $chapterIndex: ${file.name} (${file.length()} bytes)")
                 try {
@@ -1232,7 +1233,7 @@ class BookPaginator(
         Timber.tag("POS_DIAG").d("getPlainTextForChapter: chapterIndex=$chapterIndex, chapterTitle='${chapter.title}', hasInMemoryContent=${chapter.htmlContent.isNotEmpty()}")
         val htmlToParse = chapter.htmlContent.ifEmpty {
             try {
-                val file = java.io.File(extractionBasePath, chapter.htmlFilePath)
+                val file = java.io.File(extractionBasePath, chapter.contentFilePath())
                 if (file.exists()) file.readText() else ""
             } catch (_: Exception) {
                 ""

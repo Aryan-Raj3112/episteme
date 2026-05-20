@@ -45,6 +45,7 @@ import com.aryan.reader.SearchResult
 import com.aryan.reader.SearchResultsPanel
 import com.aryan.reader.SearchState
 import com.aryan.reader.epub.EpubBook
+import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.IPaginator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,8 +65,7 @@ fun createEpubSearcher(epubBook: EpubBook): suspend (String) -> List<SearchResul
         val results = mutableListOf<SearchResult>()
         epubBook.chapters.forEachIndexed { chapterIndex, chapter ->
             try {
-                val fullPath = "${epubBook.extractionBasePath}/${chapter.htmlFilePath}"
-                val htmlFile = File(fullPath)
+                val htmlFile = File(epubBook.extractionBasePath, chapter.contentFilePath())
                 if (!htmlFile.exists()) return@forEachIndexed
 
                 val doc = Jsoup.parse(htmlFile, "UTF-8")

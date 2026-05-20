@@ -4,6 +4,7 @@ import android.content.Context
 import com.aryan.reader.R
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.EpubChapter
+import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.LocatorConverter
 import io.mockk.coEvery
@@ -91,6 +92,19 @@ class EpubReaderContentTest {
 
         assertEquals(0, high.startChunkIndex)
         assertEquals(0, low.startChunkIndex)
+    }
+
+    @Test
+    fun `loadChapterContent ignores fragment and query in chapter file path`() = runTest {
+        val root = temp.newFolder("path-fragment")
+        writeChapter(root, "chapter.xhtml", "<html><body><p>Found chapter</p></body></html>")
+        val book = epubBook(root, listOf(chapter("chapter.xhtml#anchor?ignored")))
+
+        val result = loadChapterContent(contextWithStrings(), book, 0, null, false, null, mockk())
+
+        assertTrue(book.hasReadableExtractedContent())
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("<p>Found chapter</p>"), result.chunks)
     }
 
     @Test

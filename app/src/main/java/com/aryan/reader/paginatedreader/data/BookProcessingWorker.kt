@@ -34,6 +34,7 @@ import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.aryan.reader.epub.epubContentFilePath
 import com.aryan.reader.paginatedreader.CssParser
 import com.aryan.reader.paginatedreader.FontFaceInfo
 import com.aryan.reader.paginatedreader.MathMLRenderer
@@ -246,7 +247,7 @@ class BookProcessingWorker(
                         if (db.bookCacheDao().getProcessedChapter(bookId, index) == null) {
                             Timber.d("[BG_PROC] Caching chapter $index: ${chapter.title}")
                             val htmlToParse = chapter.htmlContent.ifBlank {
-                                val backingFile = File(extractionBasePath, chapter.htmlFilePath)
+                                val backingFile = File(extractionBasePath, epubContentFilePath(chapter.htmlFilePath))
                                 if (backingFile.exists()) {
                                     backingFile.readText()
                                 } else {
