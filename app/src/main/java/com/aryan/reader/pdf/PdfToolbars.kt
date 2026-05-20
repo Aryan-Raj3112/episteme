@@ -139,6 +139,7 @@ internal fun PdfTopBar(
     isRightToLeftPagination: Boolean,
     isKeepScreenOn: Boolean,
     isTtsSessionActive: Boolean,
+    isSliderActive: Boolean,
     isBookmarked: Boolean,
     canDeletePage: Boolean,
     isReflowingThisBook: Boolean,
@@ -280,7 +281,11 @@ internal fun PdfTopBar(
                                         onClick = onShowSlider,
                                         enabled = !isTtsPlayingOrLoading
                                     ) {
-                                        Icon(painterResource(id = R.drawable.slider), contentDescription = stringResource(R.string.content_desc_navigate_slider))
+                                        Icon(
+                                            painterResource(id = R.drawable.slider),
+                                            contentDescription = stringResource(R.string.content_desc_navigate_slider),
+                                            tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
                                     PdfReaderTool.TOC -> TooltipIconButton(
                                         text = stringResource(R.string.tooltip_toc),
@@ -423,6 +428,7 @@ internal fun PdfTopBar(
                                                         isHighlightingLoading = isHighlightingLoading,
                                                         isEditMode = isEditMode,
                                                         isTtsSessionActive = isTtsSessionActive,
+                                                        isSliderActive = isSliderActive,
                                                         closeMenu = {
                                                             showHiddenToolsExpanded = false
                                                             showMoreMenu = false
@@ -695,6 +701,7 @@ private fun HiddenPdfToolMenuItem(
     isHighlightingLoading: Boolean,
     isEditMode: Boolean,
     isTtsSessionActive: Boolean,
+    isSliderActive: Boolean,
     closeMenu: () -> Unit,
     onShowThemePanel: () -> Unit,
     onShowBrightnessControl: () -> Unit,
@@ -742,7 +749,12 @@ private fun HiddenPdfToolMenuItem(
                 PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.LOCK_PANNING -> Icon(Icons.Default.LockOpen, contentDescription = null, modifier = Modifier.size(20.dp))
-                PdfReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = null, modifier = Modifier.size(20.dp))
+                PdfReaderTool.SLIDER -> Icon(
+                    painterResource(id = R.drawable.slider),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 PdfReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.HIGHLIGHT_ALL -> {
@@ -755,7 +767,12 @@ private fun HiddenPdfToolMenuItem(
                 PdfReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = null, modifier = Modifier.size(20.dp))
                 else -> Icon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(20.dp))
             }
-        }
+        },
+        trailingIcon = if (tool == PdfReaderTool.SLIDER && isSliderActive) {
+            {
+                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+            }
+        } else null
     )
 }
 
@@ -902,6 +919,7 @@ fun PdfBottomBar(
     isHighlightingLoading: Boolean,
     isEditMode: Boolean,
     isTtsSessionActive: Boolean,
+    isSliderActive: Boolean,
     ttsErrorMessage: String?,
     onShowThemePanel: () -> Unit,
     onShowBrightnessControl: () -> Unit,
@@ -974,7 +992,11 @@ fun PdfBottomBar(
                                 onClick = onShowSlider,
                                 enabled = !isTtsPlayingOrLoading
                             ) {
-                                Icon(painterResource(id = R.drawable.slider), contentDescription = stringResource(R.string.content_desc_navigate_slider))
+                                Icon(
+                                    painterResource(id = R.drawable.slider),
+                                    contentDescription = stringResource(R.string.content_desc_navigate_slider),
+                                    tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             PdfReaderTool.TOC -> TooltipIconButton(
                                 text = stringResource(R.string.tooltip_toc),

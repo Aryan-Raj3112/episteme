@@ -238,6 +238,7 @@ import com.aryan.reader.loadGlobalTextureTransparency
 import com.aryan.reader.loadReaderBrightnessSettings
 import com.aryan.reader.loadReaderScreenOrientationMode
 import com.aryan.reader.loadPdfRightToLeftPagination
+import com.aryan.reader.loadReaderSliderToggled
 import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -251,13 +252,17 @@ import com.aryan.reader.pdf.data.SmartSearchResult
 import com.aryan.reader.pdf.data.TextStyleConfig
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.rememberSearchState
+import com.aryan.reader.readerSliderBookmarkPosition
+import com.aryan.reader.readerSliderToggleState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
 import com.aryan.reader.saveReaderBrightnessSettings
 import com.aryan.reader.saveReaderScreenOrientationMode
 import com.aryan.reader.savePdfRightToLeftPagination
+import com.aryan.reader.saveReaderSliderToggled
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.scaledToCanvasLimit
+import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
@@ -2729,12 +2734,28 @@ fun PdfViewerScreen(
     var summarizationResult by remember { mutableStateOf<SummarizationResult?>(null) }
     var isSummarizationLoading by remember { mutableStateOf(false) }
 
-    var isPageSliderVisible by remember { mutableStateOf(false) }
+    var isPageSliderVisible by remember(bookId) {
+        mutableStateOf(loadReaderSliderToggled(context, bookId))
+    }
     var sliderStartPage by remember { mutableIntStateOf(0) }
     var sliderCurrentPage by remember { mutableFloatStateOf(0f) }
     var isFastScrubbing by remember { mutableStateOf(false) }
     val scrubDebounceJob = remember { mutableStateOf<Job?>(null) }
     var startPageThumbnail by remember { mutableStateOf<Bitmap?>(null) }
+    val pdfSliderChromeVisible = shouldRenderReaderSlider(
+        isToggledOn = isPageSliderVisible,
+        isBottomChromeVisible = showStandardBars,
+        isSearchActive = searchState.isSearchActive
+    )
+
+    LaunchedEffect(bookId, isPageSliderVisible) {
+        saveReaderSliderToggled(context, bookId, isPageSliderVisible)
+        if (isPageSliderVisible) {
+            val position = readerSliderBookmarkPosition(currentPage)
+            sliderStartPage = position.startPage
+            sliderCurrentPage = position.currentPage
+        }
+    }
 
     val speakerPlayer = remember(context, coroutineScope) {
         SpeakerSamplePlayer(
@@ -3408,8 +3429,18 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(isPageSliderVisible) {
-        if (isPageSliderVisible) {
+    LaunchedEffect(isPageSliderVisible, pdfSliderChromeVisible, currentPage) {
+        if (isPageSliderVisible && !pdfSliderChromeVisible) {
+            val position = readerSliderBookmarkPosition(currentPage)
+            sliderStartPage = position.startPage
+            sliderCurrentPage = position.currentPage
+        }
+    }
+
+    LaunchedEffect(pdfSliderChromeVisible, sliderStartPage, pdfDocument, totalPages) {
+        startPageThumbnail?.recycle()
+        startPageThumbnail = null
+        if (pdfSliderChromeVisible) {
             val doc = pdfDocument
             if (doc != null && totalPages > 0) {
                 Timber.d("Slider visible. Rendering thumbnail for page $sliderStartPage")
@@ -3420,8 +3451,6 @@ fun PdfViewerScreen(
             }
         } else {
             Timber.d("Slider hidden. Clearing thumbnail.")
-            startPageThumbnail?.recycle()
-            startPageThumbnail = null
         }
     }
 
@@ -4270,10 +4299,6 @@ fun PdfViewerScreen(
             showAiDefinitionPopup -> showAiDefinitionPopup = false
             showDictionaryUpsellDialog -> showDictionaryUpsellDialog = false
             showCustomizeToolsSheet -> showCustomizeToolsSheet = false
-            isPageSliderVisible -> {
-                isPageSliderVisible = false
-                showBars = true
-            }
 
             searchState.isSearchActive -> {
                 searchState.isSearchActive = false
@@ -5833,65 +5858,36 @@ fun PdfViewerScreen(
                     }
                 }
 
-                // --- Slider UI Overlay ---
+                val jumpBackPage = jumpHistory.getOrNull(jumpHistoryCursor - 1)
+                val jumpForwardPage = jumpHistory.getOrNull(jumpHistoryCursor + 1)
+                val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
+                val isPdfJumpHistoryVisible = showStandardBars && !searchState.isSearchActive && (jumpBackPage != null || jumpForwardPage != null)
+                val pdfBottomChromePadding = 56.dp + effectiveNavBarForJumpBar
+                val pdfSliderBottomPadding = pdfBottomChromePadding + if (isPdfJumpHistoryVisible) 40.dp else 0.dp
+
+                // --- Slider UI attached to the bottom chrome ---
                 AnimatedVisibility(
-                    visible = isPageSliderVisible,
+                    visible = pdfSliderChromeVisible,
                     enter = slideInVertically { fullHeight -> fullHeight } + fadeIn(),
-                    exit = slideOutVertically { fullHeight -> fullHeight } + fadeOut()) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clickable(
-                                    interactionSource = remember {
-                                        MutableInteractionSource()
-                                    }, indication = null
-                                ) {
-                                    isPageSliderVisible = false
-                                    showBars = true
-                                })
-
-                        if (isFastScrubbing) {
-                            PageScrubbingAnimation(
-                                pageLabel = pdfPageRangeLabel(
-                                    pageIndex = sliderCurrentPage.roundToInt(),
-                                    pageCount = totalDisplayPages,
-                                    displayMode = displayMode,
-                                    settings = pdfSpreadSettings
-                                )
-                            )
-                        }
-
-                        // Top back button
-                        IconButton(
-                            onClick = {
-                                isPageSliderVisible = false
-                                showBars = true
-                            }, modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(R.string.content_desc_exit_slider_navigation)
-                            )
-                        }
-
-                        // Bottom controls
+                    exit = slideOutVertically { fullHeight -> fullHeight } + fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = pdfSliderBottomPadding)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.height(72.dp))
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .align(Alignment.BottomCenter)
                                 .clickable(
-                                    indication = null, interactionSource = remember {
-                                        MutableInteractionSource()
-                                    }) {},
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) {}
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 32.dp, vertical = 16.dp)
-                                    .padding(bottom = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp),
+                                    .padding(horizontal = 32.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(16.dp)
                             ) {
@@ -5909,23 +5905,16 @@ fun PdfViewerScreen(
                                                 delay(200)
                                                 if (isActive) {
                                                     val targetPage = newValue.roundToInt()
-
-                                                    if (targetPage != sliderStartPage) {
-                                                        recordJumpHistory(sliderStartPage, targetPage)
-                                                    }
                                                     if (displayMode == DisplayMode.PAGINATION) {
-                                                        scrollPaginationToDisplayPage(newValue.roundToInt())
+                                                        scrollPaginationToDisplayPage(targetPage)
                                                     } else {
-                                                        verticalReaderState.scrollToPage(
-                                                            newValue.roundToInt()
-                                                        )
+                                                        verticalReaderState.scrollToPage(targetPage)
                                                     }
                                                     isFastScrubbing = false
                                                 }
                                             }
                                         },
-                                        valueRange = 0f..(totalDisplayPages - 1).toFloat()
-                                            .coerceAtLeast(0f),
+                                        valueRange = 0f..(totalDisplayPages - 1).toFloat().coerceAtLeast(0f),
                                         steps = if (totalDisplayPages > 2) totalDisplayPages - 2 else 0,
                                         modifier = Modifier.fillMaxWidth(),
                                         thumb = {
@@ -5940,15 +5929,9 @@ fun PdfViewerScreen(
                                         track = { sliderState ->
                                             val trackHeight = 2.dp
                                             val trackShape = RoundedCornerShape(trackHeight)
-
-                                            val range =
-                                                sliderState.valueRange.endInclusive - sliderState.valueRange.start
-                                            val fraction = if (range == 0f) 0f
-                                            else {
-                                                ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(
-                                                    0f,
-                                                    1f
-                                                )
+                                            val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
+                                            val fraction = if (range == 0f) 0f else {
+                                                ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
                                             }
 
                                             Box(
@@ -5970,22 +5953,21 @@ fun PdfViewerScreen(
                                                         )
                                                 )
                                             }
-                                        })
+                                        }
+                                    )
 
                                     val startPageOffsetFraction = if (totalDisplayPages > 1) {
                                         sliderStartPage.toFloat() / (totalDisplayPages - 1)
                                     } else {
                                         0f
                                     }
-
                                     val thumbWidth = 20.dp
                                     val trackWidth = maxWidth - thumbWidth
                                     val startPagePixelPosition =
                                         (trackWidth * startPageOffsetFraction) + (thumbWidth / 2)
 
                                     val indicatorSize = 8.dp
-                                    val indicatorOffset =
-                                        startPagePixelPosition - (indicatorSize / 2)
+                                    val indicatorOffset = startPagePixelPosition - (indicatorSize / 2)
                                     Surface(
                                         modifier = Modifier
                                             .align(Alignment.CenterStart)
@@ -5994,14 +5976,6 @@ fun PdfViewerScreen(
                                         shape = CircleShape,
                                         color = MaterialTheme.colorScheme.primary
                                     ) {}
-
-                                    Timber.d("maxWidth: $maxWidth, trackWidth: $trackWidth")
-                                    Timber.d(
-                                        "startPage: $sliderStartPage, totalPages: $totalPages, fraction: $startPageOffsetFraction"
-                                    )
-                                    Timber.d(
-                                        "Calculated X Offset (before centering): $startPagePixelPosition"
-                                    )
 
                                     startPageThumbnail?.let { thumbnail ->
                                         ThumbnailWithIndicator(
@@ -6019,16 +5993,14 @@ fun PdfViewerScreen(
                                                     if (displayMode == DisplayMode.PAGINATION) {
                                                         scrollPaginationToDisplayPage(sliderStartPage)
                                                     } else {
-                                                        verticalReaderState.scrollToPage(
-                                                            sliderStartPage
-                                                        )
+                                                        verticalReaderState.scrollToPage(sliderStartPage)
                                                     }
                                                 }
-                                            })
+                                            }
+                                        )
                                     }
                                 }
 
-                                // Page number text
                                 Text(
                                     text = pdfPageRangeText(
                                         pageIndex = sliderCurrentPage.roundToInt(),
@@ -6037,13 +6009,23 @@ fun PdfViewerScreen(
                                         settings = pdfSpreadSettings
                                     ),
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = if (displayMode == DisplayMode.VERTICAL_SCROLL) Color.Black
-                                    else MaterialTheme.colorScheme.onSurface,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     fontSize = 18.sp
                                 )
                             }
                         }
                     }
+                }
+
+                if (pdfSliderChromeVisible && isFastScrubbing) {
+                    PageScrubbingAnimation(
+                        pageLabel = pdfPageRangeLabel(
+                            pageIndex = sliderCurrentPage.roundToInt(),
+                            pageCount = totalDisplayPages,
+                            displayMode = displayMode,
+                            settings = pdfSpreadSettings
+                        )
+                    )
                 }
 
                 val isPdfTtsPlayingOrLoading = ttsState.isPlaying || ttsState.isLoading
@@ -6061,10 +6043,14 @@ fun PdfViewerScreen(
                 }
                 val showPdfSlider = {
                     val currentPageForSlider = if (displayMode == DisplayMode.PAGINATION) currentPaginationDisplayPage() else verticalReaderState.currentPage
-                    sliderStartPage = currentPageForSlider
-                    sliderCurrentPage = currentPageForSlider.toFloat()
-                    isPageSliderVisible = true
-                    showBars = false
+                    val nextState = readerSliderToggleState(
+                        isCurrentlyToggledOn = isPageSliderVisible,
+                        currentPage = currentPageForSlider
+                    )
+                    sliderStartPage = nextState.bookmarkPosition.startPage
+                    sliderCurrentPage = nextState.bookmarkPosition.currentPage
+                    isPageSliderVisible = nextState.isToggledOn
+                    showBars = true
                 }
                 val showPdfToc = {
                     coroutineScope.launch { drawerState.open() }
@@ -6151,6 +6137,7 @@ fun PdfViewerScreen(
                     isRightToLeftPagination = rightToLeftPagination,
                     isKeepScreenOn = isKeepScreenOn,
                     isTtsSessionActive = isTtsSessionActive,
+                    isSliderActive = isPageSliderVisible,
                     isBookmarked = isBookmarked,
                     canDeletePage = virtualPages.getOrNull(currentPage) is VirtualPage.BlankPage,
                     isReflowingThisBook = isReflowingThisBook,
@@ -6503,14 +6490,10 @@ fun PdfViewerScreen(
                     )
                 }
 
-                val jumpBackPage = jumpHistory.getOrNull(jumpHistoryCursor - 1)
-                val jumpForwardPage = jumpHistory.getOrNull(jumpHistoryCursor + 1)
-                val effectiveNavBarForJumpBar = if (systemUiMode == SystemUiMode.DEFAULT || (systemUiMode == SystemUiMode.SYNC && showStandardBars)) with(density) { navBarHeight.toDp() } else 0.dp
-
                 PdfJumpHistoryBar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 56.dp + effectiveNavBarForJumpBar),
+                        .padding(bottom = pdfBottomChromePadding),
                     showStandardBars = showStandardBars,
                     searchStateActive = searchState.isSearchActive,
                     backPage = jumpBackPage,
@@ -6545,6 +6528,7 @@ fun PdfViewerScreen(
                     isHighlightingLoading = isHighlightingLoading,
                     isEditMode = isEditMode,
                     isTtsSessionActive = isTtsSessionActive,
+                    isSliderActive = isPageSliderVisible,
                     ttsErrorMessage = null,
                     onShowThemePanel = showPdfThemePanel,
                     onShowBrightnessControl = { showBrightnessSheet = true },

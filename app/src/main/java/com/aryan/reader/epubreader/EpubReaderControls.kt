@@ -52,7 +52,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,7 +61,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -370,6 +368,7 @@ fun EpubReaderTopBar(
     currentRenderMode: RenderMode,
     isBookmarked: Boolean,
     isTtsActive: Boolean,
+    isSliderActive: Boolean,
     tapToNavigateEnabled: Boolean,
     volumeScrollEnabled: Boolean,
     isPageTurnAnimationEnabled: Boolean,
@@ -480,10 +479,13 @@ fun EpubReaderTopBar(
                                 ReaderTool.SLIDER -> TooltipIconButton(
                                     text = stringResource(R.string.tooltip_slider),
                                     description = stringResource(R.string.tooltip_slider_desc),
-                                    onClick = onOpenSlider,
-                                    enabled = currentRenderMode != RenderMode.VERTICAL_SCROLL
+                                    onClick = onOpenSlider
                                 ) {
-                                    Icon(painter = painterResource(id = R.drawable.slider), contentDescription = stringResource(R.string.content_desc_navigate_slider))
+                                    Icon(
+                                        painter = painterResource(id = R.drawable.slider),
+                                        contentDescription = stringResource(R.string.content_desc_navigate_slider),
+                                        tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
                                 }
                                 ReaderTool.TOC -> TooltipIconButton(
                                     text = stringResource(R.string.tooltip_toc),
@@ -606,8 +608,7 @@ fun EpubReaderTopBar(
                                             hiddenToolbarTools.forEach { tool ->
                                                 HiddenEpubToolMenuItem(
                                                     tool = tool,
-                                                    currentRenderMode = currentRenderMode,
-                                                    isTtsActive = isTtsActive,
+                                                    isSliderActive = isSliderActive,
                                                     showMoreMenu = {
                                                         showHiddenToolsExpanded = false
                                                         showMoreMenu = false
@@ -980,6 +981,7 @@ fun EpubReaderBottomBar(
     ttsState: TtsState,
     isProUser: Boolean,
     currentTtsMode: com.aryan.reader.tts.TtsPlaybackManager.TtsMode,
+    isSliderActive: Boolean,
     onOpenSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleFormat: () -> Unit,
@@ -1045,12 +1047,12 @@ fun EpubReaderBottomBar(
                             ReaderTool.SLIDER -> TooltipIconButton(
                                 text = stringResource(R.string.tooltip_slider),
                                 description = stringResource(R.string.tooltip_slider_desc),
-                                onClick = onOpenSlider,
-                                enabled = currentRenderMode != RenderMode.VERTICAL_SCROLL
+                                onClick = onOpenSlider
                             ) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.slider),
-                                    contentDescription = stringResource(R.string.content_desc_navigate_slider)
+                                    contentDescription = stringResource(R.string.content_desc_navigate_slider),
+                                    tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                             }
                             ReaderTool.TOC -> TooltipIconButton(
@@ -1143,50 +1145,28 @@ fun EpubReaderPageSlider(
     startPageThumbnail: Bitmap?,
     paginator: IPaginator?,
     chapters: List<EpubChapter>,
-    onClose: () -> Unit,
     onScrub: (Float) -> Unit,
-    onJumpToPage: (Int) -> Unit
+    onJumpToPage: (Int) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
         visible = isVisible,
         enter = slideInVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeIn(animationSpec = tween(200)),
-        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200))
+        exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
+        modifier = modifier
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onClose() }
-            )
-
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top + WindowInsetsSides.Start))
-                    .padding(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = stringResource(R.string.content_desc_exit_slider)
-                )
-            }
-
-            // Bottom controls
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Spacer(Modifier.height(72.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp)
                     .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 32.dp, vertical = 16.dp),
+                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+                        .padding(horizontal = 32.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
@@ -2123,13 +2103,18 @@ enum class ToolbarSection(@StringRes val titleRes: Int) {
 }
 
 @Composable
-private fun ToolPreviewIcon(tool: ReaderTool) {
+private fun ToolPreviewIcon(tool: ReaderTool, isSliderActive: Boolean = false) {
     val title = stringResource(tool.titleRes)
     when (tool) {
         ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = title, modifier = Modifier.size(20.dp))
-        ReaderTool.SLIDER -> Icon(painterResource(id = R.drawable.slider), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.SLIDER -> Icon(
+            painterResource(id = R.drawable.slider),
+            contentDescription = title,
+            modifier = Modifier.size(20.dp),
+            tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        )
         ReaderTool.TOC -> Icon(Icons.Default.Menu, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.FORMAT -> Icon(painterResource(id = R.drawable.format_size), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = title, modifier = Modifier.size(20.dp))
@@ -2143,8 +2128,7 @@ private fun ToolPreviewIcon(tool: ReaderTool) {
 @Composable
 private fun HiddenEpubToolMenuItem(
     tool: ReaderTool,
-    currentRenderMode: RenderMode,
-    isTtsActive: Boolean,
+    isSliderActive: Boolean,
     showMoreMenu: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
@@ -2157,13 +2141,8 @@ private fun HiddenEpubToolMenuItem(
     onToggleTts: () -> Unit,
     onOpenScreenOrientation: () -> Unit
 ) {
-    val enabled = when (tool) {
-        ReaderTool.SLIDER -> currentRenderMode != RenderMode.VERTICAL_SCROLL
-        else -> true
-    }
     DropdownMenuItem(
         text = { Text(stringResource(tool.titleRes)) },
-        enabled = enabled,
         onClick = {
             showMoreMenu()
             when (tool) {
@@ -2180,7 +2159,12 @@ private fun HiddenEpubToolMenuItem(
                 else -> Unit
             }
         },
-        leadingIcon = { ToolPreviewIcon(tool) }
+        leadingIcon = { ToolPreviewIcon(tool, isSliderActive = isSliderActive) },
+        trailingIcon = if (tool == ReaderTool.SLIDER && isSliderActive) {
+            {
+                Icon(Icons.Default.Check, contentDescription = stringResource(R.string.content_desc_enabled))
+            }
+        } else null
     )
 }
 
