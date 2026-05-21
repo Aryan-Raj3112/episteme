@@ -230,6 +230,7 @@ fun SharedNativePaginatedReader(
     onHighlightCreated: (UserHighlight) -> Unit = {},
     onHighlightSelected: (String) -> Unit = {},
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
+    onReaderTap: () -> Unit = {},
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null
 ) {
     val visiblePages = renderPlan.visiblePages
@@ -282,7 +283,15 @@ fun SharedNativePaginatedReader(
 
     val selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
     Box(
-        modifier = modifier.onGloballyPositioned { readerCoordinates = it }
+        modifier = modifier
+            .readerChromeTapTogglePointerInput {
+                if (activeSelection == null) {
+                    onReaderTap()
+                } else {
+                    updateActiveSelection(null)
+                }
+            }
+            .onGloballyPositioned { readerCoordinates = it }
     ) {
         BoxWithConstraints(
             modifier = Modifier
@@ -318,6 +327,7 @@ fun SharedNativePaginatedReader(
                         onSelectionGestureActiveChange = { selectionGestureActive = it },
                         onHighlightSelected = onHighlightSelected,
                         onLinkClicked = onLinkClicked,
+                        onReaderTap = onReaderTap,
                         selectionLayouts = selectionLayouts,
                         imageContent = imageContent,
                         modifier = Modifier
@@ -399,6 +409,7 @@ private fun SharedNativePaginatedPage(
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit,
+    onReaderTap: () -> Unit,
     selectionLayouts: MutableMap<String, SharedNativeTextLayoutInfo>,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
     modifier: Modifier = Modifier
@@ -517,6 +528,8 @@ private fun SharedNativePaginatedPage(
                         lineHeight = (settings.fontSize * settings.lineSpacing).sp,
                         fontFamily = readerFontFamily
                     ).withAndroidPaginationTextMetrics(),
+                    activeSelection = activeSelection,
+                    onReaderTap = onReaderTap,
                     onSelectionChange = onSelectionChange,
                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
@@ -544,6 +557,7 @@ private fun SharedNativePaginatedPage(
                     fallbackFontFamily = readerFontFamily,
                     settings = settings,
                     includeTrailingBottomMargin = false,
+                    onReaderTap = onReaderTap,
                     onSelectionChange = onSelectionChange,
                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
@@ -802,6 +816,8 @@ private fun SharedNativeInteractiveText(
     color: Color,
     textAlign: TextAlign,
     style: TextStyle,
+    activeSelection: SharedNativeReaderTextSelection?,
+    onReaderTap: () -> Unit,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -906,6 +922,9 @@ private fun SharedNativeInteractiveText(
                             onSelectionChange(null)
                             onHighlightSelected(highlightId)
                             return@detectTapGestures
+                        }
+                        if (activeSelection == null) {
+                            onReaderTap()
                         }
                         onSelectionChange(null)
                     }
@@ -1091,6 +1110,7 @@ private fun SharedSemanticBlockStack(
     fallbackFontFamily: FontFamily,
     settings: ReaderSettings,
     includeTrailingBottomMargin: Boolean,
+    onReaderTap: () -> Unit,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -1119,6 +1139,7 @@ private fun SharedSemanticBlockStack(
             } else {
                 0.dp
             },
+            onReaderTap = onReaderTap,
             onSelectionChange = onSelectionChange,
             onSelectionGestureActiveChange = onSelectionGestureActiveChange,
             onHighlightSelected = onHighlightSelected,
@@ -1147,6 +1168,7 @@ private fun SharedSemanticBlockView(
     settings: ReaderSettings,
     marginTop: Dp,
     marginBottom: Dp,
+    onReaderTap: () -> Unit,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -1203,6 +1225,7 @@ private fun SharedSemanticBlockView(
                 fallbackFontFamily = fallbackFontFamily,
                 settings = settings,
                 fontWeight = FontWeight.Bold,
+                onReaderTap = onReaderTap,
                 onSelectionChange = onSelectionChange,
                 onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                 onHighlightSelected = onHighlightSelected,
@@ -1211,9 +1234,9 @@ private fun SharedSemanticBlockView(
             )
         }
 
-        is SemanticParagraph -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
-        is SemanticListItem -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
-        is SemanticTextBlock -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
+        is SemanticParagraph -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
+        is SemanticListItem -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
+        is SemanticTextBlock -> SharedSemanticTextView(block, page, measuredModifier, foreground, searchQuery, searchHighlight, highlights, activeSelection, selectionHighlight, fallbackTextAlign, fallbackFontFamily, settings, onReaderTap = onReaderTap, onSelectionChange = onSelectionChange, onSelectionGestureActiveChange = onSelectionGestureActiveChange, onHighlightSelected = onHighlightSelected, onLinkClicked = onLinkClicked, selectionLayouts = selectionLayouts)
 
         is SemanticList -> {
             Column(modifier = measuredModifier, verticalArrangement = Arrangement.Top) {
@@ -1253,6 +1276,7 @@ private fun SharedSemanticBlockView(
                             fallbackTextAlign = fallbackTextAlign,
                             fallbackFontFamily = fallbackFontFamily,
                             settings = settings,
+                            onReaderTap = onReaderTap,
                             onSelectionChange = onSelectionChange,
                             onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                             onHighlightSelected = onHighlightSelected,
@@ -1280,6 +1304,7 @@ private fun SharedSemanticBlockView(
                     fallbackFontFamily = fallbackFontFamily,
                     settings = settings,
                     includeTrailingBottomMargin = true,
+                    onReaderTap = onReaderTap,
                     onSelectionChange = onSelectionChange,
                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
@@ -1305,6 +1330,7 @@ private fun SharedSemanticBlockView(
                     fallbackFontFamily = fallbackFontFamily,
                     settings = settings,
                     includeTrailingBottomMargin = true,
+                    onReaderTap = onReaderTap,
                     onSelectionChange = onSelectionChange,
                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                     onHighlightSelected = onHighlightSelected,
@@ -1334,6 +1360,7 @@ private fun SharedSemanticBlockView(
                                     fallbackFontFamily = fallbackFontFamily,
                                     settings = settings,
                                     includeTrailingBottomMargin = true,
+                                    onReaderTap = onReaderTap,
                                     onSelectionChange = onSelectionChange,
                                     onSelectionGestureActiveChange = onSelectionGestureActiveChange,
                                     onHighlightSelected = onHighlightSelected,
@@ -1584,6 +1611,7 @@ private fun SharedSemanticTextView(
     fallbackFontFamily: FontFamily,
     settings: ReaderSettings,
     fontWeight: FontWeight? = null,
+    onReaderTap: () -> Unit,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -1624,6 +1652,8 @@ private fun SharedSemanticTextView(
         modifier = modifier,
         textAlign = block.style.paragraphStyle.textAlign.takeUnless { it == TextAlign.Unspecified } ?: fallbackTextAlign,
         style = textStyle,
+        activeSelection = activeSelection,
+        onReaderTap = onReaderTap,
         onSelectionChange = onSelectionChange,
         onSelectionGestureActiveChange = onSelectionGestureActiveChange,
         onHighlightSelected = onHighlightSelected,

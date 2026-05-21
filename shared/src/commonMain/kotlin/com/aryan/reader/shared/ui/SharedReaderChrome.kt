@@ -335,6 +335,7 @@ fun SharedReaderScreen(
         onSearchAction = { dispatch(ReaderAction.SearchOpened) },
         useDetachedChromeLayer = useDetachedChromeLayer,
         useDetachedPanelLayer = useDetachedPanelLayer,
+        contentHandlesChromeTap = true,
         topSearchBar = if (session.isSearchActive) {
             {
                 SharedReaderSearchTopBar(
@@ -455,8 +456,8 @@ fun SharedReaderScreen(
                             bounds = coordinates.boundsInWindow(),
                             details = "sliderVisible=${toolbarPreferences.isVisible(ReaderTool.SLIDER)} pageInfoBottom=${shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM}"
                         )
-                    },
-                shape = RoundedCornerShape(6.dp),
+                },
+                shape = RoundedCornerShape(0.dp),
                 color = chromeBarColor,
                 contentColor = chromeContentColor,
                 tonalElevation = 0.dp,
@@ -666,7 +667,7 @@ private fun SharedReaderSearchTopBar(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(0.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 2.dp

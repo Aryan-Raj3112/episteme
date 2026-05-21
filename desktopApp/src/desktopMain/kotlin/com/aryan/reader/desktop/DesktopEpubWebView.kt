@@ -30,10 +30,6 @@ import com.multiplatform.webview.web.WebViewNavigator
 import com.multiplatform.webview.web.WebViewState
 import com.multiplatform.webview.web.rememberWebViewNavigator
 import kotlinx.coroutines.launch
-import java.awt.AWTEvent
-import java.awt.Toolkit
-import java.awt.event.AWTEventListener
-import java.awt.event.MouseEvent
 
 @Composable
 internal fun DesktopEpubWebView(
@@ -174,44 +170,6 @@ internal fun DesktopEpubWebView(
         )
     }
 
-    DisposableEffect(Unit) {
-        var lastActivityAt = 0L
-        var lastMouseX: Int? = null
-        var lastMouseY: Int? = null
-        val listener = AWTEventListener { event ->
-            val mouseEvent = event as? MouseEvent ?: return@AWTEventListener
-            if (
-                mouseEvent.id != MouseEvent.MOUSE_MOVED &&
-                mouseEvent.id != MouseEvent.MOUSE_DRAGGED &&
-                mouseEvent.id != MouseEvent.MOUSE_PRESSED &&
-                mouseEvent.id != MouseEvent.MOUSE_WHEEL
-            ) {
-                return@AWTEventListener
-            }
-            if (mouseEvent.id == MouseEvent.MOUSE_MOVED || mouseEvent.id == MouseEvent.MOUSE_DRAGGED) {
-                val screenX = mouseEvent.xOnScreen
-                val screenY = mouseEvent.yOnScreen
-                if (lastMouseX == screenX && lastMouseY == screenY) return@AWTEventListener
-                lastMouseX = screenX
-                lastMouseY = screenY
-            } else {
-                lastMouseX = mouseEvent.xOnScreen
-                lastMouseY = mouseEvent.yOnScreen
-            }
-            val now = mouseEvent.`when`.takeIf { it > 0L } ?: System.currentTimeMillis()
-            if (now - lastActivityAt < 120L) return@AWTEventListener
-            lastActivityAt = now
-            scope.launch { latestOnPointerActivity() }
-        }
-        val eventMask = AWTEvent.MOUSE_MOTION_EVENT_MASK or
-            AWTEvent.MOUSE_EVENT_MASK or
-            AWTEvent.MOUSE_WHEEL_EVENT_MASK
-        Toolkit.getDefaultToolkit().addAWTEventListener(listener, eventMask)
-        onDispose {
-            Toolkit.getDefaultToolkit().removeAWTEventListener(listener)
-        }
-    }
-
     Box(modifier = modifier) {
         WebView(
             state = state,
@@ -331,29 +289,55 @@ private fun LoadingState.isFinished(): Boolean = this is LoadingState.Finished
 
 private val DesktopEpubKeyNavigationScript = """
     (function () {
-      if (!window.readerDesktopPointerActivityInstalled) {
-        window.readerDesktopPointerActivityInstalled = true;
-        var lastPointerActivityAt = 0;
-        var lastPointerX = null;
-        var lastPointerY = null;
-        function notifyPointerActivity(event, requireMovement) {
-          if (requireMovement && event) {
-            var x = Math.round(event.screenX || event.clientX || 0);
-            var y = Math.round(event.screenY || event.clientY || 0);
-            if (lastPointerX === x && lastPointerY === y) return;
-            lastPointerX = x;
-            lastPointerY = y;
-          }
-          var now = Date.now();
-          if (now - lastPointerActivityAt < 120) return;
-          lastPointerActivityAt = now;
+      if (!window.readerDesktopChromeTapInstalled) {
+        window.readerDesktopChromeTapInstalled = true;
+        var chromeTapStart = null;
+        function notifyChromeTap() {
           if (!window.kmpJsBridge || !window.kmpJsBridge.callNative) return;
           window.kmpJsBridge.callNative('readerPointerActivity', '{}');
         }
-        document.addEventListener('mousemove', function (event) { notifyPointerActivity(event, true); }, true);
-        document.addEventListener('pointermove', function (event) { notifyPointerActivity(event, true); }, true);
-        document.addEventListener('pointerdown', function (event) { notifyPointerActivity(event, false); }, true);
-        document.addEventListener('wheel', function (event) { notifyPointerActivity(event, false); }, true);
+        function chromeTapIgnored(target) {
+          if (!target || !target.closest) return false;
+          return !!target.closest(
+            'a[href], button, input, textarea, select, [contenteditable="true"], #reader-selection-menu, .reader-selection-handle'
+          );
+        }
+        function hasActiveReaderSelection() {
+          var selection = window.getSelection && window.getSelection();
+          return !!selection && selection.toString().trim().length > 0;
+        }
+        function beginChromeTap(event) {
+          if (event.button !== undefined && event.button !== 0) return;
+          if (chromeTapIgnored(event.target)) {
+            chromeTapStart = null;
+            return;
+          }
+          chromeTapStart = {
+            pointerId: event.pointerId,
+            x: event.clientX || 0,
+            y: event.clientY || 0,
+            at: Date.now()
+          };
+        }
+        function finishChromeTap(event) {
+          if (!chromeTapStart) return;
+          if (event.pointerId !== undefined && chromeTapStart.pointerId !== undefined && event.pointerId !== chromeTapStart.pointerId) return;
+          var dx = (event.clientX || 0) - chromeTapStart.x;
+          var dy = (event.clientY || 0) - chromeTapStart.y;
+          var elapsed = Date.now() - chromeTapStart.at;
+          chromeTapStart = null;
+          if ((dx * dx + dy * dy) > 64 || elapsed > 650) return;
+          if (chromeTapIgnored(event.target) || hasActiveReaderSelection()) return;
+          notifyChromeTap();
+        }
+        document.addEventListener('pointerdown', beginChromeTap, true);
+        document.addEventListener('pointerup', finishChromeTap, true);
+        document.addEventListener('pointercancel', function () { chromeTapStart = null; }, true);
+        document.addEventListener('click', function (event) {
+          if (window.PointerEvent) return;
+          beginChromeTap(event);
+          finishChromeTap(event);
+        }, true);
       }
       if (window.readerDesktopKeyNavigationInstalled) return;
       window.readerDesktopKeyNavigationInstalled = true;

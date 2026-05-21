@@ -194,9 +194,25 @@ private fun sharedReaderModalLayerVisible(
     level: SharedReaderModalLevel
 ): Boolean {
     if (explicitOwnerWindow == null || !level.isChromeLayer()) return true
-    return ownerWindow?.let { window ->
-        window.isShowing && window.isDisplayable && (window.isActive || window.isFocused)
-    } == true
+    return ownerWindow?.sharedReaderChromeLayerVisible() == true
+}
+
+internal fun sharedReaderModalChromeLayerVisible(
+    ownerShowing: Boolean,
+    ownerDisplayable: Boolean,
+    ownerMinimized: Boolean
+): Boolean {
+    return ownerShowing && ownerDisplayable && !ownerMinimized
+}
+
+private fun AwtWindow.sharedReaderChromeLayerVisible(): Boolean {
+    return sharedReaderModalChromeLayerVisible(
+        ownerShowing = isShowing,
+        ownerDisplayable = isDisplayable,
+        ownerMinimized = (this as? java.awt.Frame)?.let { frame ->
+            frame.extendedState and java.awt.Frame.ICONIFIED != 0
+        } == true
+    )
 }
 
 private fun sharedReaderModalLayerPosition(

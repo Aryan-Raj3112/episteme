@@ -81,6 +81,42 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
+    fun `reader tap toggles chrome when it is not locked or forced`() {
+        assertTrue(
+            readerWorkspaceChromeVisibleAfterReaderTap(
+                requestedVisible = false,
+                lockedVisible = false,
+                forcedVisible = false
+            )
+        )
+        assertFalse(
+            readerWorkspaceChromeVisibleAfterReaderTap(
+                requestedVisible = true,
+                lockedVisible = false,
+                forcedVisible = false
+            )
+        )
+    }
+
+    @Test
+    fun `locked or forced reader chrome stays visible after reader taps`() {
+        assertTrue(
+            readerWorkspaceChromeVisible(
+                requestedVisible = false,
+                lockedVisible = true,
+                forcedVisible = false
+            )
+        )
+        assertTrue(
+            readerWorkspaceChromeVisibleAfterReaderTap(
+                requestedVisible = false,
+                lockedVisible = false,
+                forcedVisible = true
+            )
+        )
+    }
+
+    @Test
     fun `epub workspace ignores desktop visual options in inspector`() {
         val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(

@@ -55,6 +55,26 @@ data class ReaderWorkspaceChromeModel(
     val forceVisibleReasons: Set<String> = emptySet()
 )
 
+internal fun readerWorkspaceChromeVisible(
+    requestedVisible: Boolean,
+    lockedVisible: Boolean,
+    forcedVisible: Boolean
+): Boolean {
+    return lockedVisible || forcedVisible || requestedVisible
+}
+
+internal fun readerWorkspaceChromeVisibleAfterReaderTap(
+    requestedVisible: Boolean,
+    lockedVisible: Boolean,
+    forcedVisible: Boolean
+): Boolean {
+    return if (lockedVisible || forcedVisible) {
+        true
+    } else {
+        !requestedVisible
+    }
+}
+
 data class ReaderWorkspaceFileActionState(
     val canShare: Boolean = false,
     val canSaveCopy: Boolean = false,

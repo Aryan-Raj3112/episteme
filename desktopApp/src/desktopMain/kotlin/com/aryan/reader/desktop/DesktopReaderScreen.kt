@@ -459,6 +459,7 @@ internal fun DesktopReaderScreen(
                             onLinkClicked = { link ->
                                 handleDesktopEpubLinkClicked(link.toDesktopEpubLinkClick())
                             },
+                            onReaderTap = onChromeActivity,
                             imageContent = { image, imageModifier ->
                                 DesktopEpubNativeImage(
                                     image = image,

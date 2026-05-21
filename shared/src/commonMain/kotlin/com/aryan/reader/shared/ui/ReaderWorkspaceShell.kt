@@ -6,6 +6,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -18,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -55,7 +56,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -64,6 +64,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -98,6 +99,7 @@ fun ReaderWorkspaceShell(
     topSearchBar: (@Composable () -> Unit)? = null,
     useDetachedChromeLayer: Boolean = true,
     useDetachedPanelLayer: Boolean = true,
+    contentHandlesChromeTap: Boolean = false,
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
@@ -114,19 +116,13 @@ fun ReaderWorkspaceShell(
     var fullscreenBannerVisible by remember { mutableStateOf(false) }
     var chromeVisible by remember(model.kind) { mutableStateOf(false) }
     var chromeHoverSources by remember(model.kind) { mutableStateOf(emptySet<ReaderChromeHoverSource>()) }
-    var chromeRevealTick by remember(model.kind) { mutableStateOf(0L) }
-    var lastChromeRevealAt by remember(model.kind) { mutableStateOf(0L) }
-    val chromeHovered = chromeHoverSources.isNotEmpty()
 
-    fun revealChrome(eventTimeMillis: Long = 0L) {
-        val shouldRefreshDelay = !chromeVisible ||
-            eventTimeMillis <= 0L ||
-            eventTimeMillis - lastChromeRevealAt >= ReaderChromeRevealThrottleMillis
-        chromeVisible = true
-        if (shouldRefreshDelay) {
-            lastChromeRevealAt = eventTimeMillis
-            chromeRevealTick += 1
-        }
+    fun toggleChromeFromReaderTap() {
+        chromeVisible = readerWorkspaceChromeVisibleAfterReaderTap(
+            requestedVisible = chromeVisible,
+            lockedVisible = topSearchBar != null,
+            forcedVisible = model.chrome.forceVisible
+        )
     }
 
     fun updateChromeHovered(source: ReaderChromeHoverSource, hovered: Boolean) {
@@ -139,7 +135,7 @@ fun ReaderWorkspaceShell(
             chromeHoverSources = nextSources
         }
         if (hovered) {
-            revealChrome()
+            chromeVisible = true
         }
     }
 
@@ -174,7 +170,11 @@ fun ReaderWorkspaceShell(
     ) shellConstraints@ {
         val wide = this@shellConstraints.maxWidth >= 1120.dp
         val chromeLockedVisible = topSearchBar != null
-        val showChrome = chromeLockedVisible || chromeVisible
+        val showChrome = readerWorkspaceChromeVisible(
+            requestedVisible = chromeVisible,
+            lockedVisible = chromeLockedVisible,
+            forcedVisible = model.chrome.forceVisible
+        )
         val chromeSuppressedByPanel = leftPanelOpen || rightPanelOpen
         val showTopChrome = showChrome && topSearchBar == null && !isFullscreen && !chromeSuppressedByPanel
         val showBottomChrome = showChrome && !chromeSuppressedByPanel
@@ -198,22 +198,9 @@ fun ReaderWorkspaceShell(
                 chromeHoverSources = nextSources
             }
         }
-        LaunchedEffect(chromeRevealTick, chromeLockedVisible, chromeHovered) {
-            if (chromeLockedVisible) {
+        LaunchedEffect(chromeLockedVisible, model.chrome.forceVisible) {
+            if (chromeLockedVisible || model.chrome.forceVisible) {
                 chromeVisible = true
-                return@LaunchedEffect
-            }
-            if (chromeRevealTick == 0L) {
-                chromeVisible = false
-                return@LaunchedEffect
-            }
-            chromeVisible = true
-            if (chromeHovered) {
-                return@LaunchedEffect
-            }
-            delay(ReaderChromeAutoHideDelayMillis)
-            if (!chromeHovered) {
-                chromeVisible = false
             }
         }
 
@@ -221,7 +208,6 @@ fun ReaderWorkspaceShell(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .readerChromeRevealPointerInput(::revealChrome)
                     .onGloballyPositioned { coordinates ->
                         logReaderGapLayout(
                             layer = "shell_column",
@@ -239,6 +225,13 @@ fun ReaderWorkspaceShell(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .then(
+                            if (contentHandlesChromeTap) {
+                                Modifier
+                            } else {
+                                Modifier.readerChromeTapTogglePointerInput(::toggleChromeFromReaderTap)
+                            }
+                        )
                         .clipToBounds()
                         .onGloballyPositioned { coordinates ->
                             logReaderGapLayout("content_slot", coordinates.boundsInWindow())
@@ -254,7 +247,7 @@ fun ReaderWorkspaceShell(
                             }
                         }
                 ) {
-                    content(::revealChrome)
+                    content(::toggleChromeFromReaderTap)
                 }
                 ReaderWorkspacePanelOverlays(
                     showLeftPanel = showLeftPanel,
@@ -279,7 +272,6 @@ fun ReaderWorkspaceShell(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .readerChromeRevealPointerInput(::revealChrome)
                             ) {
                                 ReaderWorkspaceChromeOverlay(
                                     showTopBar = showTopChrome,
@@ -320,7 +312,6 @@ fun ReaderWorkspaceShell(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .readerChromeRevealPointerInput(::revealChrome)
                             ) {
                                 ReaderWorkspaceChromeOverlay(
                                     showTopBar = false,
@@ -411,8 +402,6 @@ fun ReaderWorkspaceShell(
     }
 }
 
-private const val ReaderChromeAutoHideDelayMillis = 2_050L
-private const val ReaderChromeRevealThrottleMillis = 120L
 private const val ReaderChromeZIndex = 10_000f
 
 private enum class ReaderChromeHoverSource {
@@ -422,26 +411,29 @@ private enum class ReaderChromeHoverSource {
     FileActionsMenu
 }
 
-private fun Modifier.readerChromeRevealPointerInput(
-    onReveal: (Long) -> Unit
+internal fun Modifier.readerChromeTapTogglePointerInput(
+    onTap: () -> Unit
 ): Modifier {
-    return pointerInput(onReveal) {
-        awaitPointerEventScope {
-            var lastMovePosition: Offset? = null
-            pointerLoop@ while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                when (event.type) {
-                    PointerEventType.Move -> {
-                        val position = event.changes.firstOrNull()?.position ?: continue@pointerLoop
-                        if (!lastMovePosition.isMeaningfulMoveTo(position)) continue@pointerLoop
-                        lastMovePosition = position
-                        onReveal(event.changes.maxOfOrNull { it.uptimeMillis } ?: 0L)
+    return pointerInput(onTap) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Final)
+            val pointerId = down.id
+            val start = down.position
+            val touchSlop = viewConfiguration.touchSlop
+            var moved = false
+            var consumed = down.isConsumed
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Final)
+                val change = event.changes.firstOrNull { it.id == pointerId } ?: return@awaitEachGesture
+                consumed = consumed || change.isConsumed
+                if (!moved && (change.position - start).getDistance() > touchSlop) {
+                    moved = true
+                }
+                if (change.changedToUp() || !change.pressed) {
+                    if (!moved && !consumed) {
+                        onTap()
                     }
-                    PointerEventType.Press,
-                    PointerEventType.Scroll -> {
-                        event.changes.firstOrNull()?.position?.let { lastMovePosition = it }
-                        onReveal(event.changes.maxOfOrNull { it.uptimeMillis } ?: 0L)
-                    }
+                    return@awaitEachGesture
                 }
             }
         }
@@ -477,13 +469,6 @@ private fun Modifier.readerChromeHoverPointerInput(
             }
         }
     }
-}
-
-private fun Offset?.isMeaningfulMoveTo(next: Offset): Boolean {
-    val previous = this ?: return true
-    val dx = next.x - previous.x
-    val dy = next.y - previous.y
-    return (dx * dx) + (dy * dy) >= 1f
 }
 
 @Composable
@@ -617,8 +602,6 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-                .widthIn(max = 820.dp)
                 .fillMaxWidth()
                 .readerChromeHoverPointerInput(ReaderChromeHoverSource.TopSearch, onChromeHoverChange)
                 .zIndex(ReaderChromeZIndex)
@@ -632,8 +615,6 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
             exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-                .widthIn(max = 820.dp)
                 .fillMaxWidth()
                 .readerChromeHoverPointerInput(ReaderChromeHoverSource.TopBar, onChromeHoverChange)
                 .zIndex(ReaderChromeZIndex)
@@ -671,8 +652,6 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         modifier = Modifier
             .align(Alignment.BottomCenter)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-            .widthIn(max = 980.dp)
             .fillMaxWidth()
             .readerChromeHoverPointerInput(ReaderChromeHoverSource.BottomBar, onChromeHoverChange)
             .zIndex(ReaderChromeZIndex)
@@ -749,7 +728,7 @@ private fun ReaderWorkspaceTopChrome(
     }
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(SharedUiTokens.chromeRadius),
+        shape = RoundedCornerShape(0.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 3.dp,

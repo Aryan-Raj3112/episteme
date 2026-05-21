@@ -85,9 +85,8 @@ internal fun DesktopPdfFullscreenBottomChrome(
     val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
     Surface(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, top = 6.dp, end = 16.dp, bottom = 0.dp),
-        shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp),
+            .fillMaxWidth(),
+        shape = RoundedCornerShape(0.dp),
         color = chromeBackground,
         contentColor = chromeContent,
         tonalElevation = 0.dp,
@@ -174,7 +173,7 @@ internal fun DesktopPdfBottomChrome(
     val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(0.dp),
         color = chromeBackground,
         contentColor = chromeContent,
         tonalElevation = 0.dp,
@@ -298,7 +297,7 @@ internal fun DesktopPdfSearchTopBar(
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(0.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp
     ) {
