@@ -41,13 +41,26 @@ internal fun DesktopPdfAnnotationSidecarEffect(
 
     LaunchedEffect(documentHandleId, annotations, annotationsLoaded) {
         if (!annotationsLoaded) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
+        val changed = withContext(Dispatchers.IO) {
             runCatching {
-                annotationFile.parentFile?.mkdirs()
-                annotationFile.writeText(SharedPdfAnnotationSerializer.encode(annotations))
-            }
+                val nextJson = SharedPdfAnnotationSerializer.encode(annotations)
+                when {
+                    annotations.isEmpty() && annotationFile.isFile -> {
+                        annotationFile.delete()
+                    }
+                    annotations.isEmpty() -> false
+                    annotationFile.isFile && annotationFile.readText() == nextJson -> false
+                    else -> {
+                        annotationFile.parentFile?.mkdirs()
+                        annotationFile.writeText(nextJson)
+                        true
+                    }
+                }
+            }.getOrDefault(false)
         }
-        onLocalSidecarsChanged()
+        if (changed) {
+            onLocalSidecarsChanged()
+        }
     }
 }
 
@@ -76,13 +89,23 @@ internal fun DesktopPdfBookmarkSidecarEffect(
 
     LaunchedEffect(documentHandleId, bookmarks, bookmarksLoaded) {
         if (!bookmarksLoaded) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
+        val changed = withContext(Dispatchers.IO) {
             runCatching {
-                bookmarkFile.parentFile?.mkdirs()
-                bookmarkFile.writeText(SharedPdfBookmarkSerializer.encode(bookmarks))
-            }
+                val nextJson = SharedPdfBookmarkSerializer.encode(bookmarks)
+                when {
+                    bookmarks.isEmpty() && !bookmarkFile.isFile -> false
+                    bookmarkFile.isFile && bookmarkFile.readText() == nextJson -> false
+                    else -> {
+                        bookmarkFile.parentFile?.mkdirs()
+                        bookmarkFile.writeText(nextJson)
+                        true
+                    }
+                }
+            }.getOrDefault(false)
         }
-        onLocalSidecarsChanged()
+        if (changed) {
+            onLocalSidecarsChanged()
+        }
     }
 }
 

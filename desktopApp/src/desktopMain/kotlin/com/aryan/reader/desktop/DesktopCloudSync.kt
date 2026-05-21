@@ -83,6 +83,7 @@ internal class DesktopCloudSync(
                     val remoteBook = downloaded ?: remote.toDesktopBookItem()
                     state = state.upsertCloudBook(remoteBook)
                     if (downloaded != null) downloadedBooks += 1
+                    importDesktopPdfBookmarksMetadata(remoteBook, remote.bookmarksJson, remote.lastModifiedTimestamp)
                     if (remote.hasAnnotations) {
                         downloadAnnotations(input.driveAccessToken, remoteBook, remote.lastModifiedTimestamp)
                     }
@@ -103,18 +104,23 @@ internal class DesktopCloudSync(
                     }
                     val localSidecarTimestampBeforeMerge = DesktopCloudSidecarSync.localAnnotationTimestamp(local)
                     val localMetadataTimestamp = maxOf(local.timestamp, localSidecarTimestampBeforeMerge)
+                    val localMetadataWins = localMetadataTimestamp > remote.lastModifiedTimestamp
 
-                    if (localMetadataTimestamp > remote.lastModifiedTimestamp) {
-                        uploadBookAndMetadata(input, local, uploadContent = shouldUploadLocalBookContent(local, remote))?.let { synced ->
-                            state = state.upsertCloudBook(synced)
+                    if (localMetadataWins) {
+                        val bookForMetadata = local.withDownloadedCloudContent(downloaded, replacePath = false)
+                        uploadBookAndMetadata(input, bookForMetadata, uploadContent = shouldUploadLocalBookContent(local, remote))?.let { synced ->
+                            state = state.upsertCloudBook(synced.withDownloadedCloudContent(downloaded))
                             uploadedBooks += 1
                         }
                     } else if (remote.lastModifiedTimestamp > local.timestamp || downloaded != null) {
-                        state = state.upsertCloudBook(downloaded ?: remoteBook)
+                        val mergedBook = downloaded ?: remoteBook
+                        state = state.upsertCloudBook(mergedBook)
+                        importDesktopPdfBookmarksMetadata(mergedBook, remote.bookmarksJson, remote.lastModifiedTimestamp)
                     }
 
-                    val localSidecarTimestamp = DesktopCloudSidecarSync.localAnnotationTimestamp(downloaded ?: local)
-                    val needsAnnotationDownload = remote.hasAnnotations &&
+                    val localSidecarTimestamp = DesktopCloudSidecarSync.localAnnotationPayloadTimestamp(downloaded ?: local)
+                    val needsAnnotationDownload = !localMetadataWins &&
+                        remote.hasAnnotations &&
                         (remote.lastModifiedTimestamp > localSidecarTimestamp || localSidecarTimestamp == 0L)
                     if (needsAnnotationDownload) {
                         val targetBook = downloaded ?: state.rawLibraryBooks.firstOrNull { it.id == bookId } ?: local
@@ -450,10 +456,11 @@ internal fun BookItem.toDesktopCloudBookMetadata(
     timestamp: Long = this.timestamp
 ): DesktopCloudBookMetadata {
     val position = readerPosition
-    val bookmarksJson = readerBookmarks
-        .mapNotNull { it.toDesktopCloudEpubBookmarkOrNull() }
-        .takeIf { it.isNotEmpty() }
-        ?.let(EpubAnnotationSerializer::bookmarksToJson)
+    val bookmarksJson = desktopPdfBookmarksMetadataJson(this)
+        ?: readerBookmarks
+            .mapNotNull { it.toDesktopCloudEpubBookmarkOrNull() }
+            .takeIf { it.isNotEmpty() }
+            ?.let(EpubAnnotationSerializer::bookmarksToJson)
     val highlightsJson = readerHighlights
         .takeIf { it.isNotEmpty() }
         ?.let(EpubAnnotationSerializer::highlightsToJson)
@@ -534,7 +541,7 @@ internal fun DesktopCloudBookMetadata.toDesktopBookItem(
             it.chapterIndex != null || it.pageIndex != null || it.cfi != null || it.startOffset != null
         } ?: existing?.readerPosition,
         readerSettings = existing?.readerSettings,
-        readerBookmarks = if (bookmarksJson.isNullOrBlank()) {
+        readerBookmarks = if (type == FileType.PDF || bookmarksJson.isNullOrBlank()) {
             existing?.readerBookmarks.orEmpty()
         } else {
             EpubAnnotationSerializer.parseBookmarksJson(bookmarksJson).map { bookmark ->
@@ -625,6 +632,16 @@ private fun shouldUploadLocalBookContent(local: BookItem, remote: DesktopCloudBo
     return local.sourceFolder == null &&
         localTimestamp > 0L &&
         localTimestamp > (remote?.fileContentModifiedTimestamp ?: 0L)
+}
+
+private fun BookItem.withDownloadedCloudContent(downloaded: BookItem?, replacePath: Boolean = true): BookItem {
+    if (downloaded == null) return this
+    return copy(
+        path = if (replacePath) downloaded.path ?: path else path,
+        fileSize = downloaded.fileSize.takeIf { it > 0L } ?: fileSize,
+        fileContentModifiedTimestamp = downloaded.fileContentModifiedTimestamp.takeIf { it > 0L }
+            ?: fileContentModifiedTimestamp
+    )
 }
 
 private fun desktopShelfTimestamp(record: ShelfRecord, refs: List<BookShelfRef>): Long {

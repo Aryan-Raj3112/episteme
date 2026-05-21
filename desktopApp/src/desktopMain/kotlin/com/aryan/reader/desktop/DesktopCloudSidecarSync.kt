@@ -11,51 +11,46 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 internal object DesktopCloudSidecarSync {
     fun hasLocalAnnotationData(book: BookItem): Boolean {
         val path = book.path?.takeIf { it.isNotBlank() } ?: return false
         if (book.type != FileType.PDF) return false
-        return desktopPdfAnnotationFile(path).isFile ||
+        return desktopPdfAnnotationFile(path).hasSyncablePdfAnnotations() ||
             desktopPdfBookmarkFile(path).isFile ||
-            desktopPdfRichTextFile(path).isFile
+            desktopPdfRichTextFile(path).hasSyncablePdfRichText()
     }
 
     fun localAnnotationTimestamp(book: BookItem): Long {
         val path = book.path?.takeIf { it.isNotBlank() } ?: return 0L
         if (book.type != FileType.PDF) return 0L
         return maxOf(
-            desktopPdfAnnotationFile(path).lastModifiedIfFile(),
-            desktopPdfBookmarkFile(path).lastModifiedIfFile(),
-            desktopPdfRichTextFile(path).lastModifiedIfFile()
+            localAnnotationPayloadTimestamp(path),
+            desktopPdfBookmarkFile(path).lastModifiedIfFile()
         )
+    }
+
+    fun localAnnotationPayloadTimestamp(book: BookItem): Long {
+        val path = book.path?.takeIf { it.isNotBlank() } ?: return 0L
+        if (book.type != FileType.PDF) return 0L
+        return localAnnotationPayloadTimestamp(path)
     }
 
     fun exportAnnotationBundle(book: BookItem): File? {
         val path = book.path?.takeIf { it.isNotBlank() } ?: return null
         if (book.type != FileType.PDF) return null
         val annotationFile = desktopPdfAnnotationFile(path)
-        val bookmarkFile = desktopPdfBookmarkFile(path)
         val richTextFile = desktopPdfRichTextFile(path)
         val data = buildMap {
             if (annotationFile.isFile) {
-                val annotations = SharedPdfAnnotationSerializer.decode(annotationFile.readText())
-                put(
-                    SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS,
-                    SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(annotations)
-                )
-            }
-            if (bookmarkFile.isFile) {
-                cloudSidecarJson.parseElementOrNull(bookmarkFile.readText())?.let { put("bookmarks", it) }
+                desktopPdfAnnotationElementForSync(annotationFile.readText())?.let { annotations ->
+                    put(SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS, annotations)
+                }
             }
             if (richTextFile.isFile) {
-                cloudSidecarJson.parseElementOrNull(richTextFile.readText())?.let { element ->
-                    put("text", SharedPdfRichTextSerializer.encodeElement(SharedPdfRichTextSerializer.decodeElement(element)))
-                }
+                desktopPdfRichTextElementForSync(richTextFile.readText())?.let { put("text", it) }
             }
         }
         if (data.isEmpty()) return null
@@ -84,9 +79,13 @@ internal object DesktopCloudSidecarSync {
 
         if (canonicalData.hasPdfAnnotationPayload()) {
             val annotations = SharedPdfAnnotationSidecarCodec.annotationsFromData(canonicalData)
-            annotationFile.parentFile?.mkdirs()
-            annotationFile.writeText(SharedPdfAnnotationSerializer.encode(annotations))
-            annotationFile.setLastModified(timestamp)
+            if (annotations.isEmpty()) {
+                if (annotationFile.isFile) annotationFile.delete()
+            } else {
+                annotationFile.parentFile?.mkdirs()
+                annotationFile.writeText(SharedPdfAnnotationSerializer.encode(annotations))
+                annotationFile.setLastModified(timestamp)
+            }
         } else if (annotationFile.isFile) {
             annotationFile.delete()
         }
@@ -95,20 +94,29 @@ internal object DesktopCloudSidecarSync {
             bookmarkFile.parentFile?.mkdirs()
             bookmarkFile.writeText(cloudSidecarJson.encodeToString(JsonElement.serializer(), bookmarks))
             bookmarkFile.setLastModified(timestamp)
-        } ?: run {
-            if (bookmarkFile.isFile) bookmarkFile.delete()
         }
 
         canonicalData["text"]?.let { richText ->
             val richDocument = SharedPdfRichTextSerializer.decodeElement(richText)
-            richTextFile.parentFile?.mkdirs()
-            richTextFile.writeText(SharedPdfRichTextSerializer.encode(richDocument))
-            richTextFile.setLastModified(timestamp)
+            if (richDocument.text.isEmpty() && richDocument.spans.isEmpty()) {
+                if (richTextFile.isFile) richTextFile.delete()
+            } else {
+                richTextFile.parentFile?.mkdirs()
+                richTextFile.writeText(SharedPdfRichTextSerializer.encode(richDocument))
+                richTextFile.setLastModified(timestamp)
+            }
         } ?: run {
             if (richTextFile.isFile) richTextFile.delete()
         }
         return true
     }
+}
+
+private fun localAnnotationPayloadTimestamp(path: String): Long {
+    return maxOf(
+        desktopPdfAnnotationFile(path).lastModifiedIfSyncableAnnotations(),
+        desktopPdfRichTextFile(path).lastModifiedIfSyncableRichText()
+    )
 }
 
 private val cloudSidecarJson = Json {
@@ -135,4 +143,20 @@ private fun JsonObject.hasPdfAnnotationPayload(): Boolean {
 
 private fun File.lastModifiedIfFile(): Long {
     return if (isFile) lastModified() else 0L
+}
+
+private fun File.hasSyncablePdfAnnotations(): Boolean {
+    return isFile && desktopPdfAnnotationElementForSync(readText()) != null
+}
+
+private fun File.lastModifiedIfSyncableAnnotations(): Long {
+    return if (hasSyncablePdfAnnotations()) lastModified() else 0L
+}
+
+private fun File.hasSyncablePdfRichText(): Boolean {
+    return isFile && desktopPdfRichTextElementForSync(readText()) != null
+}
+
+private fun File.lastModifiedIfSyncableRichText(): Long {
+    return if (hasSyncablePdfRichText()) lastModified() else 0L
 }

@@ -5,10 +5,15 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
+import com.aryan.reader.shared.pdf.SharedPdfBookmark
+import com.aryan.reader.shared.pdf.SharedPdfRichDocument
+import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.reader.ReaderBookmark
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopCloudSyncMappingTest {
@@ -126,5 +131,53 @@ class DesktopCloudSyncMappingTest {
         assertEquals(listOf(existingBookmark), restored.readerBookmarks)
         assertEquals(listOf(existingHighlight), restored.readerHighlights)
         assertEquals(existing.path, restored.path)
+    }
+
+    @Test
+    fun `desktop pdf bookmarks map to android metadata json`() {
+        val metadataJson = desktopPdfBookmarksMetadataJson(
+            bookmarks = listOf(
+                SharedPdfBookmark(
+                    pageIndex = 3,
+                    label = "Important page",
+                    createdAt = 1_234L
+                )
+            ),
+            lastPageIndex = 9
+        )
+
+        val restored = desktopPdfBookmarksFromMetadataJson(metadataJson)
+
+        assertTrue(metadataJson.contains("\"pageIndex\""))
+        assertTrue(metadataJson.contains("\"title\""))
+        assertTrue(metadataJson.contains("\"totalPages\""))
+        assertEquals(1, restored.size)
+        assertEquals(3, restored.single().pageIndex)
+        assertEquals("Important page", restored.single().label)
+    }
+
+    @Test
+    fun `android pdf bookmark metadata keeps titles on desktop`() {
+        val restored = desktopPdfBookmarksFromMetadataJson(
+            """[{"pageIndex":2,"title":"Android bookmark","totalPages":8}]"""
+        )
+
+        assertEquals(1, restored.size)
+        assertEquals(2, restored.single().pageIndex)
+        assertEquals("Android bookmark", restored.single().label)
+    }
+
+    @Test
+    fun `empty desktop pdf annotations are not exported as cloud annotation data`() {
+        val emptyAnnotationsJson = SharedPdfAnnotationSerializer.encode(emptyList())
+
+        assertNull(desktopPdfAnnotationElementForSync(emptyAnnotationsJson))
+    }
+
+    @Test
+    fun `empty desktop pdf rich text is not exported as cloud annotation data`() {
+        val emptyRichTextJson = SharedPdfRichTextSerializer.encode(SharedPdfRichDocument())
+
+        assertNull(desktopPdfRichTextElementForSync(emptyRichTextJson))
     }
 }
