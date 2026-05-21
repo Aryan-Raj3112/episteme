@@ -58,6 +58,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 internal val DesktopDefaultAppSeedColor = Color(0xFFFFB300)
 
+private val DesktopReaderWindowFullscreenExitFocusRetryDelaysMillis = longArrayOf(160L, 200L)
+
 internal fun launchEpistemeDesktopApplication(startupSplash: DesktopStartupSplash? = null) {
     configureComposeSwingInterop()
     application {
@@ -276,6 +278,14 @@ internal fun DesktopReaderFullscreenEffect(
                 awtWindow.restoreDesktopReaderFullscreenExitBounds(pendingExitSnapshot.getAndSet(null))
             }
             awtWindow.refreshDesktopReaderWindowFocus()
+        }
+        if (!enabled) {
+            for (delayMillis in DesktopReaderWindowFullscreenExitFocusRetryDelaysMillis) {
+                delay(delayMillis)
+                EventQueue.invokeLater {
+                    awtWindow.refreshDesktopReaderWindowFocus()
+                }
+            }
         }
     }
 

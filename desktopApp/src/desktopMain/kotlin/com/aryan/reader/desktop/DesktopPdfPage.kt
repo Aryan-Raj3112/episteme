@@ -1,5 +1,7 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -67,6 +69,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
+private const val DesktopVerticalPdfPageTurnAnimationMillis = 140
+
+private data class DesktopVerticalPdfPageDisplay(
+    val pageIndex: Int,
+    val render: DesktopPdfPageRender
+)
+
 @Composable
 internal fun DesktopVerticalPdfPage(
     document: DesktopPdfDocument,
@@ -120,9 +129,10 @@ internal fun DesktopVerticalPdfPage(
 ) {
     val documentHandleId = document.handleId
     val density = LocalDensity.current
-    var renderedPage by remember(documentHandleId, pageIndex) { mutableStateOf<DesktopPdfPageRender?>(null) }
-    var renderError by remember(documentHandleId, pageIndex) { mutableStateOf<String?>(null) }
-    var isRendering by remember(documentHandleId, pageIndex) { mutableStateOf(true) }
+    var renderedPage by remember(documentHandleId) { mutableStateOf<DesktopPdfPageRender?>(null) }
+    var renderedPageIndex by remember(documentHandleId) { mutableStateOf<Int?>(null) }
+    var renderError by remember(documentHandleId) { mutableStateOf<String?>(null) }
+    var isRendering by remember(documentHandleId) { mutableStateOf(true) }
     var pageCanvasSize by remember(documentHandleId, pageIndex) { mutableStateOf(IntSize.Zero) }
     var pageRootOffset by remember(documentHandleId, pageIndex) { mutableStateOf(Offset.Zero) }
     var selectionStartIndex by remember(documentHandleId, pageIndex) { mutableStateOf<Int?>(null) }
@@ -157,32 +167,39 @@ internal fun DesktopVerticalPdfPage(
     LaunchedEffect(documentHandleId, pageIndex, scale, shouldRender) {
         if (!shouldRender) {
             renderedPage = null
+            renderedPageIndex = null
             renderError = null
             isRendering = false
             clearInteractionState()
             return@LaunchedEffect
         }
-        val hasPageRender = renderedPage != null
+        val hasPageRender = renderedPage != null && renderedPageIndex == pageIndex
+        val hasFallbackRender = renderedPage != null && renderedPageIndex != null
         if (!hasPageRender) {
-            isRendering = true
+            isRendering = !hasFallbackRender
         }
         renderError = null
         val pageSize = document.pageSizes.getOrNull(pageIndex)
         if (pageSize == null) {
             renderedPage = null
+            renderedPageIndex = null
             renderError = failedRenderMessage
             isRendering = false
             return@LaunchedEffect
         }
         delay(if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L)
-        isRendering = true
+        isRendering = !hasFallbackRender || hasPageRender
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
         val result = withContext(Dispatchers.IO) {
             runCatching { DesktopPdfium.renderPage(document, pageIndex, safeScale) }
         }
-        result.getOrNull()?.let { renderedPage = it }
+        result.getOrNull()?.let {
+            renderedPage = it
+            renderedPageIndex = pageIndex
+        }
+        val renderedCurrentPage = renderedPage != null && renderedPageIndex == pageIndex
         renderError = result.exceptionOrNull()?.message
-            ?: if (renderedPage == null) failedRenderMessage else null
+            ?: if (!renderedCurrentPage && renderedPage == null) failedRenderMessage else null
         isRendering = false
     }
 
@@ -205,6 +222,8 @@ internal fun DesktopVerticalPdfPage(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         val pageSize = document.pageSizes.getOrNull(pageIndex)
+        val displayPageIndex = renderedPageIndex ?: pageIndex
+        val displayPageIsCurrent = displayPageIndex == pageIndex
         val placeholderScale = zoomSpec.clamp(scale)
         val placeholderWidthDp = with(density) { ((pageSize?.width ?: 612f) * placeholderScale).toDp() }
         val placeholderHeightDp = with(density) { ((pageSize?.height ?: 792f) * placeholderScale).toDp() }
@@ -235,8 +254,15 @@ internal fun DesktopVerticalPdfPage(
                     pageRootOffset = pageRootOffset
                 )
                 .background(themeStyle.pageBackgroundColor, RoundedCornerShape(2.dp))
-                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool, isRichTextMode) {
-                    if (isRichTextMode) return@pointerInput
+                .pointerInput(
+                    pageIndex,
+                    displayPageIsCurrent,
+                    pageCanvasSize,
+                    isTextSelectionMode,
+                    selectedTool,
+                    isRichTextMode
+                ) {
+                    if (!displayPageIsCurrent || isRichTextMode) return@pointerInput
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
@@ -304,8 +330,8 @@ internal fun DesktopVerticalPdfPage(
                         }
                     }
                 }
-                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, isRichTextMode) {
-                    if (isRichTextMode || !isTextSelectionMode) return@pointerInput
+                .pointerInput(pageIndex, displayPageIsCurrent, pageCanvasSize, isTextSelectionMode, isRichTextMode) {
+                    if (!displayPageIsCurrent || isRichTextMode || !isTextSelectionMode) return@pointerInput
                     detectTapGestures(
                         onLongPress = { point ->
                             val selection = document.wordSelectionAt(pageIndex, point, pageCanvasSize)
@@ -329,8 +355,10 @@ internal fun DesktopVerticalPdfPage(
                         }
                     )
                 }
-                .pointerInput(pageIndex, selectedTool, isTextSelectionMode, isRichTextMode) {
-                    if (isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) return@pointerInput
+                .pointerInput(pageIndex, displayPageIsCurrent, selectedTool, isTextSelectionMode, isRichTextMode) {
+                    if (!displayPageIsCurrent || isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) {
+                        return@pointerInput
+                    }
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
@@ -371,9 +399,10 @@ internal fun DesktopVerticalPdfPage(
                     isRichTextMode,
                     pageCanvasSize,
                     renderedPageWidth,
-                    renderedPageHeight
+                    renderedPageHeight,
+                    displayPageIsCurrent
                 ) {
-                    if (renderedPageWidth > 0 && renderedPageHeight > 0) {
+                    if (displayPageIsCurrent && renderedPageWidth > 0 && renderedPageHeight > 0) {
                         if (isRichTextMode) return@pointerInput
                         if (isTextSelectionMode) {
                             var latestSelectionDragPoint: Offset? = null
@@ -638,8 +667,21 @@ internal fun DesktopVerticalPdfPage(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                renderedPage != null -> {
-                    val pageRender = renderedPage!!
+                renderError != null && renderedPageIndex != pageIndex -> Text(
+                    renderError ?: readerString("desktop_failed_render_page", "Failed to render page."),
+                    color = MaterialTheme.colorScheme.error
+                )
+                renderedPage != null && renderedPageIndex != null -> {
+                    Crossfade(
+                        targetState = DesktopVerticalPdfPageDisplay(renderedPageIndex!!, renderedPage!!),
+                        animationSpec = tween(DesktopVerticalPdfPageTurnAnimationMillis),
+                        label = "DesktopVerticalPdfPage"
+                    ) { pageDisplay ->
+                    val pageIndex = pageDisplay.pageIndex
+                    val pageRender = pageDisplay.render
+                    val pageEmbeddedAnnotations = remember(document.embeddedAnnotations, pageIndex) {
+                        document.embeddedAnnotations.filter { it.pageIndex == pageIndex }
+                    }
                     val pageAnnotations = remember(annotations, pageIndex, pageCanvasSize) {
                         annotations
                             .filter { it.pageIndex == pageIndex }
@@ -842,6 +884,7 @@ internal fun DesktopVerticalPdfPage(
                         showSearch = externalLookupAvailable,
                         onClear = ::clearSelection
                     )
+                    }
                 }
                 isRendering -> CircularProgressIndicator()
                 renderError != null -> Text(

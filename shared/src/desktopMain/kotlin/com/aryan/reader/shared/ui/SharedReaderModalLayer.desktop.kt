@@ -145,7 +145,7 @@ internal actual fun SharedReaderModalLayer(
             transparent = true,
             resizable = false,
             alwaysOnTop = true,
-            focusable = !level.isChromeLayer()
+            focusable = !level.isChromeLayer() && !level.isEdgePanelLayer()
         ) {
             val modalWindow = window
             LaunchedEffect(modalWindow, level) {
@@ -163,7 +163,9 @@ internal actual fun SharedReaderModalLayer(
                     delay(if (attempt == 0) 30L else 80L)
                     modalWindow.isAlwaysOnTop = true
                     modalWindow.toFront()
-                    if (!level.isChromeLayer()) {
+                    if (level.isEdgePanelLayer()) {
+                        ownerWindow?.restoreFocusAfterSharedReaderModal()
+                    } else if (!level.isChromeLayer()) {
                         modalWindow.requestFocus()
                         modalWindow.requestFocusInWindow()
                     }

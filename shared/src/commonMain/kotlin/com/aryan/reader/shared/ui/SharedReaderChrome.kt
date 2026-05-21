@@ -162,6 +162,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+private val SharedReaderFullscreenFocusRetryDelaysMillis = longArrayOf(80L, 120L, 160L, 240L)
+
 @Composable
 fun SharedScreenScaffold(
     title: String,
@@ -293,14 +295,18 @@ fun SharedReaderScreen(
         runCatching { readerFocusRequester.requestFocus() }
     }
 
+    val readerPopupActive = selectedHighlight != null || readerExtrasState.aiResult.hasContent
+    val shouldRestoreReaderFocus = !session.isSearchActive && !readerPopupActive
+    val currentShouldRestoreReaderFocus by rememberUpdatedState(shouldRestoreReaderFocus)
     LaunchedEffect(isFullscreen, session.reader.book.id) {
-        repeat(if (isFullscreen) 4 else 1) { attempt ->
-            delay(if (attempt == 0) 80L else 120L)
-            runCatching { readerFocusRequester.requestFocus() }
+        for (delayMillis in SharedReaderFullscreenFocusRetryDelaysMillis) {
+            delay(delayMillis)
+            if (currentShouldRestoreReaderFocus) {
+                runCatching { readerFocusRequester.requestFocus() }
+            }
         }
     }
 
-    val readerPopupActive = selectedHighlight != null || readerExtrasState.aiResult.hasContent
     LaunchedEffect(readerPopupActive, session.reader.book.id) {
         if (!readerPopupActive) {
             delay(120L)

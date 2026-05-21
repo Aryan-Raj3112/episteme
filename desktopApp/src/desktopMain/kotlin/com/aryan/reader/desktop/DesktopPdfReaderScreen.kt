@@ -1,6 +1,8 @@
 package com.aryan.reader.desktop
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
@@ -155,6 +157,13 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+private val DesktopPdfReaderFullscreenFocusRetryDelaysMillis = longArrayOf(80L, 120L, 160L, 240L)
+private const val DesktopPdfPaginationPageTurnAnimationMillis = 140
+
+private data class DesktopPdfPaginatedPageDisplay(
+    val pageIndex: Int,
+    val render: DesktopPdfPageRender
+)
 
 @Composable
 internal fun PdfReaderScreen(
@@ -338,11 +347,25 @@ internal fun PdfReaderScreen(
     val currentPdfPageIndex by rememberUpdatedState(pdfState.pageIndex)
     val currentPdfScale by rememberUpdatedState(pdfState.zoom)
     val currentPdfDisplayMode by rememberUpdatedState(pdfState.displayMode)
+    val pdfSelectionSheetActive = pdfState.selectedAnnotationId?.let { selectedId ->
+        pdfState.annotations.any { it.id == selectedId && it.isDesktopTextSelectionHighlight }
+    } == true
+    val shouldRestorePdfReaderFocus =
+        !pdfState.isSearchActive &&
+            !pdfSelectionSheetActive &&
+            externalLinkDialogUrl == null &&
+            !pdfExtrasState.aiResult.hasContent &&
+            activeTextDraft == null &&
+            !isRichTextMode &&
+            (textSelection == null || selectionMenuOffset == null)
+    val currentShouldRestorePdfReaderFocus by rememberUpdatedState(shouldRestorePdfReaderFocus)
 
     LaunchedEffect(isFullscreen, documentHandleId) {
-        repeat(if (isFullscreen) 4 else 1) { attempt ->
-            delay(if (attempt == 0) 80L else 120L)
-            runCatching { pdfReaderFocusRequester.requestFocus() }
+        for (delayMillis in DesktopPdfReaderFullscreenFocusRetryDelaysMillis) {
+            delay(delayMillis)
+            if (currentShouldRestorePdfReaderFocus) {
+                runCatching { pdfReaderFocusRequester.requestFocus() }
+            }
         }
     }
 
@@ -1993,12 +2016,17 @@ internal fun PdfReaderScreen(
             }
         }
         val hasPageRender = renderedPage != null && renderedPageIndex == pageIndex
+        val hasFallbackRender = renderedPage != null && renderedPageIndex != null
         if (!hasPageRender) {
-            logPdfZoomPerf { "cache_miss page=${pageIndex + 1}; showing spinner until first render" }
-            renderedPage = null
-            renderedPageIndex = null
-            renderedPageScale = null
-            isRendering = true
+            logPdfZoomPerf {
+                "cache_miss page=${pageIndex + 1}; fallback=${renderedPageIndex?.let { it + 1 } ?: "none"}"
+            }
+            if (!hasFallbackRender) {
+                renderedPage = null
+                renderedPageIndex = null
+                renderedPageScale = null
+            }
+            isRendering = !hasFallbackRender
         }
         renderJob = launch {
             val pageSize = document.pageSizes.getOrNull(pageIndex)
@@ -2144,7 +2172,7 @@ internal fun PdfReaderScreen(
                 renderAt(
                     renderScale = firstRenderScale,
                     delayMillis = if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L,
-                    showSpinner = !hasPageRender
+                    showSpinner = !hasPageRender && !hasFallbackRender
                 )
             }
             delay(DesktopPdfPaginationPrefetchDelayMillis)
@@ -2737,13 +2765,32 @@ internal fun PdfReaderScreen(
                         .padding(24.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    val currentPageRender = renderedPage.takeIf { renderedPageIndex == pageIndex }
+                    val paginatedPageDisplay = renderedPageIndex?.let { displayPageIndex ->
+                        renderedPage?.let { render ->
+                            DesktopPdfPaginatedPageDisplay(
+                                pageIndex = displayPageIndex,
+                                render = render
+                            )
+                        }
+                    }
                     when {
-                    currentPageRender != null -> {
+                    renderError != null && paginatedPageDisplay?.pageIndex != pageIndex -> Text(
+                        renderError ?: readerString("desktop_failed_render_page", "Failed to render page."),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    paginatedPageDisplay != null -> {
+                        Crossfade(
+                            targetState = paginatedPageDisplay,
+                            animationSpec = tween(DesktopPdfPaginationPageTurnAnimationMillis),
+                            label = "DesktopPdfPaginatedPage"
+                        ) { pageDisplay ->
+                        val displayPageIsCurrent = pageDisplay.pageIndex == currentPdfPageIndex
+                        val pageIndex = pageDisplay.pageIndex
+                        val currentPageRender = pageDisplay.render
                         val pageSize = document.pageSizes.getOrNull(pageIndex)
                         if (pageSize == null) {
                             Text(readerString("desktop_failed_render_page", "Failed to render page."), color = MaterialTheme.colorScheme.error)
-                            return@Box
+                            return@Crossfade
                         }
                         val pageDisplayScale = zoomSpec.clamp(scale)
                         val pageWidthDp = with(density) { (pageSize.width * pageDisplayScale).toDp() }
@@ -2854,8 +2901,15 @@ internal fun PdfReaderScreen(
                                     pageCanvasSize = pageCanvasSize
                                 )
                                 .background(pdfThemeStyle.pageBackgroundColor, RoundedCornerShape(2.dp))
-                                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, selectedTool, isRichTextMode) {
-                                    if (isRichTextMode) return@pointerInput
+                                .pointerInput(
+                                    pageIndex,
+                                    pageCanvasSize,
+                                    isTextSelectionMode,
+                                    selectedTool,
+                                    isRichTextMode,
+                                    displayPageIsCurrent
+                                ) {
+                                    if (!displayPageIsCurrent || isRichTextMode) return@pointerInput
                                     awaitPointerEventScope {
                                         while (true) {
                                             val event = awaitPointerEvent()
@@ -2921,8 +2975,14 @@ internal fun PdfReaderScreen(
                                         }
                                     }
                                 }
-                                .pointerInput(pageIndex, pageCanvasSize, isTextSelectionMode, isRichTextMode) {
-                                    if (isRichTextMode || !isTextSelectionMode) return@pointerInput
+                                .pointerInput(
+                                    pageIndex,
+                                    pageCanvasSize,
+                                    isTextSelectionMode,
+                                    isRichTextMode,
+                                    displayPageIsCurrent
+                                ) {
+                                    if (!displayPageIsCurrent || isRichTextMode || !isTextSelectionMode) return@pointerInput
                                     detectTapGestures(
                                         onLongPress = { point ->
                                             val selection = document.wordSelectionAt(pageIndex, point, pageCanvasSize)
@@ -2945,8 +3005,14 @@ internal fun PdfReaderScreen(
                                         }
                                     )
                                 }
-                                .pointerInput(pageIndex, selectedTool, isTextSelectionMode, isRichTextMode) {
-                                    if (isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) return@pointerInput
+                                .pointerInput(
+                                    pageIndex,
+                                    selectedTool,
+                                    isTextSelectionMode,
+                                    isRichTextMode,
+                                    displayPageIsCurrent
+                                ) {
+                                    if (!displayPageIsCurrent || isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) return@pointerInput
                                     awaitEachGesture {
                                         val down = awaitFirstDown(requireUnconsumed = false)
                                         if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
@@ -2989,10 +3055,11 @@ internal fun PdfReaderScreen(
                                     textStyleConfig,
                                     activeTextDraft?.id,
                                     isRichTextMode,
+                                    displayPageIsCurrent,
                                     pageCanvasSize, currentPageRender.width,
                                     currentPageRender.height
                                 ) {
-                                    if (isRichTextMode) return@pointerInput
+                                    if (!displayPageIsCurrent || isRichTextMode) return@pointerInput
                                     if (isTextSelectionMode) {
                                         var latestSelectionDragPoint: Offset? = null
                                         var lastSelectionPreviewAt = 0L
@@ -3371,6 +3438,7 @@ internal fun PdfReaderScreen(
                                 showSearch = featurePolicy.externalLookup,
                                 onClear = ::clearSelection
                             )
+                        }
                         }
                     }
                     isRendering -> CircularProgressIndicator(modifier = Modifier.padding(48.dp))
