@@ -320,31 +320,6 @@ internal fun DesktopAiByokSettingsDialog(
                     options = listOf(ReaderAiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
                     onSelected = { onSettingsChange(sanitized.copy(ttsModel = it)) }
                 )
-                Text(readerString("desktop_cloud_tts_voice", "Cloud TTS voice"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ReaderCloudTtsVoices.chunked(3).forEach { rowVoices ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                            rowVoices.forEach { voice ->
-                                FilterChip(
-                                    selected = sanitized.ttsSpeakerId == voice.id,
-                                    onClick = { onSettingsChange(sanitized.copy(ttsSpeakerId = voice.id)) },
-                                    label = {
-                                        Column {
-                                            Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text(
-                                                voice.description,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
             }
         },
         confirmButton = {
@@ -417,6 +392,7 @@ internal fun DesktopPdfExtrasPanel(
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
+    onCloudTtsVoiceChange: (String) -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     ttsReplacementBookId: String,
@@ -508,6 +484,37 @@ internal fun DesktopPdfExtrasPanel(
                     onClick = { onCloudTtsStart(ReaderTtsReadScope.BOOK) }
                 ) {
                     Text(readerString("desktop_from_here", "From here"))
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(readerString("desktop_cloud_tts_voice", "Cloud TTS voice"), fontWeight = FontWeight.SemiBold)
+                if (ttsBusy) {
+                    Text(
+                        readerString("desktop_stop_reading_change_voices", "Stop reading to change voices."),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    ReaderCloudTtsVoices.forEach { voice ->
+                        FilterChip(
+                            selected = settings.ttsSpeakerId == voice.id,
+                            enabled = !ttsBusy,
+                            onClick = { onCloudTtsVoiceChange(voice.id) },
+                            label = {
+                                Column {
+                                    Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        voice.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        )
+                    }
                 }
             }
             val cacheSummary = extrasState.cloudTts.cacheSummary

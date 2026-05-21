@@ -908,6 +908,14 @@ internal fun EpistemeDesktopApp(
 
     fun updateAiByokSettings(next: ReaderAiByokSettings) {
         val sanitized = next.sanitized()
+        if (sanitized.ttsSpeakerId != aiByokSettings.sanitized().ttsSpeakerId && desktopTtsAdapter.isPlaybackActive) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    desktopString("desktop_stop_reading_change_voices", "Stop reading to change voices.")
+                )
+            }
+            return
+        }
         val settingsToSave = if (!desktopBuildProfile.byokAiAvailable) {
             aiByokSettings.sanitized().copy(
                 hideReaderAiFeatures = sanitized.hideReaderAiFeatures,
@@ -1522,7 +1530,6 @@ internal fun EpistemeDesktopApp(
                     window.copy(
                         content = content.copy(
                             ttsJob = null,
-                            showCloudTtsSettings = false,
                             extrasState = content.extrasState.copy(
                                 cloudTts = readerCloudTtsStoppedState(
                                     content,
@@ -1765,7 +1772,6 @@ internal fun EpistemeDesktopApp(
                     if (error is kotlinx.coroutines.CancellationException) {
                         latest.copy(
                             ttsJob = null,
-                            showCloudTtsSettings = false,
                             extrasState = latest.extrasState.copy(
                                 cloudTts = readerCloudTtsStoppedState(
                                     latest,
@@ -1777,7 +1783,6 @@ internal fun EpistemeDesktopApp(
                         desktopFeatureNoticeForError(error.message)?.let { desktopFeatureNotice = it }
                         latest.copy(
                             ttsJob = null,
-                            showCloudTtsSettings = false,
                             extrasState = latest.extrasState.copy(
                                 cloudTts = readerCloudTtsStoppedState(
                                     latest,
@@ -1793,7 +1798,6 @@ internal fun EpistemeDesktopApp(
                 updateTextReaderTtsSession { latest ->
                     latest.copy(
                         ttsJob = null,
-                        showCloudTtsSettings = false,
                         extrasState = latest.extrasState.copy(
                             cloudTts = readerCloudTtsStoppedState(
                                 latest,
@@ -3568,6 +3572,9 @@ internal fun EpistemeDesktopApp(
                                         onCloudTtsPauseResume = { pauseResumeReaderCloudTts(readerWindow.id) },
                                         onCloudTtsStop = { stopReaderCloudTts(readerWindow.id) },
                                         onCloudTtsClearCache = { clearReaderCloudTtsCache(readerWindow.id) },
+                                        onCloudTtsVoiceChange = { voiceId ->
+                                            updateAiByokSettings(effectiveAiSettings().copy(ttsSpeakerId = voiceId))
+                                        },
                                         onOpenAiHub = {
                                             updateTextReaderWindow(readerWindow.id) { current ->
                                                 current.copy(showAiHub = true)
@@ -3585,26 +3592,6 @@ internal fun EpistemeDesktopApp(
                                                 val settings = effectiveAiSettings()
                                                 var isTtsOverlayCollapsed by remember(readerWindow.id) { mutableStateOf(false) }
                                                 val ttsControls = readerCloudTtsControlsModel(content.extrasState.cloudTts)
-                                                val ttsActive = content.extrasState.cloudTts.isLoading ||
-                                                    content.extrasState.cloudTts.isPlaying ||
-                                                    content.extrasState.cloudTts.isPaused
-                                                if (ttsActive && content.showCloudTtsSettings) {
-                                                    DesktopCloudTtsSettingsOverlay(
-                                                        settings = settings,
-                                                        isTtsActive = ttsActive,
-                                                        showCredits = desktopCloudTtsUsesCredits,
-                                                        credits = state.credits,
-                                                        cacheSummary = content.extrasState.cloudTts.cacheSummary,
-                                                        onClearCache = { clearReaderCloudTtsCache(readerWindow.id) },
-                                                        onSettingsChange = { next ->
-                                                            updateAiByokSettings(
-                                                                aiByokSettings.sanitized().copy(
-                                                                    ttsSpeakerId = next.sanitized().ttsSpeakerId
-                                                                )
-                                                            )
-                                                        }
-                                                    )
-                                                }
                                                 if (ttsControls.isVisible) {
                                                     SharedReaderTtsOverlayControls(
                                                         settings = settings,
@@ -3617,11 +3604,6 @@ internal fun EpistemeDesktopApp(
                                                         onSkipPrevious = { skipReaderCloudTtsChunk(readerWindow.id, -1) },
                                                         onSkipNext = { skipReaderCloudTtsChunk(readerWindow.id, 1) },
                                                         onLocateCurrentChunk = { locateReaderCloudTtsChunk(readerWindow.id) },
-                                                        onOpenSettings = {
-                                                            updateTextReaderWindow(readerWindow.id) { current ->
-                                                                current.copy(showCloudTtsSettings = !current.showCloudTtsSettings)
-                                                            }
-                                                        },
                                                         onClose = { stopReaderCloudTts(readerWindow.id) },
                                                         modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp, bottom = 4.dp)
                                                     )

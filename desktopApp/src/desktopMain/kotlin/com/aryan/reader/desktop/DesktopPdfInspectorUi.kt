@@ -115,6 +115,7 @@ internal fun DesktopPdfInspectorPanel(
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
+    onCloudTtsVoiceChange: (String) -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
@@ -192,6 +193,7 @@ internal fun DesktopPdfInspectorPanel(
                 onCloudTtsPauseResume = onCloudTtsPauseResume,
                 onCloudTtsStop = onCloudTtsStop,
                 onCloudTtsClearCache = onCloudTtsClearCache,
+                onCloudTtsVoiceChange = onCloudTtsVoiceChange,
                 onAutoScrollChange = onAutoScrollChange,
                 onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
             )
@@ -283,6 +285,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
+    onCloudTtsVoiceChange: (String) -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
@@ -524,6 +527,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                             onCloudTtsPauseResume = onCloudTtsPauseResume,
                             onCloudTtsStop = onCloudTtsStop,
                             onCloudTtsClearCache = onCloudTtsClearCache,
+                            onCloudTtsVoiceChange = onCloudTtsVoiceChange,
                             onAutoScrollChange = onAutoScrollChange,
                             ttsReplacementPreferences = ttsReplacementPreferences,
                             ttsReplacementBookId = document.path,

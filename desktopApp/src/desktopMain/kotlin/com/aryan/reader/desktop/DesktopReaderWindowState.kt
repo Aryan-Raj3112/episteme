@@ -57,7 +57,6 @@ internal sealed interface DesktopReaderWindowContent {
         val isSummaryLoading: Boolean = false,
         val isRecapLoading: Boolean = false,
         val recapProgressMessage: String? = null,
-        val showCloudTtsSettings: Boolean = false,
         val ttsJob: Job? = null
     ) : DesktopReaderWindowContent
 }

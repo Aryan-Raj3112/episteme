@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,7 +65,6 @@ fun SharedReaderTtsOverlayControls(
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit,
     onLocateCurrentChunk: () -> Unit,
-    onOpenSettings: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -219,14 +217,6 @@ fun SharedReaderTtsOverlayControls(
                                 Icon(
                                     Icons.Default.MyLocation,
                                     contentDescription = readerString("desktop_locate_current_tts", "Locate current reading"),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
-                                Icon(
-                                    Icons.Default.Settings,
-                                    contentDescription = readerString("desktop_cloud_tts_settings", "Cloud TTS settings"),
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

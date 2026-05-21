@@ -76,6 +76,9 @@ class DesktopGeminiCloudTtsAdapter(
     @Volatile
     private var activePlayer: DesktopStreamingPcmPlayer? = null
 
+    val isPlaybackActive: Boolean
+        get() = activePlayer != null || activeWebSocket != null || activeLine != null
+
     override val isAvailable: Boolean
         get() {
             val settings = settingsProvider().sanitized()

@@ -14,9 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,9 +38,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.aryan.reader.shared.ReaderAiByokSettings
-import com.aryan.reader.shared.ReaderCloudTtsVoices
-import com.aryan.reader.shared.ReaderTtsCacheSummary
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.ui.SharedMarkdownText
@@ -338,102 +333,6 @@ private fun DesktopSummaryCachePanel(
             modifier = Modifier.align(Alignment.End)
         ) {
             Text(readerString("clear_all", "Clear all"), color = MaterialTheme.colorScheme.error)
-        }
-    }
-}
-
-@Composable
-internal fun DesktopCloudTtsSettingsOverlay(
-    settings: ReaderAiByokSettings,
-    isTtsActive: Boolean,
-    showCredits: Boolean,
-    credits: Int,
-    cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary(),
-    onClearCache: (() -> Unit)? = null,
-    onSettingsChange: (ReaderAiByokSettings) -> Unit
-) {
-    val sanitized = settings.sanitized()
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shape = RoundedCornerShape(8.dp),
-        tonalElevation = 4.dp,
-        shadowElevation = 8.dp
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(readerString("desktop_cloud_tts_voice", "Cloud TTS voice"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (isTtsActive) {
-                            readerString("desktop_stop_reading_change_voices", "Stop reading to change voices.")
-                        } else {
-                            readerString("desktop_choose_cloud_tts_voice", "Choose the Gemini voice used for cloud read aloud.")
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (showCredits) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text(
-                            readerString("credits_count", "%1\$d credits", credits),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer
-                        )
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                ReaderCloudTtsVoices.forEach { voice ->
-                    FilterChip(
-                        selected = sanitized.ttsSpeakerId == voice.id,
-                        enabled = !isTtsActive,
-                        onClick = { onSettingsChange(sanitized.copy(ttsSpeakerId = voice.id)) },
-                        label = {
-                            Column {
-                                Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    voice.description,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    )
-                }
-            }
-            if (cacheSummary.hasCachedAudio) {
-                HorizontalDivider()
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(readerString("desktop_voice_cache", "Voice cache"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            cacheSummary.currentVoiceLabel,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (cacheSummary.hasCurrentVoiceCachedAudio && onClearCache != null) {
-                        TextButton(enabled = !isTtsActive, onClick = onClearCache) {
-                            Text(readerString("desktop_clear_voice_cache", "Clear voice cache"))
-                        }
-                    }
-                }
-            }
         }
     }
 }

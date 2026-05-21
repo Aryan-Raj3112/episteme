@@ -116,6 +116,7 @@ import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
 import com.aryan.reader.shared.ReaderAutoScrollState
+import com.aryan.reader.shared.ReaderCloudTtsVoices
 import com.aryan.reader.shared.ReaderContextExtractor
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderExternalLookupAction
@@ -215,6 +216,7 @@ fun SharedReaderScreen(
     onCloudTtsPauseResume: () -> Unit = {},
     onCloudTtsStop: () -> Unit = {},
     onCloudTtsClearCache: () -> Unit = {},
+    onCloudTtsVoiceChange: (String) -> Unit = {},
     onOpenAiHub: (() -> Unit)? = null,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit = {},
     onDownloadReaderImage: ((ReaderImageReference) -> Unit)? = null,
@@ -425,6 +427,7 @@ fun SharedReaderScreen(
                 onOpenAiHub = onOpenAiHub,
                 onCloudTtsStart = onCloudTtsStart,
                 onCloudTtsStop = onCloudTtsStop,
+                onCloudTtsVoiceChange = onCloudTtsVoiceChange,
                 onAutoScrollChange = onAutoScrollChange,
                 ttsReplacementPreferences = ttsReplacementPreferences,
                 ttsReplacementBookId = ttsReplacementBookId ?: session.reader.book.title,
@@ -1251,6 +1254,7 @@ private fun SharedReaderControlPanel(
     onOpenAiHub: (() -> Unit)?,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
+    onCloudTtsVoiceChange: (String) -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     ttsReplacementBookId: String,
@@ -1338,6 +1342,7 @@ private fun SharedReaderControlPanel(
                         onOpenAiHub = onOpenAiHub,
                         onCloudTtsStart = onCloudTtsStart,
                         onCloudTtsStop = onCloudTtsStop,
+                        onCloudTtsVoiceChange = onCloudTtsVoiceChange,
                         onAutoScrollChange = onAutoScrollChange,
                         ttsReplacementPreferences = ttsReplacementPreferences,
                         ttsReplacementBookId = ttsReplacementBookId,
@@ -2028,6 +2033,7 @@ private fun SharedReaderExtrasControls(
     onOpenAiHub: (() -> Unit)?,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsStop: () -> Unit,
+    onCloudTtsVoiceChange: (String) -> Unit,
     onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     ttsReplacementBookId: String,
@@ -2103,6 +2109,41 @@ private fun SharedReaderExtrasControls(
                         }
                     ) {
                         Text(if (ttsBusy) readerString("action_stop", "Stop") else readerString("action_read", "Read"))
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(readerString("desktop_cloud_tts_voice", "Cloud TTS voice"), fontWeight = FontWeight.SemiBold)
+                    if (ttsBusy) {
+                        Text(
+                            readerString("desktop_stop_reading_change_voices", "Stop reading to change voices."),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        ReaderCloudTtsVoices.forEach { voice ->
+                            FilterChip(
+                                selected = settings.ttsSpeakerId == voice.id,
+                                enabled = !ttsBusy,
+                                onClick = { onCloudTtsVoiceChange(voice.id) },
+                                label = {
+                                    Column {
+                                        Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            voice.description,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }
