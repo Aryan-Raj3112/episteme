@@ -473,14 +473,29 @@ internal fun DesktopReaderFullscreenKeyEffect(
     enabled: Boolean,
     onKeyPressed: (AwtKeyEvent) -> Boolean
 ) {
+    DesktopReaderKeyDispatcherEffect(
+        enabled = enabled,
+        allowChromeModalWindows = false,
+        onKeyPressed = onKeyPressed
+    )
+}
+
+@Composable
+internal fun DesktopReaderKeyDispatcherEffect(
+    enabled: Boolean,
+    allowChromeModalWindows: Boolean = false,
+    onKeyPressed: (AwtKeyEvent) -> Boolean
+) {
     val currentOnKeyPressed by rememberUpdatedState(onKeyPressed)
-    DisposableEffect(enabled) {
+    DisposableEffect(enabled, allowChromeModalWindows) {
         if (!enabled) {
             onDispose {}
         } else {
             val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
             val dispatcher = java.awt.KeyEventDispatcher { event ->
-                val modalWindowActive = focusManager.activeWindow?.isDesktopReaderModalWindow() == true
+                val modalWindowActive = focusManager.activeWindow?.isDesktopReaderModalWindow(
+                    allowChromeWindows = allowChromeModalWindows
+                ) == true
                 !modalWindowActive && event.id == AwtKeyEvent.KEY_PRESSED && currentOnKeyPressed(event)
             }
             focusManager.addKeyEventDispatcher(dispatcher)
@@ -491,13 +506,18 @@ internal fun DesktopReaderFullscreenKeyEffect(
     }
 }
 
-private fun java.awt.Window.isDesktopReaderModalWindow(): Boolean {
+private fun java.awt.Window.isDesktopReaderModalWindow(allowChromeWindows: Boolean): Boolean {
     val windowTitle = when (this) {
         is java.awt.Dialog -> title
         is Frame -> title
         else -> ""
     }
-    return name?.startsWith(DesktopReaderModalWindowNamePrefix) == true ||
+    val windowName = name.orEmpty()
+    val isChromeWindow = windowName == "${DesktopReaderModalWindowNamePrefix}ChromeTop" ||
+        windowName == "${DesktopReaderModalWindowNamePrefix}ChromeBottom" ||
+        windowTitle.startsWith("Reader Chrome")
+    if (allowChromeWindows && isChromeWindow) return false
+    return windowName.startsWith(DesktopReaderModalWindowNamePrefix) ||
         windowTitle.startsWith("Reader Panel") ||
         windowTitle.startsWith("Reader Popup")
 }

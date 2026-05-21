@@ -44,6 +44,32 @@ class SharedReaderModalLayerDesktopTest {
     }
 
     @Test
+    fun `chrome top layer can opt into focus for search input`() {
+        assertFalse(
+            sharedReaderModalLayerWindowFocusable(
+                level = SharedReaderModalLevel.ChromeTop,
+                focusableOverride = null
+            )
+        )
+        assertTrue(
+            sharedReaderModalLayerWindowFocusable(
+                level = SharedReaderModalLevel.ChromeTop,
+                focusableOverride = true
+            )
+        )
+    }
+
+    @Test
+    fun `chrome bottom layer stays non focusable by default`() {
+        assertFalse(
+            sharedReaderModalLayerWindowFocusable(
+                level = SharedReaderModalLevel.ChromeBottom,
+                focusableOverride = null
+            )
+        )
+    }
+
+    @Test
     fun `chrome layer remains visible when owner window is showing but not focused`() {
         assertTrue(
             sharedReaderModalChromeLayerVisible(

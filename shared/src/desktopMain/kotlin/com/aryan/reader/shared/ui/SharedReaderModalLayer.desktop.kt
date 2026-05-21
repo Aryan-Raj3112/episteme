@@ -48,9 +48,14 @@ internal actual fun SharedReaderModalLayer(
 ) {
     val anchor = LocalSharedReaderModalAnchorBounds.current
     val density = LocalDensity.current
+    val focusableOverride = LocalSharedReaderModalFocusableOverride.current
     val explicitOwnerWindow = LocalSharedReaderModalOwnerWindow.current
     val fallbackOwnerWindow = remember { currentNonModalOwnerWindow() }
     val ownerWindow = explicitOwnerWindow ?: fallbackOwnerWindow
+    val modalWindowFocusable = sharedReaderModalLayerWindowFocusable(
+        level = level,
+        focusableOverride = focusableOverride
+    )
     val dialogSize = with(density) {
         anchor?.let {
             when {
@@ -149,12 +154,13 @@ internal actual fun SharedReaderModalLayer(
             transparent = true,
             resizable = false,
             alwaysOnTop = true,
-            focusable = !level.isChromeLayer()
+            focusable = modalWindowFocusable
         ) {
             val modalWindow = window
-            LaunchedEffect(modalWindow, level) {
+            LaunchedEffect(modalWindow, level, modalWindowFocusable) {
                 modalWindow.name = SharedReaderModalWindowNamePrefix + level.name
                 modalWindow.isAlwaysOnTop = true
+                modalWindow.setFocusableWindowState(modalWindowFocusable)
                 val frontAttempts = when (level) {
                     SharedReaderModalLevel.Popup -> 4
                     SharedReaderModalLevel.Panel,
@@ -167,7 +173,7 @@ internal actual fun SharedReaderModalLayer(
                     delay(if (attempt == 0) 30L else 80L)
                     modalWindow.isAlwaysOnTop = true
                     modalWindow.toFront()
-                    if (!level.isChromeLayer() && !level.isEdgePanelLayer()) {
+                    if (modalWindowFocusable && !level.isEdgePanelLayer()) {
                         modalWindow.requestFocus()
                         modalWindow.requestFocusInWindow()
                     }
@@ -176,6 +182,13 @@ internal actual fun SharedReaderModalLayer(
             content()
         }
     }
+}
+
+internal fun sharedReaderModalLayerWindowFocusable(
+    level: SharedReaderModalLevel,
+    focusableOverride: Boolean?
+): Boolean {
+    return focusableOverride ?: !level.isChromeLayer()
 }
 
 internal actual fun sharedReaderModalLayerUsesSizedEdgeWindow(level: SharedReaderModalLevel): Boolean {

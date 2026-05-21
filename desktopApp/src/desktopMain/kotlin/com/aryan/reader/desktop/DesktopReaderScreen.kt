@@ -189,6 +189,25 @@ internal fun DesktopReaderScreen(
         }
         return true
     }
+
+    fun handleReaderGlobalShortcutAwtKeyEvent(event: AwtKeyEvent): Boolean {
+        if (event.id != AwtKeyEvent.KEY_PRESSED || !event.isControlDown) return false
+        val action = when (event.keyCode) {
+            AwtKeyEvent.VK_F -> DesktopReaderKeyNavigation.SEARCH
+            AwtKeyEvent.VK_G -> DesktopReaderKeyNavigation.NEXT_SEARCH
+            else -> return false
+        }
+        val nextSession = latestSession.reduceDesktopReaderKeyNavigation(action, readerEngine) ?: return false
+        latestOnSessionChange(nextSession)
+        return true
+    }
+
+    DesktopReaderKeyDispatcherEffect(
+        enabled = externalLinkDialogUrl == null,
+        allowChromeModalWindows = true,
+        onKeyPressed = { event -> handleReaderGlobalShortcutAwtKeyEvent(event) }
+    )
+
     DesktopReaderFullscreenKeyEffect(
         enabled = isFullscreen && externalLinkDialogUrl == null,
         onKeyPressed = { event -> handleReaderFullscreenAwtKeyEvent(event) }

@@ -298,43 +298,45 @@ fun ReaderWorkspaceShell(
                         targetVisible = topSearchBar != null || showTopChrome,
                         level = SharedReaderModalLevel.ChromeTop
                     ) { layerVisible ->
-                        SharedReaderModalLayer(
-                            level = SharedReaderModalLevel.ChromeTop,
-                            onDismiss = {}
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
+                        CompositionLocalProvider(LocalSharedReaderModalFocusableOverride provides (topSearchBar != null)) {
+                            SharedReaderModalLayer(
+                                level = SharedReaderModalLevel.ChromeTop,
+                                onDismiss = {}
                             ) {
-                                ReaderWorkspaceChromeOverlay(
-                                    showTopBar = layerVisible && showTopChrome,
-                                    showBottomBar = false,
-                                    topSearchBar = topSearchBar.takeIf { layerVisible },
-                                    title = title,
-                                    subtitle = subtitle,
-                                    progressLabel = progressLabel,
-                                    topActions = model.topActions,
-                                    hasLeftPanel = model.leftSections.isNotEmpty(),
-                                    hasRightPanel = model.inspectorSections.isNotEmpty(),
-                                    leftPanelOpen = leftPanelOpen,
-                                    rightPanelOpen = rightPanelOpen,
-                                    isBookmarked = isBookmarked,
-                                    isFullscreen = isFullscreen,
-                                    leftChromeExtensionWidth = leftChromeExtensionWidth,
-                                    fileActions = fileActions,
-                                    onReturnToLibrary = onReturnToLibrary,
-                                    onToggleLeftPanel = { toggleLeftPanel() },
-                                    onToggleRightPanel = { toggleRightPanel() },
-                                    onToggleBookmark = onToggleBookmark,
-                                    onSearchAction = onSearchAction,
-                                    onShareAction = onShareAction,
-                                    onSaveCopyAction = onSaveCopyAction,
-                                    onPrintAction = onPrintAction,
-                                    onTextViewAction = onTextViewAction,
-                                    onChromeHoverChange = ::updateChromeHovered,
-                                    onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
-                                    bottomBar = {}
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                ) {
+                                    ReaderWorkspaceChromeOverlay(
+                                        showTopBar = layerVisible && showTopChrome,
+                                        showBottomBar = false,
+                                        topSearchBar = topSearchBar.takeIf { layerVisible },
+                                        title = title,
+                                        subtitle = subtitle,
+                                        progressLabel = progressLabel,
+                                        topActions = model.topActions,
+                                        hasLeftPanel = model.leftSections.isNotEmpty(),
+                                        hasRightPanel = model.inspectorSections.isNotEmpty(),
+                                        leftPanelOpen = leftPanelOpen,
+                                        rightPanelOpen = rightPanelOpen,
+                                        isBookmarked = isBookmarked,
+                                        isFullscreen = isFullscreen,
+                                        leftChromeExtensionWidth = leftChromeExtensionWidth,
+                                        fileActions = fileActions,
+                                        onReturnToLibrary = onReturnToLibrary,
+                                        onToggleLeftPanel = { toggleLeftPanel() },
+                                        onToggleRightPanel = { toggleRightPanel() },
+                                        onToggleBookmark = onToggleBookmark,
+                                        onSearchAction = onSearchAction,
+                                        onShareAction = onShareAction,
+                                        onSaveCopyAction = onSaveCopyAction,
+                                        onPrintAction = onPrintAction,
+                                        onTextViewAction = onTextViewAction,
+                                        onChromeHoverChange = ::updateChromeHovered,
+                                        onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
+                                        bottomBar = {}
+                                    )
+                                }
                             }
                         }
                     }

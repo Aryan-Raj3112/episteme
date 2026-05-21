@@ -13,6 +13,7 @@ internal data class SharedReaderModalAnchorBounds(
 )
 
 internal val LocalSharedReaderModalAnchorBounds = compositionLocalOf<SharedReaderModalAnchorBounds?> { null }
+internal val LocalSharedReaderModalFocusableOverride = compositionLocalOf<Boolean?> { null }
 
 internal enum class SharedReaderModalLevel {
     Panel,

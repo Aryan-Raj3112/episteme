@@ -2281,6 +2281,20 @@ internal fun PdfReaderScreen(
         return runPdfKeyCommand(command)
     }
 
+    fun handlePdfReaderGlobalShortcutAwtKeyEvent(event: AwtKeyEvent): Boolean {
+        if (event.id != AwtKeyEvent.KEY_PRESSED || !event.isControlDown) return false
+        return when (event.keyCode) {
+            AwtKeyEvent.VK_F -> runPdfKeyCommand(DesktopPdfKeyCommand.SEARCH)
+            else -> false
+        }
+    }
+
+    DesktopReaderKeyDispatcherEffect(
+        enabled = !pdfPopupActive,
+        allowChromeModalWindows = true,
+        onKeyPressed = { event -> handlePdfReaderGlobalShortcutAwtKeyEvent(event) }
+    )
+
     DesktopReaderFullscreenKeyEffect(
         enabled = isFullscreen && !pdfPopupActive,
         onKeyPressed = { event -> handlePdfReaderAwtKeyEvent(event) }
