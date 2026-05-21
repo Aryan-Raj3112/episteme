@@ -33,6 +33,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
@@ -157,6 +158,11 @@ fun SharedReaderVerticalScrollbar(
         targetValue = if (isDraggingScrollbar) scrollbarActiveHeight else scrollbarIdleHeight,
         label = "sharedReaderScrollbarHeight"
     )
+    val currentScrollbarTrackHeight by rememberUpdatedState(scrollbarTrackHeight)
+    val currentScrollbarContentHeight by rememberUpdatedState(state.contentHeightPx)
+    val currentScrollbarViewportHeight by rememberUpdatedState(state.viewportHeightPx)
+    val currentScrollbarProgress by rememberUpdatedState(state.progress)
+    val currentScrollbarActiveThumbHeight by rememberUpdatedState(with(density) { scrollbarActiveHeight.toPx() })
 
     Box(
         modifier = modifier
@@ -165,6 +171,68 @@ fun SharedReaderVerticalScrollbar(
             .padding(top = 8.dp, bottom = 8.dp)
             .onGloballyPositioned { coordinates ->
                 scrollbarTrackHeight = coordinates.size.height.toFloat()
+            }
+            .pointerInput(listState) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    try {
+                        isDraggingScrollbar = true
+                        scrollbarVisible = true
+                        scrollInteractionTick += 1
+                        down.consume()
+
+                        val initialContentHeight = currentScrollbarContentHeight
+                        val initialViewportHeight = currentScrollbarViewportHeight
+                        val initialMaxScroll = (initialContentHeight - initialViewportHeight).coerceAtLeast(0f)
+                        val initialTrackHeight = currentScrollbarTrackHeight.takeIf { it > 0f }
+                            ?: initialViewportHeight
+                        val initialThumbHeight = currentScrollbarActiveThumbHeight.coerceAtLeast(1f)
+                        val initialTrackSpace = (initialTrackHeight - initialThumbHeight).coerceAtLeast(1f)
+                        val initialThumbTop = (initialTrackSpace * currentScrollbarProgress)
+                            .coerceIn(0f, initialTrackSpace)
+                        val downY = down.position.y.coerceIn(0f, initialTrackHeight)
+                        val thumbDragOffset = if (downY in initialThumbTop..(initialThumbTop + initialThumbHeight)) {
+                            downY - initialThumbTop
+                        } else {
+                            initialThumbHeight / 2f
+                        }
+                        var lastScrollPx = currentScrollbarProgress * initialMaxScroll
+
+                        fun scrollToPointer(pointerY: Float) {
+                            val contentHeight = currentScrollbarContentHeight
+                            val viewportHeight = currentScrollbarViewportHeight
+                            val maxScroll = (contentHeight - viewportHeight).coerceAtLeast(0f)
+                            if (maxScroll <= 0f) return
+                            val trackHeight = currentScrollbarTrackHeight.takeIf { it > 0f }
+                                ?: viewportHeight
+                            val thumbHeight = currentScrollbarActiveThumbHeight.coerceAtLeast(1f)
+                            val trackSpace = (trackHeight - thumbHeight).coerceAtLeast(1f)
+                            val targetThumbTop = (pointerY - thumbDragOffset).coerceIn(0f, trackSpace)
+                            val targetScrollPx = (targetThumbTop / trackSpace) * maxScroll
+                            val scrollDelta = targetScrollPx - lastScrollPx
+                            if (abs(scrollDelta) > 0.01f) {
+                                listState.dispatchRawDelta(scrollDelta)
+                                scrollInteractionTick += 1
+                            }
+                            lastScrollPx = targetScrollPx
+                        }
+
+                        scrollToPointer(down.position.y)
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || !change.pressed) break
+
+                            if (change.position.y != change.previousPosition.y) {
+                                change.consume()
+                                scrollToPointer(change.position.y)
+                            }
+                        }
+                    } finally {
+                        isDraggingScrollbar = false
+                        scrollInteractionTick += 1
+                    }
+                }
             }
     ) {
         val thumbHeightPx = with(density) { barHeight.toPx() }
@@ -184,39 +252,6 @@ fun SharedReaderVerticalScrollbar(
                 modifier = Modifier
                     .height(barHeight)
                     .width(36.dp)
-                    .pointerInput(scrollbarTrackHeight, state.contentHeightPx, state.viewportHeightPx) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            try {
-                                isDraggingScrollbar = true
-                                scrollbarVisible = true
-                                scrollInteractionTick += 1
-                                down.consume()
-
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull { it.id == down.id }
-                                    if (change == null || !change.pressed) break
-
-                                    val deltaY = change.position.y - change.previousPosition.y
-                                    if (deltaY != 0f) {
-                                        change.consume()
-                                        val trackHeight = scrollbarTrackHeight.takeIf { it > 0f }
-                                            ?: state.viewportHeightPx
-                                        val trackSpace = (trackHeight - with(density) { scrollbarActiveHeight.toPx() })
-                                            .coerceAtLeast(1f)
-                                        val scrollDelta = (deltaY / trackSpace) *
-                                            (state.contentHeightPx - state.viewportHeightPx)
-                                        listState.dispatchRawDelta(scrollDelta)
-                                        scrollInteractionTick += 1
-                                    }
-                                }
-                            } finally {
-                                isDraggingScrollbar = false
-                                scrollInteractionTick += 1
-                            }
-                        }
-                    }
             ) {
                 Box(
                     modifier = Modifier
@@ -314,6 +349,11 @@ fun SharedPdfVerticalScrollbar(
         targetValue = if (isDraggingScrollbar) scrollbarActiveHeight else scrollbarIdleHeight,
         label = "sharedPdfScrollbarHeight"
     )
+    val currentScrollbarTrackHeight by rememberUpdatedState(scrollbarTrackHeight)
+    val currentScrollbarContentHeight by rememberUpdatedState(state.contentHeightPx)
+    val currentScrollbarViewportHeight by rememberUpdatedState(state.viewportHeightPx)
+    val currentScrollbarProgress by rememberUpdatedState(state.progress)
+    val currentScrollbarActiveThumbHeight by rememberUpdatedState(with(density) { scrollbarActiveHeight.toPx() })
     val safeCurrentPage = if (pageCount > 0) currentPage.coerceIn(0, pageCount - 1) else 0
 
     Box(
@@ -323,6 +363,68 @@ fun SharedPdfVerticalScrollbar(
             .padding(top = 12.dp, bottom = 12.dp)
             .onGloballyPositioned { coordinates ->
                 scrollbarTrackHeight = coordinates.size.height.toFloat()
+            }
+            .pointerInput(listState) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    try {
+                        isDraggingScrollbar = true
+                        scrollbarVisible = true
+                        scrollInteractionTick += 1
+                        down.consume()
+
+                        val initialContentHeight = currentScrollbarContentHeight
+                        val initialViewportHeight = currentScrollbarViewportHeight
+                        val initialMaxScroll = (initialContentHeight - initialViewportHeight).coerceAtLeast(0f)
+                        val initialTrackHeight = currentScrollbarTrackHeight.takeIf { it > 0f }
+                            ?: initialViewportHeight
+                        val initialThumbHeight = currentScrollbarActiveThumbHeight.coerceAtLeast(1f)
+                        val initialTrackSpace = (initialTrackHeight - initialThumbHeight).coerceAtLeast(1f)
+                        val initialThumbTop = (initialTrackSpace * currentScrollbarProgress)
+                            .coerceIn(0f, initialTrackSpace)
+                        val downY = down.position.y.coerceIn(0f, initialTrackHeight)
+                        val thumbDragOffset = if (downY in initialThumbTop..(initialThumbTop + initialThumbHeight)) {
+                            downY - initialThumbTop
+                        } else {
+                            initialThumbHeight / 2f
+                        }
+                        var lastScrollPx = currentScrollbarProgress * initialMaxScroll
+
+                        fun scrollToPointer(pointerY: Float) {
+                            val contentHeight = currentScrollbarContentHeight
+                            val viewportHeight = currentScrollbarViewportHeight
+                            val maxScroll = (contentHeight - viewportHeight).coerceAtLeast(0f)
+                            if (maxScroll <= 0f) return
+                            val trackHeight = currentScrollbarTrackHeight.takeIf { it > 0f }
+                                ?: viewportHeight
+                            val thumbHeight = currentScrollbarActiveThumbHeight.coerceAtLeast(1f)
+                            val trackSpace = (trackHeight - thumbHeight).coerceAtLeast(1f)
+                            val targetThumbTop = (pointerY - thumbDragOffset).coerceIn(0f, trackSpace)
+                            val targetScrollPx = (targetThumbTop / trackSpace) * maxScroll
+                            val scrollDelta = targetScrollPx - lastScrollPx
+                            if (abs(scrollDelta) > 0.01f) {
+                                listState.dispatchRawDelta(scrollDelta)
+                                scrollInteractionTick += 1
+                            }
+                            lastScrollPx = targetScrollPx
+                        }
+
+                        scrollToPointer(down.position.y)
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || !change.pressed) break
+
+                            if (change.position.y != change.previousPosition.y) {
+                                change.consume()
+                                scrollToPointer(change.position.y)
+                            }
+                        }
+                    } finally {
+                        isDraggingScrollbar = false
+                        scrollInteractionTick += 1
+                    }
+                }
             }
     ) {
         val thumbHeightPx = with(density) { barHeight.toPx() }
@@ -367,39 +469,6 @@ fun SharedPdfVerticalScrollbar(
                     modifier = Modifier
                         .height(barHeight)
                         .width(48.dp)
-                        .pointerInput(scrollbarTrackHeight, state.contentHeightPx, state.viewportHeightPx) {
-                            awaitEachGesture {
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                try {
-                                    isDraggingScrollbar = true
-                                    scrollbarVisible = true
-                                    scrollInteractionTick += 1
-                                    down.consume()
-
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == down.id }
-                                        if (change == null || !change.pressed) break
-
-                                        val deltaY = change.position.y - change.previousPosition.y
-                                        if (deltaY != 0f) {
-                                            change.consume()
-                                            val trackHeight = scrollbarTrackHeight.takeIf { it > 0f }
-                                                ?: state.viewportHeightPx
-                                            val trackSpace = (trackHeight - with(density) { scrollbarActiveHeight.toPx() })
-                                                .coerceAtLeast(1f)
-                                            val scrollDelta = (deltaY / trackSpace) *
-                                                (state.contentHeightPx - state.viewportHeightPx)
-                                            listState.dispatchRawDelta(scrollDelta)
-                                            scrollInteractionTick += 1
-                                        }
-                                    }
-                                } finally {
-                                    isDraggingScrollbar = false
-                                    scrollInteractionTick += 1
-                                }
-                            }
-                        }
                 ) {
                     Box(
                         modifier = Modifier

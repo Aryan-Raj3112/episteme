@@ -6,7 +6,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -56,8 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
@@ -943,14 +940,9 @@ private fun ReaderWorkspaceOverlayPanel(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        runCatching { focusRequester.requestFocus() }
-    }
     Surface(
         modifier = modifier
             .fillMaxSize()
-            .focusRequester(focusRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.keyCode == Key.Escape) {
                     onClose()
@@ -958,8 +950,7 @@ private fun ReaderWorkspaceOverlayPanel(
                 } else {
                     false
                 }
-            }
-            .focusable(),
+            },
         shape = RoundedCornerShape(0.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 4.dp,
