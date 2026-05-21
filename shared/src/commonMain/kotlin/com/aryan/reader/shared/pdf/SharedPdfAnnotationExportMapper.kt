@@ -2,8 +2,6 @@ package com.aryan.reader.shared.pdf
 
 import kotlin.math.sqrt
 
-private const val DEFAULT_PDF_COMMENT_AUTHOR = "Reader"
-
 data class SharedPdfAnnotationExportPayload(
     val inkAnnotations: List<SharedPdfInkAnnotationExport> = emptyList(),
     val highlightAnnotations: List<SharedPdfHighlightAnnotationExport> = emptyList()
@@ -208,7 +206,7 @@ private fun List<SharedPdfHighlightCommentExport>.toSingleVisiblePdfCommentThrea
         SharedPdfHighlightCommentExport(
             id = "${highlightId}_comments",
             parentId = null,
-            author = root.author.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR },
+            author = root.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR },
             contents = threadContents,
             createdAt = createdAt,
             modifiedAt = modifiedAt
@@ -228,7 +226,7 @@ private fun List<SharedPdfHighlightCommentExport>.formatAsPdfCommentThread(): St
 
         if (lines.isNotEmpty()) lines += ""
         val indent = "  ".repeat(depth)
-        val author = comment.author.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR }
+        val author = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
         lines += "$indent$author:"
         comment.contents.lines().forEach { line ->
             lines += "$indent$line"

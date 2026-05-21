@@ -48,6 +48,38 @@ data class SharedPdfAnnotationComment(
     val modifiedAt: Long = 0L
 )
 
+const val DEFAULT_SHARED_PDF_COMMENT_AUTHOR = "Reader"
+
+fun List<SharedPdfAnnotationComment>.visiblePdfAnnotationComments(): List<SharedPdfAnnotationComment> {
+    val visibleCommentIds = filter { it.contents.isNotBlank() }.map { it.id }.toSet()
+    return filter { it.contents.isNotBlank() }
+        .map { comment ->
+            if (comment.parentId != null && comment.parentId !in visibleCommentIds) {
+                comment.copy(parentId = null)
+            } else {
+                comment
+            }
+        }
+}
+
+fun List<SharedPdfAnnotationComment>.pdfCommentChildren(parentId: String?): List<SharedPdfAnnotationComment> {
+    return filter { it.parentId == parentId }
+        .sortedWith(compareBy({ it.createdAt.takeIf { timestamp -> timestamp > 0L } ?: Long.MAX_VALUE }, { it.id }))
+}
+
+fun List<SharedPdfAnnotationComment>.withoutPdfCommentThread(commentId: String): List<SharedPdfAnnotationComment> {
+    val childrenByParentId = groupBy { it.parentId }
+    val idsToRemove = mutableSetOf<String>()
+
+    fun collect(id: String) {
+        if (!idsToRemove.add(id)) return
+        childrenByParentId[id].orEmpty().forEach { child -> collect(child.id) }
+    }
+
+    collect(commentId)
+    return filterNot { it.id in idsToRemove }
+}
+
 @Serializable
 data class SharedPdfAnnotation(
     val id: String,

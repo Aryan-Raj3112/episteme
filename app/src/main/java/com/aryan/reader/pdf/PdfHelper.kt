@@ -96,7 +96,11 @@ import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrLine
 import com.aryan.reader.pdf.ocr.OcrResult
 import com.aryan.reader.pdf.ocr.OcrSymbol
+import com.aryan.reader.shared.pdf.DEFAULT_SHARED_PDF_COMMENT_AUTHOR
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
+import com.aryan.reader.shared.pdf.pdfCommentChildren
+import com.aryan.reader.shared.pdf.visiblePdfAnnotationComments
+import com.aryan.reader.shared.pdf.withoutPdfCommentThread
 import timber.log.Timber
 import java.text.DateFormat
 import java.util.Date
@@ -708,8 +712,6 @@ private enum class PdfAnnotationSheetSection {
     COMMENTS
 }
 
-private const val DEFAULT_PDF_COMMENT_AUTHOR = "Reader"
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PdfAnnotationBottomSheet(
@@ -740,7 +742,7 @@ fun PdfAnnotationBottomSheet(
             highlight.comments
                 .lastOrNull { it.author.isNotBlank() }
                 ?.author
-                ?: DEFAULT_PDF_COMMENT_AUTHOR
+                ?: DEFAULT_SHARED_PDF_COMMENT_AUTHOR
         )
     }
 
@@ -844,14 +846,14 @@ fun PdfAnnotationBottomSheet(
                         editingCommentId = comment.id
                         replyTargetId = null
                         commentText = comment.contents
-                        commentAuthor = comment.author.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR }
+                        commentAuthor = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
                     },
                     onCancelEdit = {
                         editingCommentId = null
                         commentText = ""
                     },
                     onDelete = { comment ->
-                        val nextComments = comments.withoutCommentThread(comment.id)
+                        val nextComments = comments.withoutPdfCommentThread(comment.id)
                         persistComments(nextComments)
                         if (replyTargetId != null && (replyTargetId == comment.id || nextComments.none { it.id == replyTargetId })) {
                             replyTargetId = null
@@ -865,7 +867,7 @@ fun PdfAnnotationBottomSheet(
                         val contents = commentText.trim()
                         if (contents.isNotBlank()) {
                             val now = System.currentTimeMillis()
-                            val author = commentAuthor.trim().ifBlank { DEFAULT_PDF_COMMENT_AUTHOR }
+                            val author = commentAuthor.trim().ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
                             val nextComments = if (editingCommentId != null) {
                                 comments.map { comment ->
                                     if (comment.id == editingCommentId) {
@@ -1005,16 +1007,7 @@ private fun PdfHighlightCommentsEditor(
     onDelete: (SharedPdfAnnotationComment) -> Unit,
     onAddComment: () -> Unit
 ) {
-    val commentIds = comments.filter { it.contents.isNotBlank() }.map { it.id }.toSet()
-    val visibleComments = comments
-        .filter { it.contents.isNotBlank() }
-        .map { comment ->
-            if (comment.parentId != null && comment.parentId !in commentIds) {
-                comment.copy(parentId = null)
-            } else {
-                comment
-            }
-        }
+    val visibleComments = comments.visiblePdfAnnotationComments()
     val replyTarget = visibleComments.firstOrNull { it.id == replyTargetId }
     val editingComment = visibleComments.firstOrNull { it.id == editingCommentId }
 
@@ -1048,7 +1041,7 @@ private fun PdfHighlightCommentsEditor(
                     } else {
                         stringResource(
                             R.string.label_replying_to,
-                            replyTarget?.author?.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR }.orEmpty()
+                            replyTarget?.author?.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }.orEmpty()
                         )
                     },
                     style = MaterialTheme.typography.labelMedium,
@@ -1115,8 +1108,7 @@ private fun PdfHighlightCommentThread(
     onDelete: (SharedPdfAnnotationComment) -> Unit
 ) {
     comments
-        .filter { it.parentId == parentId }
-        .sortedWith(compareBy({ it.createdAt.takeIf { timestamp -> timestamp > 0L } ?: Long.MAX_VALUE }, { it.id }))
+        .pdfCommentChildren(parentId)
         .forEach { comment ->
             if (comment.id in visitedIds) return@forEach
             PdfHighlightCommentItem(
@@ -1167,7 +1159,7 @@ private fun PdfHighlightCommentItem(
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = comment.author.ifBlank { DEFAULT_PDF_COMMENT_AUTHOR },
+                    text = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold,
@@ -1215,19 +1207,6 @@ private fun pdfAnnotationTextFieldColors(effectiveText: Color) =
         focusedTextColor = effectiveText,
         unfocusedTextColor = effectiveText
     )
-
-private fun List<SharedPdfAnnotationComment>.withoutCommentThread(commentId: String): List<SharedPdfAnnotationComment> {
-    val childrenByParentId = groupBy { it.parentId }
-    val idsToRemove = mutableSetOf<String>()
-
-    fun collect(id: String) {
-        if (!idsToRemove.add(id)) return
-        childrenByParentId[id].orEmpty().forEach { child -> collect(child.id) }
-    }
-
-    collect(commentId)
-    return filterNot { it.id in idsToRemove }
-}
 
 private fun Long.formatPdfCommentTimestamp(): String {
     if (this <= 0L) return ""

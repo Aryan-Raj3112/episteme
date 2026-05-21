@@ -9,14 +9,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Search
@@ -40,24 +43,33 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.pdf.DEFAULT_SHARED_PDF_COMMENT_AUTHOR
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.pdf.pdfCommentChildren
 import com.aryan.reader.shared.pdf.sharedPdfStrokePercent
 import com.aryan.reader.shared.pdf.sharedPdfStrokeWidthRange
 import com.aryan.reader.shared.pdf.sharedPdfTextStyle
+import com.aryan.reader.shared.pdf.visiblePdfAnnotationComments
+import com.aryan.reader.shared.pdf.withoutPdfCommentThread
 import com.aryan.reader.shared.pdf.withSharedPdfTextStyle
 import com.aryan.reader.shared.ui.SharedHsvColorPickerDialog
 import com.aryan.reader.shared.ui.SharedPdfTextStyleControls
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
 import com.aryan.reader.shared.ui.readerString
+import java.text.DateFormat
+import java.util.Date
+import java.util.UUID
 
 internal val DesktopPdfAnnotationTools = listOf(
     PdfInkTool.PEN,
@@ -68,6 +80,11 @@ internal val DesktopPdfAnnotationTools = listOf(
     PdfInkTool.TEXT,
     PdfInkTool.ERASER
 )
+
+private enum class DesktopPdfAnnotationSheetSection {
+    NOTE,
+    COMMENTS
+}
 
 @Composable
 internal fun DesktopPdfAnnotationEditor(
@@ -88,6 +105,22 @@ internal fun DesktopPdfAnnotationEditor(
     val isHighlighterAnnotation = annotation.kind == PdfAnnotationKind.HIGHLIGHT ||
         annotation.tool == PdfInkTool.HIGHLIGHTER ||
         annotation.tool == PdfInkTool.HIGHLIGHTER_ROUND
+    var selectedSection by remember(annotation.id) { mutableStateOf(DesktopPdfAnnotationSheetSection.NOTE) }
+    var commentText by remember(annotation.id) { mutableStateOf("") }
+    var replyTargetId by remember(annotation.id) { mutableStateOf<String?>(null) }
+    var editingCommentId by remember(annotation.id) { mutableStateOf<String?>(null) }
+    var commentAuthor by remember(annotation.id) {
+        mutableStateOf(
+            annotation.comments
+                .lastOrNull { it.author.isNotBlank() }
+                ?.author
+                ?: DEFAULT_SHARED_PDF_COMMENT_AUTHOR
+        )
+    }
+
+    fun updateComments(nextComments: List<SharedPdfAnnotationComment>) {
+        onUpdate(annotation.copy(comments = nextComments))
+    }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -127,7 +160,7 @@ internal fun DesktopPdfAnnotationEditor(
                         )
                         Text(
                             "\"${annotation.text}\"",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
                             maxLines = 4,
                             overflow = TextOverflow.Ellipsis,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
@@ -225,16 +258,93 @@ internal fun DesktopPdfAnnotationEditor(
                         )
                     }
                 }
-                SharedStableOutlinedTextField(
-                    value = annotation.note.orEmpty(),
-                    onValueChange = { note -> onUpdate(annotation.copy(note = note.takeIf { it.isNotBlank() })) },
-                    label = { Text(readerString("label_note", "Note")) },
-                    minLines = 3,
-                    maxLines = 5,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    selectionKey = annotation.id
+                DesktopPdfAnnotationSheetTabs(
+                    selectedSection = selectedSection,
+                    commentCount = annotation.comments.count { it.contents.isNotBlank() },
+                    onSectionChange = { selectedSection = it }
                 )
+                if (selectedSection == DesktopPdfAnnotationSheetSection.NOTE) {
+                    SharedStableOutlinedTextField(
+                        value = annotation.note.orEmpty(),
+                        onValueChange = { note -> onUpdate(annotation.copy(note = note.takeIf { it.isNotBlank() })) },
+                        label = { Text(readerString("label_note", "Note")) },
+                        minLines = 3,
+                        maxLines = 5,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        selectionKey = annotation.id
+                    )
+                } else {
+                    DesktopPdfHighlightCommentsEditor(
+                        comments = annotation.comments,
+                        commentText = commentText,
+                        commentAuthor = commentAuthor,
+                        replyTargetId = replyTargetId,
+                        editingCommentId = editingCommentId,
+                        onCommentTextChange = { commentText = it },
+                        onCommentAuthorChange = { commentAuthor = it },
+                        onReply = { comment ->
+                            editingCommentId = null
+                            replyTargetId = comment.id
+                            commentText = ""
+                        },
+                        onCancelReply = { replyTargetId = null },
+                        onEdit = { comment ->
+                            editingCommentId = comment.id
+                            replyTargetId = null
+                            commentText = comment.contents
+                            commentAuthor = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
+                        },
+                        onCancelEdit = {
+                            editingCommentId = null
+                            commentText = ""
+                        },
+                        onDelete = { comment ->
+                            val nextComments = annotation.comments.withoutPdfCommentThread(comment.id)
+                            updateComments(nextComments)
+                            if (replyTargetId != null && (replyTargetId == comment.id || nextComments.none { it.id == replyTargetId })) {
+                                replyTargetId = null
+                            }
+                            if (editingCommentId != null && (editingCommentId == comment.id || nextComments.none { it.id == editingCommentId })) {
+                                editingCommentId = null
+                                commentText = ""
+                            }
+                        },
+                        onAddComment = {
+                            val contents = commentText.trim()
+                            if (contents.isNotBlank()) {
+                                val now = System.currentTimeMillis()
+                                val author = commentAuthor.trim().ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
+                                val nextComments = if (editingCommentId != null) {
+                                    annotation.comments.map { comment ->
+                                        if (comment.id == editingCommentId) {
+                                            comment.copy(
+                                                author = author,
+                                                contents = contents,
+                                                modifiedAt = now
+                                            )
+                                        } else {
+                                            comment
+                                        }
+                                    }
+                                } else {
+                                    annotation.comments + SharedPdfAnnotationComment(
+                                        id = UUID.randomUUID().toString(),
+                                        parentId = replyTargetId,
+                                        author = author,
+                                        contents = contents,
+                                        createdAt = now,
+                                        modifiedAt = now
+                                    )
+                                }
+                                updateComments(nextComments)
+                                commentText = ""
+                                replyTargetId = null
+                                editingCommentId = null
+                            }
+                        }
+                    )
+                }
             }
             if (annotation.kind == PdfAnnotationKind.INK) {
                 val strokeRange = annotation.tool.sharedPdfStrokeWidthRange()
@@ -311,6 +421,265 @@ internal fun DesktopPdfAnnotationEditor(
             }
         }
     }
+}
+
+@Composable
+private fun DesktopPdfAnnotationSheetTabs(
+    selectedSection: DesktopPdfAnnotationSheetSection,
+    commentCount: Int,
+    onSectionChange: (DesktopPdfAnnotationSheetSection) -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(modifier = Modifier.padding(4.dp)) {
+            DesktopPdfAnnotationSheetTab(
+                label = readerString("label_note", "Note"),
+                selected = selectedSection == DesktopPdfAnnotationSheetSection.NOTE,
+                modifier = Modifier.weight(1f),
+                onClick = { onSectionChange(DesktopPdfAnnotationSheetSection.NOTE) }
+            )
+            DesktopPdfAnnotationSheetTab(
+                label = "${readerString("label_comments", "Comments")} ($commentCount)",
+                selected = selectedSection == DesktopPdfAnnotationSheetSection.COMMENTS,
+                modifier = Modifier.weight(1f),
+                onClick = { onSectionChange(DesktopPdfAnnotationSheetSection.COMMENTS) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfAnnotationSheetTab(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(6.dp),
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfHighlightCommentsEditor(
+    comments: List<SharedPdfAnnotationComment>,
+    commentText: String,
+    commentAuthor: String,
+    replyTargetId: String?,
+    editingCommentId: String?,
+    onCommentTextChange: (String) -> Unit,
+    onCommentAuthorChange: (String) -> Unit,
+    onReply: (SharedPdfAnnotationComment) -> Unit,
+    onCancelReply: () -> Unit,
+    onEdit: (SharedPdfAnnotationComment) -> Unit,
+    onCancelEdit: () -> Unit,
+    onDelete: (SharedPdfAnnotationComment) -> Unit,
+    onAddComment: () -> Unit
+) {
+    val visibleComments = comments.visiblePdfAnnotationComments()
+    val replyTarget = visibleComments.firstOrNull { it.id == replyTargetId }
+    val editingComment = visibleComments.firstOrNull { it.id == editingCommentId }
+
+    Column {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 220.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            DesktopPdfHighlightCommentThread(
+                comments = visibleComments,
+                parentId = null,
+                depth = 0,
+                visitedIds = emptySet(),
+                onReply = onReply,
+                onEdit = onEdit,
+                onDelete = onDelete
+            )
+        }
+
+        if (editingComment != null || replyTarget != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (editingComment != null) {
+                        readerString("label_editing_comment", "Editing comment")
+                    } else {
+                        readerString(
+                            "label_replying_to",
+                            "Replying to %1\$s",
+                            replyTarget?.author?.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }.orEmpty()
+                        )
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = if (editingComment != null) onCancelEdit else onCancelReply) {
+                    Text(readerString("action_cancel", "Cancel"))
+                }
+            }
+        }
+
+        SharedStableOutlinedTextField(
+            value = commentAuthor,
+            onValueChange = onCommentAuthorChange,
+            label = { Text(readerString("author", "Author")) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            selectionKey = "comment-author-${editingCommentId ?: replyTargetId ?: "new"}"
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        SharedStableOutlinedTextField(
+            value = commentText,
+            onValueChange = onCommentTextChange,
+            placeholder = { Text(readerString("placeholder_add_comment", "Add a comment...")) },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp),
+            minLines = 3,
+            maxLines = 4,
+            shape = RoundedCornerShape(12.dp),
+            selectionKey = "comment-text-${editingCommentId ?: replyTargetId ?: "new"}"
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onAddComment, enabled = commentText.isNotBlank()) {
+                Text(
+                    readerString(
+                        if (editingComment != null) "action_save_comment" else "action_add_comment",
+                        if (editingComment != null) "Save Comment" else "Add Comment"
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DesktopPdfHighlightCommentThread(
+    comments: List<SharedPdfAnnotationComment>,
+    parentId: String?,
+    depth: Int,
+    visitedIds: Set<String>,
+    onReply: (SharedPdfAnnotationComment) -> Unit,
+    onEdit: (SharedPdfAnnotationComment) -> Unit,
+    onDelete: (SharedPdfAnnotationComment) -> Unit
+) {
+    comments.pdfCommentChildren(parentId).forEach { comment ->
+        if (comment.id in visitedIds) return@forEach
+        DesktopPdfHighlightCommentItem(
+            comment = comment,
+            depth = depth,
+            onReply = { onReply(comment) },
+            onEdit = { onEdit(comment) },
+            onDelete = { onDelete(comment) }
+        )
+        DesktopPdfHighlightCommentThread(
+            comments = comments,
+            parentId = comment.id,
+            depth = depth + 1,
+            visitedIds = visitedIds + comment.id,
+            onReply = onReply,
+            onEdit = onEdit,
+            onDelete = onDelete
+        )
+    }
+}
+
+@Composable
+private fun DesktopPdfHighlightCommentItem(
+    comment: SharedPdfAnnotationComment,
+    depth: Int,
+    onReply: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val indentSize = (depth * 16).dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = indentSize, top = 6.dp, bottom = 6.dp)
+    ) {
+        if (depth > 0) {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                val timestamp = comment.createdAt.formatDesktopPdfCommentTimestamp()
+                if (timestamp.isNotBlank()) {
+                    Text(
+                        text = timestamp,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = comment.contents,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Row {
+                TextButton(onClick = onReply) {
+                    Text(readerString("action_reply", "Reply"))
+                }
+                TextButton(onClick = onEdit) {
+                    Text(readerString("label_edit", "Edit"))
+                }
+                TextButton(onClick = onDelete) {
+                    Text(readerString("action_delete", "Delete"), color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+private fun Long.formatDesktopPdfCommentTimestamp(): String {
+    if (this <= 0L) return ""
+    return runCatching {
+        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(this))
+    }.getOrDefault("")
 }
 
 @Composable
