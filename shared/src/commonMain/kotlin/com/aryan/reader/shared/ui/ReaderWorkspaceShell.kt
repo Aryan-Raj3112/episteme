@@ -1,6 +1,8 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -175,9 +177,23 @@ fun ReaderWorkspaceShell(
             lockedVisible = chromeLockedVisible,
             forcedVisible = model.chrome.forceVisible
         )
-        val chromeSuppressedByPanel = leftPanelOpen || rightPanelOpen
+        val chromeSuppressedByPanel = rightPanelOpen
         val showTopChrome = showChrome && topSearchBar == null && !isFullscreen && !chromeSuppressedByPanel
         val showBottomChrome = showChrome && !chromeSuppressedByPanel
+        val showLeftPanel = readerWorkspaceLeftPanelVisible(
+            toggledOpen = leftPanelOpen,
+            chromeVisible = showChrome,
+            hasNavigationSections = model.leftSections.isNotEmpty()
+        )
+        val showRightPanel = rightPanelOpen && model.inspectorSections.isNotEmpty()
+        val leftChromeExtensionWidth = if (showLeftPanel) {
+            readerWorkspaceLeftPanelWidth(
+                availableWidth = this@shellConstraints.maxWidth,
+                wide = wide
+            )
+        } else {
+            0.dp
+        }
         LaunchedEffect(wide, leftPanelOpen, rightPanelOpen) {
             if (!wide && leftPanelOpen && rightPanelOpen) {
                 rightPanelOpen = false
@@ -203,6 +219,21 @@ fun ReaderWorkspaceShell(
                 chromeVisible = true
             }
         }
+        fun toggleLeftPanel() {
+            val nextOpen = !leftPanelOpen
+            leftPanelOpen = nextOpen
+            if (nextOpen) {
+                rightPanelOpen = false
+                chromeVisible = true
+            }
+        }
+        fun toggleRightPanel() {
+            val nextOpen = !rightPanelOpen
+            rightPanelOpen = nextOpen
+            if (nextOpen) {
+                leftPanelOpen = false
+            }
+        }
 
         CompositionLocalProvider(LocalSharedReaderModalAnchorBounds provides modalAnchorBounds) {
             Box(
@@ -220,8 +251,6 @@ fun ReaderWorkspaceShell(
                         )
                     }
             ) {
-                val showLeftPanel = leftPanelOpen && model.leftSections.isNotEmpty()
-                val showRightPanel = rightPanelOpen && model.inspectorSections.isNotEmpty()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -253,6 +282,7 @@ fun ReaderWorkspaceShell(
                     showLeftPanel = showLeftPanel,
                     showRightPanel = showRightPanel,
                     wide = wide,
+                    leftPanelWidth = leftChromeExtensionWidth,
                     useDetachedPanelLayer = useDetachedPanelLayer,
                     onCloseLeftPanel = { leftPanelOpen = false },
                     onCloseRightPanel = { rightPanelOpen = false },
@@ -264,7 +294,10 @@ fun ReaderWorkspaceShell(
                     model.kind == ReaderWorkspaceKind.EPUB &&
                     modalAnchorBounds != null
                 if (useDetachedChromeLayerForChrome) {
-                    if (topSearchBar != null || showTopChrome) {
+                    ReaderWorkspaceDetachedChromeLayer(
+                        targetVisible = topSearchBar != null || showTopChrome,
+                        level = SharedReaderModalLevel.ChromeTop
+                    ) { layerVisible ->
                         SharedReaderModalLayer(
                             level = SharedReaderModalLevel.ChromeTop,
                             onDismiss = {}
@@ -274,9 +307,9 @@ fun ReaderWorkspaceShell(
                                     .fillMaxSize()
                             ) {
                                 ReaderWorkspaceChromeOverlay(
-                                    showTopBar = showTopChrome,
+                                    showTopBar = layerVisible && showTopChrome,
                                     showBottomBar = false,
-                                    topSearchBar = topSearchBar,
+                                    topSearchBar = topSearchBar.takeIf { layerVisible },
                                     title = title,
                                     subtitle = subtitle,
                                     progressLabel = progressLabel,
@@ -287,10 +320,11 @@ fun ReaderWorkspaceShell(
                                     rightPanelOpen = rightPanelOpen,
                                     isBookmarked = isBookmarked,
                                     isFullscreen = isFullscreen,
+                                    leftChromeExtensionWidth = leftChromeExtensionWidth,
                                     fileActions = fileActions,
                                     onReturnToLibrary = onReturnToLibrary,
-                                    onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                                    onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                                    onToggleLeftPanel = { toggleLeftPanel() },
+                                    onToggleRightPanel = { toggleRightPanel() },
                                     onToggleBookmark = onToggleBookmark,
                                     onSearchAction = onSearchAction,
                                     onShareAction = onShareAction,
@@ -304,7 +338,10 @@ fun ReaderWorkspaceShell(
                             }
                         }
                     }
-                    if (showBottomChrome) {
+                    ReaderWorkspaceDetachedChromeLayer(
+                        targetVisible = showBottomChrome,
+                        level = SharedReaderModalLevel.ChromeBottom
+                    ) { layerVisible ->
                         SharedReaderModalLayer(
                             level = SharedReaderModalLevel.ChromeBottom,
                             onDismiss = {}
@@ -315,7 +352,7 @@ fun ReaderWorkspaceShell(
                             ) {
                                 ReaderWorkspaceChromeOverlay(
                                     showTopBar = false,
-                                    showBottomBar = true,
+                                    showBottomBar = layerVisible && showBottomChrome,
                                     topSearchBar = null,
                                     title = title,
                                     subtitle = subtitle,
@@ -327,10 +364,11 @@ fun ReaderWorkspaceShell(
                                     rightPanelOpen = rightPanelOpen,
                                     isBookmarked = isBookmarked,
                                     isFullscreen = isFullscreen,
+                                    leftChromeExtensionWidth = leftChromeExtensionWidth,
                                     fileActions = fileActions,
                                     onReturnToLibrary = onReturnToLibrary,
-                                    onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                                    onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                                    onToggleLeftPanel = { toggleLeftPanel() },
+                                    onToggleRightPanel = { toggleRightPanel() },
                                     onToggleBookmark = onToggleBookmark,
                                     onSearchAction = onSearchAction,
                                     onShareAction = onShareAction,
@@ -368,10 +406,11 @@ fun ReaderWorkspaceShell(
                         rightPanelOpen = rightPanelOpen,
                         isBookmarked = isBookmarked,
                         isFullscreen = isFullscreen,
+                        leftChromeExtensionWidth = leftChromeExtensionWidth,
                         fileActions = fileActions,
                         onReturnToLibrary = onReturnToLibrary,
-                        onToggleLeftPanel = { leftPanelOpen = !leftPanelOpen },
-                        onToggleRightPanel = { rightPanelOpen = !rightPanelOpen },
+                        onToggleLeftPanel = { toggleLeftPanel() },
+                        onToggleRightPanel = { toggleRightPanel() },
                         onToggleBookmark = onToggleBookmark,
                         onSearchAction = onSearchAction,
                         onShareAction = onShareAction,
@@ -476,6 +515,7 @@ private fun ReaderWorkspacePanelOverlays(
     showLeftPanel: Boolean,
     showRightPanel: Boolean,
     wide: Boolean,
+    leftPanelWidth: androidx.compose.ui.unit.Dp,
     useDetachedPanelLayer: Boolean,
     onCloseLeftPanel: () -> Unit,
     onCloseRightPanel: () -> Unit,
@@ -491,22 +531,16 @@ private fun ReaderWorkspacePanelOverlays(
                     .fillMaxSize()
                     .then(if (useDetachedPanelLayer) Modifier else Modifier.zIndex(ReaderChromeZIndex + 1f))
             ) panelConstraints@ {
-                val availableWidth = this@panelConstraints.maxWidth
-                val leftPanelWidth = if (
-                    useDetachedPanelLayer &&
-                    sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelLeft)
-                ) {
-                    availableWidth
-                } else if (wide) {
-                    minOf(340.dp, availableWidth)
-                } else {
-                    minOf(320.dp, availableWidth * 0.92f)
-                }
+                val panelWidth = leftPanelWidth.takeIf { it > 0.dp }
+                    ?: readerWorkspaceLeftPanelWidth(
+                        availableWidth = this@panelConstraints.maxWidth,
+                        wide = wide
+                    )
                 ReaderWorkspaceOverlayPanel(
                     title = readerString("desktop_reader", "Reader"),
                     edge = ReaderWorkspacePanelEdge.Start,
                     onClose = onCloseLeftPanel,
-                    modifier = Modifier.align(Alignment.CenterStart).width(leftPanelWidth)
+                    modifier = Modifier.align(Alignment.CenterStart).width(panelWidth)
                 ) {
                     leftSidebar(onCloseLeftPanel)
                 }
@@ -564,9 +598,49 @@ private fun ReaderWorkspacePanelOverlays(
     }
 }
 
+private fun readerWorkspaceLeftPanelWidth(
+    availableWidth: androidx.compose.ui.unit.Dp,
+    wide: Boolean
+): androidx.compose.ui.unit.Dp {
+    return if (wide) {
+        minOf(340.dp, availableWidth)
+    } else {
+        minOf(320.dp, availableWidth * 0.92f)
+    }.coerceAtLeast(1.dp)
+}
+
 private enum class ReaderWorkspacePanelEdge {
     Start,
     End
+}
+
+private const val ReaderWorkspaceChromeAnimationMillis = 220
+private const val ReaderWorkspaceDetachedChromeEnterDelayMillis = 16L
+
+@Composable
+private fun ReaderWorkspaceDetachedChromeLayer(
+    targetVisible: Boolean,
+    level: SharedReaderModalLevel,
+    content: @Composable (layerVisible: Boolean) -> Unit
+) {
+    var renderLayer by remember(level) { mutableStateOf(false) }
+    var layerVisible by remember(level) { mutableStateOf(false) }
+
+    LaunchedEffect(targetVisible) {
+        if (targetVisible) {
+            renderLayer = true
+            delay(ReaderWorkspaceDetachedChromeEnterDelayMillis)
+            layerVisible = true
+        } else {
+            layerVisible = false
+            delay(ReaderWorkspaceChromeAnimationMillis.toLong())
+            renderLayer = false
+        }
+    }
+
+    if (renderLayer) {
+        content(layerVisible)
+    }
 }
 
 @Composable
@@ -584,6 +658,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     rightPanelOpen: Boolean,
     isBookmarked: Boolean,
     isFullscreen: Boolean,
+    leftChromeExtensionWidth: androidx.compose.ui.unit.Dp,
     fileActions: ReaderWorkspaceFileActionState?,
     onReturnToLibrary: (() -> Unit)?,
     onToggleLeftPanel: () -> Unit,
@@ -602,6 +677,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
+                .padding(start = leftChromeExtensionWidth)
                 .fillMaxWidth()
                 .readerChromeHoverPointerInput(ReaderChromeHoverSource.TopSearch, onChromeHoverChange)
                 .zIndex(ReaderChromeZIndex)
@@ -611,10 +687,23 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     } else {
         AnimatedVisibility(
             visible = showTopBar,
-            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+            enter = slideInVertically(
+                animationSpec = tween(
+                    durationMillis = ReaderWorkspaceChromeAnimationMillis,
+                    easing = FastOutSlowInEasing
+                ),
+                initialOffsetY = { -it }
+            ) + fadeIn(animationSpec = tween(durationMillis = ReaderWorkspaceChromeAnimationMillis)),
+            exit = slideOutVertically(
+                animationSpec = tween(
+                    durationMillis = ReaderWorkspaceChromeAnimationMillis,
+                    easing = FastOutSlowInEasing
+                ),
+                targetOffsetY = { -it }
+            ) + fadeOut(animationSpec = tween(durationMillis = ReaderWorkspaceChromeAnimationMillis)),
             modifier = Modifier
                 .align(Alignment.TopCenter)
+                .padding(start = leftChromeExtensionWidth)
                 .fillMaxWidth()
                 .readerChromeHoverPointerInput(ReaderChromeHoverSource.TopBar, onChromeHoverChange)
                 .zIndex(ReaderChromeZIndex)
@@ -648,10 +737,23 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     }
     AnimatedVisibility(
         visible = showBottomBar,
-        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+        enter = slideInVertically(
+            animationSpec = tween(
+                durationMillis = ReaderWorkspaceChromeAnimationMillis,
+                easing = FastOutSlowInEasing
+            ),
+            initialOffsetY = { it }
+        ) + fadeIn(animationSpec = tween(durationMillis = ReaderWorkspaceChromeAnimationMillis)),
+        exit = slideOutVertically(
+            animationSpec = tween(
+                durationMillis = ReaderWorkspaceChromeAnimationMillis,
+                easing = FastOutSlowInEasing
+            ),
+            targetOffsetY = { it }
+        ) + fadeOut(animationSpec = tween(durationMillis = ReaderWorkspaceChromeAnimationMillis)),
         modifier = Modifier
             .align(Alignment.BottomCenter)
+            .padding(start = leftChromeExtensionWidth)
             .fillMaxWidth()
             .readerChromeHoverPointerInput(ReaderChromeHoverSource.BottomBar, onChromeHoverChange)
             .zIndex(ReaderChromeZIndex)
@@ -919,6 +1021,23 @@ private fun ReaderWorkspaceOverlayPanel(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val isChromeExtension = edge == ReaderWorkspacePanelEdge.Start
+    val panelColor = if (isChromeExtension) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val panelContentColor = MaterialTheme.colorScheme.onSurface
+    val dividerColor = if (isChromeExtension) {
+        panelContentColor.copy(alpha = 0.12f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
+    }
+    val edgeDividerColor = if (isChromeExtension) {
+        panelContentColor.copy(alpha = 0.14f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+    }
     Surface(
         modifier = modifier
             .fillMaxSize()
@@ -931,14 +1050,23 @@ private fun ReaderWorkspaceOverlayPanel(
                 }
             },
         shape = RoundedCornerShape(0.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 4.dp,
-        shadowElevation = 10.dp
+        color = panelColor,
+        contentColor = panelContentColor,
+        tonalElevation = if (isChromeExtension) 0.dp else 4.dp,
+        shadowElevation = if (isChromeExtension) 1.dp else 10.dp,
+        border = if (isChromeExtension) sharedSubtleBorder(alpha = 0.55f) else null
     ) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = if (isChromeExtension) 12.dp else 14.dp,
+                            top = if (isChromeExtension) 4.dp else 8.dp,
+                            end = if (isChromeExtension) 4.dp else 8.dp,
+                            bottom = if (isChromeExtension) 4.dp else 8.dp
+                        ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -947,13 +1075,21 @@ private fun ReaderWorkspaceOverlayPanel(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = onClose, modifier = Modifier.size(34.dp)) {
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(if (isChromeExtension) 36.dp else 34.dp)
+                    ) {
                         Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
                     }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                HorizontalDivider(color = dividerColor)
                 Box(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp)
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(
+                            horizontal = if (isChromeExtension) 8.dp else 10.dp,
+                            vertical = if (isChromeExtension) 6.dp else 8.dp
+                        )
                 ) {
                     content()
                 }
@@ -969,7 +1105,7 @@ private fun ReaderWorkspaceOverlayPanel(
                     )
                     .fillMaxHeight()
                     .width(1.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+                    .background(edgeDividerColor)
             )
         }
     }

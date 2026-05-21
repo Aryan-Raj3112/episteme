@@ -75,6 +75,14 @@ internal fun readerWorkspaceChromeVisibleAfterReaderTap(
     }
 }
 
+internal fun readerWorkspaceLeftPanelVisible(
+    toggledOpen: Boolean,
+    chromeVisible: Boolean,
+    hasNavigationSections: Boolean
+): Boolean {
+    return toggledOpen && chromeVisible && hasNavigationSections
+}
+
 data class ReaderWorkspaceFileActionState(
     val canShare: Boolean = false,
     val canSaveCopy: Boolean = false,

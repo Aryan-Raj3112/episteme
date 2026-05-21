@@ -117,6 +117,31 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
+    fun `left reader panel is drawn with chrome while preserving its toggle state`() {
+        assertFalse(
+            readerWorkspaceLeftPanelVisible(
+                toggledOpen = true,
+                chromeVisible = false,
+                hasNavigationSections = true
+            )
+        )
+        assertTrue(
+            readerWorkspaceLeftPanelVisible(
+                toggledOpen = true,
+                chromeVisible = true,
+                hasNavigationSections = true
+            )
+        )
+        assertFalse(
+            readerWorkspaceLeftPanelVisible(
+                toggledOpen = false,
+                chromeVisible = true,
+                hasNavigationSections = true
+            )
+        )
+    }
+
+    @Test
     fun `epub workspace ignores desktop visual options in inspector`() {
         val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(

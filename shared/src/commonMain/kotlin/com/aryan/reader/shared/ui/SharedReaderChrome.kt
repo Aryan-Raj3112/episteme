@@ -461,32 +461,34 @@ fun SharedReaderScreen(
                 color = chromeBarColor,
                 contentColor = chromeContentColor,
                 tonalElevation = 0.dp,
-                shadowElevation = 1.dp,
-                border = BorderStroke(1.dp, chromeContentColor.copy(alpha = 0.12f))
+                shadowElevation = 0.dp
             ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                    bottomChromeExtraContent()
-                    val showJumpHistory = !session.isSearchActive && session.shouldShowJumpHistory
-                    if (showJumpHistory) {
-                        SharedReaderJumpHistoryBar(
+                Column(Modifier.fillMaxWidth()) {
+                    HorizontalDivider(color = chromeContentColor.copy(alpha = 0.12f))
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                        bottomChromeExtraContent()
+                        val showJumpHistory = !session.isSearchActive && session.shouldShowJumpHistory
+                        if (showJumpHistory) {
+                            SharedReaderJumpHistoryBar(
+                                session = session,
+                                onBack = { dispatch(ReaderAction.JumpBack) },
+                                onForward = { dispatch(ReaderAction.JumpForward) },
+                                onClear = { dispatch(ReaderAction.JumpHistoryCleared) }
+                            )
+                            HorizontalDivider(color = chromeContentColor.copy(alpha = 0.12f))
+                        }
+                        SharedReaderCompactNavigation(
                             session = session,
-                            onBack = { dispatch(ReaderAction.JumpBack) },
-                            onForward = { dispatch(ReaderAction.JumpForward) },
-                            onClear = { dispatch(ReaderAction.JumpHistoryCleared) }
+                            showSlider = toolbarPreferences.isVisible(ReaderTool.SLIDER),
+                            canGoPrevious = readerState.canGoPrevious,
+                            canGoNext = readerState.canGoNext,
+                            pageInfoText = if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoText else null,
+                            onPrevious = { dispatch(ReaderAction.PreviousPage) },
+                            onNext = { dispatch(ReaderAction.NextPage) },
+                            onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) },
+                            contentColor = chromeContentColor
                         )
-                        HorizontalDivider(color = chromeContentColor.copy(alpha = 0.12f))
                     }
-                    SharedReaderCompactNavigation(
-                        session = session,
-                        showSlider = toolbarPreferences.isVisible(ReaderTool.SLIDER),
-                        canGoPrevious = readerState.canGoPrevious,
-                        canGoNext = readerState.canGoNext,
-                        pageInfoText = if (shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoText else null,
-                        onPrevious = { dispatch(ReaderAction.PreviousPage) },
-                        onNext = { dispatch(ReaderAction.NextPage) },
-                        onPageNumberChange = { pageNumber -> dispatch(ReaderAction.GoToPageNumber(pageNumber)) },
-                        contentColor = chromeContentColor
-                    )
                 }
             }
         },
@@ -3197,63 +3199,61 @@ private fun SharedReaderSidebar(
     var selectedSection by remember(tabs) { mutableStateOf(tabs.firstOrNull()) }
     val selectedTabIndex = tabs.indexOf(selectedSection).takeIf { it >= 0 } ?: 0
 
-    Surface(
+    Column(
         modifier = Modifier
-            .width(300.dp)
-            .fillMaxHeight(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(8.dp)
+            .fillMaxWidth()
+            .fillMaxHeight()
     ) {
-        Column(Modifier.fillMaxSize()) {
-            if (tabs.isNotEmpty()) {
-                ScrollableTabRow(
-                    selectedTabIndex = selectedTabIndex,
-                    edgePadding = 0.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    tabs.forEach { section ->
-                        Tab(
-                            selected = selectedSection == section,
-                            onClick = { selectedSection = section },
-                            text = {
-                                Text(
-                                    section.readerNavigationTabLabel(),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        )
-                    }
+        if (tabs.isNotEmpty()) {
+            ScrollableTabRow(
+                selectedTabIndex = selectedTabIndex,
+                edgePadding = 0.dp,
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                tabs.forEach { section ->
+                    Tab(
+                        selected = selectedSection == section,
+                        onClick = { selectedSection = section },
+                        text = {
+                            Text(
+                                section.readerNavigationTabLabel(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    )
                 }
             }
+        }
 
-            when (selectedSection) {
-                ReaderWorkspaceLeftSection.CONTENTS -> SharedReaderTocTab(
-                    session = session,
-                    readerEngine = readerEngine,
-                    onGoToLocator = onGoToLocator,
-                    onGoToChapter = onGoToChapter
-                )
-                ReaderWorkspaceLeftSection.NOTES -> SharedReaderAnnotationsTab(
-                    session = session,
-                    onGoToHighlight = onGoToHighlight,
-                    onEditHighlight = onEditHighlight,
-                    highlightPalette = highlightPalette,
-                    onHighlightColorChange = onHighlightColorChange,
-                    onDeleteHighlight = onDeleteHighlight
-                )
-                ReaderWorkspaceLeftSection.BOOKMARKS -> SharedReaderBookmarksTab(
-                    session = session,
-                    onGoToBookmark = onGoToBookmark
-                )
-                ReaderWorkspaceLeftSection.IMAGES -> SharedReaderImagesTab(
-                    session = session,
-                    onGoToImage = onGoToLocator,
-                    onDownloadImage = onDownloadImage,
-                    imagePreviewContent = imagePreviewContent
-                )
-                else -> SharedReaderEmptyNavigation(readerString("desktop_no_navigation_items", "No navigation items"))
-            }
+        when (selectedSection) {
+            ReaderWorkspaceLeftSection.CONTENTS -> SharedReaderTocTab(
+                session = session,
+                readerEngine = readerEngine,
+                onGoToLocator = onGoToLocator,
+                onGoToChapter = onGoToChapter
+            )
+            ReaderWorkspaceLeftSection.NOTES -> SharedReaderAnnotationsTab(
+                session = session,
+                onGoToHighlight = onGoToHighlight,
+                onEditHighlight = onEditHighlight,
+                highlightPalette = highlightPalette,
+                onHighlightColorChange = onHighlightColorChange,
+                onDeleteHighlight = onDeleteHighlight
+            )
+            ReaderWorkspaceLeftSection.BOOKMARKS -> SharedReaderBookmarksTab(
+                session = session,
+                onGoToBookmark = onGoToBookmark
+            )
+            ReaderWorkspaceLeftSection.IMAGES -> SharedReaderImagesTab(
+                session = session,
+                onGoToImage = onGoToLocator,
+                onDownloadImage = onDownloadImage,
+                imagePreviewContent = imagePreviewContent
+            )
+            else -> SharedReaderEmptyNavigation(readerString("desktop_no_navigation_items", "No navigation items"))
         }
     }
 }
