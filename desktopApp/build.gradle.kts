@@ -375,7 +375,7 @@ fun desktopConfigValue(vararg keys: String): String {
 }
 val desktopCloudConfig = mapOf(
     "AI_WORKER_URL" to desktopConfigValue("DESKTOP_AI_WORKER_URL", "AI_WORKER_URL"),
-    "TTS_WORKER_URL" to desktopConfigValue("DESKTOP_TTS_WORKER_URL", "TTS_WORKER_URL", "AI_WORKER_URL"),
+    "TTS_WORKER_URL" to desktopConfigValue("DESKTOP_TTS_WORKER_URL", "TTS_WORKER_URL"),
     "FIREBASE_WEB_API_KEY" to desktopConfigValue("DESKTOP_FIREBASE_WEB_API_KEY", "FIREBASE_WEB_API_KEY", "GOOGLE_API_KEY"),
     "FIREBASE_PROJECT_ID" to desktopConfigValue("DESKTOP_FIREBASE_PROJECT_ID", "FIREBASE_PROJECT_ID").ifBlank { "reader-9fc469d7" },
     "GOOGLE_OAUTH_CLIENT_ID" to desktopConfigValue("DESKTOP_GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID", "DEFAULT_WEB_CLIENT_ID"),

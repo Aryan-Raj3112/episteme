@@ -122,6 +122,7 @@ import com.aryan.reader.shared.pdf.withSharedPdfTextStyle
 import com.aryan.reader.shared.pdf.withStyle
 import com.aryan.reader.shared.pdf.withText
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.readerCloudTtsControlsModel
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.ReaderWorkspaceFileActionState
 import com.aryan.reader.shared.ui.ReaderWorkspaceShell
@@ -134,6 +135,7 @@ import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
 import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.SharedPdfTextBoxEditorOverlay
 import com.aryan.reader.shared.ui.SharedPdfVerticalScrollbar
+import com.aryan.reader.shared.ui.SharedReaderTtsOverlayControls
 import com.aryan.reader.shared.ui.pdfReaderWorkspaceModel
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
@@ -179,6 +181,7 @@ internal fun PdfReaderScreen(
     showPaidCredits: Boolean = false,
     onAiByokSettingsChange: (ReaderAiByokSettings) -> Unit = {},
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard,
+    cloudTtsControlsAvailable: Boolean = true,
     onReaderAiEntitlementRequired: (ReaderAiFeature, String) -> Boolean = { _, _ -> false },
     onCloudTtsEntitlementRequired: () -> Boolean = { false },
     onPaidFeatureError: (String?) -> Unit = {},
@@ -246,7 +249,7 @@ internal fun PdfReaderScreen(
         mutableStateOf(
             ReaderExtrasState(
                 cloudTts = ReaderCloudTtsState(
-                    isAvailable = aiByokSettings.isCloudTtsAvailable,
+                    isAvailable = cloudTtsControlsAvailable && aiByokSettings.isCloudTtsAvailable,
                     cacheSummary = ttsAdapter.cacheSummary(document.title, aiByokSettings.sanitized().ttsSpeakerId)
                 )
             )
@@ -259,6 +262,7 @@ internal fun PdfReaderScreen(
     var pdfHubSummaryResult by remember(documentHandleId) { mutableStateOf<SummarizationResult?>(null) }
     var isPdfHubSummaryLoading by remember(documentHandleId) { mutableStateOf(false) }
     var showPdfCloudTtsSettings by remember(documentHandleId) { mutableStateOf(false) }
+    var isPdfTtsOverlayCollapsed by remember(documentHandleId) { mutableStateOf(false) }
     val annotationFile = remember(documentHandleId) { desktopPdfAnnotationFile(document.path) }
     val bookmarkFile = remember(documentHandleId) { desktopPdfBookmarkFile(document.path) }
     val richTextFile = remember(documentHandleId) { desktopPdfRichTextFile(document.path) }
@@ -1016,10 +1020,10 @@ internal fun PdfReaderScreen(
         }
     }
 
-    LaunchedEffect(aiByokSettings) {
+    LaunchedEffect(aiByokSettings, cloudTtsControlsAvailable) {
         pdfExtrasState = pdfExtrasState.copy(
             cloudTts = pdfExtrasState.cloudTts.copy(
-                isAvailable = aiByokSettings.isCloudTtsAvailable,
+                isAvailable = cloudTtsControlsAvailable && aiByokSettings.isCloudTtsAvailable,
                 errorMessage = null,
                 cacheSummary = currentPdfTtsCacheSummary()
             )
@@ -1320,7 +1324,7 @@ internal fun PdfReaderScreen(
     }
 
     fun pdfCloudTtsStoppedState(statusMessage: String? = null, errorMessage: String? = null) = ReaderCloudTtsState(
-        isAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
+        isAvailable = cloudTtsControlsAvailable && aiByokSettings.sanitized().isCloudTtsAvailable,
         statusMessage = statusMessage,
         errorMessage = errorMessage,
         cacheSummary = currentPdfTtsCacheSummary()
@@ -1501,6 +1505,7 @@ internal fun PdfReaderScreen(
         logDesktopTts("pdf_stop_requested")
         pdfTtsJob?.cancel()
         pdfTtsJob = null
+        showPdfCloudTtsSettings = false
         pdfScope.launch {
             ttsAdapter.stop()
             pdfExtrasState = pdfExtrasState.copy(
@@ -1547,17 +1552,10 @@ internal fun PdfReaderScreen(
     }
 
     fun pdfCloudTtsUnavailableMessage(): String {
-        return if (aiByokSettings.serverBackedReaderAiFeatures || aiByokSettings.serverBackedCloudTts) {
-            pdfString(
-                "desktop_cloud_tts_signed_in_credits_required_desc",
-                "Cloud TTS needs a signed-in account with credits. Pro and credits can only be purchased from the Android app."
-            )
-        } else {
-            pdfString(
-                "desktop_cloud_tts_needs_gemini_key_desc",
-                "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
-            )
-        }
+        return pdfString(
+            "desktop_cloud_tts_signed_in_credits_required_desc",
+            "Cloud TTS needs a signed-in account with credits. Pro and credits can only be purchased from the Android app."
+        )
     }
 
     fun pdfReadScopeLabel(readScope: ReaderTtsReadScope): String {
@@ -1568,7 +1566,12 @@ internal fun PdfReaderScreen(
         }
     }
 
-    fun startPdfCloudTts(readScope: ReaderTtsReadScope) {
+    fun startPdfCloudTts(
+        readScope: ReaderTtsReadScope,
+        startChunkIndex: Int = 0,
+        chunksOverride: List<ReaderTtsChunk>? = null,
+        restartActive: Boolean = false
+    ) {
         val settings = aiByokSettings.sanitized()
         logDesktopTts(
             "pdf_sequence_toggle scope=${readScope.name} startPage=${pageIndex + 1} " +
@@ -1576,9 +1579,14 @@ internal fun PdfReaderScreen(
                 "keyPresent=${settings.geminiKey.isNotBlank()} ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" " +
                 "available=${ttsAdapter.isAvailable}"
         )
-        if (pdfExtrasState.cloudTts.isPlaying || pdfExtrasState.cloudTts.isLoading || pdfExtrasState.cloudTts.isPaused) {
+        val ttsActive = pdfExtrasState.cloudTts.isPlaying || pdfExtrasState.cloudTts.isLoading || pdfExtrasState.cloudTts.isPaused
+        if (ttsActive && !restartActive) {
             stopPdfCloudTts()
             return
+        }
+        if (ttsActive) {
+            pdfTtsJob?.cancel()
+            pdfTtsJob = null
         }
         if (!ttsAdapter.isAvailable) {
             logDesktopTts("pdf_sequence_blocked reason=adapter_unavailable")
@@ -1602,45 +1610,69 @@ internal fun PdfReaderScreen(
                     "Preparing %1\$s",
                     pdfReadScopeLabel(readScope)
                 ),
+                progress = ReaderTtsProgress(sessionId = ttsSessionId, scope = readScope),
                 cacheSummary = currentPdfTtsCacheSummary()
             )
         )
+        fun updatePdfTtsSession(transform: (ReaderExtrasState) -> ReaderExtrasState) {
+            if (pdfExtrasState.cloudTts.progress.sessionId == ttsSessionId) {
+                pdfExtrasState = transform(pdfExtrasState)
+            }
+        }
         val noTextMessage = pdfString("desktop_no_text_here_to_read", "There is no text here to read.")
         pdfTtsJob = pdfScope.launch {
             var completedChunkCount = 0
             runCatching {
-                val ttsChunks = withContext(Dispatchers.IO) {
-                    pdfTtsChunksForScope(readScope, pageIndex)
-                        .filter { it.text.isNotBlank() }
-                        .withTtsReplacements(ttsReplacementPreferences, document.path)
-                }
+                val ttsChunks = chunksOverride
+                    ?.filter { it.text.isNotBlank() }
+                    ?: withContext(Dispatchers.IO) {
+                        pdfTtsChunksForScope(readScope, pageIndex)
+                            .filter { it.text.isNotBlank() }
+                            .withTtsReplacements(ttsReplacementPreferences, document.path)
+                    }
                 if (ttsChunks.isEmpty()) {
                     logDesktopTts("pdf_sequence_ignored reason=blank_text scope=${readScope.name}")
                     throw IllegalStateException(noTextMessage)
                 }
+                val boundedStartChunkIndex = startChunkIndex.coerceIn(0, ttsChunks.lastIndex)
+                val playbackChunks = ttsChunks.drop(boundedStartChunkIndex)
                 val initialProgress = ReaderTtsProgress(
                     sessionId = ttsSessionId,
                     scope = readScope,
                     chunks = ttsChunks,
-                    currentChunkIndex = -1
+                    currentChunkIndex = boundedStartChunkIndex - 1
                 )
-                logDesktopTts("pdf_sequence_start scope=${readScope.name} chunks=${ttsChunks.size}")
-                ttsAdapter.speakChunks(document.title, readScope, ttsChunks) { index ->
+                updatePdfTtsSession { extras ->
+                    extras.copy(
+                        cloudTts = extras.cloudTts.copy(
+                            progress = initialProgress,
+                            cacheSummary = currentPdfTtsCacheSummary()
+                        )
+                    )
+                }
+                logDesktopTts(
+                    "pdf_sequence_start scope=${readScope.name} chunks=${ttsChunks.size} " +
+                        "startChunk=${boundedStartChunkIndex + 1}"
+                )
+                ttsAdapter.speakChunks(document.title, readScope, playbackChunks) { relativeIndex ->
                     if (!isActive) throw kotlinx.coroutines.CancellationException("PDF cloud TTS stopped")
+                    val index = boundedStartChunkIndex + relativeIndex
                     val chunk = ttsChunks[index]
                     val progress = initialProgress.copy(currentChunkIndex = index)
                     if (chunk.pageIndex != pdfState.pageIndex) {
                         goToPage(chunk.pageIndex, recordJump = false)
                     }
-                    pdfExtrasState = pdfExtrasState.copy(
-                        cloudTts = ReaderCloudTtsState(
-                            isAvailable = true,
-                            isPlaying = true,
-                            statusMessage = progress.currentPositionLabel ?: pdfString("label_reading", "Reading"),
-                            progress = progress,
-                            cacheSummary = currentPdfTtsCacheSummary()
+                    updatePdfTtsSession { extras ->
+                        extras.copy(
+                            cloudTts = ReaderCloudTtsState(
+                                isAvailable = true,
+                                isPlaying = true,
+                                statusMessage = progress.currentPositionLabel ?: pdfString("label_reading", "Reading"),
+                                progress = progress,
+                                cacheSummary = currentPdfTtsCacheSummary()
+                            )
                         )
-                    )
+                    }
                     logDesktopTts(
                         "pdf_chunk_start scope=${readScope.name} index=${index + 1}/${ttsChunks.size} " +
                             "page=${chunk.pageIndex + 1} offsets=${chunk.startOffset}..${chunk.endOffset} chars=${chunk.text.length}"
@@ -1650,25 +1682,50 @@ internal fun PdfReaderScreen(
             }.onFailure { error ->
                 logDesktopTts("pdf_sequence_failed error=\"${error.desktopTtsSummary()}\"")
                 if (error !is kotlinx.coroutines.CancellationException && error.message != noTextMessage) error.printStackTrace()
-                pdfExtrasState = if (error is kotlinx.coroutines.CancellationException) {
-                    pdfExtrasState.copy(
-                        cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_stopped", "Stopped"))
-                    )
-                } else {
-                    onPaidFeatureError(error.message)
-                    pdfExtrasState.copy(
-                        cloudTts = pdfCloudTtsStoppedState(
-                            errorMessage = error.message ?: pdfString("desktop_cloud_tts_failed", "Cloud TTS failed.")
+                updatePdfTtsSession { extras ->
+                    showPdfCloudTtsSettings = false
+                    if (error is kotlinx.coroutines.CancellationException) {
+                        extras.copy(
+                            cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_stopped", "Stopped"))
                         )
-                    )
+                    } else {
+                        onPaidFeatureError(error.message)
+                        extras.copy(
+                            cloudTts = pdfCloudTtsStoppedState(
+                                errorMessage = error.message ?: pdfString("desktop_cloud_tts_failed", "Cloud TTS failed.")
+                            )
+                        )
+                    }
                 }
             }.onSuccess {
                 logDesktopTts("pdf_sequence_success chunks=$completedChunkCount")
-                pdfExtrasState = pdfExtrasState.copy(
-                    cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_finished", "Finished"))
-                )
+                showPdfCloudTtsSettings = false
+                updatePdfTtsSession { extras ->
+                    extras.copy(
+                        cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_finished", "Finished"))
+                    )
+                }
             }
         }
+    }
+
+    fun skipPdfCloudTtsChunk(delta: Int) {
+        val progress = pdfExtrasState.cloudTts.progress
+        if (progress.chunks.isEmpty()) return
+        val currentIndex = progress.currentChunkIndex.takeIf { it >= 0 } ?: return
+        val targetIndex = (currentIndex + delta).coerceIn(0, progress.chunks.lastIndex)
+        if (targetIndex == currentIndex) return
+        startPdfCloudTts(
+            readScope = progress.scope,
+            startChunkIndex = targetIndex,
+            chunksOverride = progress.chunks,
+            restartActive = true
+        )
+    }
+
+    fun locatePdfCloudTtsChunk() {
+        val chunk = pdfExtrasState.cloudTts.progress.currentChunk ?: return
+        goToPage(chunk.pageIndex, recordJump = false)
     }
 
     fun togglePdfCloudTts(text: String) {
@@ -1720,59 +1777,10 @@ internal fun PdfReaderScreen(
             )
             return
         }
-        pdfTtsJob = null
-        pdfExtrasState = pdfExtrasState.copy(
-            cloudTts = pdfExtrasState.cloudTts.copy(cacheSummary = currentPdfTtsCacheSummary())
+        startPdfCloudTts(
+            readScope = ReaderTtsReadScope.PAGE,
+            chunksOverride = selectionChunks
         )
-        pdfTtsJob = pdfScope.launch {
-            val initialProgress = ReaderTtsProgress(
-                sessionId = System.currentTimeMillis(),
-                scope = ReaderTtsReadScope.PAGE,
-                chunks = selectionChunks,
-                currentChunkIndex = -1
-            )
-            runCatching {
-                pdfExtrasState = pdfExtrasState.copy(
-                    cloudTts = ReaderCloudTtsState(
-                        isAvailable = true,
-                        isLoading = true,
-                        statusMessage = pdfString("desktop_preparing_selection", "Preparing selection"),
-                        progress = initialProgress,
-                        cacheSummary = currentPdfTtsCacheSummary()
-                    )
-                )
-                ttsAdapter.speakChunks(document.title, ReaderTtsReadScope.PAGE, selectionChunks) { index ->
-                    val progress = initialProgress.copy(currentChunkIndex = index)
-                    pdfExtrasState = pdfExtrasState.copy(
-                        cloudTts = ReaderCloudTtsState(
-                            isAvailable = true,
-                            isPlaying = true,
-                            statusMessage = progress.currentPositionLabel ?: pdfString("label_reading", "Reading"),
-                            progress = progress,
-                            cacheSummary = currentPdfTtsCacheSummary()
-                        )
-                    )
-                }
-            }.onFailure { error ->
-                logDesktopTts("pdf_job_failed error=\"${error.desktopTtsSummary()}\"")
-                if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
-                pdfExtrasState = pdfExtrasState.copy(
-                    cloudTts = if (error is kotlinx.coroutines.CancellationException) {
-                        pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_stopped", "Stopped"))
-                    } else {
-                        onPaidFeatureError(error.message)
-                        pdfCloudTtsStoppedState(
-                            errorMessage = error.message ?: pdfString("desktop_cloud_tts_failed", "Cloud TTS failed.")
-                        )
-                    }
-                )
-            }.onSuccess {
-                logDesktopTts("pdf_job_success")
-                pdfExtrasState = pdfExtrasState.copy(
-                    cloudTts = pdfCloudTtsStoppedState(statusMessage = pdfString("desktop_finished", "Finished"))
-                )
-            }
-        }
     }
 
     fun updateAnnotation(annotation: SharedPdfAnnotation) {
@@ -2166,7 +2174,7 @@ internal fun PdfReaderScreen(
         errorMessage = renderError,
         extrasState = pdfExtrasState,
         aiAvailable = featurePolicy.aiAndCloud && aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
-        cloudTtsAvailable = featurePolicy.aiAndCloud && aiByokSettings.sanitized().isCloudTtsAvailable,
+        cloudTtsAvailable = cloudTtsControlsAvailable && aiByokSettings.sanitized().isCloudTtsAvailable,
         externalLookupAvailable = featurePolicy.externalLookup
     )
 
@@ -2327,7 +2335,7 @@ internal fun PdfReaderScreen(
                 pdfExtrasState = pdfExtrasState,
                 aiByokSettings = aiByokSettings,
                 externalLookupAvailable = featurePolicy.externalLookup,
-                cloudTtsFeatureAvailable = featurePolicy.aiAndCloud,
+                cloudTtsFeatureAvailable = cloudTtsControlsAvailable,
                 ttsReplacementPreferences = ttsReplacementPreferences,
                 pageText = { currentPdfPageText() },
                 onDisplayModeSelected = { mode ->
@@ -2404,11 +2412,12 @@ internal fun PdfReaderScreen(
                 onJumpForward = ::goForwardInJumpHistory,
                 onClearJumpHistory = { jumpHistory = jumpHistory.clear() },
                 extraContent = {
-                    if (featurePolicy.aiAndCloud) {
+                    if (cloudTtsControlsAvailable) {
+                        val ttsControls = readerCloudTtsControlsModel(pdfExtrasState.cloudTts)
                         val ttsActive = pdfExtrasState.cloudTts.isLoading ||
                             pdfExtrasState.cloudTts.isPlaying ||
                             pdfExtrasState.cloudTts.isPaused
-                        if (showPdfCloudTtsSettings) {
+                        if (ttsActive && showPdfCloudTtsSettings) {
                             DesktopCloudTtsSettingsOverlay(
                                 settings = aiByokSettings,
                                 isTtsActive = ttsActive,
@@ -2425,16 +2434,23 @@ internal fun PdfReaderScreen(
                                 }
                             )
                         }
-                        DesktopCloudTtsChromeControls(
-                            settings = aiByokSettings,
-                            cloudTts = pdfExtrasState.cloudTts,
-                            credits = credits,
-                            showCredits = showPaidCredits,
-                            onRead = { startPdfCloudTts(ReaderTtsReadScope.BOOK) },
-                            onPauseResume = ::pauseResumePdfCloudTts,
-                            onStop = ::stopPdfCloudTts,
-                            onOpenSettings = { showPdfCloudTtsSettings = !showPdfCloudTtsSettings }
-                        )
+                        if (ttsControls.isVisible) {
+                            SharedReaderTtsOverlayControls(
+                                settings = aiByokSettings,
+                                cloudTts = pdfExtrasState.cloudTts,
+                                credits = credits,
+                                showCredits = showPaidCredits,
+                                isCollapsed = isPdfTtsOverlayCollapsed,
+                                onCollapseChange = { isPdfTtsOverlayCollapsed = it },
+                                onPauseResume = ::pauseResumePdfCloudTts,
+                                onSkipPrevious = { skipPdfCloudTtsChunk(-1) },
+                                onSkipNext = { skipPdfCloudTtsChunk(1) },
+                                onLocateCurrentChunk = ::locatePdfCloudTtsChunk,
+                                onOpenSettings = { showPdfCloudTtsSettings = !showPdfCloudTtsSettings },
+                                onClose = ::stopPdfCloudTts,
+                                modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp, bottom = 4.dp)
+                            )
+                        }
                     }
                 }
             )
@@ -2457,11 +2473,12 @@ internal fun PdfReaderScreen(
                 onJumpForward = ::goForwardInJumpHistory,
                 onClearJumpHistory = { jumpHistory = jumpHistory.clear() },
                 extraContent = {
-                    if (featurePolicy.aiAndCloud) {
+                    if (cloudTtsControlsAvailable) {
+                        val ttsControls = readerCloudTtsControlsModel(pdfExtrasState.cloudTts)
                         val ttsActive = pdfExtrasState.cloudTts.isLoading ||
                             pdfExtrasState.cloudTts.isPlaying ||
                             pdfExtrasState.cloudTts.isPaused
-                        if (showPdfCloudTtsSettings) {
+                        if (ttsActive && showPdfCloudTtsSettings) {
                             DesktopCloudTtsSettingsOverlay(
                                 settings = aiByokSettings,
                                 isTtsActive = ttsActive,
@@ -2478,16 +2495,23 @@ internal fun PdfReaderScreen(
                                 }
                             )
                         }
-                        DesktopCloudTtsChromeControls(
-                            settings = aiByokSettings,
-                            cloudTts = pdfExtrasState.cloudTts,
-                            credits = credits,
-                            showCredits = showPaidCredits,
-                            onRead = { startPdfCloudTts(ReaderTtsReadScope.BOOK) },
-                            onPauseResume = ::pauseResumePdfCloudTts,
-                            onStop = ::stopPdfCloudTts,
-                            onOpenSettings = { showPdfCloudTtsSettings = !showPdfCloudTtsSettings }
-                        )
+                        if (ttsControls.isVisible) {
+                            SharedReaderTtsOverlayControls(
+                                settings = aiByokSettings,
+                                cloudTts = pdfExtrasState.cloudTts,
+                                credits = credits,
+                                showCredits = showPaidCredits,
+                                isCollapsed = isPdfTtsOverlayCollapsed,
+                                onCollapseChange = { isPdfTtsOverlayCollapsed = it },
+                                onPauseResume = ::pauseResumePdfCloudTts,
+                                onSkipPrevious = { skipPdfCloudTtsChunk(-1) },
+                                onSkipNext = { skipPdfCloudTtsChunk(1) },
+                                onLocateCurrentChunk = ::locatePdfCloudTtsChunk,
+                                onOpenSettings = { showPdfCloudTtsSettings = !showPdfCloudTtsSettings },
+                                onClose = ::stopPdfCloudTts,
+                                modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp, bottom = 4.dp)
+                            )
+                        }
                     }
                 }
             )
@@ -2576,7 +2600,7 @@ internal fun PdfReaderScreen(
                                 richTextController = richTextController,
                                 isRichTextMode = isRichTextMode,
                                 readerAiFeaturesAvailable = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
-                                cloudTtsAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
+                                cloudTtsAvailable = cloudTtsControlsAvailable && aiByokSettings.sanitized().isCloudTtsAvailable,
                                 externalLookupAvailable = featurePolicy.externalLookup,
                                 themeStyle = pdfThemeStyle,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
@@ -2680,7 +2704,7 @@ internal fun PdfReaderScreen(
                                     richTextController = richTextController,
                                     isRichTextMode = isRichTextMode,
                                     readerAiFeaturesAvailable = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
-                                    cloudTtsAvailable = aiByokSettings.sanitized().isCloudTtsAvailable,
+                                    cloudTtsAvailable = cloudTtsControlsAvailable && aiByokSettings.sanitized().isCloudTtsAvailable,
                                     externalLookupAvailable = featurePolicy.externalLookup,
                                     themeStyle = pdfThemeStyle,
                                     shouldRender = true,
@@ -3381,7 +3405,7 @@ internal fun PdfReaderScreen(
                                     clearSelection()
                                 },
                                 showDefine = aiByokSettings.sanitized().areReaderAiFeaturesAvailable,
-                                showSpeak = aiByokSettings.sanitized().isCloudTtsAvailable,
+                                showSpeak = cloudTtsControlsAvailable && aiByokSettings.sanitized().isCloudTtsAvailable,
                                 showSearch = featurePolicy.externalLookup,
                                 onClear = ::clearSelection
                             )

@@ -3,6 +3,7 @@ package com.aryan.reader.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -87,6 +88,7 @@ import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
 import com.aryan.reader.shared.reader.SharedEpubMetadataUpdate
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
+import com.aryan.reader.shared.readerCloudTtsControlsModel
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
@@ -103,6 +105,7 @@ import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedOpdsScreen
 import com.aryan.reader.shared.ui.SharedReaderModalOwnerWindowProvider
+import com.aryan.reader.shared.ui.SharedReaderTtsOverlayControls
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
@@ -207,6 +210,14 @@ internal fun EpistemeDesktopApp(
     var aiByokSettings by remember {
         mutableStateOf(aiByokStore.load())
     }
+    val sanitizedAiByokSettings = aiByokSettings.sanitized()
+    val desktopByokCloudTtsAvailable = featurePolicy.aiAndCloud &&
+        featurePolicy.networkAccess &&
+        sanitizedAiByokSettings.isByokCloudTtsAvailable
+    val desktopCreditCloudTtsControlsAvailable =
+        desktopBuildProfile.creditBackedCloudTtsControlsAvailable && desktopCloudConfig.isTtsWorkerConfigured
+    val desktopCloudTtsControlsAvailable = desktopByokCloudTtsAvailable || desktopCreditCloudTtsControlsAvailable
+    val desktopCloudTtsUsesCredits = desktopCreditCloudTtsControlsAvailable && !desktopByokCloudTtsAvailable
     val initialLibrarySnapshot = remember { libraryDatabase.load().withDesktopDefaults() }
     val scope = rememberCoroutineScope()
     var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
@@ -249,18 +260,23 @@ internal fun EpistemeDesktopApp(
     var accountRefreshRequestCount by remember { mutableStateOf(0) }
     fun effectiveAiSettings(): ReaderAiByokSettings {
         val hidden = aiByokSettings.hideReaderAiFeatures
+        val sanitized = aiByokSettings.sanitized()
+        val byokCloudTtsAvailable = featurePolicy.aiAndCloud &&
+            featurePolicy.networkAccess &&
+            sanitized.isByokCloudTtsAvailable
         return if (desktopBuildProfile.byokAiAvailable) {
             aiByokSettings.withDesktopFeaturePolicy(featurePolicy)
         } else {
             ReaderAiByokSettings(
+                geminiKey = if (featurePolicy.aiAndCloud && featurePolicy.networkAccess) sanitized.geminiKey else "",
                 hideReaderAiFeatures = hidden,
-                ttsSpeakerId = aiByokSettings.sanitized().ttsSpeakerId,
+                ttsModel = if (featurePolicy.aiAndCloud && featurePolicy.networkAccess) sanitized.ttsModel else "",
+                ttsSpeakerId = sanitized.ttsSpeakerId,
                 serverBackedReaderAiFeatures = featurePolicy.aiAndCloud && featurePolicy.networkAccess,
-                serverBackedCloudTts = featurePolicy.aiAndCloud &&
-                    featurePolicy.networkAccess &&
+                serverBackedCloudTts = !byokCloudTtsAvailable &&
+                    desktopCreditCloudTtsControlsAvailable &&
                     state.currentUser != null &&
-                    state.credits > 0 &&
-                    desktopCloudConfig.isTtsWorkerConfigured
+                    state.credits > 0
             )
         }
     }
@@ -292,7 +308,7 @@ internal fun EpistemeDesktopApp(
             networkAccess = { featurePolicy.networkAccess },
             workerUrlProvider = { desktopCloudConfig.ttsWorkerUrl },
             authTokenProvider = { desktopAuthRepository.freshIdToken() },
-            useWorkerProvider = { !desktopBuildProfile.byokAiAvailable },
+            useWorkerProvider = { true },
             onWorkerUsageCompleted = {
                 scope.launch { accountRefreshRequestCount++ }
                 Unit
@@ -955,10 +971,15 @@ internal fun EpistemeDesktopApp(
     )
 
     fun cloudTtsUnavailableMessage(): String {
-        return if (desktopBuildProfile.byokAiAvailable) {
+        return if (!featurePolicy.aiAndCloud || !featurePolicy.networkAccess) {
             desktopString(
-                "desktop_cloud_tts_needs_gemini_key_desc",
-                "Add a Gemini key and select Gemini cloud TTS in AI keys and models."
+                "desktop_cloud_tts_unavailable",
+                "Cloud TTS unavailable"
+            )
+        } else if (!desktopByokCloudTtsAvailable && !desktopCreditCloudTtsControlsAvailable) {
+            desktopString(
+                "desktop_cloud_tts_not_configured_desc",
+                "Cloud TTS is not configured for this desktop build."
             )
         } else if (state.currentUser == null) {
             desktopString("desktop_cloud_tts_sign_in_required_desc", "Sign in with Google to use cloud TTS.")
@@ -1037,8 +1058,14 @@ internal fun EpistemeDesktopApp(
     }
 
     fun desktopFeatureNoticeForCloudTts(): DesktopFeatureNotice? {
-        if (desktopBuildProfile.byokAiAvailable) return null
-        if (!featurePolicy.networkAccess || !desktopCloudConfig.isTtsWorkerConfigured) {
+        if (!featurePolicy.aiAndCloud || !featurePolicy.networkAccess) {
+            return desktopFeatureUnavailableNotice(
+                messageKey = "desktop_cloud_tts_not_configured_desc",
+                messageFallback = "Cloud TTS is not configured for this desktop build."
+            )
+        }
+        if (desktopByokCloudTtsAvailable) return null
+        if (!desktopCreditCloudTtsControlsAvailable) {
             return desktopFeatureUnavailableNotice(
                 messageKey = "desktop_cloud_tts_not_configured_desc",
                 messageFallback = "Cloud TTS is not configured for this desktop build."
@@ -1495,6 +1522,7 @@ internal fun EpistemeDesktopApp(
                     window.copy(
                         content = content.copy(
                             ttsJob = null,
+                            showCloudTtsSettings = false,
                             extrasState = content.extrasState.copy(
                                 cloudTts = readerCloudTtsStoppedState(
                                     content,
@@ -1570,12 +1598,22 @@ internal fun EpistemeDesktopApp(
         }
     }
 
-    fun startReaderCloudTts(windowId: String, readScope: ReaderTtsReadScope, chunks: List<ReaderTtsChunk>) {
+    fun startReaderCloudTts(
+        windowId: String,
+        readScope: ReaderTtsReadScope,
+        chunks: List<ReaderTtsChunk>,
+        startChunkIndex: Int = 0,
+        restartActive: Boolean = false,
+        applyReplacements: Boolean = true
+    ) {
         val content = textReaderWindowContent(windowId) ?: return
         val replacementBookId = content.book.id.ifBlank { content.session.reader.book.title }
-        val ttsChunks = chunks
-            .filter { it.text.isNotBlank() }
-            .withTtsReplacements(state.readerTtsReplacementPreferences, replacementBookId)
+        val sourceChunks = chunks.filter { it.text.isNotBlank() }
+        val ttsChunks = if (applyReplacements) {
+            sourceChunks.withTtsReplacements(state.readerTtsReplacementPreferences, replacementBookId)
+        } else {
+            sourceChunks
+        }
         val settings = aiByokSettings.sanitized()
         val currentCloudTts = content.extrasState.cloudTts
         logDesktopTts(
@@ -1584,9 +1622,13 @@ internal fun EpistemeDesktopApp(
                 "keyPresent=${settings.geminiKey.isNotBlank()} ttsModel=\"${settings.ttsModel.desktopTtsPreview()}\" " +
                 "available=${desktopTtsAdapter.isAvailable}"
         )
-        if (currentCloudTts.isPlaying || currentCloudTts.isLoading || currentCloudTts.isPaused) {
+        val ttsActive = currentCloudTts.isPlaying || currentCloudTts.isLoading || currentCloudTts.isPaused
+        if (ttsActive && !restartActive) {
             stopReaderCloudTts(windowId)
             return
+        }
+        if (ttsActive) {
+            content.ttsJob?.cancel()
         }
         if (ttsChunks.isEmpty()) {
             logDesktopTts("reader_sequence_ignored reason=blank_text scope=${readScope.name}")
@@ -1638,11 +1680,13 @@ internal fun EpistemeDesktopApp(
             }
         }
         val ttsSessionId = System.currentTimeMillis()
+        val boundedStartChunkIndex = startChunkIndex.coerceIn(0, ttsChunks.lastIndex)
+        val playbackChunks = ttsChunks.drop(boundedStartChunkIndex)
         val initialProgress = ReaderTtsProgress(
             sessionId = ttsSessionId,
             scope = readScope,
             chunks = ttsChunks,
-            currentChunkIndex = -1
+            currentChunkIndex = boundedStartChunkIndex - 1
         )
         updateTextReaderWindow(windowId) { latest ->
             latest.copy(
@@ -1661,11 +1705,24 @@ internal fun EpistemeDesktopApp(
                 )
             )
         }
+        fun updateTextReaderTtsSession(transform: (DesktopReaderWindowContent.Text) -> DesktopReaderWindowContent.Text) {
+            updateTextReaderWindow(windowId) { latest ->
+                if (latest.extrasState.cloudTts.progress.sessionId == ttsSessionId) {
+                    transform(latest)
+                } else {
+                    latest
+                }
+            }
+        }
         val ttsJob = scope.launch {
             runCatching {
-                logDesktopTts("reader_sequence_start scope=${readScope.name} chunks=${ttsChunks.size}")
-                desktopTtsAdapter.speakChunks(content.session.reader.book.title, readScope, ttsChunks) { index ->
+                logDesktopTts(
+                    "reader_sequence_start scope=${readScope.name} chunks=${ttsChunks.size} " +
+                        "startChunk=${boundedStartChunkIndex + 1}"
+                )
+                desktopTtsAdapter.speakChunks(content.session.reader.book.title, readScope, playbackChunks) { relativeIndex ->
                     if (!isActive) throw kotlinx.coroutines.CancellationException("Reader cloud TTS stopped")
+                    val index = boundedStartChunkIndex + relativeIndex
                     val chunk = ttsChunks[index]
                     val progress = initialProgress.copy(currentChunkIndex = index)
                     val latest = textReaderWindowContent(windowId)
@@ -1680,7 +1737,7 @@ internal fun EpistemeDesktopApp(
                             session = updatedSession
                         )
                     }
-                    updateTextReaderWindow(windowId) { current ->
+                    updateTextReaderTtsSession { current ->
                         current.copy(
                             extrasState = current.extrasState.copy(
                                 cloudTts = ReaderCloudTtsState(
@@ -1704,10 +1761,11 @@ internal fun EpistemeDesktopApp(
             }.onFailure { error ->
                 logDesktopTts("reader_sequence_failed error=\"${error.desktopTtsSummary()}\"")
                 if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
-                updateTextReaderWindow(windowId) { latest ->
+                updateTextReaderTtsSession { latest ->
                     if (error is kotlinx.coroutines.CancellationException) {
                         latest.copy(
                             ttsJob = null,
+                            showCloudTtsSettings = false,
                             extrasState = latest.extrasState.copy(
                                 cloudTts = readerCloudTtsStoppedState(
                                     latest,
@@ -1719,6 +1777,7 @@ internal fun EpistemeDesktopApp(
                         desktopFeatureNoticeForError(error.message)?.let { desktopFeatureNotice = it }
                         latest.copy(
                             ttsJob = null,
+                            showCloudTtsSettings = false,
                             extrasState = latest.extrasState.copy(
                                 cloudTts = readerCloudTtsStoppedState(
                                     latest,
@@ -1731,9 +1790,10 @@ internal fun EpistemeDesktopApp(
                 }
             }.onSuccess {
                 logDesktopTts("reader_sequence_success chunks=${ttsChunks.size}")
-                updateTextReaderWindow(windowId) { latest ->
+                updateTextReaderTtsSession { latest ->
                     latest.copy(
                         ttsJob = null,
+                        showCloudTtsSettings = false,
                         extrasState = latest.extrasState.copy(
                             cloudTts = readerCloudTtsStoppedState(
                                 latest,
@@ -1745,6 +1805,36 @@ internal fun EpistemeDesktopApp(
             }
         }
         updateTextReaderWindow(windowId) { latest -> latest.copy(ttsJob = ttsJob) }
+    }
+
+    fun skipReaderCloudTtsChunk(windowId: String, delta: Int) {
+        val content = textReaderWindowContent(windowId) ?: return
+        val progress = content.extrasState.cloudTts.progress
+        if (progress.chunks.isEmpty()) return
+        val currentIndex = progress.currentChunkIndex.takeIf { it >= 0 } ?: return
+        val targetIndex = (currentIndex + delta).coerceIn(0, progress.chunks.lastIndex)
+        if (targetIndex == currentIndex) return
+        startReaderCloudTts(
+            windowId = windowId,
+            readScope = progress.scope,
+            chunks = progress.chunks,
+            startChunkIndex = targetIndex,
+            restartActive = true,
+            applyReplacements = false
+        )
+    }
+
+    fun locateReaderCloudTtsChunk(windowId: String) {
+        val content = textReaderWindowContent(windowId) ?: return
+        val chunk = content.extrasState.cloudTts.progress.currentChunk ?: return
+        val updatedSession = readerEngine.goToPage(content.session, chunk.pageIndex)
+        updateTextReaderWindow(windowId) { current -> current.copy(session = updatedSession) }
+        updateBookReadingState(
+            bookId = content.book.id,
+            pageIndex = updatedSession.reader.currentPageIndex,
+            progress = updatedSession.reader.progress,
+            session = updatedSession
+        )
     }
 
     fun toggleReaderCloudTts(windowId: String, text: String) {
@@ -3382,9 +3472,10 @@ internal fun EpistemeDesktopApp(
                                         },
                                         summaryCacheStore = desktopSummaryCacheStore,
                                         credits = state.credits,
-                                        showPaidCredits = !desktopBuildProfile.byokAiAvailable,
+                                        showPaidCredits = desktopCloudTtsUsesCredits,
                                         onAiByokSettingsChange = ::updateAiByokSettings,
                                         featurePolicy = featurePolicy,
+                                        cloudTtsControlsAvailable = desktopCloudTtsControlsAvailable,
                                         onReaderAiEntitlementRequired = { feature, text ->
                                             desktopFeatureNoticeForReaderAi(feature, text)?.let { notice ->
                                                 desktopFeatureNotice = notice
@@ -3457,7 +3548,7 @@ internal fun EpistemeDesktopApp(
                                         readerExtrasState = content.extrasState,
                                         aiByokSettings = effectiveAiSettings(),
                                         externalLookupAvailable = featurePolicy.externalLookup,
-                                        cloudTtsControlsAvailable = featurePolicy.aiAndCloud,
+                                        cloudTtsControlsAvailable = desktopCloudTtsControlsAvailable,
                                         onExternalLookup = ::openReaderExternalLookup,
                                         onAiAction = { feature, text ->
                                             runReaderAiAction(readerWindow.id, feature, text)
@@ -3490,16 +3581,18 @@ internal fun EpistemeDesktopApp(
                                         readerCustomTextureIds = readerCustomTextureIds,
                                         onImportReaderTexture = ::importDesktopReaderTexture,
                                         bottomChromeExtraContent = {
-                                            if (featurePolicy.aiAndCloud) {
+                                            if (desktopCloudTtsControlsAvailable) {
                                                 val settings = effectiveAiSettings()
+                                                var isTtsOverlayCollapsed by remember(readerWindow.id) { mutableStateOf(false) }
+                                                val ttsControls = readerCloudTtsControlsModel(content.extrasState.cloudTts)
                                                 val ttsActive = content.extrasState.cloudTts.isLoading ||
                                                     content.extrasState.cloudTts.isPlaying ||
                                                     content.extrasState.cloudTts.isPaused
-                                                if (content.showCloudTtsSettings) {
+                                                if (ttsActive && content.showCloudTtsSettings) {
                                                     DesktopCloudTtsSettingsOverlay(
                                                         settings = settings,
                                                         isTtsActive = ttsActive,
-                                                        showCredits = !desktopBuildProfile.byokAiAvailable,
+                                                        showCredits = desktopCloudTtsUsesCredits,
                                                         credits = state.credits,
                                                         cacheSummary = content.extrasState.cloudTts.cacheSummary,
                                                         onClearCache = { clearReaderCloudTtsCache(readerWindow.id) },
@@ -3512,26 +3605,27 @@ internal fun EpistemeDesktopApp(
                                                         }
                                                     )
                                                 }
-                                                DesktopCloudTtsChromeControls(
-                                                    settings = settings,
-                                                    cloudTts = content.extrasState.cloudTts,
-                                                    credits = state.credits,
-                                                    showCredits = !desktopBuildProfile.byokAiAvailable,
-                                                    onRead = {
-                                                        startReaderCloudTts(
-                                                            readerWindow.id,
-                                                            ReaderTtsReadScope.BOOK,
-                                                            ReaderTtsPlanner.chunksFromCurrentLocation(content.session)
-                                                        )
-                                                    },
-                                                    onPauseResume = { pauseResumeReaderCloudTts(readerWindow.id) },
-                                                    onStop = { stopReaderCloudTts(readerWindow.id) },
-                                                    onOpenSettings = {
-                                                        updateTextReaderWindow(readerWindow.id) { current ->
-                                                            current.copy(showCloudTtsSettings = !current.showCloudTtsSettings)
-                                                        }
-                                                    }
-                                                )
+                                                if (ttsControls.isVisible) {
+                                                    SharedReaderTtsOverlayControls(
+                                                        settings = settings,
+                                                        cloudTts = content.extrasState.cloudTts,
+                                                        credits = state.credits,
+                                                        showCredits = desktopCloudTtsUsesCredits,
+                                                        isCollapsed = isTtsOverlayCollapsed,
+                                                        onCollapseChange = { isTtsOverlayCollapsed = it },
+                                                        onPauseResume = { pauseResumeReaderCloudTts(readerWindow.id) },
+                                                        onSkipPrevious = { skipReaderCloudTtsChunk(readerWindow.id, -1) },
+                                                        onSkipNext = { skipReaderCloudTtsChunk(readerWindow.id, 1) },
+                                                        onLocateCurrentChunk = { locateReaderCloudTtsChunk(readerWindow.id) },
+                                                        onOpenSettings = {
+                                                            updateTextReaderWindow(readerWindow.id) { current ->
+                                                                current.copy(showCloudTtsSettings = !current.showCloudTtsSettings)
+                                                            }
+                                                        },
+                                                        onClose = { stopReaderCloudTts(readerWindow.id) },
+                                                        modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp, bottom = 4.dp)
+                                                    )
+                                                }
                                             }
                                         },
                                         webViewRuntimeState = webViewRuntimeState,
@@ -3568,7 +3662,7 @@ internal fun EpistemeDesktopApp(
                                                 }
                                             },
                                             credits = state.credits,
-                                            showCredits = !desktopBuildProfile.byokAiAvailable
+                                            showCredits = desktopCloudTtsUsesCredits
                                         )
                                     }
                                 }

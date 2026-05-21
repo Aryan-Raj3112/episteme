@@ -625,6 +625,31 @@ data class ReaderCloudTtsState(
     val cacheSummary: ReaderTtsCacheSummary = ReaderTtsCacheSummary()
 )
 
+data class ReaderCloudTtsControlsModel(
+    val isVisible: Boolean,
+    val canPauseResume: Boolean,
+    val canSkipPrevious: Boolean,
+    val canSkipNext: Boolean,
+    val canLocateCurrentChunk: Boolean
+)
+
+fun readerCloudTtsControlsModel(cloudTts: ReaderCloudTtsState): ReaderCloudTtsControlsModel {
+    val progress = cloudTts.progress
+    val visible = cloudTts.isLoading || cloudTts.isPlaying || cloudTts.isPaused
+    val hasCurrentChunk = progress.currentChunk != null
+    return ReaderCloudTtsControlsModel(
+        isVisible = visible,
+        canPauseResume = cloudTts.isPlaying || cloudTts.isPaused,
+        canSkipPrevious = !cloudTts.isLoading &&
+            progress.currentChunkIndex > 0 &&
+            progress.chunks.isNotEmpty(),
+        canSkipNext = !cloudTts.isLoading &&
+            progress.currentChunkIndex >= 0 &&
+            progress.currentChunkIndex < progress.chunks.lastIndex,
+        canLocateCurrentChunk = hasCurrentChunk
+    )
+}
+
 data class ReaderAiResultState(
     val title: String? = null,
     val text: String = "",

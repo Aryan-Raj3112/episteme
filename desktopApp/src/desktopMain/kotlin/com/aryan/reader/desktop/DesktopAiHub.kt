@@ -15,8 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -43,12 +41,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.ReaderAiByokSettings
-import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderCloudTtsVoices
 import com.aryan.reader.shared.ReaderTtsCacheSummary
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
-import com.aryan.reader.shared.readerCloudTtsVoiceById
 import com.aryan.reader.shared.ui.SharedMarkdownText
 import com.aryan.reader.shared.ui.readerString
 
@@ -342,76 +338,6 @@ private fun DesktopSummaryCachePanel(
             modifier = Modifier.align(Alignment.End)
         ) {
             Text(readerString("clear_all", "Clear all"), color = MaterialTheme.colorScheme.error)
-        }
-    }
-}
-
-@Composable
-internal fun DesktopCloudTtsChromeControls(
-    settings: ReaderAiByokSettings,
-    cloudTts: ReaderCloudTtsState,
-    credits: Int,
-    showCredits: Boolean,
-    onRead: () -> Unit,
-    onPauseResume: () -> Unit,
-    onStop: () -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    val sanitized = settings.sanitized()
-    val voice = readerCloudTtsVoiceById(sanitized.ttsSpeakerId)
-    val ttsBusy = cloudTts.isLoading || cloudTts.isPlaying || cloudTts.isPaused
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(8.dp),
-        tonalElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Default.VolumeUp, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    when {
-                        cloudTts.isLoading -> readerString("desktop_preparing_audio", "Preparing audio")
-                        cloudTts.isPaused -> readerString("desktop_paused", "Paused")
-                        cloudTts.isPlaying -> readerString("label_reading", "Reading")
-                        sanitized.isCloudTtsAvailable -> readerString("desktop_cloud_tts_ready", "Cloud TTS ready")
-                        else -> readerString("desktop_cloud_tts_unavailable", "Cloud TTS unavailable")
-                    },
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    cloudTts.errorMessage
-                        ?: cloudTts.progress.currentPositionLabel
-                        ?: cloudTts.statusMessage
-                        ?: voice?.let { "${it.name}: ${it.description}" }
-                        ?: "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (cloudTts.errorMessage != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (showCredits) {
-                AssistChip(onClick = {}, label = { Text(readerString("credits_count", "%1\$d credits", credits)) })
-            }
-            if (cloudTts.isPlaying || cloudTts.isPaused) {
-                TextButton(onClick = onPauseResume) {
-                    Text(if (cloudTts.isPaused) readerString("tooltip_tts_resume", "Resume") else readerString("tooltip_tts_pause", "Pause"))
-                }
-            }
-            TextButton(
-                enabled = sanitized.isCloudTtsAvailable || ttsBusy,
-                onClick = { if (ttsBusy) onStop() else onRead() }
-            ) {
-                Text(if (ttsBusy) readerString("action_stop", "Stop") else readerString("action_read", "Read"))
-            }
-            IconButton(onClick = onOpenSettings) {
-                Icon(Icons.Default.Settings, contentDescription = readerString("desktop_cloud_tts_settings", "Cloud TTS settings"))
-            }
         }
     }
 }

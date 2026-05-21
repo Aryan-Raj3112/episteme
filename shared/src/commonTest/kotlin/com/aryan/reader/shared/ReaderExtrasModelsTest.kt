@@ -113,6 +113,56 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `cloud tts overlay is visible only for active reader playback`() {
+        assertFalse(readerCloudTtsControlsModel(ReaderCloudTtsState(isAvailable = true)).isVisible)
+        assertTrue(readerCloudTtsControlsModel(ReaderCloudTtsState(isLoading = true)).isVisible)
+        assertTrue(readerCloudTtsControlsModel(ReaderCloudTtsState(isPlaying = true)).isVisible)
+        assertTrue(readerCloudTtsControlsModel(ReaderCloudTtsState(isPaused = true)).isVisible)
+    }
+
+    @Test
+    fun `cloud tts overlay exposes chunk navigation only when a chunk can be skipped`() {
+        val chunks = List(3) { index ->
+            ReaderTtsChunk(
+                index = index,
+                pageIndex = index,
+                chapterIndex = 0,
+                chapterTitle = "Chapter",
+                text = "Part ${index + 1}.",
+                startOffset = index * 10,
+                endOffset = index * 10 + 7
+            )
+        }
+
+        val first = readerCloudTtsControlsModel(
+            ReaderCloudTtsState(
+                isPlaying = true,
+                progress = ReaderTtsProgress(chunks = chunks, currentChunkIndex = 0)
+            )
+        )
+        val middle = readerCloudTtsControlsModel(
+            ReaderCloudTtsState(
+                isPlaying = true,
+                progress = ReaderTtsProgress(chunks = chunks, currentChunkIndex = 1)
+            )
+        )
+        val loading = readerCloudTtsControlsModel(
+            ReaderCloudTtsState(
+                isLoading = true,
+                progress = ReaderTtsProgress(chunks = chunks, currentChunkIndex = 1)
+            )
+        )
+
+        assertFalse(first.canSkipPrevious)
+        assertTrue(first.canSkipNext)
+        assertTrue(first.canLocateCurrentChunk)
+        assertTrue(middle.canSkipPrevious)
+        assertTrue(middle.canSkipNext)
+        assertFalse(loading.canSkipPrevious)
+        assertFalse(loading.canSkipNext)
+    }
+
+    @Test
     fun `hidden reader ai follows android availability logic`() {
         val visible = ReaderAiByokSettings(
             groqKey = "gsk_test",

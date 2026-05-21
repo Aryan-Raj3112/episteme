@@ -56,7 +56,7 @@ internal fun loadDesktopCloudConfig(): DesktopCloudConfig {
     val aiWorkerUrl = value("AI_WORKER_URL").ifBlank {
         "https://reader-ai.aryanrajttps.workers.dev"
     }
-    val ttsWorkerUrl = value("TTS_WORKER_URL").ifBlank { aiWorkerUrl }
+    val ttsWorkerUrl = value("TTS_WORKER_URL")
 
     return DesktopCloudConfig(
         aiWorkerUrl = aiWorkerUrl,
