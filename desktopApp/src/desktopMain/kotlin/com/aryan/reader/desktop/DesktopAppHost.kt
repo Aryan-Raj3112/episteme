@@ -200,24 +200,42 @@ internal fun configureComposeSwingInterop() {
 }
 
 @Composable
-private fun DesktopWindowStatePersistenceEffect(
+internal fun DesktopWindowStatePersistenceEffect(
     windowState: WindowState,
     store: DesktopWindowStateStore,
-    enabled: Boolean
+    enabled: Boolean,
+    transformSnapshot: (DesktopWindowStateSnapshot) -> DesktopWindowStateSnapshot? = { it },
+    onSnapshotSaved: (DesktopWindowStateSnapshot) -> Unit = {}
 ) {
     val persistenceEnabled by rememberUpdatedState(enabled)
+    val latestTransformSnapshot by rememberUpdatedState(transformSnapshot)
+    val latestOnSnapshotSaved by rememberUpdatedState(onSnapshotSaved)
     LaunchedEffect(windowState, store) {
         snapshotFlow { DesktopWindowStateSnapshot.fromWindowState(windowState) }
             .distinctUntilChanged()
             .collectLatest { snapshot ->
                 if (!persistenceEnabled || snapshot == null) return@collectLatest
+                val persistableSnapshot = latestTransformSnapshot(snapshot) ?: return@collectLatest
                 delay(DesktopWindowStatePersistDebounceMillis)
                 if (persistenceEnabled) {
                     withContext(Dispatchers.IO) {
-                        store.save(snapshot)
+                        store.save(persistableSnapshot)
                     }
+                    latestOnSnapshotSaved(persistableSnapshot)
                 }
             }
+    }
+    DisposableEffect(windowState, store) {
+        onDispose {
+            if (persistenceEnabled) {
+                DesktopWindowStateSnapshot.fromWindowState(windowState)
+                    ?.let(latestTransformSnapshot)
+                    ?.let { snapshot ->
+                        runCatching { store.save(snapshot) }
+                        latestOnSnapshotSaved(snapshot)
+                    }
+            }
+        }
     }
 }
 

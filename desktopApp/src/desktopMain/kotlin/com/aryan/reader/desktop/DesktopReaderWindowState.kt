@@ -1,5 +1,8 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.WindowPlacement
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderExtrasState
@@ -7,6 +10,25 @@ import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.reader.ReaderSessionState
 import kotlinx.coroutines.Job
+
+internal const val DesktopReaderWindowDefaultWidthDp = 1120f
+internal const val DesktopReaderWindowDefaultHeightDp = 760f
+internal val DesktopReaderWindowDefaultSize = DpSize(
+    DesktopReaderWindowDefaultWidthDp.dp,
+    DesktopReaderWindowDefaultHeightDp.dp
+)
+
+internal fun DesktopWindowStateSnapshot.toReaderWindowPlacement(): WindowPlacement {
+    return when (placement) {
+        DesktopSavedWindowPlacement.FULLSCREEN -> WindowPlacement.Floating
+        else -> toWindowPlacement()
+    }
+}
+
+internal fun DesktopWindowStateSnapshot.toPersistableReaderWindowSnapshot(): DesktopWindowStateSnapshot? {
+    if (placement == DesktopSavedWindowPlacement.FULLSCREEN) return null
+    return sanitized()
+}
 
 internal data class DesktopReaderWindowState(
     val id: String,

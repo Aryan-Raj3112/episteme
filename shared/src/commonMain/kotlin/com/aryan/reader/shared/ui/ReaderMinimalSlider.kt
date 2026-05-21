@@ -10,6 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -17,6 +18,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
@@ -35,6 +37,7 @@ fun ReaderMinimalSlider(
     thumbColor: Color? = null
 ) {
     var widthPx by remember { mutableFloatStateOf(0f) }
+    var dragValue by remember { mutableStateOf<Float?>(null) }
     val rangeStart = valueRange.start
     val rangeEnd = valueRange.endInclusive
 
@@ -45,22 +48,36 @@ fun ReaderMinimalSlider(
     }
 
     val inputModifier = if (enabled) {
-        Modifier.pointerInput(rangeStart, rangeEnd, widthPx) {
+        Modifier.pointerInput(rangeStart, rangeEnd) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
-                onValueChangeStarted?.invoke()
-                onValueChange(valueForOffset(down.position.x))
-                down.consume()
+                var gestureStarted = false
 
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull { it.id == down.id }
-                    if (change == null || !change.pressed) break
-                    onValueChange(valueForOffset(change.position.x))
-                    change.consume()
+                fun updateValue(offsetX: Float) {
+                    val nextValue = valueForOffset(offsetX)
+                    dragValue = nextValue
+                    onValueChange(nextValue)
                 }
 
-                onValueChangeFinished?.invoke()
+                try {
+                    onValueChangeStarted?.invoke()
+                    gestureStarted = true
+                    updateValue(down.position.x)
+                    down.consume()
+
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null || !change.pressed) break
+                        updateValue(change.position.x)
+                        change.consume()
+                    }
+                } finally {
+                    if (gestureStarted) {
+                        onValueChangeFinished?.invoke()
+                    }
+                    dragValue = null
+                }
             }
         }
     } else {
@@ -80,8 +97,9 @@ fun ReaderMinimalSlider(
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val range = rangeEnd - rangeStart
+            val displayValue = dragValue ?: value
             val fraction = if (range > 0f) {
-                ((value.coerceIn(rangeStart, rangeEnd) - rangeStart) / range).coerceIn(0f, 1f)
+                ((displayValue.coerceIn(rangeStart, rangeEnd) - rangeStart) / range).coerceIn(0f, 1f)
             } else {
                 0f
             }

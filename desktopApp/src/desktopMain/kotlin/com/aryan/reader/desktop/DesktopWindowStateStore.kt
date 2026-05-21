@@ -151,5 +151,9 @@ internal class DesktopWindowStateStore(
         fun defaultWindowStateFile(): File {
             return File(desktopUserConfigRoot(), "window_state.json")
         }
+
+        fun defaultReaderWindowStateFile(): File {
+            return File(desktopUserConfigRoot(), "reader_window_state.json")
+        }
     }
 }

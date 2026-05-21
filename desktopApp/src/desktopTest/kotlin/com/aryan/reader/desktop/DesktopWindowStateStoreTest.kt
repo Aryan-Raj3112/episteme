@@ -34,4 +34,10 @@ class DesktopWindowStateStoreTest {
         assertEquals(EpistemeDesktopWindowMinimumWidthPx.toFloat(), snapshot.widthDp)
         assertEquals(EpistemeDesktopWindowMinimumHeightPx.toFloat(), snapshot.heightDp)
     }
+
+    @Test
+    fun `reader window state uses a separate config file`() {
+        assertEquals("window_state.json", DesktopWindowStateStore.defaultWindowStateFile().name)
+        assertEquals("reader_window_state.json", DesktopWindowStateStore.defaultReaderWindowStateFile().name)
+    }
 }

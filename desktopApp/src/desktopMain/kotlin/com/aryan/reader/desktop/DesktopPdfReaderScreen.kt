@@ -1122,18 +1122,24 @@ internal fun PdfReaderScreen(
         if (pageScrubStartPage == null) {
             pageScrubStartPage = pdfState.pageIndex
         }
-        val targetPage = if (displayMode == PdfDisplayMode.PAGINATION) {
-            PdfSpreadLayout.normalizePageIndex(value.roundToInt(), document.pageCount, pdfReaderSettings)
-        } else {
-            value.roundToInt().coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
-        }
+        val targetPage = desktopPdfPageScrubTarget(
+            value = value,
+            pageCount = document.pageCount,
+            displayMode = displayMode,
+            settings = pdfReaderSettings
+        )
         pageScrubPreview = targetPage
-        goToPage(targetPage)
     }
 
     fun finishPdfPageScrub() {
         val startPage = pageScrubStartPage
-        val targetPage = pdfState.pageIndex
+        val targetPage = desktopPdfPageScrubCommitTarget(
+            previewPage = pageScrubPreview,
+            currentPage = pdfState.pageIndex,
+            pageCount = document.pageCount
+        )
+        pageScrubStartPage = null
+        pageScrubPreview = null
         if (startPage != null) {
             jumpHistory = jumpHistory.record(
                 currentPageIndex = startPage,
@@ -1141,8 +1147,7 @@ internal fun PdfReaderScreen(
                 pageCount = document.pageCount
             )
         }
-        pageScrubStartPage = null
-        pageScrubPreview = null
+        goToPage(targetPage)
     }
 
     fun previousPdfPageTarget(): Int {

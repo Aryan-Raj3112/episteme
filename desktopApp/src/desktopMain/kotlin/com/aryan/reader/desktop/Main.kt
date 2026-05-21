@@ -24,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
@@ -406,6 +405,12 @@ internal fun EpistemeDesktopApp(
     val desktopBookCloudSyncJobs = remember { mutableMapOf<String, Job>() }
     var initialDesktopCloudSyncDone by remember { mutableStateOf(false) }
     val readerWindowDefaults = remember(desktopBuildProfile) { epistemeDesktopWindowDefaults(desktopBuildProfile) }
+    val readerWindowStateStore = remember {
+        DesktopWindowStateStore(DesktopWindowStateStore.defaultReaderWindowStateFile())
+    }
+    var savedReaderWindowState by remember {
+        mutableStateOf(readerWindowStateStore.load()?.toPersistableReaderWindowSnapshot())
+    }
 
     fun projectState(
         next: SharedReaderScreenState,
@@ -484,6 +489,14 @@ internal fun EpistemeDesktopApp(
 
     fun textReaderWindowContent(windowId: String): DesktopReaderWindowContent.Text? {
         return readerWindows.firstOrNull { it.id == windowId }?.content as? DesktopReaderWindowContent.Text
+    }
+
+    fun saveReaderWindowStateSnapshot(snapshot: DesktopWindowStateSnapshot?) {
+        val persistable = snapshot?.toPersistableReaderWindowSnapshot() ?: return
+        savedReaderWindowState = persistable
+        scope.launch(Dispatchers.IO) {
+            runCatching { readerWindowStateStore.save(persistable) }
+        }
     }
 
     fun closeReaderWindow(windowId: String) {
@@ -3348,17 +3361,32 @@ internal fun EpistemeDesktopApp(
 
         readerWindows.forEach { readerWindow ->
             key(readerWindow.id) {
+                val restoredReaderWindowState = savedReaderWindowState
                 val windowState = rememberWindowState(
+                    placement = restoredReaderWindowState?.toReaderWindowPlacement() ?: WindowPlacement.Floating,
                     position = WindowPosition(Alignment.Center),
-                    size = DpSize(1120.dp, 760.dp)
+                    size = restoredReaderWindowState?.toWindowSize(DesktopReaderWindowDefaultSize)
+                        ?: DesktopReaderWindowDefaultSize
                 )
                 Window(
-                    onCloseRequest = { closeReaderWindow(readerWindow.id) },
+                    onCloseRequest = {
+                        if (!readerWindow.fullscreen) {
+                            saveReaderWindowStateSnapshot(DesktopWindowStateSnapshot.fromWindowState(windowState))
+                        }
+                        closeReaderWindow(readerWindow.id)
+                    },
                     title = desktopString("desktop_label_pair_format", "%1\$s - %2\$s", readerWindow.title, readerWindowDefaults.title),
                     state = windowState,
                     icon = painterResource(readerWindowDefaults.iconResourcePath)
                 ) {
                     val readerAwtWindow = this.window
+                    DesktopWindowStatePersistenceEffect(
+                        windowState = windowState,
+                        store = readerWindowStateStore,
+                        enabled = !readerWindow.fullscreen,
+                        transformSnapshot = { it.toPersistableReaderWindowSnapshot() },
+                        onSnapshotSaved = { savedReaderWindowState = it }
+                    )
                     DisposableEffect(readerAwtWindow, readerWindowDefaults.minimumSize) {
                         readerAwtWindow.minimumSize = readerWindowDefaults.minimumSize
                         onDispose {}
