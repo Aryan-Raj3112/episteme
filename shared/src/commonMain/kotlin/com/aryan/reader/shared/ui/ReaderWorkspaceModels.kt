@@ -39,7 +39,6 @@ enum class ReaderWorkspaceTopAction {
     APPEARANCE,
     READ_ALOUD,
     AI,
-    AUTO_SCROLL,
     TOOLS
 }
 
@@ -132,16 +131,20 @@ fun epubReaderWorkspaceModel(
         ReaderWorkspaceLeftSection.IMAGES
     )
     val inspectorSections = buildList {
-        if (preferences.isVisible(ReaderTool.THEME) || preferences.isVisible(ReaderTool.FORMAT)) {
+        if (
+            preferences.isVisible(ReaderTool.THEME) ||
+            preferences.isVisible(ReaderTool.FORMAT) ||
+            preferences.isVisible(ReaderTool.VISUAL_OPTIONS) ||
+            preferences.isVisible(ReaderTool.READING_MODE)
+        ) {
             add(ReaderWorkspaceInspectorSection.APPEARANCE)
         }
-        if (preferences.isVisible(ReaderTool.READING_MODE)) {
-            add(ReaderWorkspaceInspectorSection.TOOLS)
-        }
         if (
-            (aiAvailable && preferences.isVisible(ReaderTool.AI_FEATURES)) ||
-            (cloudTtsAvailable && preferences.isVisible(ReaderTool.TTS_CONTROLS)) ||
-            preferences.isVisible(ReaderTool.AUTO_SCROLL)
+            (cloudTtsAvailable && (
+                preferences.isVisible(ReaderTool.TTS_CONTROLS) ||
+                    preferences.isVisible(ReaderTool.TTS_SETTINGS)
+                )) ||
+            preferences.isVisible(ReaderTool.TTS_REPLACEMENTS)
         ) {
             add(ReaderWorkspaceInspectorSection.AI_TTS)
         }
@@ -154,7 +157,6 @@ fun epubReaderWorkspaceModel(
         if (ReaderWorkspaceInspectorSection.APPEARANCE in inspectorSections) add(ReaderWorkspaceTopAction.APPEARANCE)
         if (cloudTtsAvailable && preferences.isVisible(ReaderTool.TTS_CONTROLS)) add(ReaderWorkspaceTopAction.READ_ALOUD)
         if (aiAvailable && preferences.isVisible(ReaderTool.AI_FEATURES)) add(ReaderWorkspaceTopAction.AI)
-        if (preferences.isVisible(ReaderTool.AUTO_SCROLL)) add(ReaderWorkspaceTopAction.AUTO_SCROLL)
         if (inspectorSections.isNotEmpty()) add(ReaderWorkspaceTopAction.TOOLS)
     }.distinct()
     val bottomActions = buildList {
@@ -177,7 +179,7 @@ fun epubReaderWorkspaceModel(
             richTextEditing = false,
             loading = false,
             errorMessage = null,
-            autoScroll = extrasState.autoScroll,
+            autoScroll = ReaderAutoScrollState(),
             ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused
         )
     )
@@ -239,7 +241,6 @@ fun pdfReaderWorkspaceModel(
         add(ReaderWorkspaceTopAction.APPEARANCE)
         if (cloudTtsAvailable) add(ReaderWorkspaceTopAction.READ_ALOUD)
         if (aiAvailable) add(ReaderWorkspaceTopAction.AI)
-        add(ReaderWorkspaceTopAction.AUTO_SCROLL)
         add(ReaderWorkspaceTopAction.TOOLS)
     }
     return ReaderWorkspaceModel(
@@ -262,7 +263,7 @@ fun pdfReaderWorkspaceModel(
             richTextEditing = richTextEditing,
             loading = loading,
             errorMessage = errorMessage,
-            autoScroll = extrasState.autoScroll,
+            autoScroll = ReaderAutoScrollState(),
             ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused
         )
     )

@@ -76,7 +76,6 @@ import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
-import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderExternalLookupAction
@@ -1346,10 +1345,6 @@ internal fun PdfReaderScreen(
         }
     }
 
-    fun updatePdfAutoScroll(autoScroll: ReaderAutoScrollState) {
-        pdfExtrasState = pdfExtrasState.copy(autoScroll = autoScroll.sanitized())
-    }
-
     fun pdfCloudTtsStoppedState(statusMessage: String? = null, errorMessage: String? = null) = ReaderCloudTtsState(
         isAvailable = cloudTtsControlsAvailable && aiByokSettings.sanitized().isCloudTtsAvailable,
         statusMessage = statusMessage,
@@ -1943,18 +1938,6 @@ internal fun PdfReaderScreen(
         dispatchPdf(SharedPdfReaderAction.ToolSelected(PdfInkTool.NONE))
     }
 
-    LaunchedEffect(pdfExtrasState.autoScroll.sanitized(), pageIndex, canGoNext, displayMode) {
-        val autoScroll = pdfExtrasState.autoScroll.sanitized()
-        if (!autoScroll.enabled) return@LaunchedEffect
-        if (!canGoNext) {
-            updatePdfAutoScroll(autoScroll.copy(enabled = false))
-            return@LaunchedEffect
-        }
-        val delayMs = (180_000f / autoScroll.speed).roundToInt().coerceIn(1_200, 12_000)
-        delay(delayMs.toLong())
-        goToPage(nextPdfPageTarget())
-    }
-
     LaunchedEffect(documentHandleId, displayMode, verticalListState) {
         if (displayMode != PdfDisplayMode.VERTICAL_SCROLL) return@LaunchedEffect
         snapshotFlow {
@@ -2316,6 +2299,16 @@ internal fun PdfReaderScreen(
         isBookmarked = bookmarks.any { it.pageIndex == pageIndex },
         onToggleBookmark = { toggleBookmark(pageIndex) },
         onSearchAction = { dispatchPdf(SharedPdfReaderAction.SearchOpened) },
+        onReadAloudAction = if (cloudTtsControlsAvailable && aiByokSettings.sanitized().isCloudTtsAvailable) {
+            { startPdfCloudTts(ReaderTtsReadScope.BOOK) }
+        } else {
+            null
+        },
+        onAiHubAction = if (aiByokSettings.sanitized().areReaderAiFeaturesAvailable) {
+            { showPdfAiHub = true }
+        } else {
+            null
+        },
         fileActions = pdfFileActions,
         onSaveCopyAction = requestSaveCopy,
         onPrintAction = requestPrint,
@@ -2357,14 +2350,11 @@ internal fun PdfReaderScreen(
         rightInspector = {
             DesktopPdfInspectorPanel(
                 document = document,
-                pageIndex = pageIndex,
                 displayMode = displayMode,
                 pdfReaderSettings = pdfReaderSettings,
                 customTextureIds = customTextureIds,
                 onImportTexture = onImportTexture,
                 onReaderSettingsChange = ::updatePdfReaderSettings,
-                zoomControlScale = zoomControlScale,
-                zoomSpec = zoomSpec,
                 isTextSelectionMode = isTextSelectionMode,
                 selectedTool = selectedTool,
                 isRichTextMode = isRichTextMode,
@@ -2377,27 +2367,11 @@ internal fun PdfReaderScreen(
                 richTextController = richTextController,
                 pdfExtrasState = pdfExtrasState,
                 aiByokSettings = aiByokSettings,
-                externalLookupAvailable = featurePolicy.externalLookup,
                 cloudTtsFeatureAvailable = cloudTtsControlsAvailable,
                 ttsReplacementPreferences = ttsReplacementPreferences,
-                pageText = { currentPdfPageText() },
                 onDisplayModeSelected = { mode ->
                     commitActiveTextDraft()
                     dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(mode))
-                },
-                onPageScrub = ::updatePdfPageScrub,
-                onPageScrubFinished = ::finishPdfPageScrub,
-                onZoomOut = {
-                    cancelPendingPdfZoomPreview()
-                    dispatchPdf(SharedPdfReaderAction.ZoomBy(-0.15f))
-                },
-                onZoomIn = {
-                    cancelPendingPdfZoomPreview()
-                    dispatchPdf(SharedPdfReaderAction.ZoomBy(0.15f))
-                },
-                onZoomChange = { zoom ->
-                    cancelPendingPdfZoomPreview()
-                    dispatchPdf(SharedPdfReaderAction.ZoomChanged(zoom))
                 },
                 onSelectPanMode = ::selectPdfPanMode,
                 onTextSelectionModeToggle = {
@@ -2426,16 +2400,10 @@ internal fun PdfReaderScreen(
                 onHighlighterSnapChange = { isHighlighterSnapEnabled = it },
                 onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
                 onTextStyleChange = ::updateTextStyleConfig,
-                onExternalLookup = ::openPdfExternalLookup,
-                onOpenAiHub = { showPdfAiHub = true },
-                onCloudTtsStart = ::startPdfCloudTts,
-                onCloudTtsPauseResume = ::pauseResumePdfCloudTts,
-                onCloudTtsStop = ::stopPdfCloudTts,
                 onCloudTtsClearCache = ::clearPdfCloudTtsCache,
                 onCloudTtsVoiceChange = { voiceId ->
                     onAiByokSettingsChange(aiByokSettings.sanitized().copy(ttsSpeakerId = voiceId))
                 },
-                onAutoScrollChange = ::updatePdfAutoScroll,
                 onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
             )
         },

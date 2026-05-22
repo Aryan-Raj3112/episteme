@@ -829,34 +829,6 @@ object ReaderHtmlDocumentBuilder {
                     });
                   }
                   window.readerScrollToLocator = scrollToLocator;
-                  var readerAutoScrollFrame = null;
-                  var readerAutoScrollLastTime = 0;
-                  var readerAutoScrollSpeed = 36;
-                  function readerAutoScrollStep(timestamp) {
-                    if (readerAutoScrollFrame === null) return;
-                    if (!readerAutoScrollLastTime) readerAutoScrollLastTime = timestamp;
-                    var elapsed = Math.max(0, timestamp - readerAutoScrollLastTime);
-                    readerAutoScrollLastTime = timestamp;
-                    window.scrollBy(0, readerAutoScrollSpeed * elapsed / 1000);
-                    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
-                      window.readerAutoScroll.stop();
-                      return;
-                    }
-                    readerAutoScrollFrame = window.requestAnimationFrame(readerAutoScrollStep);
-                  }
-                  window.readerAutoScroll = {
-                    start: function (speed) {
-                      readerAutoScrollSpeed = Math.max(12, Math.min(160, Number(speed) || 36));
-                      if (readerAutoScrollFrame !== null) window.cancelAnimationFrame(readerAutoScrollFrame);
-                      readerAutoScrollLastTime = 0;
-                      readerAutoScrollFrame = window.requestAnimationFrame(readerAutoScrollStep);
-                    },
-                    stop: function () {
-                      if (readerAutoScrollFrame !== null) window.cancelAnimationFrame(readerAutoScrollFrame);
-                      readerAutoScrollFrame = null;
-                      readerAutoScrollLastTime = 0;
-                    }
-                  };
                   function textNodesUnder(root, includeWhitespace) {
                     includeWhitespace = includeWhitespace === undefined ? true : includeWhitespace;
                     var nodes = [];

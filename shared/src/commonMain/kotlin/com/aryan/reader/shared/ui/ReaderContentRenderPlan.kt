@@ -1,7 +1,6 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.ui.graphics.Color
-import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
@@ -14,7 +13,6 @@ data class ReaderContentNavigationTarget(
     val locator: ReaderLocator?,
     val requestId: Long,
     val readingMode: ReaderReadingMode,
-    val autoScroll: ReaderAutoScrollState = ReaderAutoScrollState(),
     val ttsLocator: ReaderLocator? = null,
     val ttsRequestId: Long = 0L
 )

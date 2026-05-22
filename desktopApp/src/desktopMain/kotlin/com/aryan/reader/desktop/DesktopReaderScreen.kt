@@ -87,7 +87,6 @@ internal fun DesktopReaderScreen(
     onCloudTtsClearCache: () -> Unit,
     onCloudTtsVoiceChange: (String) -> Unit,
     onOpenAiHub: (() -> Unit)? = null,
-    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onDownloadReaderImage: (ReaderImageReference) -> Unit,
     readerTextureDataUri: (String) -> String?,
     readerCustomTextureIds: List<String>,
@@ -163,6 +162,7 @@ internal fun DesktopReaderScreen(
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
     var lastHandledLink by remember { mutableStateOf<DesktopEpubHandledLink?>(null) }
     var isFullscreen by remember(session.reader.book.id) { mutableStateOf(false) }
+    val desktopReaderExtrasState = readerExtrasState.copy(autoScroll = ReaderAutoScrollState())
     val currentReaderFullscreen by rememberUpdatedState(isFullscreen)
     val currentOnReaderFullscreenChange by rememberUpdatedState(onFullscreenChange)
 
@@ -367,7 +367,7 @@ internal fun DesktopReaderScreen(
         onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange,
         onPickCustomFont = onPickCustomFont,
         customFonts = customFonts,
-        readerExtrasState = readerExtrasState,
+        readerExtrasState = desktopReaderExtrasState,
         aiByokSettings = aiByokSettings,
         externalLookupAvailable = externalLookupAvailable,
         cloudTtsControlsAvailable = cloudTtsControlsAvailable,
@@ -381,7 +381,6 @@ internal fun DesktopReaderScreen(
         onCloudTtsClearCache = onCloudTtsClearCache,
         onCloudTtsVoiceChange = onCloudTtsVoiceChange,
         onOpenAiHub = onOpenAiHub,
-        onAutoScrollChange = onAutoScrollChange,
         onDownloadReaderImage = onDownloadReaderImage,
         readerImagePreviewContent = { image, previewModifier ->
             DesktopEpubNativeImage(
@@ -390,6 +389,9 @@ internal fun DesktopReaderScreen(
             )
         },
         readerTextureDataUri = readerTextureDataUri,
+        readerTexturePreviewContent = { textureId, previewModifier ->
+            DesktopReaderTexturePreview(textureId = textureId, modifier = previewModifier)
+        },
         readerCustomTextureIds = readerCustomTextureIds,
         onImportReaderTexture = onImportReaderTexture,
         bottomChromeExtraContent = bottomChromeExtraContent,

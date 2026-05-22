@@ -41,7 +41,6 @@ import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiFeature
 import com.aryan.reader.shared.ReaderAiResultState
-import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderContextExtractor
 import com.aryan.reader.shared.RecapResult
@@ -965,12 +964,6 @@ internal fun EpistemeDesktopApp(
                     snackbarHostState.showSnackbar(error.message ?: "AI settings could not be saved securely.")
                 }
             }
-    }
-
-    fun updateReaderAutoScroll(windowId: String, autoScroll: ReaderAutoScrollState) {
-        updateTextReaderWindow(windowId) { content ->
-            content.copy(extrasState = content.extrasState.copy(autoScroll = autoScroll.sanitized()))
-        }
     }
 
     fun textReaderTtsCacheSummary(content: DesktopReaderWindowContent.Text): ReaderTtsCacheSummary {
@@ -3622,9 +3615,6 @@ internal fun EpistemeDesktopApp(
                                             updateTextReaderWindow(readerWindow.id) { current ->
                                                 current.copy(showAiHub = true)
                                             }
-                                        },
-                                        onAutoScrollChange = { autoScroll ->
-                                            updateReaderAutoScroll(readerWindow.id, autoScroll)
                                         },
                                         onDownloadReaderImage = ::downloadReaderImage,
                                         readerTextureDataUri = DesktopReaderTextures::dataUriFor,

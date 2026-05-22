@@ -26,7 +26,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -49,11 +48,8 @@ import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderAiModelOption
 import com.aryan.reader.shared.ReaderAiModelOptions
 import com.aryan.reader.shared.ReaderAiResultState
-import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderCloudTtsVoices
 import com.aryan.reader.shared.ReaderExtrasState
-import com.aryan.reader.shared.ReaderExternalLookupAction
-import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.maskedReaderAiKey
 import com.aryan.reader.shared.ui.SharedMarkdownText
@@ -380,54 +376,21 @@ private fun DesktopAiModelSelector(
 }
 
 @Composable
-internal fun DesktopPdfExtrasPanel(
-    pageText: String,
+internal fun DesktopPdfTtsPanel(
     extrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
-    externalLookupAvailable: Boolean,
     cloudTtsFeatureAvailable: Boolean,
-    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
-    onOpenAiHub: (() -> Unit)? = null,
-    onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
-    onCloudTtsPauseResume: () -> Unit,
-    onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
     onCloudTtsVoiceChange: (String) -> Unit,
-    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     ttsReplacementBookId: String,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
     val settings = aiByokSettings.sanitized()
-    val autoScroll = extrasState.autoScroll.sanitized()
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-        Text(readerString("desktop_extras", "Extras"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        if (externalLookupAvailable) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                ReaderExternalLookupAction.entries.forEach { action ->
-                    FilterChip(
-                        selected = false,
-                        enabled = pageText.isNotBlank(),
-                        onClick = { onExternalLookup(action, pageText) },
-                        label = { Text(action.title) }
-                    )
-                }
-            }
-        }
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(readerString("menu_auto_scroll", "Auto Scroll"), modifier = Modifier.weight(1f))
-            Switch(
-                checked = autoScroll.enabled,
-                onCheckedChange = { onAutoScrollChange(autoScroll.copy(enabled = it)) }
-            )
-        }
-        Slider(
-            value = autoScroll.speed,
-            onValueChange = { onAutoScrollChange(autoScroll.copy(speed = it).sanitized()) },
-            valueRange = 12f..160f
-        )
+        Text(readerString("menu_tts_settings", "TTS"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         val ttsBusy = extrasState.cloudTts.isLoading || extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused
         if (cloudTtsFeatureAvailable) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -451,39 +414,6 @@ internal fun DesktopPdfExtrasPanel(
                     statusMessage?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
-                TextButton(
-                    enabled = settings.isCloudTtsAvailable || ttsBusy,
-                    onClick = {
-                        if (ttsBusy) {
-                            onCloudTtsStop()
-                        } else {
-                            onCloudTtsStart(ReaderTtsReadScope.BOOK)
-                        }
-                    }
-                ) {
-                    Text(if (ttsBusy) readerString("action_stop", "Stop") else readerString("action_read", "Read"))
-                }
-            }
-            if (extrasState.cloudTts.isPlaying || extrasState.cloudTts.isPaused) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    TextButton(onClick = onCloudTtsPauseResume) {
-                        Text(if (extrasState.cloudTts.isPaused) readerString("tooltip_tts_resume", "Resume") else readerString("tooltip_tts_pause", "Pause"))
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                TextButton(
-                    enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
-                    onClick = { onCloudTtsStart(ReaderTtsReadScope.PAGE) }
-                ) {
-                    Text(readerString("desktop_page", "Page"))
-                }
-                TextButton(
-                    enabled = settings.isCloudTtsAvailable && !ttsBusy && pageText.isNotBlank(),
-                    onClick = { onCloudTtsStart(ReaderTtsReadScope.BOOK) }
-                ) {
-                    Text(readerString("desktop_from_here", "From here"))
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -536,12 +466,5 @@ internal fun DesktopPdfExtrasPanel(
             bookId = ttsReplacementBookId,
             onPreferencesChange = onTtsReplacementPreferencesChange
         )
-        if (settings.areReaderAiFeaturesAvailable && onOpenAiHub != null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                TextButton(onClick = onOpenAiHub) {
-                    Text(readerString("desktop_ai_hub", "AI hub"))
-                }
-            }
-        }
     }
 }

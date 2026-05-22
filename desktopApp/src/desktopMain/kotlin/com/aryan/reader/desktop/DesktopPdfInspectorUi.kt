@@ -5,25 +5,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -34,21 +32,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderAiByokSettings
-import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderExtrasState
-import com.aryan.reader.shared.ReaderExternalLookupAction
-import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.pdf.PdfInkTool
-import com.aryan.reader.shared.pdf.PdfSpreadLayout
-import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfTextStyleConfig
@@ -56,7 +48,6 @@ import com.aryan.reader.shared.pdf.currentSharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.updateCurrentSharedPdfTextStyle
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
-import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
 import com.aryan.reader.shared.ui.SharedPdfHighlighterPaletteEditor
 import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
@@ -68,14 +59,11 @@ import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 @Composable
 internal fun DesktopPdfInspectorPanel(
     document: DesktopPdfDocument,
-    pageIndex: Int,
     displayMode: PdfDisplayMode,
     pdfReaderSettings: ReaderSettings,
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
-    zoomControlScale: Float,
-    zoomSpec: PdfZoomSpec,
     isTextSelectionMode: Boolean,
     selectedTool: PdfInkTool,
     isRichTextMode: Boolean,
@@ -88,16 +76,9 @@ internal fun DesktopPdfInspectorPanel(
     richTextController: SharedPdfRichTextController,
     pdfExtrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
-    externalLookupAvailable: Boolean,
     cloudTtsFeatureAvailable: Boolean,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
-    pageText: () -> String,
     onDisplayModeSelected: (PdfDisplayMode) -> Unit,
-    onPageScrub: (Float) -> Unit,
-    onPageScrubFinished: () -> Unit,
-    onZoomOut: () -> Unit,
-    onZoomIn: () -> Unit,
-    onZoomChange: (Float) -> Unit,
     onSelectPanMode: () -> Unit,
     onTextSelectionModeToggle: () -> Unit,
     onRichTextModeToggle: () -> Unit,
@@ -109,32 +90,26 @@ internal fun DesktopPdfInspectorPanel(
     onHighlighterSnapChange: (Boolean) -> Unit,
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onTextStyleChange: (SharedPdfTextStyleConfig) -> Unit,
-    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
-    onOpenAiHub: (() -> Unit)? = null,
-    onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
-    onCloudTtsPauseResume: () -> Unit,
-    onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
     onCloudTtsVoiceChange: (String) -> Unit,
-    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
-    var selectedPdfInspectorTab by remember(document.handleId) { mutableStateOf(DesktopPdfInspectorTab.VIEW) }
-    val viewInspectorListState = rememberLazyListState()
+    var selectedPdfInspectorTab by remember(document.handleId) { mutableStateOf(DesktopPdfInspectorTab.VISUAL) }
+    val appearanceInspectorListState = rememberLazyListState()
+    val visualInspectorListState = rememberLazyListState()
     val markupInspectorListState = rememberLazyListState()
-    val assistInspectorListState = rememberLazyListState()
+    val ttsInspectorListState = rememberLazyListState()
     val pdfInspectorListState = when (selectedPdfInspectorTab) {
-        DesktopPdfInspectorTab.VIEW -> viewInspectorListState
+        DesktopPdfInspectorTab.APPEARANCE -> appearanceInspectorListState
+        DesktopPdfInspectorTab.VISUAL -> visualInspectorListState
         DesktopPdfInspectorTab.MARKUP -> markupInspectorListState
-        DesktopPdfInspectorTab.ASSIST -> assistInspectorListState
+        DesktopPdfInspectorTab.TTS -> ttsInspectorListState
     }
 
     Surface(
-        modifier = Modifier
-            .width(340.dp)
-            .fillMaxHeight(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(8.dp)
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(0.dp)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             DesktopPdfInspectorHeader(
@@ -144,14 +119,11 @@ internal fun DesktopPdfInspectorPanel(
             HorizontalDivider()
             DesktopPdfInspectorContent(
                 document = document,
-                pageIndex = pageIndex,
                 displayMode = displayMode,
                 pdfReaderSettings = pdfReaderSettings,
                 customTextureIds = customTextureIds,
                 onImportTexture = onImportTexture,
                 onReaderSettingsChange = onReaderSettingsChange,
-                zoomControlScale = zoomControlScale,
-                zoomSpec = zoomSpec,
                 isTextSelectionMode = isTextSelectionMode,
                 selectedTool = selectedTool,
                 isRichTextMode = isRichTextMode,
@@ -164,18 +136,11 @@ internal fun DesktopPdfInspectorPanel(
                 richTextController = richTextController,
                 pdfExtrasState = pdfExtrasState,
                 aiByokSettings = aiByokSettings,
-                externalLookupAvailable = externalLookupAvailable,
                 cloudTtsFeatureAvailable = cloudTtsFeatureAvailable,
                 ttsReplacementPreferences = ttsReplacementPreferences,
-                pageText = pageText,
                 selectedTab = selectedPdfInspectorTab,
                 listState = pdfInspectorListState,
                 onDisplayModeSelected = onDisplayModeSelected,
-                onPageScrub = onPageScrub,
-                onPageScrubFinished = onPageScrubFinished,
-                onZoomOut = onZoomOut,
-                onZoomIn = onZoomIn,
-                onZoomChange = onZoomChange,
                 onSelectPanMode = onSelectPanMode,
                 onTextSelectionModeToggle = onTextSelectionModeToggle,
                 onRichTextModeToggle = onRichTextModeToggle,
@@ -187,14 +152,8 @@ internal fun DesktopPdfInspectorPanel(
                 onHighlighterSnapChange = onHighlighterSnapChange,
                 onHighlighterPaletteChange = onHighlighterPaletteChange,
                 onTextStyleChange = onTextStyleChange,
-                onExternalLookup = onExternalLookup,
-                onOpenAiHub = onOpenAiHub,
-                onCloudTtsStart = onCloudTtsStart,
-                onCloudTtsPauseResume = onCloudTtsPauseResume,
-                onCloudTtsStop = onCloudTtsStop,
                 onCloudTtsClearCache = onCloudTtsClearCache,
                 onCloudTtsVoiceChange = onCloudTtsVoiceChange,
-                onAutoScrollChange = onAutoScrollChange,
                 onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
             )
         }
@@ -206,29 +165,29 @@ private fun DesktopPdfInspectorHeader(
     selectedTab: DesktopPdfInspectorTab,
     onTabSelected: (DesktopPdfInspectorTab) -> Unit
 ) {
-    Column(
-        modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ScrollableTabRow(
+        selectedTabIndex = selectedTab.ordinal,
+        edgePadding = 0.dp,
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Text(readerString("desktop_pdf_tools", "PDF tools"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        ScrollableTabRow(
-            selectedTabIndex = selectedTab.ordinal,
-            edgePadding = 0.dp,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            DesktopPdfInspectorTab.values().forEach { tab ->
-                Tab(
-                    selected = selectedTab == tab,
-                    onClick = { onTabSelected(tab) },
-                    text = {
-                        Text(
-                            tab.localizedTitle(),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                )
-            }
+        DesktopPdfInspectorTab.values().forEach { tab ->
+            Tab(
+                selected = selectedTab == tab,
+                onClick = { onTabSelected(tab) },
+                icon = {
+                    Icon(
+                        tab.icon(),
+                        contentDescription = null
+                    )
+                },
+                text = {
+                    Text(
+                        tab.localizedTitle(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            )
         }
     }
 }
@@ -236,14 +195,11 @@ private fun DesktopPdfInspectorHeader(
 @Composable
 private fun ColumnScope.DesktopPdfInspectorContent(
     document: DesktopPdfDocument,
-    pageIndex: Int,
     displayMode: PdfDisplayMode,
     pdfReaderSettings: ReaderSettings,
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
-    zoomControlScale: Float,
-    zoomSpec: PdfZoomSpec,
     isTextSelectionMode: Boolean,
     selectedTool: PdfInkTool,
     isRichTextMode: Boolean,
@@ -256,18 +212,11 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     richTextController: SharedPdfRichTextController,
     pdfExtrasState: ReaderExtrasState,
     aiByokSettings: ReaderAiByokSettings,
-    externalLookupAvailable: Boolean,
     cloudTtsFeatureAvailable: Boolean,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
-    pageText: () -> String,
     selectedTab: DesktopPdfInspectorTab,
     listState: LazyListState,
     onDisplayModeSelected: (PdfDisplayMode) -> Unit,
-    onPageScrub: (Float) -> Unit,
-    onPageScrubFinished: () -> Unit,
-    onZoomOut: () -> Unit,
-    onZoomIn: () -> Unit,
-    onZoomChange: (Float) -> Unit,
     onSelectPanMode: () -> Unit,
     onTextSelectionModeToggle: () -> Unit,
     onRichTextModeToggle: () -> Unit,
@@ -279,14 +228,8 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     onHighlighterSnapChange: (Boolean) -> Unit,
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onTextStyleChange: (SharedPdfTextStyleConfig) -> Unit,
-    onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
-    onOpenAiHub: (() -> Unit)?,
-    onCloudTtsStart: (ReaderTtsReadScope) -> Unit,
-    onCloudTtsPauseResume: () -> Unit,
-    onCloudTtsStop: () -> Unit,
     onCloudTtsClearCache: () -> Unit,
     onCloudTtsVoiceChange: (String) -> Unit,
-    onAutoScrollChange: (ReaderAutoScrollState) -> Unit,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -299,9 +242,25 @@ private fun ColumnScope.DesktopPdfInspectorContent(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             when (selectedTab) {
-                DesktopPdfInspectorTab.VIEW -> {
+                DesktopPdfInspectorTab.APPEARANCE -> {
                     item {
-                        DesktopPdfInspectorSection(readerString("label_reading", "Reading")) {
+                        DesktopPdfInspectorSection(readerString("app_theme_appearance", "Appearance")) {
+                            SharedReaderThemeControls(
+                                settings = pdfReaderSettings,
+                                builtInThemes = BuiltInPdfReaderThemes,
+                                customTextureIds = customTextureIds,
+                                onImportTexture = onImportTexture,
+                                texturePreviewContent = { textureId, previewModifier ->
+                                    DesktopReaderTexturePreview(textureId = textureId, modifier = previewModifier)
+                                },
+                                onSettingsChange = onReaderSettingsChange
+                            )
+                        }
+                    }
+                }
+                DesktopPdfInspectorTab.VISUAL -> {
+                    item {
+                        DesktopPdfInspectorSection(readerString("visual_options_title", "Visual options")) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 FilterChip(
                                     selected = displayMode == PdfDisplayMode.PAGINATION,
@@ -351,48 +310,6 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                     )
                                 }
                             }
-                        }
-                    }
-                    item {
-                        DesktopPdfInspectorSection(readerString("visual_options_progress_bar_position", "Position")) {
-                            val pageRange = if (displayMode == PdfDisplayMode.PAGINATION) {
-                                PdfSpreadLayout.pageRangeLabel(pageIndex, document.pageCount, pdfReaderSettings)
-                            } else {
-                                "${pageIndex + 1}"
-                            }
-                            Text(
-                                if ('-' in pageRange) {
-                                    readerString("desktop_pdf_pages_of_count", "Pages %1\$s of %2\$d", pageRange, document.pageCount)
-                                } else {
-                                    readerString("desktop_pdf_page_of_count", "Page %1\$s of %2\$d", pageRange, document.pageCount)
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (document.pageCount > 1) {
-                                ReaderMinimalSlider(
-                                    value = pageIndex.toFloat(),
-                                    onValueChange = onPageScrub,
-                                    onValueChangeFinished = onPageScrubFinished,
-                                    valueRange = 0f..(document.pageCount - 1).toFloat()
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        DesktopPdfInspectorSection(readerString("app_theme_appearance", "Appearance")) {
-                            SharedReaderThemeControls(
-                                settings = pdfReaderSettings,
-                                builtInThemes = BuiltInPdfReaderThemes,
-                                customTextureIds = customTextureIds,
-                                onImportTexture = onImportTexture,
-                                onSettingsChange = onReaderSettingsChange
-                            )
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                            Text(
-                                readerString("visual_options_title", "Visual options"),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold
-                            )
                             DesktopPdfVisualOptionSwitch(
                                 title = readerString("visual_options_remove_page_gap", "Remove gap between pages"),
                                 description = readerString(
@@ -418,28 +335,6 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                         pdfReaderSettings.copy(pdfPageNumberOverlayVisible = !hideOverlay)
                                     )
                                 }
-                            )
-                        }
-                    }
-                    item {
-                        DesktopPdfInspectorSection(readerString("desktop_zoom", "Zoom")) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = onZoomOut) {
-                                    Icon(Icons.Default.ZoomOut, contentDescription = readerString("desktop_zoom_out", "Zoom out"))
-                                }
-                                Text(
-                                    "${(zoomControlScale * 100).toInt()}%",
-                                    modifier = Modifier.weight(1f),
-                                    textAlign = TextAlign.Center
-                                )
-                                IconButton(onClick = onZoomIn) {
-                                    Icon(Icons.Default.ZoomIn, contentDescription = readerString("desktop_zoom_in", "Zoom in"))
-                                }
-                            }
-                            Slider(
-                                value = zoomControlScale,
-                                onValueChange = onZoomChange,
-                                valueRange = zoomSpec.min..zoomSpec.max
                             )
                         }
                     }
@@ -513,22 +408,14 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                         }
                     }
                 }
-                DesktopPdfInspectorTab.ASSIST -> {
+                DesktopPdfInspectorTab.TTS -> {
                     item {
-                        DesktopPdfExtrasPanel(
-                            pageText = pageText(),
+                        DesktopPdfTtsPanel(
                             extrasState = pdfExtrasState,
                             aiByokSettings = aiByokSettings,
-                            externalLookupAvailable = externalLookupAvailable,
                             cloudTtsFeatureAvailable = cloudTtsFeatureAvailable,
-                            onExternalLookup = onExternalLookup,
-                            onOpenAiHub = onOpenAiHub,
-                            onCloudTtsStart = onCloudTtsStart,
-                            onCloudTtsPauseResume = onCloudTtsPauseResume,
-                            onCloudTtsStop = onCloudTtsStop,
                             onCloudTtsClearCache = onCloudTtsClearCache,
                             onCloudTtsVoiceChange = onCloudTtsVoiceChange,
-                            onAutoScrollChange = onAutoScrollChange,
                             ttsReplacementPreferences = ttsReplacementPreferences,
                             ttsReplacementBookId = document.path,
                             onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange
@@ -547,8 +434,18 @@ private fun ColumnScope.DesktopPdfInspectorContent(
 @Composable
 private fun DesktopPdfInspectorTab.localizedTitle(): String {
     return when (this) {
-        DesktopPdfInspectorTab.VIEW -> readerString("desktop_view", "View")
+        DesktopPdfInspectorTab.APPEARANCE -> readerString("app_theme_appearance", "Appearance")
+        DesktopPdfInspectorTab.VISUAL -> readerString("visual_options_title", "Visual")
         DesktopPdfInspectorTab.MARKUP -> readerString("desktop_markup", "Markup")
-        DesktopPdfInspectorTab.ASSIST -> readerString("desktop_assist", "Assist")
+        DesktopPdfInspectorTab.TTS -> readerString("menu_tts_settings", "TTS")
+    }
+}
+
+private fun DesktopPdfInspectorTab.icon(): ImageVector {
+    return when (this) {
+        DesktopPdfInspectorTab.APPEARANCE -> Icons.Default.Palette
+        DesktopPdfInspectorTab.VISUAL -> Icons.Default.Tune
+        DesktopPdfInspectorTab.MARKUP -> Icons.Default.Edit
+        DesktopPdfInspectorTab.TTS -> Icons.AutoMirrored.Filled.VolumeUp
     }
 }

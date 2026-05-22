@@ -1,6 +1,9 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.toArgb
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
+import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -29,6 +32,55 @@ class ReaderAppearanceModelsTest {
             ),
             texturedThemeIds
         )
+    }
+
+    @Test
+    fun `pdf and epub built in themes share the standard reader palette`() {
+        data class ThemeToken(
+            val name: String,
+            val backgroundArgb: Int,
+            val textArgb: Int,
+            val isDark: Boolean,
+            val textureId: String?
+        )
+
+        val epubPalette = BuiltInReaderThemes
+            .drop(1)
+            .map { theme ->
+                ThemeToken(
+                    name = theme.name,
+                    backgroundArgb = theme.backgroundColor.toArgb(),
+                    textArgb = theme.textColor.toArgb(),
+                    isDark = theme.isDark,
+                    textureId = theme.textureId
+                )
+            }
+        val pdfPalette = BuiltInPdfReaderThemes
+            .drop(2)
+            .map { theme ->
+                ThemeToken(
+                    name = theme.name,
+                    backgroundArgb = theme.backgroundColor.toArgb(),
+                    textArgb = theme.textColor.toArgb(),
+                    isDark = theme.isDark,
+                    textureId = theme.textureId
+                )
+            }
+
+        assertEquals(epubPalette, pdfPalette)
+    }
+
+    @Test
+    fun `pdf highlighter defaults follow the reader highlight palette`() {
+        val expectedPdfColors = ReaderHighlightPalette.defaultColors
+            .take(SharedPdfHighlighterPalette.MaxColors)
+            .map { color ->
+                (SharedPdfHighlighterPalette.DefaultAlpha shl 24) or (color.color.toArgb() and 0x00FFFFFF)
+            }
+
+        assertEquals(expectedPdfColors, SharedPdfHighlighterPalette.defaultColors)
+        assertEquals(expectedPdfColors[0], SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb)
+        assertEquals(expectedPdfColors[1], SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER_ROUND).colorArgb)
     }
 
     @Test

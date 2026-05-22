@@ -200,22 +200,6 @@ internal fun DesktopEpubWebView(
         }
 
         LaunchedEffect(
-            navigationTarget.autoScroll,
-            navigationTarget.readingMode,
-            state.loadingState
-        ) {
-            if (navigationTarget.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            val autoScroll = navigationTarget.autoScroll.sanitized()
-            val command = if (autoScroll.enabled) {
-                "window.readerAutoScroll && window.readerAutoScroll.start(${autoScroll.speed});"
-            } else {
-                "window.readerAutoScroll && window.readerAutoScroll.stop();"
-            }
-            navigator.evaluateJavaScript(command)
-        }
-
-        LaunchedEffect(
             navigationTarget.requestId,
             navigationTarget.readingMode,
             state.loadingState

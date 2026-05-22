@@ -101,13 +101,15 @@ data class ReaderTheme(
     val isCustom: Boolean = false
 )
 
-val BuiltInReaderThemes = listOf(
-    ReaderTheme("system", "System", Color.Unspecified, Color.Unspecified, false),
+private val StandardReaderSolidThemes = listOf(
     ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
     ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
     ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
     ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
-    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true),
+    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true)
+)
+
+private val StandardReaderTexturedThemes = listOf(
     ReaderTheme("natural_white_texture", "Natural White", Color(0xFFF7F1E5), Color(0xFF1D1B18), false, textureId = ReaderTexture.NATURAL_WHITE.id),
     ReaderTheme("retina_texture", "Retina", Color(0xFFF1E4CD), Color(0xFF2A2119), false, textureId = ReaderTexture.RETINA_WOOD.id),
     ReaderTheme("veneer_texture", "Veneer", Color(0xFFF4E7CF), Color(0xFF2A2119), false, textureId = ReaderTexture.LIGHT_VENEER.id),
@@ -116,21 +118,16 @@ val BuiltInReaderThemes = listOf(
     ReaderTheme("retro_texture", "Retro", Color(0xFFF6ECD8), Color(0xFF2F2118), false, textureId = ReaderTexture.RETRO_INTRO.id)
 )
 
+val BuiltInReaderThemes = listOf(
+    ReaderTheme("system", "System", Color.Unspecified, Color.Unspecified, false)
+) + StandardReaderSolidThemes + StandardReaderTexturedThemes
+
 val BuiltInPdfReaderThemes = listOf(
     ReaderTheme("no_theme", "No Theme", Color.Unspecified, Color.Unspecified, false),
-    ReaderTheme("reverse", "Reverse", Color.Black, Color.White, true),
-    ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
-    ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),
-    ReaderTheme("sepia", "Sepia", Color(0xFFFBF0D9), Color(0xFF5F4B32), false),
-    ReaderTheme("slate", "Slate", Color(0xFF2E3440), Color(0xFFECEFF4), true),
-    ReaderTheme("oled", "OLED", Color(0xFF000000), Color(0xFFB0B0B0), true),
-    ReaderTheme("pdf_natural_white_texture", "Natural White", Color(0xFFF7F1E5), Color(0xFF1D1B18), false, textureId = ReaderTexture.NATURAL_WHITE.id),
-    ReaderTheme("pdf_retina_texture", "Retina", Color(0xFFF1E4CD), Color(0xFF2A2119), false, textureId = ReaderTexture.RETINA_WOOD.id),
-    ReaderTheme("pdf_veneer_texture", "Veneer", Color(0xFFF4E7CF), Color(0xFF2A2119), false, textureId = ReaderTexture.LIGHT_VENEER.id),
-    ReaderTheme("pdf_grey_wash_texture", "Grey Wash", Color(0xFF202124), Color(0xFFFFFFFF), true, textureId = ReaderTexture.GREY_WASH.id),
-    ReaderTheme("pdf_fabric_texture", "Fabric", Color(0xFF262626), Color(0xFFE8E2D8), true, textureId = ReaderTexture.CLASSY_FABRIC.id),
-    ReaderTheme("pdf_retro_texture", "Retro", Color(0xFFF6ECD8), Color(0xFF2F2118), false, textureId = ReaderTexture.RETRO_INTRO.id)
-)
+    ReaderTheme("reverse", "Reverse", Color.Black, Color.White, true)
+) + StandardReaderSolidThemes + StandardReaderTexturedThemes.map { theme ->
+    theme.copy(id = "pdf_${theme.id}")
+}
 
 fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
     val horizontalMarginPx = (ReaderAppearanceDefaults.marginPx * horizontalMargin).roundToInt()

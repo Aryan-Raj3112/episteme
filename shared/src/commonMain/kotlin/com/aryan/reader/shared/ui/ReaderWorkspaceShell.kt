@@ -8,8 +8,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -19,12 +21,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
@@ -33,6 +37,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -98,6 +103,8 @@ fun ReaderWorkspaceShell(
     onSaveCopyAction: (() -> Unit)? = null,
     onPrintAction: (() -> Unit)? = null,
     onTextViewAction: (() -> Unit)? = null,
+    onReadAloudAction: (() -> Unit)? = null,
+    onAiHubAction: (() -> Unit)? = null,
     topSearchBar: (@Composable () -> Unit)? = null,
     useDetachedChromeLayer: Boolean = true,
     useDetachedPanelLayer: Boolean = true,
@@ -332,6 +339,8 @@ fun ReaderWorkspaceShell(
                                         onSaveCopyAction = onSaveCopyAction,
                                         onPrintAction = onPrintAction,
                                         onTextViewAction = onTextViewAction,
+                                        onReadAloudAction = onReadAloudAction,
+                                        onAiHubAction = onAiHubAction,
                                         onChromeHoverChange = ::updateChromeHovered,
                                         onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                         bottomBar = {}
@@ -377,6 +386,8 @@ fun ReaderWorkspaceShell(
                                     onSaveCopyAction = onSaveCopyAction,
                                     onPrintAction = onPrintAction,
                                     onTextViewAction = onTextViewAction,
+                                    onReadAloudAction = onReadAloudAction,
+                                    onAiHubAction = onAiHubAction,
                                     onChromeHoverChange = ::updateChromeHovered,
                                     onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                     bottomBar = {
@@ -419,6 +430,8 @@ fun ReaderWorkspaceShell(
                         onSaveCopyAction = onSaveCopyAction,
                         onPrintAction = onPrintAction,
                         onTextViewAction = onTextViewAction,
+                        onReadAloudAction = onReadAloudAction,
+                        onAiHubAction = onAiHubAction,
                         onChromeHoverChange = ::updateChromeHovered,
                         onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                         bottomBar = {
@@ -567,21 +580,12 @@ private fun ReaderWorkspacePanelOverlays(
                     .then(if (useDetachedPanelLayer) Modifier else Modifier.zIndex(ReaderChromeZIndex + 1f))
             ) panelConstraints@ {
                 val availableWidth = this@panelConstraints.maxWidth
-                val rightPanelWidth = if (
-                    useDetachedPanelLayer &&
-                    sharedReaderModalLayerUsesSizedEdgeWindow(SharedReaderModalLevel.PanelRight)
-                ) {
-                    availableWidth
-                } else if (wide) {
-                    minOf(380.dp, availableWidth)
-                } else {
-                    minOf(360.dp, availableWidth * 0.92f)
-                }
-                ReaderWorkspaceOverlayPanel(
-                    title = readerString("desktop_tools", "Tools"),
-                    edge = ReaderWorkspacePanelEdge.End,
+                val availableHeight = this@panelConstraints.maxHeight
+                ReaderWorkspaceToolsPopup(
+                    availableWidth = availableWidth,
+                    availableHeight = availableHeight,
                     onClose = onCloseRightPanel,
-                    modifier = Modifier.align(Alignment.CenterEnd).width(rightPanelWidth)
+                    modifier = Modifier.align(Alignment.Center)
                 ) {
                     rightInspector()
                 }
@@ -589,7 +593,7 @@ private fun ReaderWorkspacePanelOverlays(
         }
         if (useDetachedPanelLayer) {
             SharedReaderModalLayer(
-                level = SharedReaderModalLevel.PanelRight,
+                level = SharedReaderModalLevel.Popup,
                 onDismiss = onCloseRightPanel
             ) {
                 panelContent()
@@ -598,6 +602,94 @@ private fun ReaderWorkspacePanelOverlays(
             panelContent()
         }
     }
+}
+
+@Composable
+private fun ReaderWorkspaceToolsPopup(
+    availableWidth: androidx.compose.ui.unit.Dp,
+    availableHeight: androidx.compose.ui.unit.Dp,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val popupWidth = readerWorkspaceToolsPopupWidth(availableWidth)
+    val popupHeight = readerWorkspaceToolsPopupHeight(availableHeight)
+    val emptyInteractionSource = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.18f))
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.keyCode == Key.Escape) {
+                    onClose()
+                    true
+                } else {
+                    false
+                }
+            }
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clickable(
+                    interactionSource = emptyInteractionSource,
+                    indication = null,
+                    onClick = onClose
+                )
+        )
+        Surface(
+            modifier = modifier
+                .width(popupWidth)
+                .height(popupHeight),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 3.dp,
+            shadowElevation = 18.dp,
+            border = sharedSubtleBorder(alpha = 0.72f)
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 18.dp, top = 12.dp, end = 8.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        readerString("desktop_tools", "Tools"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = readerString("action_close", "Close"))
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
+private fun readerWorkspaceToolsPopupWidth(availableWidth: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp {
+    if (availableWidth <= 0.dp) return 0.dp
+    val minWidth = 360.dp.coerceAtMost(availableWidth)
+    val maxWidth = 720.dp.coerceAtMost(availableWidth - 32.dp).coerceAtLeast(minWidth)
+    return (availableWidth * 0.72f).coerceIn(minWidth, maxWidth)
+}
+
+private fun readerWorkspaceToolsPopupHeight(availableHeight: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp {
+    if (availableHeight <= 0.dp) return 0.dp
+    val minHeight = 420.dp.coerceAtMost(availableHeight)
+    val maxHeight = 760.dp.coerceAtMost(availableHeight - 32.dp).coerceAtLeast(minHeight)
+    return (availableHeight * 0.84f).coerceIn(minHeight, maxHeight)
 }
 
 private fun readerWorkspaceLeftPanelWidth(
@@ -671,6 +763,8 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     onSaveCopyAction: (() -> Unit)?,
     onPrintAction: (() -> Unit)?,
     onTextViewAction: (() -> Unit)?,
+    onReadAloudAction: (() -> Unit)?,
+    onAiHubAction: (() -> Unit)?,
     onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
     onToggleFullscreen: (() -> Unit)?,
     bottomBar: @Composable () -> Unit
@@ -732,6 +826,8 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
                 onSaveCopyAction = onSaveCopyAction,
                 onPrintAction = onPrintAction,
                 onTextViewAction = onTextViewAction,
+                onReadAloudAction = onReadAloudAction,
+                onAiHubAction = onAiHubAction,
                 onChromeHoverChange = onChromeHoverChange,
                 onToggleFullscreen = onToggleFullscreen
             )
@@ -816,6 +912,8 @@ private fun ReaderWorkspaceTopChrome(
     onSaveCopyAction: (() -> Unit)?,
     onPrintAction: (() -> Unit)?,
     onTextViewAction: (() -> Unit)?,
+    onReadAloudAction: (() -> Unit)?,
+    onAiHubAction: (() -> Unit)?,
     onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
     onToggleFullscreen: (() -> Unit)?
 ) {
@@ -873,6 +971,22 @@ private fun ReaderWorkspaceTopChrome(
                         } else {
                             readerString("menu_bookmark_this_page", "Bookmark this page")
                         }
+                    )
+                }
+            }
+            if (ReaderWorkspaceTopAction.READ_ALOUD in topActions && onReadAloudAction != null) {
+                IconButton(onClick = onReadAloudAction, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = readerString("action_read_aloud", "Read aloud")
+                    )
+                }
+            }
+            if (ReaderWorkspaceTopAction.AI in topActions && onAiHubAction != null) {
+                IconButton(onClick = onAiHubAction, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Default.Psychology,
+                        contentDescription = readerString("desktop_ai_hub", "AI hub")
                     )
                 }
             }

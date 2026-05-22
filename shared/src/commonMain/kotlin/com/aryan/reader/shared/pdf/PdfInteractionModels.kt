@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.pdf
 
+import androidx.compose.ui.graphics.toArgb
+import com.aryan.reader.shared.ReaderHighlightPalette
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -194,13 +196,9 @@ object SharedPdfAnnotationDefaults {
         0xFFFFFFFF.toInt()
     )
 
-    val highlighterPalette: List<Int> = listOf(
-        0x8CFF9800.toInt(),
-        0x8CFFEB3B.toInt(),
-        0x8C81C784.toInt(),
-        0x8C64B5F6.toInt(),
-        0x8CE1BEE7.toInt()
-    )
+    val highlighterPalette: List<Int> = ReaderHighlightPalette.defaultColors
+        .take(SharedPdfHighlighterPalette.MaxColors)
+        .map { it.color.toArgb().withPdfHighlighterAlpha() }
 
     fun configFor(tool: PdfInkTool): PdfToolConfig {
         return when (tool) {
@@ -208,8 +206,8 @@ object SharedPdfAnnotationDefaults {
             PdfInkTool.PEN -> PdfToolConfig(0xFFFF0000.toInt(), 0.008f)
             PdfInkTool.FOUNTAIN_PEN -> PdfToolConfig(0xFF0000FF.toInt(), 0.008f)
             PdfInkTool.PENCIL -> PdfToolConfig(0xFF444444.toInt(), 0.008f)
-            PdfInkTool.HIGHLIGHTER -> PdfToolConfig(0x8CFF9800.toInt(), 0.035f)
-            PdfInkTool.HIGHLIGHTER_ROUND -> PdfToolConfig(0x8CFFEB3B.toInt(), 0.035f)
+            PdfInkTool.HIGHLIGHTER -> PdfToolConfig(highlighterPalette[0], 0.035f)
+            PdfInkTool.HIGHLIGHTER_ROUND -> PdfToolConfig(highlighterPalette[1], 0.035f)
             PdfInkTool.ERASER -> PdfToolConfig(0x00000000, 0.03f)
             PdfInkTool.TEXT -> PdfToolConfig(0xFF000000.toInt(), 0.02f)
         }

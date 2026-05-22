@@ -33,9 +33,10 @@ import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.reader.ReaderSettings
 
 internal enum class DesktopPdfInspectorTab(val title: String) {
-    VIEW("View"),
+    APPEARANCE("Appearance"),
+    VISUAL("Visual"),
     MARKUP("Markup"),
-    ASSIST("Assist")
+    TTS("TTS")
 }
 
 internal data class DesktopPdfThemeStyle(
