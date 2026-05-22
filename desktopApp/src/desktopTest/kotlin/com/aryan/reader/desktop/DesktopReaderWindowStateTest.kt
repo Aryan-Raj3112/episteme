@@ -13,6 +13,11 @@ import kotlin.test.assertTrue
 class DesktopReaderWindowStateTest {
 
     @Test
+    fun `desktop starts on library instead of home`() {
+        assertEquals(SharedAppTab.LIBRARY, DesktopInitialAppTab)
+    }
+
+    @Test
     fun `opening a new reader creates a window`() {
         val opening = readerOpening("book-1", requestId = 1)
 

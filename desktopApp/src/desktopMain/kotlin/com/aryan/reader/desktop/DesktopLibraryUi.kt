@@ -145,57 +145,6 @@ internal fun DesktopReaderOpeningScreen(
 }
 
 @Composable
-internal fun HomeScreen(
-    state: SharedReaderScreenState,
-    selectedLibraryTab: NonReaderLibraryTab,
-    onLibraryTabChange: (NonReaderLibraryTab) -> Unit,
-    onStateChange: (SharedReaderScreenState) -> Unit,
-    onImportBooks: () -> Unit,
-    onImportFolder: () -> Unit,
-    onRead: (BookItem) -> Unit,
-    onSelect: (String) -> Unit,
-    onClearSelection: () -> Unit,
-    onRemoveSelected: () -> Unit,
-    onShowBookInfo: (BookItem) -> Unit,
-    onEditBook: (BookItem) -> Unit,
-    onCreateShelf: () -> Unit,
-    onCreateSmartShelf: () -> Unit,
-    onRenameShelf: (Shelf) -> Unit,
-    onDeleteShelf: (Shelf) -> Unit,
-    onRemoveFolder: (Shelf) -> Unit,
-    onTagSelectedBooks: () -> Unit,
-    onAddSelectedBooksToShelf: () -> Unit,
-    onSyncFolderMetadata: () -> Unit,
-    onScanFolders: () -> Unit,
-    onTogglePinned: (BookItem) -> Unit
-) {
-    LibraryScreen(
-        state = state,
-        selectedLibraryTab = selectedLibraryTab,
-        onLibraryTabChange = onLibraryTabChange,
-        onStateChange = onStateChange,
-        onImportBooks = onImportBooks,
-        onImportFolder = onImportFolder,
-        onRead = onRead,
-        onSelect = onSelect,
-        onClearSelection = onClearSelection,
-        onRemoveSelected = onRemoveSelected,
-        onShowBookInfo = onShowBookInfo,
-        onEditBook = onEditBook,
-        onCreateShelf = onCreateShelf,
-        onCreateSmartShelf = onCreateSmartShelf,
-        onRenameShelf = onRenameShelf,
-        onDeleteShelf = onDeleteShelf,
-        onRemoveFolder = onRemoveFolder,
-        onTagSelectedBooks = onTagSelectedBooks,
-        onAddSelectedBooksToShelf = onAddSelectedBooksToShelf,
-        onSyncFolderMetadata = onSyncFolderMetadata,
-        onScanFolders = onScanFolders,
-        onTogglePinned = onTogglePinned
-    )
-}
-
-@Composable
 internal fun LibraryScreen(
     state: SharedReaderScreenState,
     selectedLibraryTab: NonReaderLibraryTab,

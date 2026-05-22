@@ -9,6 +9,9 @@ import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
+import com.aryan.reader.shared.ui.SharedAppTab
+
+internal val DesktopInitialAppTab = SharedAppTab.LIBRARY
 
 internal fun desktopEmptyReaderBook(): SharedEpubBook {
     val noBookOpen = loadDesktopStringResolver().string("desktop_no_book_open", "No book open")

@@ -314,7 +314,7 @@ internal fun EpistemeDesktopApp(
         )
     }
     val desktopSummaryCacheStore = remember { DesktopSummaryCacheStore() }
-    var selectedTab by remember { mutableStateOf(SharedAppTab.HOME) }
+    var selectedTab by remember { mutableStateOf(DesktopInitialAppTab) }
     var selectedLibraryTab by remember { mutableStateOf(NonReaderLibraryTab.BOOKS) }
     var customFonts by remember {
         mutableStateOf(initialLibrarySnapshot.customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() })
@@ -465,7 +465,8 @@ internal fun EpistemeDesktopApp(
         when (val content = content) {
             DesktopReaderWindowContent.Opening,
             is DesktopReaderWindowContent.PasswordRequired -> Unit
-            is DesktopReaderWindowContent.Pdf -> content.document.close()
+            // PdfReaderScreen cancels PDF work and closes the document from its dispose effect.
+            is DesktopReaderWindowContent.Pdf -> Unit
             is DesktopReaderWindowContent.Text -> content.ttsJob?.cancel()
         }
     }
@@ -2520,7 +2521,7 @@ internal fun EpistemeDesktopApp(
 
     fun selectAppTab(tab: SharedAppTab) {
         val nextTab = if (tab == SharedAppTab.CATALOGS && !featurePolicy.opdsCatalogs) {
-            SharedAppTab.HOME
+            SharedAppTab.LIBRARY
         } else {
             tab
         }
@@ -2564,10 +2565,6 @@ internal fun EpistemeDesktopApp(
             }
 
             is DesktopReaderOpenResult.Pdf -> {
-                (window.content as? DesktopReaderWindowContent.Pdf)
-                    ?.document
-                    ?.takeIf { it.handleId != result.document.handleId }
-                    ?.close()
                 readerWindows = readerWindows.withDesktopReaderWindowContent(
                     requestId = result.opening.requestId,
                     content = DesktopReaderWindowContent.Pdf(
@@ -3120,39 +3117,6 @@ internal fun EpistemeDesktopApp(
                 }
             ) { tab ->
                 when (tab) {
-                        SharedAppTab.HOME -> HomeScreen(
-                            state = state,
-                            selectedLibraryTab = selectedLibraryTab,
-                            onLibraryTabChange = { selectedLibraryTab = it },
-                            onStateChange = ::updateState,
-                            onImportBooks = {
-                                importFiles(chooseFiles())
-                            },
-                            onImportFolder = { chooseFolder()?.let(::importFolder) },
-                            onRead = ::openReader,
-                            onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
-                            onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
-                            onRemoveSelected = ::removeSelectedBooks,
-                            onShowBookInfo = {
-                                bookInfoInitiallyEditing = false
-                                bookInfoDialogFor = it
-                            },
-                            onEditBook = {
-                                bookInfoInitiallyEditing = true
-                                bookInfoDialogFor = it
-                            },
-                            onCreateShelf = { showCreateShelfDialog = true },
-                            onCreateSmartShelf = { showCreateSmartShelfDialog = true },
-                            onRenameShelf = { shelfToRename = it },
-                            onDeleteShelf = { shelfToDelete = it },
-                            onRemoveFolder = { folderToRemove = it },
-                            onTagSelectedBooks = { showTagSelectionDialog = true },
-                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true },
-                            onSyncFolderMetadata = { syncFolderMetadata() },
-                            onScanFolders = { scanSyncedFolders() },
-                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
-                        )
-
                         SharedAppTab.SETTINGS -> SharedSettingsHub(
                             model = sharedSettingsHubModel(
                                 SharedSettingsHubInput(

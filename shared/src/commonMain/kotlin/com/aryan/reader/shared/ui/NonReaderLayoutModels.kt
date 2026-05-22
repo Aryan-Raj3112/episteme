@@ -45,7 +45,6 @@ fun sharedAppShellModel(
         if (featurePolicy.opdsCatalogs) add(SharedAppTab.CATALOGS)
     }
     val selectedPrimaryTab = when (selectedTab) {
-        SharedAppTab.HOME -> SharedAppTab.LIBRARY
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY
         SharedAppTab.SETTINGS,
         SharedAppTab.PRO,
@@ -175,6 +174,22 @@ internal fun visibleNonReaderLibraryTabs(
     return when (platform) {
         ReaderPlatform.ANDROID -> AndroidLibraryTabs
         ReaderPlatform.DESKTOP -> DesktopLibraryTabs
+    }
+}
+
+internal enum class LibraryCommandBarLayout {
+    INLINE,
+    STACKED
+}
+
+internal fun libraryCommandBarLayoutForWidth(
+    widthDp: Float,
+    platform: ReaderPlatform = ReaderPlatform.DESKTOP
+): LibraryCommandBarLayout {
+    return if (platform == ReaderPlatform.DESKTOP && widthDp >= 980f) {
+        LibraryCommandBarLayout.INLINE
+    } else {
+        LibraryCommandBarLayout.STACKED
     }
 }
 

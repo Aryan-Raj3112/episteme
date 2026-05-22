@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -401,6 +399,7 @@ fun SharedLibraryScreen(
                                 state = state,
                                 viewMode = viewMode,
                                 showFilters = showFilters,
+                                platform = platform,
                                 onViewModeChange = { viewMode = it },
                                 onToggleFilters = { showFilters = !showFilters },
                                 onStateChange = onStateChange,
@@ -445,6 +444,7 @@ fun SharedLibraryScreen(
                             state = state,
                             viewMode = viewMode,
                             showFilters = showFilters,
+                            platform = platform,
                             onViewModeChange = { viewMode = it },
                             onToggleFilters = { showFilters = !showFilters },
                             onStateChange = onStateChange,
@@ -906,6 +906,104 @@ private fun LibraryToolbar(
     state: SharedReaderScreenState,
     viewMode: BookViewMode,
     showFilters: Boolean,
+    platform: ReaderPlatform,
+    onViewModeChange: (BookViewMode) -> Unit,
+    onToggleFilters: () -> Unit,
+    onStateChange: (SharedReaderScreenState) -> Unit,
+    onImportBooks: () -> Unit,
+    onImportFolder: () -> Unit,
+    onCreateShelf: () -> Unit
+) {
+    BoxWithConstraints {
+        val layout = libraryCommandBarLayoutForWidth(maxWidth.value, platform)
+        if (layout == LibraryCommandBarLayout.INLINE) {
+            DesktopLibraryCommandBar(
+                state = state,
+                viewMode = viewMode,
+                showFilters = showFilters,
+                onViewModeChange = onViewModeChange,
+                onToggleFilters = onToggleFilters,
+                onStateChange = onStateChange,
+                onImportBooks = onImportBooks,
+                onImportFolder = onImportFolder,
+                onCreateShelf = onCreateShelf
+            )
+        } else {
+            StackedLibraryCommandBar(
+                state = state,
+                viewMode = viewMode,
+                showFilters = showFilters,
+                onViewModeChange = onViewModeChange,
+                onToggleFilters = onToggleFilters,
+                onStateChange = onStateChange,
+                onImportBooks = onImportBooks,
+                onImportFolder = onImportFolder,
+                onCreateShelf = onCreateShelf
+            )
+        }
+    }
+}
+
+@Composable
+private fun DesktopLibraryCommandBar(
+    state: SharedReaderScreenState,
+    viewMode: BookViewMode,
+    showFilters: Boolean,
+    onViewModeChange: (BookViewMode) -> Unit,
+    onToggleFilters: () -> Unit,
+    onStateChange: (SharedReaderScreenState) -> Unit,
+    onImportBooks: () -> Unit,
+    onImportFolder: () -> Unit,
+    onCreateShelf: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(SharedUiTokens.surfaceRadius),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = sharedSubtleBorder(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            LibrarySearchField(
+                state = state,
+                onStateChange = onStateChange,
+                modifier = Modifier.weight(1f).widthIn(min = 260.dp)
+            )
+            SortMenu(
+                sortOrder = state.sortOrder,
+                onSortOrderChange = { onStateChange(state.reduce(LibraryAction.SortChanged(it))) }
+            )
+            LibraryFilterButton(
+                filters = state.libraryFilters,
+                showFilters = showFilters,
+                onToggleFilters = onToggleFilters
+            )
+            Button(onClick = onImportBooks) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(readerString("desktop_import_files", "Import files"))
+            }
+            OutlinedButton(onClick = onImportFolder) {
+                Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(readerString("fab_add_folder", "Add folder"))
+            }
+            LibraryMoreActionsMenu(
+                viewMode = viewMode,
+                onViewModeChange = onViewModeChange,
+                onCreateShelf = onCreateShelf
+            )
+        }
+    }
+}
+
+@Composable
+private fun StackedLibraryCommandBar(
+    state: SharedReaderScreenState,
+    viewMode: BookViewMode,
+    showFilters: Boolean,
     onViewModeChange: (BookViewMode) -> Unit,
     onToggleFilters: () -> Unit,
     onStateChange: (SharedReaderScreenState) -> Unit,
@@ -914,12 +1012,9 @@ private fun LibraryToolbar(
     onCreateShelf: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SharedStableOutlinedTextField(
-            value = state.searchQuery,
-            onValueChange = { onStateChange(state.reduce(LibraryAction.SearchChanged(it))) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            label = { Text(readerString("library_search_placeholder", "Search books, authors, or tags")) },
-            singleLine = true,
+        LibrarySearchField(
+            state = state,
+            onStateChange = onStateChange,
             modifier = Modifier.fillMaxWidth()
         )
         Row(
@@ -927,53 +1022,125 @@ private fun LibraryToolbar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            SortMenu(sortOrder = state.sortOrder, onSortOrderChange = { onStateChange(state.reduce(LibraryAction.SortChanged(it))) })
-            OutlinedButton(onClick = { onViewModeChange(if (viewMode == BookViewMode.COVERS) BookViewMode.LIST else BookViewMode.COVERS) }) {
-                Icon(if (viewMode == BookViewMode.COVERS) Icons.AutoMirrored.Filled.List else Icons.Default.Book, contentDescription = null, modifier = Modifier.size(18.dp))
+            SortMenu(
+                sortOrder = state.sortOrder,
+                onSortOrderChange = { onStateChange(state.reduce(LibraryAction.SortChanged(it))) }
+            )
+            LibraryFilterButton(
+                filters = state.libraryFilters,
+                showFilters = showFilters,
+                onToggleFilters = onToggleFilters
+            )
+            Button(onClick = onImportBooks) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    if (viewMode == BookViewMode.COVERS) {
-                        readerString("desktop_list_view", "List")
-                    } else {
-                        readerString("desktop_cover_view", "Covers")
-                    }
-                )
-            }
-            OutlinedButton(onClick = onToggleFilters) {
-                Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (showFilters) readerString("desktop_hide_filters", "Hide filters") else readerString("filter_library", "Filters"))
-                if (state.libraryFilters.isActive) {
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    ) {
-                        Text(
-                            state.libraryFilters.activeFilterBadge(),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-            }
-            OutlinedButton(onClick = onCreateShelf) {
-                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(readerString("fab_new_shelf", "New shelf"))
+                Text(readerString("desktop_import_files", "Import files"))
             }
             OutlinedButton(onClick = onImportFolder) {
                 Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(readerString("fab_add_folder", "Add folder"))
             }
-            Button(onClick = onImportBooks) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(readerString("desktop_import_files", "Import files"))
+            LibraryMoreActionsMenu(
+                viewMode = viewMode,
+                onViewModeChange = onViewModeChange,
+                onCreateShelf = onCreateShelf
+            )
+        }
+    }
+}
+
+@Composable
+private fun LibrarySearchField(
+    state: SharedReaderScreenState,
+    onStateChange: (SharedReaderScreenState) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    SharedStableOutlinedTextField(
+        value = state.searchQuery,
+        onValueChange = { onStateChange(state.reduce(LibraryAction.SearchChanged(it))) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        label = { Text(readerString("library_search_placeholder", "Search books, authors, or tags")) },
+        singleLine = true,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun LibraryFilterButton(
+    filters: LibraryFilters,
+    showFilters: Boolean,
+    onToggleFilters: () -> Unit
+) {
+    OutlinedButton(onClick = onToggleFilters) {
+        Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(if (showFilters) readerString("desktop_hide_filters", "Hide filters") else readerString("filter_library", "Filters"))
+        if (filters.isActive) {
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Text(
+                    filters.activeFilterBadge(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun LibraryMoreActionsMenu(
+    viewMode: BookViewMode,
+    onViewModeChange: (BookViewMode) -> Unit,
+    onCreateShelf: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                Icons.Default.MoreVert,
+                contentDescription = readerString("desktop_more", "More"),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                leadingIcon = {
+                    Icon(
+                        if (viewMode == BookViewMode.COVERS) Icons.AutoMirrored.Filled.List else Icons.Default.Book,
+                        contentDescription = null
+                    )
+                },
+                text = {
+                    Text(
+                        if (viewMode == BookViewMode.COVERS) {
+                            readerString("desktop_list_view", "List")
+                        } else {
+                            readerString("desktop_cover_view", "Covers")
+                        }
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onViewModeChange(
+                        if (viewMode == BookViewMode.COVERS) BookViewMode.LIST else BookViewMode.COVERS
+                    )
+                }
+            )
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
+                text = { Text(readerString("fab_new_shelf", "New shelf")) },
+                onClick = {
+                    expanded = false
+                    onCreateShelf()
+                }
+            )
         }
     }
 }
@@ -1006,6 +1173,7 @@ private fun LibraryContent(
         if (showFilters) {
             LibraryFilterPanel(
                 state = state,
+                platform = platform,
                 onStateChange = onStateChange
             )
         } else if (state.libraryFilters.isActive || state.searchQuery.isNotBlank()) {
@@ -1257,9 +1425,9 @@ private fun LibraryFilterSummary(
 }
 
 @Composable
-@OptIn(ExperimentalLayoutApi::class)
 private fun LibraryFilterPanel(
     state: SharedReaderScreenState,
+    platform: ReaderPlatform,
     onStateChange: (SharedReaderScreenState) -> Unit
 ) {
     Surface(
@@ -1267,7 +1435,7 @@ private fun LibraryFilterPanel(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         border = sharedSubtleBorder()
     ) {
-        Column(Modifier.fillMaxWidth().padding(SharedUiTokens.panelPadding), verticalArrangement = Arrangement.spacedBy(SharedUiTokens.contentGap)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(readerString("filter_library", "Filters"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 if (state.libraryFilters.isActive || state.searchQuery.isNotBlank()) {
@@ -1278,30 +1446,20 @@ private fun LibraryFilterPanel(
             }
 
             LibraryFilterSection(title = readerString("filter_file_type", "File type")) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    nonReaderLibraryFileTypeGroups().forEach { group ->
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                readerString(group.titleKey, group.titleFallback),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                group.fileTypes.forEach { type ->
-                                    FilterChip(
-                                        selected = type in state.libraryFilters.fileTypes,
-                                        onClick = {
-                                            val updated = state.libraryFilters.fileTypes.toggle(type)
-                                            onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(fileTypes = updated))))
-                                        },
-                                        label = { Text(SharedFileCapabilities.displayNameFor(type)) }
-                                    )
-                                }
-                            }
-                        }
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    nonReaderLibraryFileTypeGroups(platform).flatMap { it.fileTypes }.forEach { type ->
+                        FilterChip(
+                            selected = type in state.libraryFilters.fileTypes,
+                            onClick = {
+                                val updated = state.libraryFilters.fileTypes.toggle(type)
+                                onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(fileTypes = updated))))
+                            },
+                            label = { Text(SharedFileCapabilities.displayNameFor(type)) }
+                        )
                     }
                 }
             }
@@ -1328,7 +1486,14 @@ private fun LibraryFilterPanel(
                                 onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(sourceFolders = updated))))
                             },
                             leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                            label = { Text(folder.name) }
+                            label = {
+                                Text(
+                                    folder.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 180.dp)
+                                )
+                            }
                         )
                     }
                 }
@@ -1360,9 +1525,10 @@ private fun LibraryFilterPanel(
 
             if (state.allTags.isNotEmpty()) {
                 LibraryFilterSection(title = readerString("section_tags", "Tags")) {
-                    FlowRow(
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         state.allTags.forEach { tag ->
                             FilterChip(
@@ -1372,7 +1538,14 @@ private fun LibraryFilterPanel(
                                     onStateChange(state.reduce(LibraryAction.FiltersChanged(state.libraryFilters.copy(tagIds = updated))))
                                 },
                                 leadingIcon = { Icon(Icons.Default.Tag, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                                label = { Text(tag.name) }
+                                label = {
+                                    Text(
+                                        tag.name,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 160.dp)
+                                    )
+                                }
                             )
                         }
                     }
@@ -1387,11 +1560,11 @@ private fun LibraryFilterSection(
     title: String,
     content: @Composable () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         Text(
             title,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold
         )
         content()

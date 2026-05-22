@@ -58,6 +58,22 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `desktop library command bar uses inline layout only on wide panes`() {
+        assertEquals(
+            LibraryCommandBarLayout.STACKED,
+            libraryCommandBarLayoutForWidth(widthDp = 979f, platform = ReaderPlatform.DESKTOP)
+        )
+        assertEquals(
+            LibraryCommandBarLayout.INLINE,
+            libraryCommandBarLayoutForWidth(widthDp = 980f, platform = ReaderPlatform.DESKTOP)
+        )
+        assertEquals(
+            LibraryCommandBarLayout.STACKED,
+            libraryCommandBarLayoutForWidth(widthDp = 1200f, platform = ReaderPlatform.ANDROID)
+        )
+    }
+
+    @Test
     fun `desktop library filter file type groups include every shared readable format`() {
         val groupedTypes = nonReaderLibraryFileTypeGroups().flatMap { it.fileTypes }
 

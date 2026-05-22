@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
@@ -72,7 +71,6 @@ import com.aryan.reader.shared.CustomAppTheme
 import com.aryan.reader.shared.SharedFeaturePolicy
 
 enum class SharedAppTab {
-    HOME,
     LIBRARY,
     SHELVES,
     CATALOGS,
@@ -550,7 +548,6 @@ private fun SharedToolRow(
 @Composable
 private fun SharedAppTab.localizedLabel(): String {
     return when (this) {
-        SharedAppTab.HOME -> readerString("nav_home", "Home")
         SharedAppTab.LIBRARY -> readerString("library_title", "Library")
         SharedAppTab.SHELVES -> readerString("tab_shelves", "Shelves")
         SharedAppTab.CATALOGS -> readerString("opds_stream", "OPDS")
@@ -566,7 +563,6 @@ private fun SharedAppTab.localizedLabel(): String {
 
 private val SharedAppTab.icon: ImageVector
     get() = when (this) {
-        SharedAppTab.HOME -> Icons.Default.Home
         SharedAppTab.LIBRARY -> Icons.AutoMirrored.Filled.LibraryBooks
         SharedAppTab.SHELVES -> Icons.Default.Folder
         SharedAppTab.CATALOGS -> Icons.Default.Cloud
