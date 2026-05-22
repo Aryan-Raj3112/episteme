@@ -3350,6 +3350,21 @@ internal fun EpistemeDesktopApp(
                                 { openExternalUrl(EpistemeIssuesUrl) }
                             } else {
                                 null
+                            },
+                            onOpenPrivacyPolicy = if (featurePolicy.projectLinks) {
+                                { openExternalUrl(desktopBuildProfile.legalLinks.privacyPolicyUrl) }
+                            } else {
+                                null
+                            },
+                            onOpenTerms = if (featurePolicy.projectLinks) {
+                                { openExternalUrl(desktopBuildProfile.legalLinks.termsUrl) }
+                            } else {
+                                null
+                            },
+                            onOpenLicenses = if (featurePolicy.projectLinks) {
+                                { openExternalUrl(desktopBuildProfile.legalLinks.licensesUrl) }
+                            } else {
+                                null
                             }
                         )
 

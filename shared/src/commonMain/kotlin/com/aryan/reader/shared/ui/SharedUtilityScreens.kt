@@ -32,8 +32,11 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Feedback
+import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.Gavel
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.AlertDialog
@@ -494,6 +497,9 @@ fun SharedAboutScreen(
     buildLabel: String,
     onOpenSource: (() -> Unit)? = null,
     onOpenIssues: (() -> Unit)? = null,
+    onOpenPrivacyPolicy: (() -> Unit)? = null,
+    onOpenTerms: (() -> Unit)? = null,
+    onOpenLicenses: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     SharedScreenScaffold(
@@ -542,6 +548,30 @@ fun SharedAboutScreen(
                 body = readerString("desktop_issues_desc", "Open the issue tracker for bugs and feature requests."),
                 icon = { Icon(Icons.Default.Feedback, contentDescription = null, modifier = Modifier.size(28.dp)) },
                 onClick = onOpenIssues
+            )
+        }
+        if (onOpenPrivacyPolicy != null) {
+            SharedUtilityOptionCard(
+                title = readerString("legal_privacy_policy", "Privacy Policy"),
+                body = readerString("about_privacy_desc", "How Episteme handles data for this edition."),
+                icon = { Icon(Icons.Default.Policy, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                onClick = onOpenPrivacyPolicy
+            )
+        }
+        if (onOpenTerms != null) {
+            SharedUtilityOptionCard(
+                title = readerString("legal_terms_of_service", "Terms of Service"),
+                body = readerString("about_terms_desc", "Usage terms and conditions."),
+                icon = { Icon(Icons.Default.Gavel, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                onClick = onOpenTerms
+            )
+        }
+        if (onOpenLicenses != null) {
+            SharedUtilityOptionCard(
+                title = readerString("legal_licenses", "Licenses"),
+                body = readerString("about_licenses_desc", "Open source libraries used."),
+                icon = { Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(28.dp)) },
+                onClick = onOpenLicenses
             )
         }
     }

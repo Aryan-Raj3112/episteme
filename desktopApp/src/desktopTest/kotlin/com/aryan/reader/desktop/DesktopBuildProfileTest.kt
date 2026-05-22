@@ -19,6 +19,8 @@ class DesktopBuildProfileTest {
         assertEquals(EpistemeDesktopStandardAppName, profile.appName)
         assertEquals("Standard edition", profile.buildLabel)
         assertEquals(SharedFeaturePolicy.Standard, profile.featurePolicy)
+        assertTrue(profile.legalLinks.privacyPolicyUrl.endsWith("/privacy-policy.html"))
+        assertTrue(profile.legalLinks.termsUrl.endsWith("/terms-and-conditions.html"))
         assertTrue(profile.featurePolicy.networkAccess)
         assertFalse(profile.featurePolicy.byokAi)
         assertFalse(profile.byokAiAvailable)
@@ -33,6 +35,8 @@ class DesktopBuildProfileTest {
         assertEquals(EpistemeDesktopOssAppName, profile.appName)
         assertEquals("Offline OSS edition", profile.buildLabel)
         assertEquals(SharedFeaturePolicy.OssOffline, profile.featurePolicy)
+        assertTrue(profile.legalLinks.privacyPolicyUrl.endsWith("/oss-privacy-policy.html"))
+        assertTrue(profile.legalLinks.termsUrl.endsWith("/oss-terms-of-service.html"))
         assertFalse(profile.featurePolicy.networkAccess)
         assertFalse(profile.featurePolicy.aiAndCloud)
         assertTrue(profile.featurePolicy.byokAi)
@@ -57,11 +61,7 @@ class DesktopBuildProfileTest {
             geminiKey = "gemini_secret",
             modelForAll = "gemini:gemini-flash-lite-latest"
         )
-        val onlineOssPolicy = SharedFeaturePolicy(
-            networkAccess = true,
-            aiAndCloud = true,
-            byokAi = true
-        )
+        val onlineOssPolicy = SharedFeaturePolicy.OssOnline
 
         assertTrue(
             DesktopBuildProfile(

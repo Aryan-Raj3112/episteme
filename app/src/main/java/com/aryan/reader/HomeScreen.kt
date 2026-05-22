@@ -1485,7 +1485,7 @@ private fun AppDrawerContent(
             Spacer(modifier = Modifier.weight(1f))
 
             // legal links
-            if (uiState.currentUser != null && !isOss) {
+            if (uiState.currentUser != null || (isOss && !BuildConfig.IS_OFFLINE)) {
                 val uriHandler = LocalUriHandler.current
                 val baseStyle = MaterialTheme.typography.labelMedium
                 var scaledTextStyle by remember { mutableStateOf(baseStyle) }

@@ -15,6 +15,8 @@ fun androidSettingsHubInput(
     val supportsOssAiKeys = isOssBuild && !isOfflineBuild
     val featurePolicy = if (isOfflineBuild) {
         SharedFeaturePolicy.OssOffline
+    } else if (isOssBuild) {
+        SharedFeaturePolicy.OssOnline
     } else {
         SharedFeaturePolicy.Standard
     }

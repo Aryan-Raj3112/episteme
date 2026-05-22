@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.SharedSettingsDestination
+import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedSettingsHubModel
 import com.aryan.reader.shared.SharedSettingsItemModel
 import com.aryan.reader.shared.sharedSettingsHubModel
@@ -37,24 +38,23 @@ class AndroidSettingsHubModelsTest {
 
     @Test
     fun `oss online settings hide sync rows but keep oss ai key settings`() {
-        val model = sharedSettingsHubModel(
-            androidSettingsHubInput(
-                uiState = ReaderScreenState(
-                    currentUser = UserData(
-                        uid = "user-id",
-                        displayName = "Reader",
-                        photoUrl = null,
-                        email = "reader@example.com"
-                    ),
-                    isProUser = true,
-                    isSyncEnabled = true,
-                    isFolderSyncEnabled = true
+        val input = androidSettingsHubInput(
+            uiState = ReaderScreenState(
+                currentUser = UserData(
+                    uid = "user-id",
+                    displayName = "Reader",
+                    photoUrl = null,
+                    email = "reader@example.com"
                 ),
-                isOssBuild = true,
-                isOfflineBuild = false,
-                isDebugBuild = true
-            )
+                isProUser = true,
+                isSyncEnabled = true,
+                isFolderSyncEnabled = true
+            ),
+            isOssBuild = true,
+            isOfflineBuild = false,
+            isDebugBuild = true
         )
+        val model = sharedSettingsHubModel(input)
         val actions = model.visibleNestedActions()
 
         assertTrue(SharedSettingsAction.AI_SETTINGS in actions)
@@ -65,6 +65,7 @@ class AndroidSettingsHubModelsTest {
         assertFalse(SharedSettingsAction.DEVICE_MANAGEMENT in actions)
         assertFalse(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in actions)
         assertTrue(SharedSettingsAction.SUPPORT in actions)
+        assertEquals(SharedFeaturePolicy.OssOnline, input.featurePolicy)
         assertEquals(
             "TTS & AI",
             model.rootCategories.single { it.destination == SharedSettingsDestination.TTS_AI }.title

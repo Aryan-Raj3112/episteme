@@ -142,9 +142,12 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import androidx.core.text.HtmlCompat
+import com.aryan.reader.shared.SharedLegalLinks
+import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.SharedText
+import com.aryan.reader.shared.sharedLegalLinksForProfile
 import com.aryan.reader.shared.ui.SharedMarkdownText
 import timber.log.Timber
 import java.text.SimpleDateFormat
@@ -154,9 +157,14 @@ import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-internal const val PRIVACY_POLICY_URL = "https://aryan-raj3112.github.io/reader-policy/privacy-policy.html"
-internal const val TERMS_URL = "https://aryan-raj3112.github.io/reader-policy/terms-and-conditions.html"
-internal const val LICENSES_URL = "https://aryan-raj3112.github.io/reader-policy/licenses.html"
+internal fun legalLinksForAndroidFlavor(flavor: String = BuildConfig.FLAVOR): SharedLegalLinks {
+    val profile = if (flavor == "oss") SharedLegalProfile.OSS else SharedLegalProfile.STANDARD
+    return sharedLegalLinksForProfile(profile)
+}
+
+internal val PRIVACY_POLICY_URL: String get() = legalLinksForAndroidFlavor().privacyPolicyUrl
+internal val TERMS_URL: String get() = legalLinksForAndroidFlavor().termsUrl
+internal val LICENSES_URL: String get() = legalLinksForAndroidFlavor().licensesUrl
 
 class CustomTabUriHandler(private val context: Context) : UriHandler {
     override fun openUri(uri: String) {
@@ -1237,53 +1245,55 @@ fun AboutDialog(onDismiss: () -> Unit) {
                         subtitle = stringResource(R.string.about_github_desc),
                         onClick = { uriHandler.openUri("https://github.com/Aryan-Raj3112/episteme") }
                     )
-                } else {
-                    AboutInfoRow(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Outlined.Policy,
-                                contentDescription = null,
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        text = stringResource(R.string.legal_privacy_policy),
-                        subtitle = stringResource(R.string.about_privacy_desc),
-                        onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }
-                    )
 
                     Spacer(modifier = Modifier.height(10.dp))
-
-                    AboutInfoRow(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Outlined.Gavel,
-                                contentDescription = null,
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        text = stringResource(R.string.legal_terms_of_service),
-                        subtitle = stringResource(R.string.about_terms_desc),
-                        onClick = { uriHandler.openUri(TERMS_URL) }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    AboutInfoRow(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Outlined.FileOpen,
-                                contentDescription = null,
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        text = stringResource(R.string.legal_licenses),
-                        subtitle = stringResource(R.string.about_licenses_desc),
-                        onClick = { uriHandler.openUri(LICENSES_URL) }
-                    )
                 }
+
+                AboutInfoRow(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Policy,
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    text = stringResource(R.string.legal_privacy_policy),
+                    subtitle = stringResource(R.string.about_privacy_desc),
+                    onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                AboutInfoRow(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Outlined.Gavel,
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    text = stringResource(R.string.legal_terms_of_service),
+                    subtitle = stringResource(R.string.about_terms_desc),
+                    onClick = { uriHandler.openUri(TERMS_URL) }
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                AboutInfoRow(
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Outlined.FileOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    text = stringResource(R.string.legal_licenses),
+                    subtitle = stringResource(R.string.about_licenses_desc),
+                    onClick = { uriHandler.openUri(LICENSES_URL) }
+                )
             }
         },
         confirmButton = {

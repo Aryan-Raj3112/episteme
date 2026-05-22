@@ -11,6 +11,11 @@ data class SharedFeaturePolicy(
 ) {
     companion object {
         val Standard = SharedFeaturePolicy()
+        val OssOnline = SharedFeaturePolicy(
+            networkAccess = true,
+            aiAndCloud = true,
+            byokAi = true
+        )
         val OssOffline = SharedFeaturePolicy(
             networkAccess = false,
             opdsCatalogs = false,
