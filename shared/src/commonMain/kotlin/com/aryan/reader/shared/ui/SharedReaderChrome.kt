@@ -1257,7 +1257,6 @@ private fun SharedReaderControlPanel(
     onReaderAction: (ReaderAction) -> Unit
 ) {
     val sections = toolbarPreferences.availableReaderControlSections(
-        session = session,
         cloudTtsControlsAvailable = cloudTtsControlsAvailable
     )
     if (sections.isEmpty()) return
@@ -1287,11 +1286,6 @@ private fun SharedReaderControlPanel(
         ) {
             item {
                 when (activeSection) {
-                    ReaderControlSection.PAGE -> SharedReaderPageControls(
-                        session = session,
-                        onReaderAction = onReaderAction
-                    )
-
                     ReaderControlSection.FORMAT -> SharedReaderFormatControls(
                         settings = session.reader.settings,
                         onPickCustomFont = onPickCustomFont,
@@ -1368,7 +1362,6 @@ private fun SharedReaderControlSectionTabs(
 }
 
 private enum class ReaderControlSection {
-    PAGE,
     FORMAT,
     THEME,
     VISUAL,
@@ -1377,7 +1370,6 @@ private enum class ReaderControlSection {
 
 private fun ReaderControlSection.icon(): ImageVector {
     return when (this) {
-        ReaderControlSection.PAGE -> Icons.AutoMirrored.Filled.NavigateNext
         ReaderControlSection.FORMAT -> Icons.Default.TextFields
         ReaderControlSection.THEME -> Icons.Default.Palette
         ReaderControlSection.VISUAL -> Icons.Default.Tune
@@ -1388,7 +1380,6 @@ private fun ReaderControlSection.icon(): ImageVector {
 @Composable
 private fun ReaderControlSection.localizedTitle(): String {
     return when (this) {
-        ReaderControlSection.PAGE -> readerString("desktop_navigation", "Navigation")
         ReaderControlSection.FORMAT -> readerString("desktop_typography", "Typography")
         ReaderControlSection.THEME -> readerString("app_theme_appearance", "Appearance")
         ReaderControlSection.VISUAL -> readerString("visual_options_title", "Visual")
@@ -1397,13 +1388,9 @@ private fun ReaderControlSection.localizedTitle(): String {
 }
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(
-    session: ReaderSessionState,
     cloudTtsControlsAvailable: Boolean
 ): List<ReaderControlSection> {
     return buildList {
-        if (session.shouldShowJumpHistory) {
-            add(ReaderControlSection.PAGE)
-        }
         if (isVisible(ReaderTool.FORMAT)) add(ReaderControlSection.FORMAT)
         if (isVisible(ReaderTool.THEME)) add(ReaderControlSection.THEME)
         if (isVisible(ReaderTool.VISUAL_OPTIONS) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.VISUAL)
@@ -1415,24 +1402,6 @@ private fun ReaderToolbarPreferences.availableReaderControlSections(
             isVisible(ReaderTool.TTS_REPLACEMENTS)
         ) {
             add(ReaderControlSection.TTS)
-        }
-    }
-}
-
-@Composable
-private fun SharedReaderPageControls(
-    session: ReaderSessionState,
-    onReaderAction: (ReaderAction) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (session.shouldShowJumpHistory) {
-            Text(readerString("desktop_jump_history", "Jump history"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            SharedReaderJumpHistoryBar(
-                session = session,
-                onBack = { onReaderAction(ReaderAction.JumpBack) },
-                onForward = { onReaderAction(ReaderAction.JumpForward) },
-                onClear = { onReaderAction(ReaderAction.JumpHistoryCleared) }
-            )
         }
     }
 }

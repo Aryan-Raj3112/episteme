@@ -59,6 +59,16 @@ object DesktopFolderMetadataExtractor {
         return enrichBooks(books) { book -> book.sourceFolder == sourceFolder }
     }
 
+    fun enrichFolderBooks(
+        books: List<BookItem>,
+        sourceFolders: Set<String>
+    ): DesktopFolderMetadataExtractionResult {
+        if (sourceFolders.isEmpty()) {
+            return DesktopFolderMetadataExtractionResult(books)
+        }
+        return enrichBooks(books) { book -> book.sourceFolder in sourceFolders }
+    }
+
     fun enrichImportedBooks(
         books: List<BookItem>,
         importedBookIds: Set<String>

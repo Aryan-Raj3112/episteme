@@ -11,8 +11,37 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class DesktopLocalFolderSyncTest {
+    @Test
+    fun `target folder sync imports files before desktop metadata extraction`() {
+        val root = Files.createTempDirectory("reader-desktop-folder-sync").toFile()
+        try {
+            val bookFile = File(root, "Notes.txt").apply { writeText("Notes") }
+
+            val result = DesktopLocalFolderSync.sync(
+                state = SharedReaderScreenState(),
+                shelfRefs = emptyList(),
+                targetFolder = root,
+                nowMillis = 3_000L,
+                extractMetadata = false
+            )
+
+            val syncedBook = result.state.rawLibraryBooks.single()
+            assertEquals("local_Notes.txt", syncedBook.id)
+            assertEquals(bookFile.absolutePath, syncedBook.path)
+            assertEquals(root.absolutePath, syncedBook.sourceFolder)
+            assertEquals(listOf(root.absolutePath), result.processedFolderUris)
+            assertEquals(1, result.state.syncedFolders.size)
+            assertEquals(1, result.stats.newBooks)
+            assertEquals(0, result.metadataStats.updatedBooks)
+            assertNull(syncedBook.coverImagePath)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test
     fun `metadata-only sync imports sidecar metadata without scanning physical files`() {
         val root = Files.createTempDirectory("reader-desktop-folder-sync").toFile()
@@ -61,6 +90,7 @@ class DesktopLocalFolderSyncTest {
             assertEquals(0, result.stats.newBooks)
             assertEquals(0, result.stats.removedBooks)
             assertEquals(1, result.stats.remoteMetadataUpdates)
+            assertTrue(result.processedFolderUris.contains(root.absolutePath))
         } finally {
             root.deleteRecursively()
         }

@@ -46,7 +46,8 @@ data class DesktopLocalFolderSyncResult(
     val metadataStats: DesktopFolderMetadataExtractionStats = DesktopFolderMetadataExtractionStats(),
     val idMigrations: Map<String, String> = emptyMap(),
     val removedBookIds: Set<String> = emptySet(),
-    val failedFolders: List<String> = emptyList()
+    val failedFolders: List<String> = emptyList(),
+    val processedFolderUris: List<String> = emptyList()
 )
 
 object DesktopLocalFolderSync {
@@ -56,10 +57,18 @@ object DesktopLocalFolderSync {
         if (!folder.isDirectory) return false
         return folder.walkTopDown()
             .onEnter { it == folder || it.shouldEnterSyncedFolder() }
+            .onFail { file, error ->
+                logDesktopFolderSync(
+                    "folder.supportedFiles.skipInaccessible path=\"${file.absolutePath.folderSyncPreview()}\" " +
+                        "error=${error.folderSyncSummary()}"
+                )
+            }
             .any { file ->
-                file.isFile &&
-                    file.shouldSyncBookFile() &&
-                    SharedFileCapabilities.fileTypeForName(file.name) in desktopSyncableTypes
+                runCatching {
+                    file.isFile &&
+                        file.shouldSyncBookFile() &&
+                        SharedFileCapabilities.fileTypeForName(file.name) in desktopSyncableTypes
+                }.getOrDefault(false)
             }
     }
 
@@ -68,7 +77,8 @@ object DesktopLocalFolderSync {
         shelfRefs: List<BookShelfRef>,
         targetFolder: File? = null,
         nowMillis: Long = System.currentTimeMillis(),
-        metadataOnly: Boolean = false
+        metadataOnly: Boolean = false,
+        extractMetadata: Boolean = true
     ): DesktopLocalFolderSyncResult {
         val requestedFolders = foldersToSync(state, targetFolder, nowMillis)
         val mode = if (metadataOnly) "metadata" else "full"
@@ -84,6 +94,7 @@ object DesktopLocalFolderSync {
         val allMigrations = linkedMapOf<String, String>()
         val allRemovedBookIds = linkedSetOf<String>()
         val failedFolders = mutableListOf<String>()
+        val processedFolderUris = mutableListOf<String>()
 
         requestedFolders.forEach { folder ->
             val root = File(folder.uriString)
@@ -95,6 +106,7 @@ object DesktopLocalFolderSync {
                 failedFolders += folder.name
                 return@forEach
             }
+            processedFolderUris += folder.uriString
 
             logDesktopFolderSync(
                 "folder.start mode=$mode name=\"${folder.name.folderSyncPreview()}\" " +
@@ -138,13 +150,27 @@ object DesktopLocalFolderSync {
             logDesktopFolderSync(
                 "folder.sidecars.importCheck mode=$mode name=\"${folder.name.folderSyncPreview()}\" books=${syncedBooks.size}"
             )
-            importAnnotationSidecars(root, syncedBooks)
+            runCatching {
+                importAnnotationSidecars(root, syncedBooks)
+            }.onFailure { error ->
+                logDesktopFolderSync(
+                    "annotation.import.failed mode=$mode name=\"${folder.name.folderSyncPreview()}\" " +
+                        "root=\"${root.absolutePath.folderSyncPreview()}\" error=${error.folderSyncSummary()}"
+                )
+            }
             syncedBooks.forEach { book ->
                 remoteMetadata[book.id]?.let { metadata ->
-                    importDesktopPdfBookmarksMetadata(book, metadata.bookmarksJson, metadata.lastModifiedTimestamp)
+                    runCatching {
+                        importDesktopPdfBookmarksMetadata(book, metadata.bookmarksJson, metadata.lastModifiedTimestamp)
+                    }.onFailure { error ->
+                        logDesktopFolderSync(
+                            "metadata.bookmarks.importFailed book=${book.id} " +
+                                "error=${error.folderSyncSummary()}"
+                        )
+                    }
                 }
             }
-            if (!metadataOnly) {
+            if (!metadataOnly && extractMetadata) {
                 val metadataResult = DesktopFolderMetadataExtractor.enrichFolderBooks(
                     books = nextState.rawLibraryBooks,
                     sourceFolder = folder.uriString
@@ -178,7 +204,8 @@ object DesktopLocalFolderSync {
             metadataStats = totalMetadataStats,
             idMigrations = allMigrations,
             removedBookIds = allRemovedBookIds,
-            failedFolders = failedFolders
+            failedFolders = failedFolders,
+            processedFolderUris = processedFolderUris
         )
         logDesktopFolderSync(
             "sync.done mode=$mode failed=${failedFolders.size} new=${totalStats.newBooks} " +
@@ -332,7 +359,15 @@ object DesktopLocalFolderSync {
         val rootPath = root.toPath().toAbsolutePath().normalize()
         return root.walkTopDown()
             .onEnter { it == root || it.shouldEnterSyncedFolder() }
-            .filter { it.isFile && it.shouldSyncBookFile() }
+            .onFail { file, error ->
+                logDesktopFolderSync(
+                    "folder.scan.skipInaccessible root=\"${root.absolutePath.folderSyncPreview()}\" " +
+                        "path=\"${file.absolutePath.folderSyncPreview()}\" error=${error.folderSyncSummary()}"
+                )
+            }
+            .filter { file ->
+                runCatching { file.isFile && file.shouldSyncBookFile() }.getOrDefault(false)
+            }
             .mapNotNull { file ->
                 val type = SharedFileCapabilities.fileTypeForName(file.name)
                     .takeIf { it in desktopSyncableTypes }
@@ -347,8 +382,8 @@ object DesktopLocalFolderSync {
                     sourceFolder = sourceFolder,
                     relativePath = relativePath,
                     type = type,
-                    size = file.length(),
-                    lastModified = file.lastModified()
+                    size = runCatching { file.length() }.getOrDefault(0L),
+                    lastModified = runCatching { file.lastModified() }.getOrDefault(0L)
                 )
             }
             .toList()

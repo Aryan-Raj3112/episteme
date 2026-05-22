@@ -1451,6 +1451,47 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun scheduleFolderMetadataExtraction(sourceFolders: Set<String>) {
+        if (sourceFolders.isEmpty()) return
+        val snapshotBooks = state.rawLibraryBooks
+        val originalBooksById = snapshotBooks
+            .filter { it.sourceFolder in sourceFolders }
+            .associateBy { it.id }
+        if (originalBooksById.isEmpty()) return
+
+        scope.launch {
+            val metadataResult = withContext(Dispatchers.IO) {
+                DesktopFolderMetadataExtractor.enrichFolderBooks(
+                    books = snapshotBooks,
+                    sourceFolders = sourceFolders
+                )
+            }
+            if (metadataResult.stats.updatedBooks <= 0) return@launch
+
+            val enrichedBooksById = metadataResult.books
+                .filter { it.sourceFolder in sourceFolders }
+                .associateBy { it.id }
+            val booksToSave = mutableListOf<BookItem>()
+            val mergedBooks = state.rawLibraryBooks.map { current ->
+                val enriched = enrichedBooksById[current.id]
+                    ?.takeIf { current.sourceFolder in sourceFolders }
+                    ?: return@map current
+                val merged = current.withDesktopImportMetadata(
+                    enriched = enriched,
+                    original = originalBooksById[current.id]
+                )
+                if (merged != current) booksToSave += merged
+                merged
+            }
+            if (booksToSave.isEmpty()) return@launch
+
+            updateState(state.copy(rawLibraryBooks = mergedBooks))
+            withContext(Dispatchers.IO) {
+                booksToSave.forEach(DesktopLocalFolderSync::saveBookSidecars)
+            }
+        }
+    }
+
     fun updateBookReadingState(
         bookId: String,
         pageIndex: Int,
@@ -2102,14 +2143,22 @@ internal fun EpistemeDesktopApp(
         }
 
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                DesktopLocalFolderSync.sync(
-                    state = snapshotState,
-                    shelfRefs = snapshotShelfRefs,
-                    targetFolder = targetFolder,
-                    metadataOnly = metadataOnly
-                )
-            }
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    DesktopLocalFolderSync.sync(
+                        state = snapshotState,
+                        shelfRefs = snapshotShelfRefs,
+                        targetFolder = targetFolder,
+                        metadataOnly = metadataOnly,
+                        extractMetadata = false
+                    )
+                }
+            }.onFailure { error ->
+                logDesktopFolderSync("ui.sync.failed mode=$mode error=${error.folderSyncSummary()}")
+                if (showBanner) {
+                    updateState(state.withBanner(error.message ?: "Folder sync failed.", isError = true))
+                }
+            }.getOrNull() ?: return@launch
             val failedCount = result.failedFolders.size
             val stats = result.stats
             val metadataStats = result.metadataStats
@@ -2140,15 +2189,19 @@ internal fun EpistemeDesktopApp(
                     "new=${stats.newBooks} updated=${stats.updatedBooks} remoteUpdates=${stats.remoteMetadataUpdates} " +
                     "removed=${stats.removedBooks} metadataExtracted=${metadataStats.updatedBooks}"
             )
-            val completedState = if (showBanner || failedCount > 0) {
-                result.state.withBanner(message, isError = failedCount > 0)
-            } else {
-                result.state
-            }
+            val completedState = desktopFolderSyncCompletedState(
+                state = result.state,
+                message = message,
+                failedFolderCount = failedCount,
+                showBanner = showBanner
+            )
             replaceLibrary(
                 completedState,
                 refs = result.shelfRefs
             )
+            if (!metadataOnly) {
+                scheduleFolderMetadataExtraction(result.processedFolderUris.toSet())
+            }
             val existingBookIds = completedState.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
             readerWindows = readerWindows.mapNotNull { window ->
                 val migratedBookId = result.idMigrations[window.bookId] ?: window.bookId
