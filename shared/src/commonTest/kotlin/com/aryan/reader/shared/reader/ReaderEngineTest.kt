@@ -359,6 +359,81 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `replacePages resolves page start anchors to the page after a touching boundary`() {
+        val engine = ReaderEngine()
+        val book = manualRangeBook()
+        val pages = listOf(
+            ReaderPage(0, 0, "One", "first", 0, 100),
+            ReaderPage(1, 0, "One", "second", 100, 200),
+            ReaderPage(2, 0, "One", "third", 200, 300)
+        )
+        val session = engine.createSession(book).copy(
+            reader = PaginatedReaderState(book, pages, currentPageIndex = 1),
+            navigationLocator = ReaderLocator(chapterIndex = 0, pageIndex = 1, startOffset = 100, endOffset = 100),
+            navigationRequestId = 8L
+        )
+
+        val replaced = engine.replacePages(
+            state = session,
+            pages = pages,
+            reflowAnchor = session.navigationLocator,
+            navigationRequestIdAtReflowStart = 8L
+        )
+
+        assertEquals(1, replaced.reader.currentPageIndex)
+        assertEquals(1, replaced.navigationLocator?.pageIndex)
+        assertEquals(100, replaced.navigationLocator?.startOffset)
+    }
+
+    @Test
+    fun `replacePages resolves android block locator after measured pagination`() {
+        val engine = ReaderEngine()
+        val book = manualRangeBook()
+        val initialSession = engine.createSession(
+            book = book,
+            initialLocator = ReaderLocator(
+                chapterIndex = 0,
+                pageIndex = 0,
+                blockIndex = 42,
+                charOffset = 160,
+                cfi = "android-locator:0:42:160"
+            )
+        )
+        val measuredPages = listOf(
+            ReaderPage(
+                pageIndex = 0,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "first",
+                startOffset = 0,
+                endOffset = 100,
+                semanticBlocks = listOf(SemanticParagraph("first", emptyList(), CssStyle(), null, null, 0, 7))
+            ),
+            ReaderPage(
+                pageIndex = 1,
+                chapterIndex = 0,
+                chapterTitle = "One",
+                text = "target",
+                startOffset = 150,
+                endOffset = 210,
+                semanticBlocks = listOf(SemanticParagraph("target", emptyList(), CssStyle(), null, null, 150, 42))
+            )
+        )
+
+        val replaced = engine.replacePages(
+            state = initialSession,
+            pages = measuredPages,
+            reflowAnchor = initialSession.navigationLocator,
+            navigationRequestIdAtReflowStart = initialSession.navigationRequestId
+        )
+
+        assertEquals(1, replaced.reader.currentPageIndex)
+        assertEquals(1, replaced.navigationLocator?.pageIndex)
+        assertEquals(42, replaced.navigationLocator?.blockIndex)
+        assertEquals(160, replaced.navigationLocator?.charOffset)
+    }
+
+    @Test
     fun `replacePages lets newer explicit navigation override reflow anchor`() {
         val engine = ReaderEngine()
         val book = manualRangeBook()

@@ -306,6 +306,36 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `metadata sidecar preserves android block reader position`() {
+        val locator = ReaderLocator(
+            chapterIndex = 1,
+            pageIndex = 5,
+            blockIndex = 44,
+            charOffset = 120,
+            cfi = "android-locator:1:44:120"
+        )
+
+        val metadata = book(
+            id = "local_Book.epub",
+            type = FileType.EPUB,
+            progress = 37f,
+            readerPosition = locator
+        ).toSharedFolderBookMetadata() ?: error("Expected sidecar")
+        val restored = metadata.toBookItem(
+            file = scannedFile("Book.epub", "Book.epub"),
+            existing = null,
+            nowMillis = 2_000L
+        )
+
+        assertEquals(1, metadata.lastChapterIndex)
+        assertEquals(5, metadata.lastPage)
+        assertEquals("android-locator:1:44:120", metadata.lastPositionCfi)
+        assertEquals(44, metadata.locatorBlockIndex)
+        assertEquals(120, metadata.locatorCharOffset)
+        assertEquals(locator, restored.readerPosition)
+    }
+
+    @Test
     fun `metadata sidecar ignores legacy editable metadata`() {
         val local = book(id = "local_Book.pdf")
             .copy(
@@ -451,6 +481,7 @@ class LocalFolderSyncEngineTest {
         sourceFolder: String = "C:/Library",
         timestamp: Long = 100L,
         title: String = "Book",
+        type: FileType = FileType.PDF,
         progress: Float? = null,
         isRecent: Boolean = false,
         fileSize: Long = 0L,
@@ -461,7 +492,7 @@ class LocalFolderSyncEngineTest {
         return BookItem(
             id = id,
             path = path,
-            type = FileType.PDF,
+            type = type,
             displayName = displayName,
             timestamp = timestamp,
             coverImagePath = coverImagePath,

@@ -195,6 +195,8 @@ internal fun String.readerPositionOrNull(): DesktopReaderPosition? {
             pageIndex = pageIndex,
             startOffset = obj["startOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
             endOffset = obj["endOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+            blockIndex = obj["blockIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+            charOffset = obj["charOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
             textQuote = obj["textQuote"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
             cfi = obj["cfi"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull
         )

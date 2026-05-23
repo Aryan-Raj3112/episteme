@@ -476,8 +476,8 @@ internal fun BookItem.toDesktopCloudBookMetadata(
         type = type.name,
         lastPositionCfi = position?.cloudPositionCfi(),
         lastChapterIndex = position?.chapterIndex,
-        locatorBlockIndex = null,
-        locatorCharOffset = null,
+        locatorBlockIndex = position?.blockIndex,
+        locatorCharOffset = position?.charOffset,
         lastPage = position?.pageIndex ?: lastPageIndex,
         progressPercentage = progressPercentage,
         isRecent = isRecent,
@@ -509,6 +509,9 @@ internal fun DesktopCloudBookMetadata.toDesktopBookItem(
         chapterIndex = lastChapterIndex,
         cfi = lastPositionCfi,
         pageIndex = pageIndex
+    ).withFallbacks(
+        blockIndex = locatorBlockIndex,
+        charOffset = locatorCharOffset
     )
     return BookItem(
         id = bookId,
@@ -538,7 +541,11 @@ internal fun DesktopCloudBookMetadata.toDesktopBookItem(
         tags = existing?.tags.orEmpty(),
         lastPageIndex = pageIndex ?: existing?.lastPageIndex,
         readerPosition = locator.takeIf {
-            it.chapterIndex != null || it.pageIndex != null || it.cfi != null || it.startOffset != null
+            it.chapterIndex != null ||
+                it.pageIndex != null ||
+                it.cfi != null ||
+                it.startOffset != null ||
+                it.blockIndex != null
         } ?: existing?.readerPosition,
         readerSettings = existing?.readerSettings,
         readerBookmarks = if (type == FileType.PDF || bookmarksJson.isNullOrBlank()) {
@@ -655,12 +662,14 @@ private fun ReaderLocator.cloudPositionCfi(): String? {
     val chapter = chapterIndex
     val start = startOffset
     val end = endOffset ?: start
-    return if (chapter != null && start != null && end != null) {
-        "desktop:$chapter:$start:$end"
-    } else if (chapter != null && pageIndex != null) {
-        "desktop:$chapter:$pageIndex"
-    } else {
-        null
+    return when {
+        chapter != null && blockIndex != null && charOffset != null ->
+            "android-locator:$chapter:$blockIndex:$charOffset"
+        chapter != null && start != null && end != null ->
+            "desktop:$chapter:$start:$end"
+        chapter != null && pageIndex != null ->
+            "desktop:$chapter:$pageIndex"
+        else -> null
     }
 }
 

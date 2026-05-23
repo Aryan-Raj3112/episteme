@@ -1,5 +1,8 @@
 package com.aryan.reader.shared.reader
 
+import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.SemanticParagraph
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import kotlin.test.Test
@@ -92,6 +95,49 @@ class SharedEpubPaginationCacheTest {
             val spread = cache.keyFor(book, ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE), viewport)
 
             assertFalse(single.configHash == spread.configHash)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `page cache ignores semanticless pages for semantic books`() = runBlocking {
+        val root = Files.createTempDirectory("reader-page-cache").toFile()
+        try {
+            val cache = SharedEpubPaginationCache(root)
+            val book = cacheBook().copy(
+                chapters = listOf(
+                    cacheBook().chapters.first().copy(
+                        semanticBlocks = listOf(
+                            SemanticParagraph(
+                                text = "Cached page content.",
+                                spans = emptyList(),
+                                style = CssStyle(fontSize = 22.sp),
+                                elementId = null,
+                                cfi = null,
+                                startCharOffsetInSource = 0,
+                                blockIndex = 0
+                            )
+                        )
+                    )
+                )
+            )
+            val settings = ReaderSettings()
+            val viewport = ReaderViewportSpec(widthPx = 960, heightPx = 720)
+            val pages = listOf(
+                ReaderPage(
+                    pageIndex = 0,
+                    chapterIndex = 0,
+                    chapterTitle = "One",
+                    text = "Cached page",
+                    startOffset = 0,
+                    endOffset = 11
+                )
+            )
+
+            cache.save(book, settings, viewport, pages)
+
+            assertNull(cache.load(book, settings, viewport))
         } finally {
             root.deleteRecursively()
         }

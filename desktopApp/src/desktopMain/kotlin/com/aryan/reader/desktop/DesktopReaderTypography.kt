@@ -35,7 +35,7 @@ internal fun List<ReaderPage>.samePageLayoutAs(other: List<ReaderPage>): Boolean
             left.startOffset == right.startOffset &&
             left.endOffset == right.endOffset &&
             left.text.length == right.text.length &&
-            left.semanticBlocks.size == right.semanticBlocks.size
+            left.semanticBlocks == right.semanticBlocks
     }
 }
 

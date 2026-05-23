@@ -2459,11 +2459,20 @@ fun EpubReaderHost(
         return SharedReaderLocator(
             chapterIndex = chapterIndex,
             pageIndex = pageIndex,
+            blockIndex = blockIndex,
+            charOffset = charOffset,
             cfi = cfiOverride ?: "android-locator:$chapterIndex:$blockIndex:$charOffset"
         )
     }
 
     fun SharedReaderLocator.toAndroidLocatorOrNull(): Locator? {
+        if (chapterIndex != null && blockIndex != null && charOffset != null) {
+            return Locator(
+                chapterIndex = chapterIndex,
+                blockIndex = blockIndex,
+                charOffset = charOffset
+            )
+        }
         val parts = cfi
             ?.takeIf { it.startsWith("android-locator:") }
             ?.split(':')

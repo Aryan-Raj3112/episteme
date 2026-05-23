@@ -238,6 +238,8 @@ object EpubAnnotationSerializer {
                 pageIndex?.let { put("pageIndex", JsonPrimitive(it)) }
                 startOffset?.let { put("startOffset", JsonPrimitive(it)) }
                 endOffset?.let { put("endOffset", JsonPrimitive(it)) }
+                blockIndex?.let { put("blockIndex", JsonPrimitive(it)) }
+                charOffset?.let { put("charOffset", JsonPrimitive(it)) }
                 textQuote?.let { put("textQuote", JsonPrimitive(it)) }
                 cfi?.let { put("cfi", JsonPrimitive(it)) }
             }
@@ -253,6 +255,8 @@ object EpubAnnotationSerializer {
             pageIndex = obj.int("pageIndex"),
             startOffset = obj.int("startOffset"),
             endOffset = obj.int("endOffset"),
+            blockIndex = obj.int("blockIndex"),
+            charOffset = obj.int("charOffset"),
             textQuote = obj.string("textQuote"),
             cfi = obj.string("cfi")
         )

@@ -47,6 +47,32 @@ class SharedModelMappersTest {
     }
 
     @Test
+    fun `book mapper carries android epub block locator through shared model`() {
+        val original = recentFile(
+            id = "book",
+            type = FileType.EPUB,
+            lastChapterIndex = 3,
+            lastPage = 18,
+            lastPositionCfi = "android-locator:3:44:120",
+            locatorBlockIndex = 44,
+            locatorCharOffset = 120
+        )
+
+        val shared = original.toSharedBookItem()
+        val mapped = shared.toRecentFileItem()
+
+        assertEquals(3, shared.readerPosition?.chapterIndex)
+        assertEquals(18, shared.readerPosition?.pageIndex)
+        assertEquals(44, shared.readerPosition?.blockIndex)
+        assertEquals(120, shared.readerPosition?.charOffset)
+        assertEquals(original.lastChapterIndex, mapped.lastChapterIndex)
+        assertEquals(original.lastPage, mapped.lastPage)
+        assertEquals(original.lastPositionCfi, mapped.lastPositionCfi)
+        assertEquals(original.locatorBlockIndex, mapped.locatorBlockIndex)
+        assertEquals(original.locatorCharOffset, mapped.locatorCharOffset)
+    }
+
+    @Test
     fun `shared projection state maps shelves tabs selections and tags back to android state`() {
         val tag = TagEntity(id = "tag", name = "Queued", createdAt = 1L)
         val book = recentFile("book", tags = listOf(tag))
@@ -141,6 +167,11 @@ class SharedModelMappersTest {
         isAvailable: Boolean = true,
         bookmarksJson: String? = null,
         sourceFolderUri: String? = null,
+        lastChapterIndex: Int? = null,
+        lastPage: Int? = null,
+        lastPositionCfi: String? = null,
+        locatorBlockIndex: Int? = null,
+        locatorCharOffset: Int? = null,
         tags: List<TagEntity> = emptyList()
     ) = RecentFileItem(
         bookId = id,
@@ -152,6 +183,11 @@ class SharedModelMappersTest {
         bookmarksJson = bookmarksJson,
         sourceFolderUri = sourceFolderUri,
         customName = customName,
+        lastChapterIndex = lastChapterIndex,
+        lastPage = lastPage,
+        lastPositionCfi = lastPositionCfi,
+        locatorBlockIndex = locatorBlockIndex,
+        locatorCharOffset = locatorCharOffset,
         tags = tags
     )
 

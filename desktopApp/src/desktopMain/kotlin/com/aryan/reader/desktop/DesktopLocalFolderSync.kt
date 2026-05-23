@@ -902,8 +902,8 @@ private fun BookItem.toDesktopFolderBookMetadata(): SharedFolderBookMetadata? {
         isRecent = isRecent,
         lastModifiedTimestamp = timestamp,
         bookmarksJson = null,
-        locatorBlockIndex = null,
-        locatorCharOffset = null,
+        locatorBlockIndex = readerPosition?.blockIndex,
+        locatorCharOffset = readerPosition?.charOffset,
         customName = null,
         highlightsJson = null
     )).copy(

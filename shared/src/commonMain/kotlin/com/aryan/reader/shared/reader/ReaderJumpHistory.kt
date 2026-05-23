@@ -110,6 +110,8 @@ private fun ReaderLocator.jumpLocationKey(): String {
             href.orEmpty(),
             startOffset?.toString().orEmpty(),
             endOffset?.toString().orEmpty(),
+            blockIndex?.toString().orEmpty(),
+            charOffset?.toString().orEmpty(),
             stableCfi
         ).joinToString("|")
     }
@@ -120,6 +122,8 @@ private fun ReaderLocator.jumpLocationKey(): String {
         pageIndex?.toString().orEmpty(),
         startOffset?.toString().orEmpty(),
         endOffset?.toString().orEmpty(),
+        blockIndex?.toString().orEmpty(),
+        charOffset?.toString().orEmpty(),
         cfi.orEmpty()
     ).joinToString("|")
 }

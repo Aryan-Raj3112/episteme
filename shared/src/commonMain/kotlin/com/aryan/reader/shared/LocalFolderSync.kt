@@ -152,6 +152,9 @@ data class SharedFolderBookMetadata(
             chapterIndex = lastChapterIndex,
             cfi = lastPositionCfi,
             pageIndex = lastPage
+        ).withFallbacks(
+            blockIndex = locatorBlockIndex,
+            charOffset = locatorCharOffset
         )
     }
 
@@ -443,10 +446,12 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
         val chapterIndex = locator.chapterIndex
         val startOffset = locator.startOffset
         val endOffset = locator.endOffset ?: startOffset
-        if (chapterIndex != null && startOffset != null && endOffset != null) {
-            "desktop:$chapterIndex:$startOffset:$endOffset"
-        } else {
-            null
+        when {
+            chapterIndex != null && locator.blockIndex != null && locator.charOffset != null ->
+                "android-locator:$chapterIndex:${locator.blockIndex}:${locator.charOffset}"
+            chapterIndex != null && startOffset != null && endOffset != null ->
+                "desktop:$chapterIndex:$startOffset:$endOffset"
+            else -> null
         }
     }
 
@@ -463,8 +468,8 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
         isRecent = isRecent,
         lastModifiedTimestamp = localFolderModifiedTimestamp(),
         bookmarksJson = bookmarksJson,
-        locatorBlockIndex = null,
-        locatorCharOffset = null,
+        locatorBlockIndex = position?.blockIndex,
+        locatorCharOffset = position?.charOffset,
         customName = null,
         highlightsJson = highlightsJson,
         seriesName = null,

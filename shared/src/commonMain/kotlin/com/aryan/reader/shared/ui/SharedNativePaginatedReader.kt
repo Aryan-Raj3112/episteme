@@ -1088,14 +1088,55 @@ private fun SharedNativeInteractiveText(
 }
 
 private fun ReaderPage.toNativeReaderLocator(): ReaderLocator {
+    val blockPosition = firstNativeLocatorBlockPosition()
     return ReaderLocator(
         chapterIndex = chapterIndex,
         pageIndex = pageIndex,
         startOffset = startOffset,
         endOffset = endOffset,
+        blockIndex = blockPosition?.blockIndex,
+        charOffset = blockPosition?.charOffset,
         textQuote = text.replace(Regex("\\s+"), " ").trim().take(160),
         cfi = "desktop:$chapterIndex:$startOffset:$endOffset"
     )
+}
+
+private data class SharedNativeLocatorBlockPosition(
+    val blockIndex: Int,
+    val charOffset: Int
+)
+
+private fun ReaderPage.firstNativeLocatorBlockPosition(): SharedNativeLocatorBlockPosition? {
+    val blocks = semanticBlocks.flattenNativeSemanticBlocks()
+    val textBlock = blocks
+        .filterIsInstance<SemanticTextBlock>()
+        .firstOrNull { it.text.isNotBlank() }
+        ?: blocks.filterIsInstance<SemanticTextBlock>().firstOrNull()
+    if (textBlock != null) {
+        return SharedNativeLocatorBlockPosition(
+            blockIndex = textBlock.blockIndex,
+            charOffset = textBlock.startCharOffsetInSource
+        )
+    }
+    val firstBlock = blocks.firstOrNull() ?: return null
+    return SharedNativeLocatorBlockPosition(firstBlock.blockIndex, 0)
+}
+
+private fun List<SemanticBlock>.flattenNativeSemanticBlocks(): List<SemanticBlock> {
+    return flatMap { it.flattenNativeSemanticBlock() }
+}
+
+private fun SemanticBlock.flattenNativeSemanticBlock(): List<SemanticBlock> {
+    return when (this) {
+        is SemanticList -> listOf(this) + items
+        is SemanticTable -> listOf(this) + rows.flatMap { row -> row.flatMap { cell -> cell.content.flattenNativeSemanticBlocks() } }
+        is SemanticFlexContainer -> listOf(this) + children.flattenNativeSemanticBlocks()
+        is SemanticWrappingBlock -> listOf(this, floatedImage) + paragraphsToWrap
+        is SemanticImage,
+        is SemanticMath,
+        is SemanticSpacer,
+        is SemanticTextBlock -> listOf(this)
+    }
 }
 
 private fun String.toReaderAnnotatedString(
@@ -2438,11 +2479,14 @@ internal fun sharedNativeReaderHighlightForSelection(
     selection: SharedNativeReaderTextSelection,
     color: HighlightColor
 ): UserHighlight {
+    val blockIndex = selection.startBlockIndex.takeIf { it >= 0 }
     val locator = ReaderLocator(
         chapterIndex = selection.chapterIndex,
         pageIndex = selection.pageIndex,
         startOffset = selection.startOffset,
         endOffset = selection.endOffset,
+        blockIndex = blockIndex,
+        charOffset = blockIndex?.let { selection.startBlockCharOffset },
         textQuote = selection.text,
         cfi = selection.cfi
     )

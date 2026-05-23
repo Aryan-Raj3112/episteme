@@ -10,6 +10,7 @@ import com.aryan.reader.shared.BookShelfRef as SharedBookShelfRef
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.FileType as SharedFileType
 import com.aryan.reader.shared.LibraryFilters as SharedLibraryFilters
+import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfRecord
@@ -53,6 +54,7 @@ fun RecentFileItem.toSharedBookItem(): SharedBookItem {
         seriesName = seriesName,
         seriesIndex = seriesIndex,
         lastPageIndex = lastPage,
+        readerPosition = toSharedReaderLocatorOrNull(),
         tags = tags.map { it.toSharedTag() },
         readerHighlights = EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
     )
@@ -67,6 +69,7 @@ fun SharedBookItem.toRecentFileItem(
     tagEntitiesById: Map<String, TagEntity> = emptyMap()
 ): RecentFileItem {
     val resolvedTags = tags.map { tag -> tagEntitiesById[tag.id] ?: tag.toTagEntity(createdAt = 0L) }
+    val positionCfi = readerPosition?.toSharedPositionCfi()
     return androidBooksById[id]?.copy(tags = resolvedTags)
         ?.copy(
             uriString = path,
@@ -90,7 +93,11 @@ fun SharedBookItem.toRecentFileItem(
             fileContentModifiedTimestamp = fileContentModifiedTimestamp,
             seriesName = seriesName,
             seriesIndex = seriesIndex,
-            folderTextMetadataParsed = folderTextMetadataParsed
+            folderTextMetadataParsed = folderTextMetadataParsed,
+            lastChapterIndex = readerPosition?.chapterIndex ?: androidBooksById[id]?.lastChapterIndex,
+            lastPositionCfi = positionCfi ?: androidBooksById[id]?.lastPositionCfi,
+            locatorBlockIndex = readerPosition?.blockIndex ?: androidBooksById[id]?.locatorBlockIndex,
+            locatorCharOffset = readerPosition?.charOffset ?: androidBooksById[id]?.locatorCharOffset
         )
         ?: RecentFileItem(
             bookId = id,
@@ -116,8 +123,46 @@ fun SharedBookItem.toRecentFileItem(
             seriesName = seriesName,
             seriesIndex = seriesIndex,
             folderTextMetadataParsed = folderTextMetadataParsed,
+            lastChapterIndex = readerPosition?.chapterIndex,
+            lastPositionCfi = positionCfi,
+            locatorBlockIndex = readerPosition?.blockIndex,
+            locatorCharOffset = readerPosition?.charOffset,
             tags = resolvedTags
         )
+}
+
+private fun RecentFileItem.toSharedReaderLocatorOrNull(): SharedReaderLocator? {
+    if (
+        lastChapterIndex == null &&
+        lastPage == null &&
+        lastPositionCfi.isNullOrBlank() &&
+        locatorBlockIndex == null &&
+        locatorCharOffset == null
+    ) {
+        return null
+    }
+    return SharedReaderLocator.fromLegacy(
+        chapterIndex = lastChapterIndex,
+        cfi = lastPositionCfi,
+        pageIndex = lastPage
+    ).withFallbacks(
+        blockIndex = locatorBlockIndex,
+        charOffset = locatorCharOffset
+    )
+}
+
+private fun SharedReaderLocator.toSharedPositionCfi(): String? {
+    cfi?.let { return it }
+    val chapter = chapterIndex
+    val start = startOffset
+    val end = endOffset ?: start
+    return when {
+        chapter != null && blockIndex != null && charOffset != null ->
+            "android-locator:$chapter:$blockIndex:$charOffset"
+        chapter != null && start != null && end != null ->
+            "desktop:$chapter:$start:$end"
+        else -> null
+    }
 }
 
 fun TagEntity.toSharedTag(): SharedTag {

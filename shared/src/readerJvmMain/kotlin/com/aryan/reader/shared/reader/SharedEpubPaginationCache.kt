@@ -17,8 +17,8 @@ import java.security.MessageDigest
 import java.util.Locale
 
 private const val SharedEpubPaginationCacheSchemaVersion = 1
-private const val SharedEpubPaginationProcessingVersion = 7
-private const val SharedEpubPaginationPageCacheVersion = 1
+private const val SharedEpubPaginationProcessingVersion = 8
+private const val SharedEpubPaginationPageCacheVersion = 2
 
 data class SharedEpubPaginationCacheKey(
     val bookHash: String,
@@ -59,6 +59,7 @@ class SharedEpubPaginationCache(
             if (!record.matches(key)) return@runCatching null
             val pages = record.pages.mapIndexed { index, page -> page.toReaderPage(index) }
             if (pages.isEmpty() || pages.size != record.pageCount) return@runCatching null
+            if (!pages.carriesRequiredSemanticBlocksFor(book)) return@runCatching null
             synchronized(memoryCache) {
                 memoryCache[key.cacheId] = pages
             }
@@ -75,6 +76,7 @@ class SharedEpubPaginationCache(
         fontScale: Float = 1f
     ): Unit = withContext(Dispatchers.IO) {
         if (pages.isEmpty()) return@withContext
+        if (!pages.carriesRequiredSemanticBlocksFor(book)) return@withContext
         val key = keyFor(book, settings, viewport, density, fontScale)
         val record = CachedReaderPages(
             schemaVersion = SharedEpubPaginationCacheSchemaVersion,
@@ -256,6 +258,15 @@ private fun bookFingerprint(book: SharedEpubBook, chapterVersions: List<Int>): I
         book.css.hashCode(),
         chapterVersions.joinToString(",")
     )
+}
+
+private fun List<ReaderPage>.carriesRequiredSemanticBlocksFor(book: SharedEpubBook): Boolean {
+    val semanticChapterIndexes = book.chapters
+        .mapIndexedNotNull { index, chapter -> index.takeIf { chapter.semanticBlocks.isNotEmpty() } }
+    if (semanticChapterIndexes.isEmpty()) return true
+    return semanticChapterIndexes.all { chapterIndex ->
+        any { page -> page.chapterIndex == chapterIndex && page.semanticBlocks.isNotEmpty() }
+    }
 }
 
 internal fun stableHash(vararg parts: Any?): Int {

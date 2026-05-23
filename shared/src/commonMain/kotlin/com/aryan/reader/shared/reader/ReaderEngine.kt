@@ -2,7 +2,10 @@ package com.aryan.reader.shared.reader
 
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.SemanticFlexContainer
+import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.SemanticList
+import com.aryan.reader.paginatedreader.SemanticMath
+import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
@@ -173,15 +176,14 @@ class ReaderEngine(
     }
 
     fun goToLocator(state: ReaderSessionState, locator: ReaderLocator): ReaderSessionState {
-        val requestedPageIndex = state.reader.pages.indexOfFirst { page -> page.contains(locator) }
+        val requestedPageIndex = state.reader.pages.findPageIndexForLocator(locator)
             .takeIf { it >= 0 }
-            ?: locator.pageIndex
-            ?.takeIf { it in state.reader.pages.indices }
             ?: return state
         val pageIndex = ReaderSpreadLayout.normalizePageIndex(requestedPageIndex, state.reader.pages.size, state.reader.settings)
         val page = state.reader.pages.getOrNull(pageIndex) ?: return state
         val requestedPage = state.reader.pages.getOrNull(requestedPageIndex) ?: page
         val requestedChapter = state.reader.book.chapters.getOrNull(requestedPage.chapterIndex)
+        val blockPosition = requestedPage.firstLocatorBlockPosition()
         val normalizedLocator = locator.copy(pageIndex = requestedPageIndex).withFallbacks(
             chapterIndex = requestedPage.chapterIndex,
             chapterId = requestedChapter?.id,
@@ -189,6 +191,8 @@ class ReaderEngine(
             pageIndex = requestedPageIndex,
             startOffset = requestedPage.startOffset,
             endOffset = requestedPage.endOffset,
+            blockIndex = blockPosition?.blockIndex,
+            charOffset = blockPosition?.charOffset,
             textQuote = locator.textQuote ?: requestedPage.text.preview(),
             cfi = locator.cfi ?: requestedPage.toDesktopCfi()
         )
@@ -509,13 +513,12 @@ class ReaderEngine(
         chapterTitle: String? = null,
         preview: String? = null
     ): ReaderSessionState {
-        val targetPageIndex = state.reader.pages.indexOfFirst { page -> page.contains(locator) }
+        val targetPageIndex = state.reader.pages.findPageIndexForLocator(locator)
             .takeIf { it >= 0 }
-            ?: locator.pageIndex
-            ?.takeIf { it in state.reader.pages.indices }
             ?: state.reader.currentPageIndex
         val page = state.reader.pages.getOrNull(targetPageIndex) ?: return state
         val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
+        val blockPosition = page.firstLocatorBlockPosition()
         val normalizedLocator = locator.copy(pageIndex = targetPageIndex).withFallbacks(
             chapterIndex = page.chapterIndex,
             chapterId = chapter?.id,
@@ -523,6 +526,8 @@ class ReaderEngine(
             pageIndex = targetPageIndex,
             startOffset = page.startOffset,
             endOffset = page.endOffset,
+            blockIndex = blockPosition?.blockIndex,
+            charOffset = blockPosition?.charOffset,
             textQuote = preview ?: page.text.preview(),
             cfi = locator.cfi ?: "desktop:${page.chapterIndex}:${locator.startOffset ?: page.startOffset}:${locator.endOffset ?: locator.startOffset ?: page.startOffset}"
         )
@@ -679,12 +684,13 @@ class ReaderEngine(
         if (state.searchResults.isEmpty()) return state
         val targetIndex = resultIndex.coerceIn(0, state.searchResults.lastIndex)
         val result = state.searchResults[targetIndex]
-        val requestedPage = state.reader.pages.indexOfFirst { page -> page.contains(result.locator) }
+        val requestedPage = state.reader.pages.findPageIndexForLocator(result.locator)
             .takeIf { it >= 0 }
             ?: result.pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
         val targetPage = ReaderSpreadLayout.normalizePageIndex(requestedPage, state.reader.pages.size, state.reader.settings)
         val page = state.reader.pages.getOrNull(targetPage)
         val chapter = page?.let { state.reader.book.chapters.getOrNull(it.chapterIndex) }
+        val blockPosition = page?.firstLocatorBlockPosition()
         return state.copy(
             reader = state.reader.copy(currentPageIndex = targetPage),
             activeSearchResultIndex = targetIndex,
@@ -692,7 +698,9 @@ class ReaderEngine(
                 chapterIndex = page?.chapterIndex,
                 chapterId = chapter?.id,
                 href = chapter?.baseHref,
-                pageIndex = requestedPage
+                pageIndex = requestedPage,
+                blockIndex = blockPosition?.blockIndex,
+                charOffset = blockPosition?.charOffset
             ),
             navigationRequestId = state.navigationRequestId + 1
         )
@@ -731,7 +739,7 @@ private fun ReaderPage.contains(locator: ReaderLocator): Boolean {
         val start = locator.startOffset ?: return false
         val end = locator.endOffset ?: start
         return if (start == end) {
-            start in startOffset..endOffset
+            containsCollapsedOffset(start)
         } else {
             start < endOffset && end > startOffset
         }
@@ -740,11 +748,111 @@ private fun ReaderPage.contains(locator: ReaderLocator): Boolean {
     return targetPage != null && targetPage == pageIndex
 }
 
+private fun ReaderPage.containsCollapsedOffset(offset: Int): Boolean {
+    return if (startOffset == endOffset) {
+        offset == startOffset
+    } else {
+        offset >= startOffset && offset < endOffset
+    }
+}
+
 private fun List<ReaderPage>.findPageIndexForLocator(locator: ReaderLocator): Int {
-    return indexOfFirst { page -> page.contains(locator) }
-        .takeIf { it >= 0 }
-        ?: locator.pageIndex?.takeIf { it in indices }
-        ?: -1
+    if (locator.blockIndex != null) {
+        val blockIndex = findPageIndexForBlockLocator(locator)
+        if (blockIndex >= 0) return blockIndex
+    }
+
+    if (locator.hasTextRange) {
+        val textRangeIndex = indexOfFirst { page -> page.containsTextRange(locator) }
+        if (textRangeIndex >= 0) return textRangeIndex
+
+        if (locator.startOffset == locator.endOffset) {
+            val offset = locator.startOffset
+            val targetChapter = locator.chapterIndex
+            val finalBoundaryIndex = indexOfLast { page ->
+                (targetChapter == null || targetChapter == page.chapterIndex) &&
+                    page.startOffset < page.endOffset &&
+                    page.endOffset == offset
+            }
+            if (finalBoundaryIndex >= 0) return finalBoundaryIndex
+        }
+    }
+
+    return locator.pageIndex?.takeIf { it in indices } ?: -1
+}
+
+private fun ReaderPage.containsTextRange(locator: ReaderLocator): Boolean {
+    val targetChapter = locator.chapterIndex
+    if (targetChapter != null && targetChapter != chapterIndex) return false
+    val start = locator.startOffset ?: return false
+    val end = locator.endOffset ?: start
+    return if (start == end) {
+        containsCollapsedOffset(start)
+    } else {
+        start < endOffset && end > startOffset
+    }
+}
+
+private fun List<ReaderPage>.findPageIndexForBlockLocator(locator: ReaderLocator): Int {
+    val blockIndex = locator.blockIndex ?: return -1
+    val charOffset = locator.charOffset
+    val targetChapter = locator.chapterIndex
+    var fallbackPageIndex = -1
+    for ((pageIndex, page) in withIndex()) {
+        if (targetChapter != null && page.chapterIndex != targetChapter) continue
+        val blocks = page.semanticBlocks.flattenSemanticBlocks()
+        if (fallbackPageIndex < 0 && blocks.any { it.blockIndex == blockIndex }) {
+            fallbackPageIndex = pageIndex
+        }
+        if (charOffset == null) continue
+        for (block in blocks.filterIsInstance<SemanticTextBlock>()) {
+            if (block.blockIndex != blockIndex) continue
+            val start = block.startCharOffsetInSource
+            val end = start + block.text.length
+            if (charOffset in start until end || (block.text.isEmpty() && charOffset == start)) {
+                return pageIndex
+            }
+        }
+    }
+    return fallbackPageIndex
+}
+
+private data class ReaderBlockPosition(
+    val blockIndex: Int,
+    val charOffset: Int
+)
+
+private fun ReaderPage.firstLocatorBlockPosition(): ReaderBlockPosition? {
+    val blocks = semanticBlocks.flattenSemanticBlocks()
+    val textBlock = blocks
+        .filterIsInstance<SemanticTextBlock>()
+        .firstOrNull { it.text.isNotBlank() }
+        ?: blocks.filterIsInstance<SemanticTextBlock>().firstOrNull()
+    if (textBlock != null) {
+        return ReaderBlockPosition(
+            blockIndex = textBlock.blockIndex,
+            charOffset = textBlock.startCharOffsetInSource
+        )
+    }
+    val firstBlock = blocks.firstOrNull() ?: return null
+    return ReaderBlockPosition(blockIndex = firstBlock.blockIndex, charOffset = 0)
+}
+
+private fun List<SemanticBlock>.flattenSemanticBlocks(): List<SemanticBlock> {
+    return flatMap { it.flattenSemanticBlock() }
+}
+
+private fun SemanticBlock.flattenSemanticBlock(): List<SemanticBlock> {
+    return when (this) {
+        is SemanticList -> listOf(this) + items
+        is SemanticTable -> listOf(this) + rows.flatMap { row -> row.flatMap { cell -> cell.content.flattenSemanticBlocks() } }
+        is SemanticFlexContainer -> listOf(this) + children.flattenSemanticBlocks()
+        is SemanticWrappingBlock -> listOf(this, floatedImage) + paragraphsToWrap
+        is SemanticImage,
+        is SemanticMath,
+        is SemanticSpacer,
+        is SemanticTextBlock -> listOf(this)
+    }
 }
 
 private fun ReaderLocator.normalizedForResolvedPage(
@@ -756,6 +864,7 @@ private fun ReaderLocator.normalizedForResolvedPage(
     val chapter = book.chapters.getOrNull(page.chapterIndex)
     val start = startOffset ?: page.startOffset
     val end = (endOffset ?: start).coerceAtLeast(start)
+    val blockPosition = page.firstLocatorBlockPosition()
     return copy(pageIndex = page.pageIndex).withFallbacks(
         chapterIndex = page.chapterIndex,
         chapterId = chapter?.id,
@@ -763,18 +872,21 @@ private fun ReaderLocator.normalizedForResolvedPage(
         pageIndex = page.pageIndex,
         startOffset = start,
         endOffset = end,
+        blockIndex = blockPosition?.blockIndex,
+        charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
         cfi = cfi ?: "desktop:${page.chapterIndex}:$start:$end"
     )
 }
 
 private fun ReaderBookmark.normalizedForBook(book: SharedEpubBook, pages: List<ReaderPage>): ReaderBookmark? {
-    val targetPageIndex = pages.indexOfFirst { page -> page.contains(locator) }
+    val targetPageIndex = pages.findPageIndexForLocator(locator)
         .takeIf { it >= 0 }
         ?: pageIndex.takeIf { it in pages.indices }
         ?: return null
     val page = pages.getOrNull(targetPageIndex) ?: return null
     val chapter = book.chapters.getOrNull(page.chapterIndex)
+    val blockPosition = page.firstLocatorBlockPosition()
     val normalizedLocator = locator.copy(pageIndex = targetPageIndex).withFallbacks(
         chapterIndex = page.chapterIndex,
         chapterId = chapter?.id,
@@ -782,6 +894,8 @@ private fun ReaderBookmark.normalizedForBook(book: SharedEpubBook, pages: List<R
         pageIndex = targetPageIndex,
         startOffset = page.startOffset,
         endOffset = page.endOffset,
+        blockIndex = blockPosition?.blockIndex,
+        charOffset = blockPosition?.charOffset,
         textQuote = preview.ifBlank { page.text.preview() },
         cfi = locator.cfi ?: page.toDesktopCfi()
     )
@@ -800,6 +914,8 @@ private fun ReaderBookmark.locationKey(): String {
         locator.pageIndex,
         locator.startOffset,
         locator.endOffset,
+        locator.blockIndex,
+        locator.charOffset,
         locator.cfi
     ).joinToString(":")
 }
@@ -808,7 +924,9 @@ private fun bookmarkId(bookId: String, pageIndex: Int, locator: ReaderLocator): 
     val chapter = locator.chapterIndex ?: -1
     val start = locator.startOffset ?: -1
     val end = locator.endOffset ?: start
-    return "${bookId}_${pageIndex}_${chapter}_${start}_${end}"
+    val block = locator.blockIndex ?: -1
+    val char = locator.charOffset ?: -1
+    return "${bookId}_${pageIndex}_${chapter}_${start}_${end}_${block}_${char}"
 }
 
 private fun ReaderLocator.belongsTo(page: ReaderPage): Boolean {
@@ -832,6 +950,7 @@ private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex
     val chapter = state.reader.book.chapters.getOrNull(page.chapterIndex)
     val start = startOffset ?: page.startOffset
     val end = (endOffset ?: start).coerceAtLeast(start)
+    val blockPosition = page.firstLocatorBlockPosition()
     return copy(pageIndex = page.pageIndex).withFallbacks(
         chapterIndex = page.chapterIndex,
         chapterId = chapter?.id,
@@ -839,6 +958,8 @@ private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex
         pageIndex = page.pageIndex,
         startOffset = start,
         endOffset = end,
+        blockIndex = blockPosition?.blockIndex,
+        charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
         cfi = cfi ?: "desktop:${page.chapterIndex}:$start:$end"
     )
@@ -846,6 +967,7 @@ private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex
 
 private fun ReaderPage.toLocator(book: SharedEpubBook): ReaderLocator {
     val chapter = book.chapters.getOrNull(chapterIndex)
+    val blockPosition = firstLocatorBlockPosition()
     return ReaderLocator(
         chapterIndex = chapterIndex,
         chapterId = chapter?.id,
@@ -853,6 +975,8 @@ private fun ReaderPage.toLocator(book: SharedEpubBook): ReaderLocator {
         pageIndex = pageIndex,
         startOffset = startOffset,
         endOffset = endOffset,
+        blockIndex = blockPosition?.blockIndex,
+        charOffset = blockPosition?.charOffset,
         textQuote = text.preview(),
         cfi = toDesktopCfi()
     )

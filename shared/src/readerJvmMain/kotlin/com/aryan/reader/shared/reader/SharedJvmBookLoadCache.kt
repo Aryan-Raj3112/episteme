@@ -14,7 +14,7 @@ import kotlinx.serialization.protobuf.ProtoNumber
 import java.io.File
 
 private const val SharedJvmBookLoadCacheSchemaVersion = 1
-private const val SharedJvmBookLoadCacheProcessingVersion = 3
+private const val SharedJvmBookLoadCacheProcessingVersion = 4
 
 data class SharedJvmBookLoadCacheKey(
     val canonicalPath: String,
@@ -41,11 +41,14 @@ class SharedJvmBookLoadCache(
         return runCatching {
             val record = proto.decodeFromByteArray<CachedSharedEpubBook>(file.readBytes())
             if (!record.matches(key)) return@runCatching null
-            record.toBook()
+            record.toBook().takeUnless {
+                key.type.requiresCachedSemanticBlocks() && it.hasHtmlContentWithoutSemanticBlocks()
+            }
         }.getOrNull()
     }
 
     fun save(key: SharedJvmBookLoadCacheKey, book: SharedEpubBook) {
+        if (key.type.requiresCachedSemanticBlocks() && book.hasHtmlContentWithoutSemanticBlocks()) return
         val record = CachedSharedEpubBook.from(key, book)
         runCatching {
             writeBookLoadCacheAtomically(cacheFile(key), proto.encodeToByteArray(record))
@@ -196,6 +199,24 @@ private data class CachedSharedEpubChapter(
             )
         }
     }
+}
+
+private fun FileType.requiresCachedSemanticBlocks(): Boolean {
+    return when (this) {
+        FileType.EPUB,
+        FileType.MOBI,
+        FileType.HTML,
+        FileType.FB2,
+        FileType.DOCX,
+        FileType.ODT,
+        FileType.FODT -> true
+        else -> false
+    }
+}
+
+private fun SharedEpubBook.hasHtmlContentWithoutSemanticBlocks(): Boolean {
+    return chapters.any { it.htmlContent.isNotBlank() } &&
+        chapters.none { it.semanticBlocks.isNotEmpty() }
 }
 
 private fun writeBookLoadCacheAtomically(file: File, bytes: ByteArray) {
