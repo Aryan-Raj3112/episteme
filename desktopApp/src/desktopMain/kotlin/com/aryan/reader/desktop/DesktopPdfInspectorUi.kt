@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -285,11 +287,26 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                 DesktopPdfInspectorTab.VISUAL -> {
                     item {
                         DesktopPdfInspectorSection(readerString("visual_options_title", "Visual options")) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.horizontalScroll(rememberScrollState())
+                            ) {
                                 FilterChip(
-                                    selected = displayMode == PdfDisplayMode.PAGINATION,
-                                    onClick = { onDisplayModeSelected(PdfDisplayMode.PAGINATION) },
-                                    label = { Text(readerString("desktop_page", "Page")) }
+                                    selected = displayMode == PdfDisplayMode.PAGINATION && !pdfReaderSettings.rightToLeftPagination,
+                                    onClick = {
+                                        onReaderSettingsChange(pdfReaderSettings.copy(rightToLeftPagination = false))
+                                        onDisplayModeSelected(PdfDisplayMode.PAGINATION)
+                                    },
+                                    label = { Text(readerString("menu_reading_mode_paginated", "Paginated (left-to-right)")) }
+                                )
+                                FilterChip(
+                                    selected = displayMode == PdfDisplayMode.PAGINATION && pdfReaderSettings.rightToLeftPagination,
+                                    onClick = {
+                                        onReaderSettingsChange(pdfReaderSettings.copy(rightToLeftPagination = true))
+                                        onDisplayModeSelected(PdfDisplayMode.PAGINATION)
+                                    },
+                                    label = { Text(readerString("menu_right_to_left_pagination", "Paginated (right-to-left)")) }
                                 )
                                 FilterChip(
                                     selected = displayMode == PdfDisplayMode.VERTICAL_SCROLL,

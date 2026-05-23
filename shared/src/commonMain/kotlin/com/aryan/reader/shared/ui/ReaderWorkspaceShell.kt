@@ -109,6 +109,7 @@ fun ReaderWorkspaceShell(
     useDetachedChromeLayer: Boolean = true,
     useDetachedPanelLayer: Boolean = true,
     contentHandlesChromeTap: Boolean = false,
+    onReaderFocusRestoreRequest: () -> Unit = {},
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
     bottomBar: @Composable () -> Unit,
@@ -226,18 +227,40 @@ fun ReaderWorkspaceShell(
                 chromeVisible = true
             }
         }
+        fun closeLeftPanel(restoreReaderFocus: Boolean) {
+            val shouldRestoreFocus = readerWorkspaceShouldRestoreFocusAfterPanelClose(
+                closingPanelOpen = leftPanelOpen,
+                otherPanelOpen = rightPanelOpen
+            )
+            leftPanelOpen = false
+            if (restoreReaderFocus && shouldRestoreFocus) {
+                onReaderFocusRestoreRequest()
+            }
+        }
+        fun closeRightPanel(restoreReaderFocus: Boolean) {
+            val shouldRestoreFocus = readerWorkspaceShouldRestoreFocusAfterPanelClose(
+                closingPanelOpen = rightPanelOpen,
+                otherPanelOpen = leftPanelOpen
+            )
+            rightPanelOpen = false
+            if (restoreReaderFocus && shouldRestoreFocus) {
+                onReaderFocusRestoreRequest()
+            }
+        }
         fun toggleLeftPanel() {
-            val nextOpen = !leftPanelOpen
-            leftPanelOpen = nextOpen
-            if (nextOpen) {
+            if (leftPanelOpen) {
+                closeLeftPanel(restoreReaderFocus = true)
+            } else {
+                leftPanelOpen = true
                 rightPanelOpen = false
                 chromeVisible = true
             }
         }
         fun toggleRightPanel() {
-            val nextOpen = !rightPanelOpen
-            rightPanelOpen = nextOpen
-            if (nextOpen) {
+            if (rightPanelOpen) {
+                closeRightPanel(restoreReaderFocus = true)
+            } else {
+                rightPanelOpen = true
                 leftPanelOpen = false
             }
         }
@@ -291,8 +314,8 @@ fun ReaderWorkspaceShell(
                     wide = wide,
                     leftPanelWidth = leftChromeExtensionWidth,
                     useDetachedPanelLayer = useDetachedPanelLayer,
-                    onCloseLeftPanel = { leftPanelOpen = false },
-                    onCloseRightPanel = { rightPanelOpen = false },
+                    onCloseLeftPanel = { closeLeftPanel(restoreReaderFocus = true) },
+                    onCloseRightPanel = { closeRightPanel(restoreReaderFocus = true) },
                     leftSidebar = leftSidebar,
                     rightInspector = rightInspector
                 )
@@ -342,6 +365,7 @@ fun ReaderWorkspaceShell(
                                         onReadAloudAction = onReadAloudAction,
                                         onAiHubAction = onAiHubAction,
                                         onChromeHoverChange = ::updateChromeHovered,
+                                        onReaderFocusRestoreRequest = onReaderFocusRestoreRequest,
                                         onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                         bottomBar = {}
                                     )
@@ -389,6 +413,7 @@ fun ReaderWorkspaceShell(
                                     onReadAloudAction = onReadAloudAction,
                                     onAiHubAction = onAiHubAction,
                                     onChromeHoverChange = ::updateChromeHovered,
+                                    onReaderFocusRestoreRequest = onReaderFocusRestoreRequest,
                                     onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                                     bottomBar = {
                                         key(isFullscreen) {
@@ -433,6 +458,7 @@ fun ReaderWorkspaceShell(
                         onReadAloudAction = onReadAloudAction,
                         onAiHubAction = onAiHubAction,
                         onChromeHoverChange = ::updateChromeHovered,
+                        onReaderFocusRestoreRequest = onReaderFocusRestoreRequest,
                         onToggleFullscreen = onFullscreenChange?.let { change -> { change(!isFullscreen) } },
                         bottomBar = {
                             key(isFullscreen) {
@@ -708,6 +734,13 @@ private enum class ReaderWorkspacePanelEdge {
     End
 }
 
+internal fun readerWorkspaceShouldRestoreFocusAfterPanelClose(
+    closingPanelOpen: Boolean,
+    otherPanelOpen: Boolean
+): Boolean {
+    return closingPanelOpen && !otherPanelOpen
+}
+
 private const val ReaderWorkspaceChromeAnimationMillis = 220
 private const val ReaderWorkspaceDetachedChromeEnterDelayMillis = 16L
 
@@ -766,6 +799,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     onReadAloudAction: (() -> Unit)?,
     onAiHubAction: (() -> Unit)?,
     onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
+    onReaderFocusRestoreRequest: () -> Unit,
     onToggleFullscreen: (() -> Unit)?,
     bottomBar: @Composable () -> Unit
 ) {
@@ -829,6 +863,7 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
                 onReadAloudAction = onReadAloudAction,
                 onAiHubAction = onAiHubAction,
                 onChromeHoverChange = onChromeHoverChange,
+                onReaderFocusRestoreRequest = onReaderFocusRestoreRequest,
                 onToggleFullscreen = onToggleFullscreen
             )
         }
@@ -915,6 +950,7 @@ private fun ReaderWorkspaceTopChrome(
     onReadAloudAction: (() -> Unit)?,
     onAiHubAction: (() -> Unit)?,
     onChromeHoverChange: (ReaderChromeHoverSource, Boolean) -> Unit,
+    onReaderFocusRestoreRequest: () -> Unit,
     onToggleFullscreen: (() -> Unit)?
 ) {
     var fileActionsExpanded by remember { mutableStateOf(false) }
@@ -1037,7 +1073,10 @@ private fun ReaderWorkspaceTopChrome(
                     }
                     DropdownMenu(
                         expanded = fileActionsExpanded,
-                        onDismissRequest = { fileActionsExpanded = false }
+                        onDismissRequest = {
+                            fileActionsExpanded = false
+                            onReaderFocusRestoreRequest()
+                        }
                     ) {
                         if (fileActions.canShare && onShareAction != null) {
                             DropdownMenuItem(

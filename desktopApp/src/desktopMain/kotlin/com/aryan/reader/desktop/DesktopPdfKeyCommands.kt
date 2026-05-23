@@ -23,7 +23,8 @@ internal enum class DesktopPdfKeyCommand {
 
 internal fun KeyEvent.desktopPdfKeyCommandOrNull(
     fullscreen: Boolean,
-    editingText: Boolean
+    editingText: Boolean,
+    rightToLeftPagination: Boolean = false
 ): DesktopPdfKeyCommand? {
     if (type != KeyEventType.KeyDown) return null
     if (fullscreen && key == Key.Escape) {
@@ -33,8 +34,16 @@ internal fun KeyEvent.desktopPdfKeyCommandOrNull(
         return null
     }
     return when {
-        key == Key.DirectionLeft -> DesktopPdfKeyCommand.PREVIOUS_PAGE
-        key == Key.DirectionRight -> DesktopPdfKeyCommand.NEXT_PAGE
+        key == Key.DirectionLeft -> if (rightToLeftPagination) {
+            DesktopPdfKeyCommand.NEXT_PAGE
+        } else {
+            DesktopPdfKeyCommand.PREVIOUS_PAGE
+        }
+        key == Key.DirectionRight -> if (rightToLeftPagination) {
+            DesktopPdfKeyCommand.PREVIOUS_PAGE
+        } else {
+            DesktopPdfKeyCommand.NEXT_PAGE
+        }
         key == Key.DirectionUp -> DesktopPdfKeyCommand.SCROLL_UP
         key == Key.DirectionDown -> DesktopPdfKeyCommand.SCROLL_DOWN
         key == Key.PageUp -> DesktopPdfKeyCommand.PREVIOUS_PAGE
@@ -50,7 +59,8 @@ internal fun KeyEvent.desktopPdfKeyCommandOrNull(
 
 internal fun AwtKeyEvent.desktopPdfKeyCommandOrNull(
     fullscreen: Boolean,
-    editingText: Boolean
+    editingText: Boolean,
+    rightToLeftPagination: Boolean = false
 ): DesktopPdfKeyCommand? {
     if (id != AwtKeyEvent.KEY_PRESSED) return null
     if (fullscreen && keyCode == AwtKeyEvent.VK_ESCAPE) {
@@ -60,8 +70,16 @@ internal fun AwtKeyEvent.desktopPdfKeyCommandOrNull(
         return null
     }
     return when (keyCode) {
-        AwtKeyEvent.VK_LEFT -> DesktopPdfKeyCommand.PREVIOUS_PAGE
-        AwtKeyEvent.VK_RIGHT -> DesktopPdfKeyCommand.NEXT_PAGE
+        AwtKeyEvent.VK_LEFT -> if (rightToLeftPagination) {
+            DesktopPdfKeyCommand.NEXT_PAGE
+        } else {
+            DesktopPdfKeyCommand.PREVIOUS_PAGE
+        }
+        AwtKeyEvent.VK_RIGHT -> if (rightToLeftPagination) {
+            DesktopPdfKeyCommand.PREVIOUS_PAGE
+        } else {
+            DesktopPdfKeyCommand.NEXT_PAGE
+        }
         AwtKeyEvent.VK_UP -> DesktopPdfKeyCommand.SCROLL_UP
         AwtKeyEvent.VK_DOWN -> DesktopPdfKeyCommand.SCROLL_DOWN
         AwtKeyEvent.VK_PAGE_UP -> DesktopPdfKeyCommand.PREVIOUS_PAGE

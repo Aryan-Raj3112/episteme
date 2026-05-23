@@ -47,6 +47,7 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedMeasuredEpubPaginator
+import com.aryan.reader.shared.reader.isRightToLeftPaginationEnabled
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.DesktopEpubNativeImage
@@ -178,8 +179,11 @@ internal fun DesktopReaderScreen(
     )
 
     fun handleReaderFullscreenAwtKeyEvent(event: AwtKeyEvent): Boolean {
-        val action = event.desktopReaderKeyNavigationOrNull(fullscreen = isFullscreen) ?: return false
         val currentSession = latestSession
+        val action = event.desktopReaderKeyNavigationOrNull(
+            fullscreen = isFullscreen,
+            rightToLeftPagination = currentSession.reader.settings.isRightToLeftPaginationEnabled()
+        ) ?: return false
         val nextSession = currentSession.reduceDesktopReaderKeyNavigation(action, readerEngine)
         if (nextSession == null) {
             if (action == DesktopReaderKeyNavigation.EXIT_FULLSCREEN && isFullscreen) {

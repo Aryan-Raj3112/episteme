@@ -553,6 +553,14 @@ private fun SharedSettingsDetailPage(
                         HorizontalDivider()
                         Text(readerString("visual_options_title", "Visual options"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         SharedPdfVisualOptionDefaultsSwitch(
+                            title = readerString("menu_right_to_left_pagination", "Paginated (right-to-left)"),
+                            summary = readerString("visual_options_right_to_left_pagination_desc", "Uses right-to-left page order when PDF pagination mode is active."),
+                            checked = pdfSettings.rightToLeftPagination,
+                            onCheckedChange = { enabled ->
+                                onPdfSettingsChange(pdfSettings.copy(rightToLeftPagination = enabled))
+                            }
+                        )
+                        SharedPdfVisualOptionDefaultsSwitch(
                             title = readerString("visual_options_remove_page_gap", "Remove gap between pages"),
                             summary = readerString("desktop_remove_gap_between_pages_desc", "Applies to vertical reading mode."),
                             checked = !pdfSettings.pdfVerticalPageGapVisible,

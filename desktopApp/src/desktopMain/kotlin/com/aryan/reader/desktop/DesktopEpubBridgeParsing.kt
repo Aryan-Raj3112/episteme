@@ -59,7 +59,10 @@ internal enum class DesktopReaderKeyNavigation {
     EXIT_FULLSCREEN
 }
 
-internal fun AwtKeyEvent.desktopReaderKeyNavigationOrNull(fullscreen: Boolean): DesktopReaderKeyNavigation? {
+internal fun AwtKeyEvent.desktopReaderKeyNavigationOrNull(
+    fullscreen: Boolean,
+    rightToLeftPagination: Boolean = false
+): DesktopReaderKeyNavigation? {
     if (id != AwtKeyEvent.KEY_PRESSED) return null
     if (fullscreen && keyCode == AwtKeyEvent.VK_ESCAPE) {
         return DesktopReaderKeyNavigation.EXIT_FULLSCREEN
@@ -71,9 +74,17 @@ internal fun AwtKeyEvent.desktopReaderKeyNavigationOrNull(fullscreen: Boolean): 
         return DesktopReaderKeyNavigation.NEXT_SEARCH
     }
     return when (keyCode) {
-        AwtKeyEvent.VK_RIGHT,
+        AwtKeyEvent.VK_RIGHT -> if (rightToLeftPagination) {
+            DesktopReaderKeyNavigation.PREVIOUS
+        } else {
+            DesktopReaderKeyNavigation.NEXT
+        }
+        AwtKeyEvent.VK_LEFT -> if (rightToLeftPagination) {
+            DesktopReaderKeyNavigation.NEXT
+        } else {
+            DesktopReaderKeyNavigation.PREVIOUS
+        }
         AwtKeyEvent.VK_PAGE_DOWN -> DesktopReaderKeyNavigation.NEXT
-        AwtKeyEvent.VK_LEFT,
         AwtKeyEvent.VK_PAGE_UP -> DesktopReaderKeyNavigation.PREVIOUS
         AwtKeyEvent.VK_HOME -> DesktopReaderKeyNavigation.FIRST
         AwtKeyEvent.VK_END -> DesktopReaderKeyNavigation.LAST

@@ -74,6 +74,7 @@ class SharedLibrarySnapshotJsonTest {
                         pageInfoMode = PageInfoMode.SYNC,
                         pageInfoPosition = PageInfoPosition.TOP,
                         pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
+                        rightToLeftPagination = true,
                         pdfVerticalPageGapVisible = false,
                         pdfPageNumberOverlayVisible = false,
                         pdfFirstPageStandaloneInSpread = true,
@@ -250,6 +251,7 @@ class SharedLibrarySnapshotJsonTest {
 
         assertTrue(settings.pdfVerticalPageGapVisible)
         assertTrue(settings.pdfPageNumberOverlayVisible)
+        assertFalse(settings.rightToLeftPagination)
     }
 
     @Test

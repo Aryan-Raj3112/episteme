@@ -529,6 +529,7 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
         pageSpreadMode = obj.string("pageSpreadMode")
             ?.let { runCatching { ReaderPageSpreadMode.valueOf(it) }.getOrNull() }
             ?: defaults.pageSpreadMode,
+        rightToLeftPagination = obj.boolean("rightToLeftPagination", defaults.rightToLeftPagination),
         pdfVerticalPageGapVisible = obj.boolean(
             "pdfVerticalPageGapVisible",
             defaults.pdfVerticalPageGapVisible
@@ -681,6 +682,7 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "pageInfoMode" to JsonPrimitive(settings.pageInfoMode.name),
             "pageInfoPosition" to JsonPrimitive(settings.pageInfoPosition.name),
             "pageSpreadMode" to JsonPrimitive(settings.pageSpreadMode.name),
+            "rightToLeftPagination" to JsonPrimitive(settings.rightToLeftPagination),
             "pdfVerticalPageGapVisible" to JsonPrimitive(settings.pdfVerticalPageGapVisible),
             "pdfPageNumberOverlayVisible" to JsonPrimitive(settings.pdfPageNumberOverlayVisible),
             "pdfFirstPageStandaloneInSpread" to JsonPrimitive(settings.pdfFirstPageStandaloneInSpread),

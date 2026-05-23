@@ -17,6 +17,25 @@ class DesktopReaderKeyCommandsTest {
     }
 
     @Test
+    fun `epub right to left pagination swaps physical arrow navigation`() {
+        assertEquals(
+            DesktopReaderKeyNavigation.PREVIOUS,
+            awtKeyEvent(KeyEvent.VK_RIGHT, 0, KeyEvent.CHAR_UNDEFINED)
+                .desktopReaderKeyNavigationOrNull(fullscreen = false, rightToLeftPagination = true)
+        )
+        assertEquals(
+            DesktopReaderKeyNavigation.NEXT,
+            awtKeyEvent(KeyEvent.VK_LEFT, 0, KeyEvent.CHAR_UNDEFINED)
+                .desktopReaderKeyNavigationOrNull(fullscreen = false, rightToLeftPagination = true)
+        )
+        assertEquals(
+            DesktopReaderKeyNavigation.NEXT,
+            awtKeyEvent(KeyEvent.VK_PAGE_DOWN, 0, KeyEvent.CHAR_UNDEFINED)
+                .desktopReaderKeyNavigationOrNull(fullscreen = false, rightToLeftPagination = true)
+        )
+    }
+
+    @Test
     fun `ctrl f opens pdf reader search while reading`() {
         assertEquals(
             DesktopPdfKeyCommand.SEARCH,
@@ -31,6 +50,37 @@ class DesktopReaderKeyCommandsTest {
             DesktopPdfKeyCommand.SEARCH,
             awtKeyEvent(KeyEvent.VK_F, KeyEvent.CTRL_DOWN_MASK, 'F')
                 .desktopPdfKeyCommandOrNull(fullscreen = false, editingText = true)
+        )
+    }
+
+    @Test
+    fun `pdf right to left pagination swaps physical arrow navigation`() {
+        assertEquals(
+            DesktopPdfKeyCommand.PREVIOUS_PAGE,
+            awtKeyEvent(KeyEvent.VK_RIGHT, 0, KeyEvent.CHAR_UNDEFINED)
+                .desktopPdfKeyCommandOrNull(
+                    fullscreen = false,
+                    editingText = false,
+                    rightToLeftPagination = true
+                )
+        )
+        assertEquals(
+            DesktopPdfKeyCommand.NEXT_PAGE,
+            awtKeyEvent(KeyEvent.VK_LEFT, 0, KeyEvent.CHAR_UNDEFINED)
+                .desktopPdfKeyCommandOrNull(
+                    fullscreen = false,
+                    editingText = false,
+                    rightToLeftPagination = true
+                )
+        )
+        assertEquals(
+            DesktopPdfKeyCommand.NEXT_PAGE,
+            awtKeyEvent(KeyEvent.VK_PAGE_DOWN, 0, KeyEvent.CHAR_UNDEFINED)
+                .desktopPdfKeyCommandOrNull(
+                    fullscreen = false,
+                    editingText = false,
+                    rightToLeftPagination = true
+                )
         )
     }
 

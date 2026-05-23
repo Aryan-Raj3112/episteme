@@ -31,6 +31,20 @@ class ReaderSpreadLayoutTest {
     }
 
     @Test
+    fun `right to left pagination reverses only the displayed spread order`() {
+        val settings = ReaderSettings(
+            readingMode = ReaderReadingMode.PAGINATED,
+            pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
+            rightToLeftPagination = true
+        )
+
+        assertEquals(listOf(2, 3), ReaderSpreadLayout.visiblePageIndices(3, pageCount = 10, settings = settings))
+        assertEquals(listOf(3, 2), ReaderSpreadLayout.visiblePageIndicesForDisplay(3, pageCount = 10, settings = settings))
+        assertEquals(4, ReaderSpreadLayout.nextPageIndex(2, pageCount = 10, settings = settings))
+        assertEquals(0, ReaderSpreadLayout.previousPageIndex(2, pageCount = 10, settings = settings))
+    }
+
+    @Test
     fun `two page mode advances by spread and clamps odd final page`() {
         val settings = ReaderSettings(
             readingMode = ReaderReadingMode.PAGINATED,

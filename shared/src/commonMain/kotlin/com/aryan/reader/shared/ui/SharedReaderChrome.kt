@@ -156,6 +156,7 @@ import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.appearanceSignature
+import com.aryan.reader.shared.reader.isRightToLeftPaginationEnabled
 import com.aryan.reader.shared.reader.layoutSignature
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import com.aryan.reader.shared.reader.readerImageReferences
@@ -255,6 +256,7 @@ fun SharedReaderScreen(
     val navigationLocator = session.navigationLocator ?: session.activeSearchResult?.locator ?: readerState.currentPageLocator()
     val effectiveCloudTtsAvailable = cloudTtsControlsAvailable && byokSettings.isCloudTtsAvailable
     val readerFocusRequester = remember(session.reader.book.id) { FocusRequester() }
+    var readerFocusRestoreRequest by remember(session.reader.book.id) { mutableIntStateOf(0) }
     val currentIsFullscreen by rememberUpdatedState(isFullscreen)
     val currentOnFullscreenChange by rememberUpdatedState(onFullscreenChange)
     var selectedHighlightId by remember(session.reader.book.id) { mutableStateOf<String?>(null) }
@@ -288,6 +290,10 @@ fun SharedReaderScreen(
     val readerPopupActive = selectedHighlight != null || readerExtrasState.aiResult.hasContent
     val shouldRestoreReaderFocus = !session.isSearchActive && !readerPopupActive
     val currentShouldRestoreReaderFocus by rememberUpdatedState(shouldRestoreReaderFocus)
+    val rightToLeftPaginationActive = settings.isRightToLeftPaginationEnabled()
+    fun requestReaderFocusRestore() {
+        readerFocusRestoreRequest += 1
+    }
     LaunchedEffect(isFullscreen, session.reader.book.id) {
         for (delayMillis in SharedReaderFullscreenFocusRetryDelaysMillis) {
             delay(delayMillis)
@@ -297,10 +303,19 @@ fun SharedReaderScreen(
         }
     }
 
-    LaunchedEffect(readerPopupActive, session.reader.book.id) {
-        if (!readerPopupActive) {
+    LaunchedEffect(shouldRestoreReaderFocus, session.reader.book.id) {
+        if (shouldRestoreReaderFocus) {
             delay(120L)
             runCatching { readerFocusRequester.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(readerFocusRestoreRequest, session.reader.book.id) {
+        if (readerFocusRestoreRequest > 0) {
+            delay(140L)
+            if (currentShouldRestoreReaderFocus) {
+                runCatching { readerFocusRequester.requestFocus() }
+            }
         }
     }
 
@@ -344,6 +359,7 @@ fun SharedReaderScreen(
         useDetachedChromeLayer = useDetachedChromeLayer,
         useDetachedPanelLayer = useDetachedPanelLayer,
         contentHandlesChromeTap = true,
+        onReaderFocusRestoreRequest = ::requestReaderFocusRestore,
         topSearchBar = if (session.isSearchActive) {
             {
                 SharedReaderSearchTopBar(
@@ -365,12 +381,22 @@ fun SharedReaderScreen(
                         true
                     }
 
-                    event.key == Key.DirectionRight || event.key == Key.PageDown -> {
+                    event.key == Key.DirectionRight -> {
+                        dispatch(if (rightToLeftPaginationActive) ReaderAction.PreviousPage else ReaderAction.NextPage)
+                        true
+                    }
+
+                    event.key == Key.DirectionLeft -> {
+                        dispatch(if (rightToLeftPaginationActive) ReaderAction.NextPage else ReaderAction.PreviousPage)
+                        true
+                    }
+
+                    event.key == Key.PageDown -> {
                         dispatch(ReaderAction.NextPage)
                         true
                     }
 
-                    event.key == Key.DirectionLeft || event.key == Key.PageUp -> {
+                    event.key == Key.PageUp -> {
                         dispatch(ReaderAction.PreviousPage)
                         true
                     }
@@ -2057,11 +2083,32 @@ fun SharedReaderVisualOptionsControls(
         SharedReaderPanelSection(readerString("label_reading", "Reading")) {
             SharedReaderChoiceRow {
                 FilterChip(
-                    selected = settings.readingMode == ReaderReadingMode.PAGINATED,
+                    selected = settings.readingMode == ReaderReadingMode.PAGINATED && !settings.rightToLeftPagination,
                     onClick = {
-                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(readingMode = ReaderReadingMode.PAGINATED)))
+                        onReaderAction(
+                            ReaderAction.SettingsChanged(
+                                settings.copy(
+                                    readingMode = ReaderReadingMode.PAGINATED,
+                                    rightToLeftPagination = false
+                                )
+                            )
+                        )
                     },
-                    label = { Text(readerString("tab_pages", "Pages")) }
+                    label = { Text(readerString("menu_reading_mode_paginated", "Paginated (left-to-right)")) }
+                )
+                FilterChip(
+                    selected = settings.readingMode == ReaderReadingMode.PAGINATED && settings.rightToLeftPagination,
+                    onClick = {
+                        onReaderAction(
+                            ReaderAction.SettingsChanged(
+                                settings.copy(
+                                    readingMode = ReaderReadingMode.PAGINATED,
+                                    rightToLeftPagination = true
+                                )
+                            )
+                        )
+                    },
+                    label = { Text(readerString("menu_right_to_left_pagination", "Paginated (right-to-left)")) }
                 )
                 FilterChip(
                     selected = settings.readingMode == ReaderReadingMode.VERTICAL,

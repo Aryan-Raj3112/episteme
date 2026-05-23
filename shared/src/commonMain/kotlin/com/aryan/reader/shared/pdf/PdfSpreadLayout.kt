@@ -36,6 +36,15 @@ object PdfSpreadLayout {
         return listOf(start, start + 1).filter { it in 0 until pageCount }
     }
 
+    fun visiblePageIndicesForDisplay(
+        pageIndex: Int,
+        pageCount: Int,
+        settings: ReaderSettings
+    ): List<Int> {
+        val indices = visiblePageIndices(pageIndex, pageCount, settings)
+        return if (settings.rightToLeftPagination) indices.asReversed() else indices
+    }
+
     fun spreadStartPageIndices(
         pageCount: Int,
         settings: ReaderSettings

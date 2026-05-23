@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -342,6 +343,7 @@ internal fun PdfReaderScreen(
             ?: 0
     )
     val pdfReaderFocusRequester = remember(documentHandleId) { FocusRequester() }
+    var pdfReaderFocusRestoreRequest by remember(documentHandleId) { mutableIntStateOf(0) }
     val currentTextSelection by rememberUpdatedState(textSelection)
     val currentPdfAnnotations by rememberUpdatedState(pdfState.annotations)
     val currentPdfPageIndex by rememberUpdatedState(pdfState.pageIndex)
@@ -359,6 +361,9 @@ internal fun PdfReaderScreen(
             !isRichTextMode &&
             (textSelection == null || selectionMenuOffset == null)
     val currentShouldRestorePdfReaderFocus by rememberUpdatedState(shouldRestorePdfReaderFocus)
+    fun requestPdfReaderFocusRestore() {
+        pdfReaderFocusRestoreRequest += 1
+    }
 
     LaunchedEffect(isFullscreen, documentHandleId) {
         for (delayMillis in DesktopPdfReaderFullscreenFocusRetryDelaysMillis) {
@@ -366,6 +371,13 @@ internal fun PdfReaderScreen(
             if (currentShouldRestorePdfReaderFocus) {
                 runCatching { pdfReaderFocusRequester.requestFocus() }
             }
+        }
+    }
+
+    LaunchedEffect(shouldRestorePdfReaderFocus, documentHandleId) {
+        if (shouldRestorePdfReaderFocus) {
+            delay(120L)
+            runCatching { pdfReaderFocusRequester.requestFocus() }
         }
     }
 
@@ -539,9 +551,11 @@ internal fun PdfReaderScreen(
     val pageIndex = pdfState.pageIndex
     val scale = pdfState.zoom
     val displayMode = pdfState.displayMode
+    val rightToLeftPdfPaginationActive = displayMode == PdfDisplayMode.PAGINATION &&
+        pdfReaderSettings.rightToLeftPagination
     val isPdfTwoPageSpread = displayMode == PdfDisplayMode.PAGINATION &&
         PdfSpreadLayout.isTwoPageSpreadEnabled(pdfReaderSettings)
-    val paginatedVisiblePageIndices: List<Int> = remember(
+    val paginatedSpreadPageIndices: List<Int> = remember(
         pageIndex,
         document.pageCount,
         displayMode,
@@ -553,6 +567,12 @@ internal fun PdfReaderScreen(
         } else {
             listOf(pageIndex.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0)))
         }
+    }
+    val paginatedVisiblePageIndices = remember(
+        paginatedSpreadPageIndices,
+        rightToLeftPdfPaginationActive
+    ) {
+        if (rightToLeftPdfPaginationActive) paginatedSpreadPageIndices.asReversed() else paginatedSpreadPageIndices
     }
     val pdfPageLabel = desktopPdfPageLabel(pageIndex, document.pageCount, displayMode, pdfReaderSettings)
     val pdfPageScrubPreviewLabel = pageScrubPreview?.let {
@@ -1039,6 +1059,15 @@ internal fun PdfReaderScreen(
         if (!pdfPopupActive) {
             delay(120L)
             runCatching { pdfReaderFocusRequester.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(pdfReaderFocusRestoreRequest, documentHandleId) {
+        if (pdfReaderFocusRestoreRequest > 0) {
+            delay(140L)
+            if (currentShouldRestorePdfReaderFocus && !pdfPopupActive) {
+                runCatching { pdfReaderFocusRequester.requestFocus() }
+            }
         }
     }
 
@@ -2252,7 +2281,8 @@ internal fun PdfReaderScreen(
     fun handlePdfReaderKeyEvent(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
         val command = event.desktopPdfKeyCommandOrNull(
             fullscreen = isFullscreen,
-            editingText = isPdfTextEditingActive()
+            editingText = isPdfTextEditingActive(),
+            rightToLeftPagination = rightToLeftPdfPaginationActive
         ) ?: return false
         return runPdfKeyCommand(command)
     }
@@ -2260,7 +2290,8 @@ internal fun PdfReaderScreen(
     fun handlePdfReaderAwtKeyEvent(event: AwtKeyEvent): Boolean {
         val command = event.desktopPdfKeyCommandOrNull(
             fullscreen = isFullscreen,
-            editingText = isPdfTextEditingActive()
+            editingText = isPdfTextEditingActive(),
+            rightToLeftPagination = rightToLeftPdfPaginationActive
         ) ?: return false
         return runPdfKeyCommand(command)
     }
@@ -2331,6 +2362,7 @@ internal fun PdfReaderScreen(
             .focusRequester(pdfReaderFocusRequester)
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
             .focusable(),
+        onReaderFocusRestoreRequest = ::requestPdfReaderFocusRestore,
         leftSidebar = { _ ->
             DesktopPdfNavigationSidebar(
                 document = document,
@@ -2718,7 +2750,7 @@ internal fun PdfReaderScreen(
                                         }
                                     },
                                     onPagePositioned = { page, offset ->
-                                        if (page == paginatedVisiblePageIndices.firstOrNull()) {
+                                        if (page == paginatedSpreadPageIndices.firstOrNull()) {
                                             paginatedPageRootOffset = offset
                                         }
                                     }

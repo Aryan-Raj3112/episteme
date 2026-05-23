@@ -234,7 +234,9 @@ fun SharedNativePaginatedReader(
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null
 ) {
     val visiblePages = renderPlan.visiblePages
-    val firstPage = visiblePages.firstOrNull()
+    val logicalFirstPage = remember(visiblePages) {
+        visiblePages.minByOrNull { it.pageIndex }
+    }
     var activeSelection by remember(renderPlan.navigationTarget.requestId) {
         mutableStateOf<SharedNativeReaderTextSelection?>(null)
     }
@@ -265,8 +267,8 @@ fun SharedNativePaginatedReader(
             updateActiveSelection(null)
         }
     }
-    LaunchedEffect(firstPage?.pageIndex, renderPlan.navigationTarget.requestId) {
-        firstPage?.let { page ->
+    LaunchedEffect(logicalFirstPage?.pageIndex, renderPlan.navigationTarget.requestId) {
+        logicalFirstPage?.let { page ->
             onVisiblePageChanged(
                 page.pageIndex,
                 renderPlan.navigationTarget.locator ?: page.toNativeReaderLocator()

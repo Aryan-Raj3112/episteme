@@ -142,6 +142,28 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
+    fun `reader focus is restored after closing the final workspace panel`() {
+        assertTrue(
+            readerWorkspaceShouldRestoreFocusAfterPanelClose(
+                closingPanelOpen = true,
+                otherPanelOpen = false
+            )
+        )
+        assertFalse(
+            readerWorkspaceShouldRestoreFocusAfterPanelClose(
+                closingPanelOpen = false,
+                otherPanelOpen = false
+            )
+        )
+        assertFalse(
+            readerWorkspaceShouldRestoreFocusAfterPanelClose(
+                closingPanelOpen = true,
+                otherPanelOpen = true
+            )
+        )
+    }
+
+    @Test
     fun `epub workspace exposes visual options through tools popup`() {
         val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(

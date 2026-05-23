@@ -55,7 +55,8 @@ class ReaderDefaultSettingsStateTest {
             fontFamily = "Serif",
             themeId = "dark",
             textureId = "paper",
-            textureAlpha = 0.25f
+            textureAlpha = 0.25f,
+            rightToLeftPagination = true
         )
 
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
@@ -72,7 +73,8 @@ class ReaderDefaultSettingsStateTest {
         val epubDefaults = ReaderSettings(themeId = "sepia")
         val pdfDefaults = ReaderSettings(
             themeId = "reverse",
-            pdfFirstPageStandaloneInSpread = true
+            pdfFirstPageStandaloneInSpread = true,
+            rightToLeftPagination = true
         )
 
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
