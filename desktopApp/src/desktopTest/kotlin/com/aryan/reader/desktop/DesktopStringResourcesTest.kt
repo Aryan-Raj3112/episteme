@@ -73,6 +73,24 @@ class DesktopStringResourcesTest {
     }
 
     @Test
+    fun loadsAndroidToolbarTooltipDescriptionsForDesktop() {
+        val resources = DesktopAndroidStringResources.load(
+            locale = Locale.ENGLISH,
+            classLoader = Thread.currentThread().contextClassLoader
+                ?: DesktopStringResourcesTest::class.java.classLoader
+        )
+
+        assertEquals(
+            "Exit search and go back to the reader",
+            resources.stringOrNull("tooltip_close_search_desc")
+        )
+        assertEquals(
+            "Jump to the next search match in the document",
+            resources.stringOrNull("tooltip_next_result_desc")
+        )
+    }
+
+    @Test
     fun choosesDesktopPluralQuantityForSupportedLanguages() {
         val slavicQuantities = setOf("one", "few", "many", "other")
         val arabicQuantities = setOf("zero", "one", "two", "few", "many", "other")

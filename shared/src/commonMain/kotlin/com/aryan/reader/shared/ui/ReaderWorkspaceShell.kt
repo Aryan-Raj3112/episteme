@@ -943,13 +943,26 @@ private fun ReaderWorkspaceTopChrome(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             onReturnToLibrary?.let { returnToLibrary ->
-                IconButton(onClick = returnToLibrary, modifier = Modifier.size(36.dp)) {
+                ReaderTooltipIconButton(
+                    tooltip = readerString("desktop_back_to_library", "Back to library"),
+                    onClick = returnToLibrary,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("desktop_back_to_library", "Back to library"))
                 }
             }
             if (hasLeftPanel) {
-                IconButton(onClick = onToggleLeftPanel, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Menu, contentDescription = if (leftPanelOpen) "Hide reader navigation" else "Show reader navigation")
+                val navigationTooltip = if (leftPanelOpen) {
+                    readerString("desktop_hide_reader_navigation", "Hide reader navigation")
+                } else {
+                    readerString("desktop_show_reader_navigation", "Show reader navigation")
+                }
+                ReaderTooltipIconButton(
+                    tooltip = navigationTooltip,
+                    onClick = onToggleLeftPanel,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Default.Menu, contentDescription = navigationTooltip)
                 }
             }
             Column(Modifier.weight(1f)) {
@@ -958,24 +971,39 @@ private fun ReaderWorkspaceTopChrome(
             }
             Text(progressLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (ReaderWorkspaceTopAction.SEARCH in topActions && onSearchAction != null) {
-                IconButton(onClick = onSearchAction, modifier = Modifier.size(36.dp)) {
+                val searchTooltip = readerString("desktop_search_in_reader", "Search in reader")
+                ReaderTooltipIconButton(
+                    tooltip = searchTooltip,
+                    onClick = onSearchAction,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(Icons.Default.Search, contentDescription = readerString("desktop_search_in_reader", "Search in reader"))
                 }
             }
             if (ReaderWorkspaceTopAction.BOOKMARK in topActions && onToggleBookmark != null) {
-                IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
+                val bookmarkTooltip = if (isBookmarked) {
+                    readerString("menu_remove_bookmark", "Remove bookmark")
+                } else {
+                    readerString("menu_bookmark_this_page", "Bookmark this page")
+                }
+                ReaderTooltipIconButton(
+                    tooltip = bookmarkTooltip,
+                    onClick = onToggleBookmark,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                        contentDescription = if (isBookmarked) {
-                            readerString("menu_remove_bookmark", "Remove bookmark")
-                        } else {
-                            readerString("menu_bookmark_this_page", "Bookmark this page")
-                        }
+                        contentDescription = bookmarkTooltip
                     )
                 }
             }
             if (ReaderWorkspaceTopAction.READ_ALOUD in topActions && onReadAloudAction != null) {
-                IconButton(onClick = onReadAloudAction, modifier = Modifier.size(36.dp)) {
+                val readAloudTooltip = readerString("tooltip_tts_start_desc", "Read the book aloud using your device's voice engine")
+                ReaderTooltipIconButton(
+                    tooltip = readAloudTooltip,
+                    onClick = onReadAloudAction,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = readerString("action_read_aloud", "Read aloud")
@@ -983,7 +1011,12 @@ private fun ReaderWorkspaceTopChrome(
                 }
             }
             if (ReaderWorkspaceTopAction.AI in topActions && onAiHubAction != null) {
-                IconButton(onClick = onAiHubAction, modifier = Modifier.size(36.dp)) {
+                val aiTooltip = readerString("desktop_ai_hub", "AI hub")
+                ReaderTooltipIconButton(
+                    tooltip = aiTooltip,
+                    onClick = onAiHubAction,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         Icons.Default.Psychology,
                         contentDescription = readerString("desktop_ai_hub", "AI hub")
@@ -995,7 +1028,11 @@ private fun ReaderWorkspaceTopChrome(
                 fileActions?.hasAnyAction == true
             ) {
                 Box {
-                    IconButton(onClick = { fileActionsExpanded = true }, modifier = Modifier.size(36.dp)) {
+                    ReaderTooltipIconButton(
+                        tooltip = readerString("desktop_pdf_file_actions", "PDF file actions"),
+                        onClick = { fileActionsExpanded = true },
+                        modifier = Modifier.size(36.dp)
+                    ) {
                         Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_pdf_file_actions", "PDF file actions"))
                     }
                     DropdownMenu(
@@ -1060,7 +1097,16 @@ private fun ReaderWorkspaceTopChrome(
                 }
             }
             if (ReaderWorkspaceTopAction.FULL_SCREEN in topActions && onToggleFullscreen != null) {
-                IconButton(onClick = onToggleFullscreen, modifier = Modifier.size(36.dp)) {
+                val fullscreenTooltip = if (isFullscreen) {
+                    readerString("desktop_exit_full_screen", "Exit full screen")
+                } else {
+                    readerString("desktop_enter_full_screen", "Enter full screen")
+                }
+                ReaderTooltipIconButton(
+                    tooltip = fullscreenTooltip,
+                    onClick = onToggleFullscreen,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                         contentDescription = if (isFullscreen) {
@@ -1072,14 +1118,19 @@ private fun ReaderWorkspaceTopChrome(
                 }
             }
             if (hasRightPanel) {
-                IconButton(onClick = onToggleRightPanel, modifier = Modifier.size(36.dp)) {
+                val toolsTooltip = if (rightPanelOpen) {
+                    readerString("desktop_hide_reader_tools", "Hide reader tools")
+                } else {
+                    readerString("desktop_show_reader_tools", "Show reader tools")
+                }
+                ReaderTooltipIconButton(
+                    tooltip = toolsTooltip,
+                    onClick = onToggleRightPanel,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         Icons.Default.Tune,
-                        contentDescription = if (rightPanelOpen) {
-                            readerString("desktop_hide_reader_tools", "Hide reader tools")
-                        } else {
-                            readerString("desktop_show_reader_tools", "Show reader tools")
-                        }
+                        contentDescription = toolsTooltip
                     )
                 }
             }

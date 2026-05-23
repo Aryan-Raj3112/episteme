@@ -681,7 +681,8 @@ private fun SharedReaderSearchTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            IconButton(
+            ReaderTooltipIconButton(
+                tooltip = readerString("tooltip_close_search_desc", "Exit search and go back to the reader"),
                 onClick = { onReaderAction(ReaderAction.SearchClosed) },
                 modifier = Modifier.size(36.dp)
             ) {
@@ -695,7 +696,10 @@ private fun SharedReaderSearchTopBar(
                 modifier = Modifier.weight(1f).focusRequester(focusRequester),
                 trailingIcon = if (session.searchQuery.isNotEmpty()) {
                     {
-                        IconButton(onClick = { onReaderAction(ReaderAction.SearchChanged("")) }) {
+                        ReaderTooltipIconButton(
+                            tooltip = readerString("tooltip_clear_search_desc", "Erase your current search query and start over"),
+                            onClick = { onReaderAction(ReaderAction.SearchChanged("")) }
+                        ) {
                             Icon(Icons.Default.Close, contentDescription = readerString("tooltip_clear_search", "Clear search"))
                         }
                     }
@@ -704,7 +708,13 @@ private fun SharedReaderSearchTopBar(
                 },
                 selectionKey = session.reader.book.id
             )
-            IconButton(
+            val resultsTooltip = if (session.showSearchResultsPanel) {
+                readerString("tooltip_hide_results_desc", "Collapse the search results panel")
+            } else {
+                readerString("tooltip_show_results_desc", "Expand the panel to see all search matches")
+            }
+            ReaderTooltipIconButton(
+                tooltip = resultsTooltip,
                 onClick = { onReaderAction(ReaderAction.SearchResultsPanelToggled) },
                 modifier = Modifier.size(36.dp)
             ) {
@@ -842,7 +852,8 @@ private fun SharedReaderSearchNavigationPill(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            IconButton(
+            ReaderTooltipIconButton(
+                tooltip = readerString("tooltip_prev_result_desc", "Jump to the previous search match in the document"),
                 onClick = onPrevious,
                 enabled = session.canGoToPreviousSearchResult,
                 modifier = Modifier.size(36.dp)
@@ -859,7 +870,8 @@ private fun SharedReaderSearchNavigationPill(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.clickable(onClick = onShowResults).padding(horizontal = 8.dp)
             )
-            IconButton(
+            ReaderTooltipIconButton(
+                tooltip = readerString("tooltip_next_result_desc", "Jump to the next search match in the document"),
                 onClick = onNext,
                 enabled = session.canGoToNextSearchResult,
                 modifier = Modifier.size(36.dp)
@@ -2974,7 +2986,8 @@ private fun SharedReaderCompactNavigation(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(
+        ReaderTooltipIconButton(
+            tooltip = readerString("desktop_previous_page", "Previous page"),
             enabled = canGoPrevious,
             onClick = onPrevious,
             modifier = Modifier.size(36.dp)
@@ -3002,7 +3015,8 @@ private fun SharedReaderCompactNavigation(
                 modifier = Modifier.weight(1f)
             )
         }
-        IconButton(
+        ReaderTooltipIconButton(
+            tooltip = readerString("desktop_next_page", "Next page"),
             enabled = canGoNext,
             onClick = onNext,
             modifier = Modifier.size(36.dp)
@@ -3063,7 +3077,8 @@ private fun SharedReaderFullscreenNavigation(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
+                ReaderTooltipIconButton(
+                    tooltip = readerString("desktop_previous_page", "Previous page"),
                     enabled = readerState.canGoPrevious,
                     onClick = onPrevious
                 ) {
@@ -3092,7 +3107,8 @@ private fun SharedReaderFullscreenNavigation(
                     thumbColor = contentColor.copy(alpha = 0.92f),
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(
+                ReaderTooltipIconButton(
+                    tooltip = readerString("desktop_next_page", "Next page"),
                     enabled = readerState.canGoNext,
                     onClick = onNext
                 ) {
