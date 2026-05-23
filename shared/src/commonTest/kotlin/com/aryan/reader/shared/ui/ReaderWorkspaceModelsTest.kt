@@ -207,6 +207,27 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
+    fun `epub workspace exposes tools popup for desktop app theme controls`() {
+        val session = ReaderEngine().createSession(readerFixtureBook())
+        val preferences = ReaderToolbarPreferences(
+            hiddenToolIds = ReaderTool.entries.mapTo(mutableSetOf()) { it.id }
+        )
+
+        val model = epubReaderWorkspaceModel(
+            session = session,
+            toolbarPreferences = preferences,
+            extrasState = ReaderExtrasState(),
+            aiAvailable = false,
+            cloudTtsAvailable = false,
+            externalLookupAvailable = false,
+            appThemeControlsAvailable = true
+        )
+
+        assertTrue(ReaderWorkspaceInspectorSection.APPEARANCE in model.inspectorSections)
+        assertTrue(ReaderWorkspaceTopAction.TOOLS in model.topActions)
+    }
+
+    @Test
     fun `toolbar quick actions preserve visibility order and bottom placement`() {
         val preferences = ReaderToolbarPreferences(
             hiddenToolIds = setOf(ReaderTool.BOOKMARK.id),

@@ -267,112 +267,29 @@ fun SharedAppThemeSettingsDialog(
     onCustomThemeDeleted: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var showCreateDialog by remember { mutableStateOf(false) }
-    val defaultCustomThemeName = readerString("desktop_custom_theme_default", "Custom")
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(readerString("app_theme_title", "App theme"), fontWeight = FontWeight.Bold) },
         text = {
-            Column(
+            SharedAppThemeControls(
+                appThemeMode = appThemeMode,
+                appContrastOption = appContrastOption,
+                appTextDimFactorLight = appTextDimFactorLight,
+                appTextDimFactorDark = appTextDimFactorDark,
+                appSeedColor = appSeedColor,
+                customAppThemes = customAppThemes,
+                onThemeModeChanged = onThemeModeChanged,
+                onContrastOptionChanged = onContrastOptionChanged,
+                onTextDimFactorLightChanged = onTextDimFactorLightChanged,
+                onTextDimFactorDarkChanged = onTextDimFactorDarkChanged,
+                onSeedColorChanged = onSeedColorChanged,
+                onCustomThemeAdded = onCustomThemeAdded,
+                onCustomThemeDeleted = onCustomThemeDeleted,
                 modifier = Modifier
                     .widthIn(max = 620.dp)
                     .heightIn(max = 620.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                SettingsLabel(readerString("app_theme_appearance", "Appearance"))
-                SegmentedControl(
-                    values = AppThemeMode.entries,
-                    selectedValue = appThemeMode,
-                    label = { it.localizedLabel() },
-                    onValueSelected = onThemeModeChanged
-                )
-
-                SettingsLabel(readerString("app_theme_contrast", "Contrast"))
-                SegmentedControl(
-                    values = AppContrastOption.entries,
-                    selectedValue = appContrastOption,
-                    label = { it.localizedLabel() },
-                    onValueSelected = onContrastOptionChanged
-                )
-
-                if (appThemeMode == AppThemeMode.SYSTEM) {
-                    TextBrightnessSlider(
-                        label = readerString("app_theme_text_brightness_light", "Text brightness (Light)"),
-                        value = appTextDimFactorLight,
-                        onValueChange = onTextDimFactorLightChanged
-                    )
-                    TextBrightnessSlider(
-                        label = readerString("app_theme_text_brightness_dark", "Text brightness (Dark)"),
-                        value = appTextDimFactorDark,
-                        onValueChange = onTextDimFactorDarkChanged
-                    )
-                } else {
-                    TextBrightnessSlider(
-                        label = readerString("app_theme_text_brightness", "Text brightness"),
-                        value = if (appThemeMode == AppThemeMode.DARK) appTextDimFactorDark else appTextDimFactorLight,
-                        onValueChange = if (appThemeMode == AppThemeMode.DARK) onTextDimFactorDarkChanged else onTextDimFactorLightChanged
-                    )
-                }
-
-                SettingsLabel(readerString("app_theme_color_scheme", "Color scheme"))
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    ThemeSwatch(
-                        color = MaterialTheme.colorScheme.primary,
-                        selected = appSeedColor == null,
-                        label = readerString("app_theme_dynamic", "Dynamic"),
-                        onClick = { onSeedColorChanged(null) }
-                    )
-                    AppThemePresets.forEach { preset ->
-                        ThemeSwatch(
-                            color = preset.color,
-                            selected = appSeedColor == preset.color,
-                            label = readerString(preset.nameKey, preset.nameFallback),
-                            onClick = { onSeedColorChanged(preset.color) }
-                        )
-                    }
-                }
-
-                HorizontalDivider()
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SettingsLabel(readerString("theme_my_themes", "My themes"))
-                    IconButton(onClick = { showCreateDialog = true }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Default.Add, contentDescription = readerString("content_desc_add_custom_theme", "Add custom theme"))
-                    }
-                }
-
-                if (customAppThemes.isEmpty()) {
-                    Text(
-                        readerString("desktop_no_custom_themes_yet", "No custom themes yet"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        customAppThemes.forEach { theme ->
-                            ThemeSwatch(
-                                color = theme.seedColor,
-                                selected = appSeedColor == theme.seedColor,
-                                label = theme.name,
-                                onClick = { onSeedColorChanged(theme.seedColor) },
-                                onDelete = { onCustomThemeDeleted(theme.id) }
-                            )
-                        }
-                    }
-                }
-            }
+                    .verticalScroll(rememberScrollState())
+            )
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
@@ -380,6 +297,124 @@ fun SharedAppThemeSettingsDialog(
             }
         }
     )
+}
+
+@Composable
+fun SharedAppThemeControls(
+    appThemeMode: AppThemeMode,
+    appContrastOption: AppContrastOption,
+    appTextDimFactorLight: Float,
+    appTextDimFactorDark: Float,
+    appSeedColor: Color?,
+    customAppThemes: List<CustomAppTheme>,
+    onThemeModeChanged: (AppThemeMode) -> Unit,
+    onContrastOptionChanged: (AppContrastOption) -> Unit,
+    onTextDimFactorLightChanged: (Float) -> Unit,
+    onTextDimFactorDarkChanged: (Float) -> Unit,
+    onSeedColorChanged: (Color?) -> Unit,
+    onCustomThemeAdded: (CustomAppTheme) -> Unit,
+    onCustomThemeDeleted: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showCreateDialog by remember { mutableStateOf(false) }
+    val defaultCustomThemeName = readerString("desktop_custom_theme_default", "Custom")
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        SettingsLabel(readerString("app_theme_appearance", "Appearance"))
+        SegmentedControl(
+            values = AppThemeMode.entries,
+            selectedValue = appThemeMode,
+            label = { it.localizedLabel() },
+            onValueSelected = onThemeModeChanged
+        )
+
+        SettingsLabel(readerString("app_theme_contrast", "Contrast"))
+        SegmentedControl(
+            values = AppContrastOption.entries,
+            selectedValue = appContrastOption,
+            label = { it.localizedLabel() },
+            onValueSelected = onContrastOptionChanged
+        )
+
+        if (appThemeMode == AppThemeMode.SYSTEM) {
+            TextBrightnessSlider(
+                label = readerString("app_theme_text_brightness_light", "Text brightness (Light)"),
+                value = appTextDimFactorLight,
+                onValueChange = onTextDimFactorLightChanged
+            )
+            TextBrightnessSlider(
+                label = readerString("app_theme_text_brightness_dark", "Text brightness (Dark)"),
+                value = appTextDimFactorDark,
+                onValueChange = onTextDimFactorDarkChanged
+            )
+        } else {
+            TextBrightnessSlider(
+                label = readerString("app_theme_text_brightness", "Text brightness"),
+                value = if (appThemeMode == AppThemeMode.DARK) appTextDimFactorDark else appTextDimFactorLight,
+                onValueChange = if (appThemeMode == AppThemeMode.DARK) onTextDimFactorDarkChanged else onTextDimFactorLightChanged
+            )
+        }
+
+        SettingsLabel(readerString("app_theme_color_scheme", "Color scheme"))
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ThemeSwatch(
+                color = MaterialTheme.colorScheme.primary,
+                selected = appSeedColor == null,
+                label = readerString("app_theme_dynamic", "Dynamic"),
+                onClick = { onSeedColorChanged(null) }
+            )
+            AppThemePresets.forEach { preset ->
+                ThemeSwatch(
+                    color = preset.color,
+                    selected = appSeedColor == preset.color,
+                    label = readerString(preset.nameKey, preset.nameFallback),
+                    onClick = { onSeedColorChanged(preset.color) }
+                )
+            }
+        }
+
+        HorizontalDivider()
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SettingsLabel(readerString("theme_my_themes", "My themes"))
+            IconButton(onClick = { showCreateDialog = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Add, contentDescription = readerString("content_desc_add_custom_theme", "Add custom theme"))
+            }
+        }
+
+        if (customAppThemes.isEmpty()) {
+            Text(
+                readerString("desktop_no_custom_themes_yet", "No custom themes yet"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                customAppThemes.forEach { theme ->
+                    ThemeSwatch(
+                        color = theme.seedColor,
+                        selected = appSeedColor == theme.seedColor,
+                        label = theme.name,
+                        onClick = { onSeedColorChanged(theme.seedColor) },
+                        onDelete = { onCustomThemeDeleted(theme.id) }
+                    )
+                }
+            }
+        }
+    }
 
     if (showCreateDialog) {
         SharedCreateAppThemeDialog(

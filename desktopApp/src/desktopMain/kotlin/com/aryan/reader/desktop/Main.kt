@@ -95,6 +95,7 @@ import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedAppShell
 import com.aryan.reader.shared.ui.SharedAppTab
 import com.aryan.reader.shared.ui.SharedAppTheme
+import com.aryan.reader.shared.ui.SharedAppThemeControls
 import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
 import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
@@ -3070,18 +3071,35 @@ internal fun EpistemeDesktopApp(
             appSeedColor = state.appSeedColor,
             appFontFamily = desktopAppFontFamily
         ) {
-        EpistemeDesktopWindowChromeEffect(
-            window = window,
-            captionColor = MaterialTheme.colorScheme.surface,
-            textColor = MaterialTheme.colorScheme.onSurface,
-            borderColor = MaterialTheme.colorScheme.background
-        )
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-        ) {
-            SharedAppShell(
+            val appThemeControls: @Composable () -> Unit = {
+                SharedAppThemeControls(
+                    appThemeMode = state.appThemeMode,
+                    appContrastOption = state.appContrastOption,
+                    appTextDimFactorLight = state.appTextDimFactorLight,
+                    appTextDimFactorDark = state.appTextDimFactorDark,
+                    appSeedColor = state.appSeedColor,
+                    customAppThemes = state.customAppThemes,
+                    onThemeModeChanged = { mode -> updateState(state.reduce(AppAction.AppThemeChanged(mode))) },
+                    onContrastOptionChanged = { option -> updateState(state.reduce(AppAction.AppContrastChanged(option))) },
+                    onTextDimFactorLightChanged = { factor -> updateState(state.reduce(AppAction.AppTextDimFactorLightChanged(factor))) },
+                    onTextDimFactorDarkChanged = { factor -> updateState(state.reduce(AppAction.AppTextDimFactorDarkChanged(factor))) },
+                    onSeedColorChanged = { color -> updateState(state.reduce(AppAction.AppSeedColorChanged(color))) },
+                    onCustomThemeAdded = { theme -> updateState(state.reduce(AppAction.CustomAppThemeAdded(theme))) },
+                    onCustomThemeDeleted = { themeId -> updateState(state.reduce(AppAction.CustomAppThemeDeleted(themeId))) }
+                )
+            }
+            EpistemeDesktopWindowChromeEffect(
+                window = window,
+                captionColor = MaterialTheme.colorScheme.surface,
+                textColor = MaterialTheme.colorScheme.onSurface,
+                borderColor = MaterialTheme.colorScheme.background
+            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+                SharedAppShell(
                 selectedTab = selectedTab,
                 snackbarHostState = snackbarHostState,
                 appThemeMode = state.appThemeMode,
@@ -3497,6 +3515,7 @@ internal fun EpistemeDesktopApp(
                                         onFullscreenChange = { enabled ->
                                             updateReaderWindow(readerWindow.id) { it.copy(fullscreen = enabled) }
                                         },
+                                        appThemeControls = appThemeControls,
                                         onPageStateChange = { page, progress, viewport ->
                                             updateBookReadingState(
                                                 bookId = content.book.id,
@@ -3589,6 +3608,7 @@ internal fun EpistemeDesktopApp(
                                         onToolbarPreferencesChange = { preferences ->
                                             updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
                                         },
+                                        appThemeControls = appThemeControls,
                                         highlightPalette = state.readerHighlightPalette,
                                         onHighlightPaletteChange = { palette ->
                                             updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))

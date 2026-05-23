@@ -26,6 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,7 @@ internal fun DesktopPdfInspectorPanel(
     document: DesktopPdfDocument,
     displayMode: PdfDisplayMode,
     pdfReaderSettings: ReaderSettings,
+    appThemeControls: (@Composable () -> Unit)? = null,
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
@@ -94,12 +96,23 @@ internal fun DesktopPdfInspectorPanel(
     onCloudTtsVoiceChange: (String) -> Unit,
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit
 ) {
+    val inspectorTabs = remember(appThemeControls != null) {
+        desktopPdfInspectorTabs(appThemeControlsAvailable = appThemeControls != null)
+    }
     var selectedPdfInspectorTab by remember(document.handleId) { mutableStateOf(DesktopPdfInspectorTab.VISUAL) }
+    LaunchedEffect(inspectorTabs) {
+        if (selectedPdfInspectorTab !in inspectorTabs) {
+            selectedPdfInspectorTab = DesktopPdfInspectorTab.VISUAL.takeIf { it in inspectorTabs }
+                ?: inspectorTabs.first()
+        }
+    }
+    val appThemeInspectorListState = rememberLazyListState()
     val appearanceInspectorListState = rememberLazyListState()
     val visualInspectorListState = rememberLazyListState()
     val markupInspectorListState = rememberLazyListState()
     val ttsInspectorListState = rememberLazyListState()
     val pdfInspectorListState = when (selectedPdfInspectorTab) {
+        DesktopPdfInspectorTab.APP_THEME -> appThemeInspectorListState
         DesktopPdfInspectorTab.APPEARANCE -> appearanceInspectorListState
         DesktopPdfInspectorTab.VISUAL -> visualInspectorListState
         DesktopPdfInspectorTab.MARKUP -> markupInspectorListState
@@ -113,6 +126,7 @@ internal fun DesktopPdfInspectorPanel(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             DesktopPdfInspectorHeader(
+                tabs = inspectorTabs,
                 selectedTab = selectedPdfInspectorTab,
                 onTabSelected = { selectedPdfInspectorTab = it }
             )
@@ -121,6 +135,7 @@ internal fun DesktopPdfInspectorPanel(
                 document = document,
                 displayMode = displayMode,
                 pdfReaderSettings = pdfReaderSettings,
+                appThemeControls = appThemeControls,
                 customTextureIds = customTextureIds,
                 onImportTexture = onImportTexture,
                 onReaderSettingsChange = onReaderSettingsChange,
@@ -162,15 +177,16 @@ internal fun DesktopPdfInspectorPanel(
 
 @Composable
 private fun DesktopPdfInspectorHeader(
+    tabs: List<DesktopPdfInspectorTab>,
     selectedTab: DesktopPdfInspectorTab,
     onTabSelected: (DesktopPdfInspectorTab) -> Unit
 ) {
     ScrollableTabRow(
-        selectedTabIndex = selectedTab.ordinal,
+        selectedTabIndex = tabs.indexOf(selectedTab).coerceAtLeast(0),
         edgePadding = 0.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        DesktopPdfInspectorTab.values().forEach { tab ->
+        tabs.forEach { tab ->
             Tab(
                 selected = selectedTab == tab,
                 onClick = { onTabSelected(tab) },
@@ -197,6 +213,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     document: DesktopPdfDocument,
     displayMode: PdfDisplayMode,
     pdfReaderSettings: ReaderSettings,
+    appThemeControls: (@Composable () -> Unit)?,
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
@@ -242,9 +259,16 @@ private fun ColumnScope.DesktopPdfInspectorContent(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             when (selectedTab) {
+                DesktopPdfInspectorTab.APP_THEME -> {
+                    appThemeControls?.let { controls ->
+                        item {
+                            controls()
+                        }
+                    }
+                }
                 DesktopPdfInspectorTab.APPEARANCE -> {
                     item {
-                        DesktopPdfInspectorSection(readerString("app_theme_appearance", "Appearance")) {
+                        DesktopPdfInspectorSection(readerString("desktop_pdf_theme", "PDF theme")) {
                             SharedReaderThemeControls(
                                 settings = pdfReaderSettings,
                                 builtInThemes = BuiltInPdfReaderThemes,
@@ -434,7 +458,8 @@ private fun ColumnScope.DesktopPdfInspectorContent(
 @Composable
 private fun DesktopPdfInspectorTab.localizedTitle(): String {
     return when (this) {
-        DesktopPdfInspectorTab.APPEARANCE -> readerString("app_theme_appearance", "Appearance")
+        DesktopPdfInspectorTab.APP_THEME -> readerString("app_theme_title", "App theme")
+        DesktopPdfInspectorTab.APPEARANCE -> readerString("desktop_pdf_theme", "PDF theme")
         DesktopPdfInspectorTab.VISUAL -> readerString("visual_options_title", "Visual")
         DesktopPdfInspectorTab.MARKUP -> readerString("desktop_markup", "Markup")
         DesktopPdfInspectorTab.TTS -> readerString("menu_tts_settings", "TTS")
@@ -443,9 +468,20 @@ private fun DesktopPdfInspectorTab.localizedTitle(): String {
 
 private fun DesktopPdfInspectorTab.icon(): ImageVector {
     return when (this) {
+        DesktopPdfInspectorTab.APP_THEME -> Icons.Default.Palette
         DesktopPdfInspectorTab.APPEARANCE -> Icons.Default.Palette
         DesktopPdfInspectorTab.VISUAL -> Icons.Default.Tune
         DesktopPdfInspectorTab.MARKUP -> Icons.Default.Edit
         DesktopPdfInspectorTab.TTS -> Icons.AutoMirrored.Filled.VolumeUp
+    }
+}
+
+private fun desktopPdfInspectorTabs(appThemeControlsAvailable: Boolean): List<DesktopPdfInspectorTab> {
+    return buildList {
+        add(DesktopPdfInspectorTab.APPEARANCE)
+        if (appThemeControlsAvailable) add(DesktopPdfInspectorTab.APP_THEME)
+        add(DesktopPdfInspectorTab.VISUAL)
+        add(DesktopPdfInspectorTab.MARKUP)
+        add(DesktopPdfInspectorTab.TTS)
     }
 }

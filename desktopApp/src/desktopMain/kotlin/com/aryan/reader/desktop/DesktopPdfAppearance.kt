@@ -34,6 +34,7 @@ import com.aryan.reader.shared.reader.ReaderSettings
 
 internal enum class DesktopPdfInspectorTab(val title: String) {
     APPEARANCE("Appearance"),
+    APP_THEME("App theme"),
     VISUAL("Visual"),
     MARKUP("Markup"),
     TTS("TTS")

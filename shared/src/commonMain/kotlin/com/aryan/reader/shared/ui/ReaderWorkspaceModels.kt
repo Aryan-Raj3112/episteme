@@ -121,7 +121,8 @@ fun epubReaderWorkspaceModel(
     extrasState: ReaderExtrasState,
     aiAvailable: Boolean,
     cloudTtsAvailable: Boolean = true,
-    externalLookupAvailable: Boolean = true
+    externalLookupAvailable: Boolean = true,
+    appThemeControlsAvailable: Boolean = false
 ): ReaderWorkspaceModel {
     val preferences = toolbarPreferences.sanitized()
     val leftSections = listOf(
@@ -132,6 +133,7 @@ fun epubReaderWorkspaceModel(
     )
     val inspectorSections = buildList {
         if (
+            appThemeControlsAvailable ||
             preferences.isVisible(ReaderTool.THEME) ||
             preferences.isVisible(ReaderTool.FORMAT) ||
             preferences.isVisible(ReaderTool.VISUAL_OPTIONS) ||

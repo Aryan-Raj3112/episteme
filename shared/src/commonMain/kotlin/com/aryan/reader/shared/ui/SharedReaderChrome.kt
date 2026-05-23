@@ -200,6 +200,7 @@ fun SharedReaderScreen(
     onFullscreenChange: (Boolean) -> Unit = {},
     toolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
+    appThemeControls: (@Composable () -> Unit)? = null,
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     ttsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
@@ -273,6 +274,7 @@ fun SharedReaderScreen(
     val workspaceModel = epubReaderWorkspaceModel(
         session = session,
         toolbarPreferences = toolbarPreferences,
+        appThemeControlsAvailable = appThemeControls != null,
         extrasState = readerExtrasState,
         aiAvailable = byokSettings.areReaderAiFeaturesAvailable,
         cloudTtsAvailable = effectiveCloudTtsAvailable,
@@ -431,6 +433,7 @@ fun SharedReaderScreen(
             SharedReaderControlPanel(
                 session = session,
                 toolbarPreferences = toolbarPreferences,
+                appThemeControls = appThemeControls,
                 onPickCustomFont = onPickCustomFont,
                 customFonts = customFonts,
                 extrasState = readerExtrasState,
@@ -1251,6 +1254,7 @@ private fun SharedReaderQuickActions(
 private fun SharedReaderControlPanel(
     session: ReaderSessionState,
     toolbarPreferences: ReaderToolbarPreferences,
+    appThemeControls: (@Composable () -> Unit)?,
     onPickCustomFont: (() -> String?)?,
     customFonts: List<CustomFontItem>,
     extrasState: ReaderExtrasState,
@@ -1269,7 +1273,8 @@ private fun SharedReaderControlPanel(
     onReaderAction: (ReaderAction) -> Unit
 ) {
     val sections = toolbarPreferences.availableReaderControlSections(
-        cloudTtsControlsAvailable = cloudTtsControlsAvailable
+        cloudTtsControlsAvailable = cloudTtsControlsAvailable,
+        appThemeControlsAvailable = appThemeControls != null
     )
     if (sections.isEmpty()) return
     val defaultSection = sections.first()
@@ -1298,6 +1303,8 @@ private fun SharedReaderControlPanel(
         ) {
             item {
                 when (activeSection) {
+                    ReaderControlSection.APP_THEME -> appThemeControls?.invoke()
+
                     ReaderControlSection.FORMAT -> SharedReaderFormatControls(
                         settings = session.reader.settings,
                         onPickCustomFont = onPickCustomFont,
@@ -1374,6 +1381,7 @@ private fun SharedReaderControlSectionTabs(
 }
 
 private enum class ReaderControlSection {
+    APP_THEME,
     FORMAT,
     THEME,
     VISUAL,
@@ -1382,6 +1390,7 @@ private enum class ReaderControlSection {
 
 private fun ReaderControlSection.icon(): ImageVector {
     return when (this) {
+        ReaderControlSection.APP_THEME -> Icons.Default.Palette
         ReaderControlSection.FORMAT -> Icons.Default.TextFields
         ReaderControlSection.THEME -> Icons.Default.Palette
         ReaderControlSection.VISUAL -> Icons.Default.Tune
@@ -1392,19 +1401,22 @@ private fun ReaderControlSection.icon(): ImageVector {
 @Composable
 private fun ReaderControlSection.localizedTitle(): String {
     return when (this) {
+        ReaderControlSection.APP_THEME -> readerString("app_theme_title", "App theme")
         ReaderControlSection.FORMAT -> readerString("desktop_typography", "Typography")
-        ReaderControlSection.THEME -> readerString("app_theme_appearance", "Appearance")
+        ReaderControlSection.THEME -> readerString("reading_themes", "Reading Themes")
         ReaderControlSection.VISUAL -> readerString("visual_options_title", "Visual")
         ReaderControlSection.TTS -> readerString("menu_tts_settings", "TTS")
     }
 }
 
 private fun ReaderToolbarPreferences.availableReaderControlSections(
-    cloudTtsControlsAvailable: Boolean
+    cloudTtsControlsAvailable: Boolean,
+    appThemeControlsAvailable: Boolean = false
 ): List<ReaderControlSection> {
     return buildList {
         if (isVisible(ReaderTool.FORMAT)) add(ReaderControlSection.FORMAT)
         if (isVisible(ReaderTool.THEME)) add(ReaderControlSection.THEME)
+        if (appThemeControlsAvailable) add(ReaderControlSection.APP_THEME)
         if (isVisible(ReaderTool.VISUAL_OPTIONS) || isVisible(ReaderTool.READING_MODE)) add(ReaderControlSection.VISUAL)
         if (
             (cloudTtsControlsAvailable && (
