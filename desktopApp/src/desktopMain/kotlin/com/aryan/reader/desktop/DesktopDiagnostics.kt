@@ -1,16 +1,34 @@
 package com.aryan.reader.desktop
 
 internal const val DesktopDiagnosticsProperty = "episteme.desktop.diagnostics"
+private const val DesktopDiagnosticsTagsProperty = "episteme.desktop.diagnostics.tags"
+
+private val DesktopDiagnosticTags: Set<String> =
+    System.getProperty(DesktopDiagnosticsTagsProperty)
+        .orEmpty()
+        .split(',', ';', ' ', '\t', '\n')
+        .mapNotNull { rawTag ->
+            rawTag.trim()
+                .takeIf { it.isNotBlank() }
+                ?.lowercase()
+        }
+        .toSet()
 
 internal val DesktopDiagnosticsEnabled: Boolean =
-    desktopDiagnosticsFlag(System.getProperty(DesktopDiagnosticsProperty))
+    desktopDiagnosticsFlag(System.getProperty(DesktopDiagnosticsProperty)) ||
+        DesktopDiagnosticTags.isNotEmpty()
 
 internal fun desktopDiagnosticsFlag(rawValue: String?): Boolean {
     return rawValue?.trim()?.equals("true", ignoreCase = true) == true
 }
 
-internal inline fun logDesktopDiagnostic(tag: String, message: () -> String) {
-    if (DesktopDiagnosticsEnabled) {
+private fun isDesktopDiagnosticTagEnabled(tag: String): Boolean {
+    if (DesktopDiagnosticTags.isEmpty()) return true
+    return "*" in DesktopDiagnosticTags || tag.lowercase() in DesktopDiagnosticTags
+}
+
+internal fun logDesktopDiagnostic(tag: String, message: () -> String) {
+    if (DesktopDiagnosticsEnabled && isDesktopDiagnosticTagEnabled(tag)) {
         println("$tag ${message()}")
     }
 }

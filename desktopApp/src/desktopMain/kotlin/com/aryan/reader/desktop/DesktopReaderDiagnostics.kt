@@ -7,6 +7,7 @@ private const val PdfZoomPerfLogTag = "EpistemePdfZoomPerf"
 private const val PdfLinkLogTag = "EpistemePdfLink"
 private const val EpubLinkLogTag = "EpistemeEpubLink"
 private const val EpubPaginationLogTag = "EpistemeEpubPagination"
+private const val EpubCutoffLogTag = "EpistemeEpubCutoff"
 private const val ReaderGapLogTag = "EpistemeReaderGap"
 private const val EpubSelectionDebugLogTag = "EPUB_SELECTION_DEBUG"
 
@@ -31,6 +32,10 @@ internal fun logEpubLink(message: String) {
 
 internal fun logEpubPagination(message: String) {
     logDesktopDiagnostic(EpubPaginationLogTag) { message }
+}
+
+internal fun logEpubCutoff(message: String) {
+    logDesktopDiagnostic(EpubCutoffLogTag) { message }
 }
 
 internal fun logReaderGap(message: String) {

@@ -312,6 +312,23 @@ fun SharedNativePaginatedReader(
                 val availableContentWidth = (maxWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
                 minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
             }
+            val pageRenderGeometry = with(density) {
+                val contentWidth = (pageOuterWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
+                val contentHeight = (maxHeight - (renderPlan.settings.resolvedVerticalMargin.dp * 2f)).coerceAtLeast(1.dp)
+                SharedNativePageRenderGeometry(
+                    readerWidthPx = maxWidth.toPx().roundToInt(),
+                    readerHeightPx = maxHeight.toPx().roundToInt(),
+                    pageOuterWidthPx = pageOuterWidth.toPx().roundToInt(),
+                    pageContentWidthPx = contentWidth.toPx().roundToInt(),
+                    pageContentHeightPx = contentHeight.toPx().roundToInt(),
+                    pageGapPx = pageGap.toPx().roundToInt(),
+                    horizontalMarginPx = horizontalMargin.toPx().roundToInt(),
+                    verticalMarginPx = renderPlan.settings.resolvedVerticalMargin.dp.toPx().roundToInt(),
+                    configuredPageWidthPx = configuredContentWidth.toPx().roundToInt(),
+                    visiblePageCount = visiblePages.size,
+                    spreadMode = renderPlan.settings.pageSpreadMode.name
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(pageGap, Alignment.CenterHorizontally),
@@ -325,6 +342,7 @@ fun SharedNativePaginatedReader(
                         searchHighlight = searchHighlight,
                         selectionHighlight = selectionHighlight,
                         activeSelection = activeSelection,
+                        renderGeometry = pageRenderGeometry,
                         onSelectionChange = ::updateActiveSelection,
                         onSelectionGestureActiveChange = { selectionGestureActive = it },
                         onHighlightSelected = onHighlightSelected,
@@ -407,6 +425,7 @@ private fun SharedNativePaginatedPage(
     searchHighlight: Color,
     selectionHighlight: Color,
     activeSelection: SharedNativeReaderTextSelection?,
+    renderGeometry: SharedNativePageRenderGeometry,
     onSelectionChange: (SharedNativeReaderTextSelection?) -> Unit,
     onSelectionGestureActiveChange: (Boolean) -> Unit,
     onHighlightSelected: (String) -> Unit,
@@ -433,7 +452,8 @@ private fun SharedNativePaginatedPage(
         page.chapterIndex,
         settings.fontSize,
         settings.lineSpacing,
-        settings.paragraphSpacing
+        settings.paragraphSpacing,
+        renderGeometry
     ) {
         val content = contentFit ?: return@LaunchedEffect
         if (blocks.isEmpty() || blockLayouts.size < blocks.size) return@LaunchedEffect
@@ -469,6 +489,19 @@ private fun SharedNativePaginatedPage(
                 "page_fit layer=rendered_overflow page=${page.pageIndex + 1} chapter=${page.chapterIndex} " +
                     "usedPx=$usedPx contentPx=$contentHeightPx remainingPx=$remainingPx " +
                     "overflowPx=${(-remainingPx).coerceAtLeast(0)} blocks=${blocks.size} " +
+                    "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length} " +
+                    "tail=\"${orderedFits.renderedPageFitTail(contentTopPx)}\""
+            }
+            logSharedReaderDiagnostic(EpubCutoffLogTag) {
+                "cutoff_probe layer=rendered_overflow page=${page.pageIndex + 1} chapter=${page.chapterIndex} " +
+                    "usedPx=$usedPx contentPx=${renderGeometry.pageContentWidthPx}x$contentHeightPx " +
+                    "expectedContentPx=${renderGeometry.pageContentWidthPx}x${renderGeometry.pageContentHeightPx} " +
+                    "remainingPx=$remainingPx overflowPx=${(-remainingPx).coerceAtLeast(0)} blocks=${blocks.size} " +
+                    "readerPx=${renderGeometry.readerWidthPx}x${renderGeometry.readerHeightPx} " +
+                    "pageOuterPx=${renderGeometry.pageOuterWidthPx} visiblePages=${renderGeometry.visiblePageCount} " +
+                    "spread=${renderGeometry.spreadMode} pageGapPx=${renderGeometry.pageGapPx} " +
+                    "marginsPx=${renderGeometry.horizontalMarginPx}x${renderGeometry.verticalMarginPx} " +
+                    "configuredPageWidthPx=${renderGeometry.configuredPageWidthPx} " +
                     "range=${page.startOffset}..${page.endOffset} textChars=${page.text.length} " +
                     "tail=\"${orderedFits.renderedPageFitTail(contentTopPx)}\""
             }
@@ -852,6 +885,7 @@ private fun SharedNativeInteractiveText(
         val layout = textLayoutResult ?: return@LaunchedEffect
         val coordinates = textCoordinates ?: return@LaunchedEffect
         val label = fitLabel ?: return@LaunchedEffect
+        val boxWidthPx = coordinates.size.width
         val boxHeightPx = coordinates.size.height
         val layoutHeightPx = layout.size.height
         val lastLineBottomPx = if (layout.lineCount > 0) {
@@ -866,9 +900,15 @@ private fun SharedNativeInteractiveText(
         lastTextClipLogSignature = signature
         logSharedReaderDiagnostic(EpubPageFitLogTag) {
             "page_fit layer=text_clip page=${label.page.pageIndex + 1} chapter=${label.page.chapterIndex} " +
-                "block=${label.blockIndex} kind=${label.kind} boxPx=$boxHeightPx layoutPx=$layoutHeightPx " +
+                "block=${label.blockIndex} kind=${label.kind} boxPx=${boxWidthPx}x$boxHeightPx layoutPx=${layout.size.width}x$layoutHeightPx " +
                 "lastLineBottomPx=$lastLineBottomPx clipPx=$clipPx lines=${layout.lineCount} " +
                 "range=${label.sourceRange} textChars=${label.textChars}"
+        }
+        logSharedReaderDiagnostic(EpubCutoffLogTag) {
+            "cutoff_probe layer=text_clip page=${label.page.pageIndex + 1} chapter=${label.page.chapterIndex} " +
+                "block=${label.blockIndex} kind=${label.kind} boxPx=${boxWidthPx}x$boxHeightPx " +
+                "layoutPx=${layout.size.width}x$layoutHeightPx lastLineBottomPx=$lastLineBottomPx " +
+                "clipPx=$clipPx lines=${layout.lineCount} range=${label.sourceRange} textChars=${label.textChars}"
         }
     }
     Text(
@@ -1514,6 +1554,20 @@ private fun sharedNativeImageRenderSizeDp(
 private data class SharedNativeContentFit(
     val rootTopPx: Int,
     val heightPx: Int
+)
+
+private data class SharedNativePageRenderGeometry(
+    val readerWidthPx: Int,
+    val readerHeightPx: Int,
+    val pageOuterWidthPx: Int,
+    val pageContentWidthPx: Int,
+    val pageContentHeightPx: Int,
+    val pageGapPx: Int,
+    val horizontalMarginPx: Int,
+    val verticalMarginPx: Int,
+    val configuredPageWidthPx: Int,
+    val visiblePageCount: Int,
+    val spreadMode: String
 )
 
 private data class SharedNativeTextFitLabel(
@@ -2465,6 +2519,7 @@ private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
 private const val ReaderNativeAnnotationUrl = "URL"
 private const val ReaderNativeAnnotationHighlight = "HIGHLIGHT"
 private const val EpubPageFitLogTag = "EpistemeEpubPageFit"
+private const val EpubCutoffLogTag = "EpistemeEpubCutoff"
 private const val EpubPageFitTailBlockCount = 4
 private const val SharedNativeListItemMarkerAreaWidthDp = 32
 private const val SharedNativeListItemMarkerEndPaddingDp = 8

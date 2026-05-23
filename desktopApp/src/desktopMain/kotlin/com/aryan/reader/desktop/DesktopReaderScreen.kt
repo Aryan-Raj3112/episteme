@@ -418,6 +418,13 @@ internal fun DesktopReaderScreen(
                             "mode=${session.reader.settings.readingMode} " +
                             "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)}"
                     )
+                    logEpubCutoff(
+                        "cutoff_probe layer=desktop_surface size=${size.width}x${size.height} " +
+                            "mode=${session.reader.settings.readingMode} spread=${session.reader.settings.pageSpreadMode} " +
+                            "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)} " +
+                            "margins=${session.reader.settings.resolvedHorizontalMargin}x${session.reader.settings.resolvedVerticalMargin} " +
+                            "pageWidthSetting=${session.reader.settings.pageWidth}"
+                    )
                     if (next != readerViewport) {
                         logEpubPagination(
                             "viewport_changed width=${next.widthPx} height=${next.heightPx} " +
