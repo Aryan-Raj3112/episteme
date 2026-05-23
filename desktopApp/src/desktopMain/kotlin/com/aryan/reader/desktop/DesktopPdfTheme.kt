@@ -6,7 +6,7 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderTheme
 
-internal val DesktopDefaultPdfDisplayMode = PdfDisplayMode.VERTICAL_SCROLL
+internal val DesktopDefaultPdfDisplayMode = PdfDisplayMode.PAGINATION
 internal val DesktopDefaultPdfVerticalPageGap = 8.dp
 
 internal fun desktopPdfPageBackgroundColor(

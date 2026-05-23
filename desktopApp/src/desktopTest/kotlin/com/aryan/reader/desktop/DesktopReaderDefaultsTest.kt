@@ -5,9 +5,12 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.pdf.PdfZoomSpec
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.test.Test
@@ -40,6 +43,59 @@ class DesktopReaderDefaultsTest {
         val book = bookItem("with-local").copy(readerSettings = local)
 
         assertEquals(local, resolvedDesktopReaderSettings(book, defaults))
+    }
+
+    @Test
+    fun `desktop library defaults migrate untouched reader defaults to two page pagination`() {
+        val migrated = SharedLibrarySnapshot().withDesktopDefaults()
+
+        assertEquals(DesktopReaderDefaultsVersion, migrated.desktopReaderDefaultsVersion)
+        assertEquals(ReaderReadingMode.PAGINATED, migrated.readerDefaultSettings.readingMode)
+        assertEquals(ReaderPageSpreadMode.TWO_PAGE, migrated.readerDefaultSettings.pageSpreadMode)
+        assertEquals(ReaderReadingMode.PAGINATED, migrated.pdfReaderDefaultSettings.readingMode)
+        assertEquals(ReaderPageSpreadMode.TWO_PAGE, migrated.pdfReaderDefaultSettings.pageSpreadMode)
+        assertEquals("no_theme", migrated.pdfReaderDefaultSettings.themeId)
+    }
+
+    @Test
+    fun `desktop reader settings engines are separated by shared reader surface`() {
+        assertEquals(DesktopReaderSettingsEngine.TEXT, FileType.EPUB.desktopReaderSettingsEngine())
+        assertEquals(DesktopReaderSettingsEngine.TEXT, FileType.MOBI.desktopReaderSettingsEngine())
+        assertEquals(DesktopReaderSettingsEngine.TEXT, FileType.DOCX.desktopReaderSettingsEngine())
+        assertEquals(DesktopReaderSettingsEngine.PDF, FileType.PDF.desktopReaderSettingsEngine())
+        assertEquals(DesktopReaderSettingsEngine.PDF, FileType.CBZ.desktopReaderSettingsEngine())
+        assertEquals(DesktopReaderSettingsEngine.PDF, FileType.PPTX.desktopReaderSettingsEngine())
+    }
+
+    @Test
+    fun `desktop engine settings update only matching reader family books`() {
+        val textSettings = ReaderSettings(themeId = "sepia", readingMode = ReaderReadingMode.PAGINATED)
+        val pdfSettings = ReaderSettings(themeId = "reverse", readingMode = ReaderReadingMode.PAGINATED)
+        val books = listOf(
+            bookItem("epub"),
+            bookItem("mobi").copy(path = "C:/Books/mobi.mobi", type = FileType.MOBI, displayName = "mobi.mobi"),
+            bookItem("pdf").copy(path = "C:/Books/pdf.pdf", type = FileType.PDF, displayName = "pdf.pdf")
+        )
+
+        val withTextDefaults = books.withDesktopReaderEngineSettings(DesktopReaderSettingsEngine.TEXT, textSettings)
+        assertEquals(textSettings, withTextDefaults[0].readerSettings)
+        assertEquals(textSettings, withTextDefaults[1].readerSettings)
+        assertEquals(null, withTextDefaults[2].readerSettings)
+
+        val withPdfDefaults = withTextDefaults.withDesktopReaderEngineSettings(DesktopReaderSettingsEngine.PDF, pdfSettings)
+        assertEquals(textSettings, withPdfDefaults[0].readerSettings)
+        assertEquals(textSettings, withPdfDefaults[1].readerSettings)
+        assertEquals(pdfSettings, withPdfDefaults[2].readerSettings)
+    }
+
+    @Test
+    fun `desktop pdf display mode is carried by pdf reader settings`() {
+        assertEquals(PdfDisplayMode.PAGINATION, DesktopDefaultPdfDisplayMode)
+        assertEquals(PdfDisplayMode.PAGINATION, DesktopDefaultPdfReaderSettings.toDesktopPdfDisplayMode())
+        assertEquals(
+            PdfDisplayMode.VERTICAL_SCROLL,
+            ReaderSettings(readingMode = ReaderReadingMode.VERTICAL).toDesktopPdfDisplayMode()
+        )
     }
 
     @Test

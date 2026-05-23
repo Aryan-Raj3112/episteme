@@ -7,6 +7,7 @@ import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.ShelfRecord
+import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.ui.SharedAppTab
@@ -30,11 +31,37 @@ internal fun desktopEmptyReaderBook(): SharedEpubBook {
 }
 
 internal fun SharedLibrarySnapshot.withDesktopDefaults(): SharedLibrarySnapshot {
-    return if (appSeedColor == null) {
-        copy(appSeedColor = DesktopDefaultAppSeedColor)
+    val shouldMigrateReaderDefaults = desktopReaderDefaultsVersion < DesktopReaderDefaultsVersion
+    val migratedTextDefaults = if (shouldMigrateReaderDefaults && readerDefaultSettings == ReaderSettings()) {
+        DesktopDefaultTextReaderSettings
     } else {
-        this
+        readerDefaultSettings
     }
+    val migratedPdfDefaults = if (shouldMigrateReaderDefaults && pdfReaderDefaultSettings == ReaderSettings(themeId = "no_theme")) {
+        DesktopDefaultPdfReaderSettings
+    } else {
+        pdfReaderDefaultSettings
+    }
+    val migratedBooks = if (shouldMigrateReaderDefaults) {
+        books.map { book ->
+            when {
+                book.usesDesktopReaderSettingsEngine(DesktopReaderSettingsEngine.TEXT) &&
+                    book.readerSettings == ReaderSettings() -> book.copy(readerSettings = migratedTextDefaults)
+                book.usesDesktopReaderSettingsEngine(DesktopReaderSettingsEngine.PDF) &&
+                    book.readerSettings == ReaderSettings(themeId = "no_theme") -> book.copy(readerSettings = migratedPdfDefaults)
+                else -> book
+            }
+        }
+    } else {
+        books
+    }
+    return copy(
+        books = migratedBooks,
+        appSeedColor = appSeedColor ?: DesktopDefaultAppSeedColor,
+        readerDefaultSettings = migratedTextDefaults,
+        pdfReaderDefaultSettings = migratedPdfDefaults,
+        desktopReaderDefaultsVersion = DesktopReaderDefaultsVersion
+    )
 }
 
 internal fun SharedLibrarySnapshot.toDesktopReaderScreenState(): SharedReaderScreenState {
@@ -121,6 +148,7 @@ internal fun SharedReaderScreenState.toDesktopLibrarySnapshot(
         customAppThemes = customAppThemes,
         readerDefaultSettings = readerDefaultSettings,
         pdfReaderDefaultSettings = pdfReaderDefaultSettings,
+        desktopReaderDefaultsVersion = DesktopReaderDefaultsVersion,
         readerToolbarPreferences = readerToolbarPreferences,
         readerHighlightPalette = readerHighlightPalette,
         pdfHighlighterPalette = pdfHighlighterPalette,

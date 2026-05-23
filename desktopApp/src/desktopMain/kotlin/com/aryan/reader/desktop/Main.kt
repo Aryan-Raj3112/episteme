@@ -1503,8 +1503,20 @@ internal fun EpistemeDesktopApp(
     ) {
         var updatedBook: BookItem? = null
         var shouldSyncSidecars = false
-        val next = state.copy(
-            rawLibraryBooks = state.rawLibraryBooks.map { book ->
+        val textReaderSettings = session?.reader?.settings
+        val updatedTextReaderDefaults = textReaderSettings
+            ?.takeIf { it != state.readerDefaultSettings }
+        val stateWithReaderDefaults = if (updatedTextReaderDefaults != null) {
+            state.withDesktopReaderEngineDefaultSettings(
+                DesktopReaderSettingsEngine.TEXT,
+                updatedTextReaderDefaults
+            )
+        } else {
+            state
+        }
+        val next = stateWithReaderDefaults.copy(
+            readerDefaultSettings = textReaderSettings ?: state.readerDefaultSettings,
+            rawLibraryBooks = stateWithReaderDefaults.rawLibraryBooks.map { book ->
                 if (book.id == bookId) {
                     val readerPosition = session?.navigationLocator ?: book.readerPosition
                     shouldSyncSidecars = session != null ||
@@ -1517,7 +1529,7 @@ internal fun EpistemeDesktopApp(
                         isRecent = true,
                         lastPageIndex = pageIndex,
                         readerPosition = readerPosition,
-                        readerSettings = session?.reader?.settings ?: book.readerSettings,
+                        readerSettings = textReaderSettings ?: book.readerSettings,
                         readerBookmarks = session?.bookmarks ?: book.readerBookmarks,
                         readerHighlights = session?.highlights ?: book.readerHighlights,
                         pdfReaderViewport = pdfViewport ?: book.pdfReaderViewport
@@ -1528,6 +1540,22 @@ internal fun EpistemeDesktopApp(
             }
         )
         updateState(next)
+        if (updatedTextReaderDefaults != null) {
+            readerWindows = readerWindows.map { windowState ->
+                val content = windowState.content
+                if (content is DesktopReaderWindowContent.Text &&
+                    content.session.reader.settings != updatedTextReaderDefaults
+                ) {
+                    windowState.copy(
+                        content = content.copy(
+                            session = readerEngine.updateSettings(content.session, updatedTextReaderDefaults)
+                        )
+                    )
+                } else {
+                    windowState
+                }
+            }
+        }
         if (shouldSyncSidecars) {
             updatedBook?.let(::syncBookSidecars)
         }
@@ -1535,14 +1563,19 @@ internal fun EpistemeDesktopApp(
     }
 
     fun updateBookReaderSettings(bookId: String, settings: ReaderSettings) {
+        val pdfSettings = settings.toDesktopPdfReaderSettings()
         var updatedBook: BookItem? = null
-        val next = state.copy(
-            rawLibraryBooks = state.rawLibraryBooks.map { book ->
+        val stateWithPdfDefaults = state.withDesktopReaderEngineDefaultSettings(
+            DesktopReaderSettingsEngine.PDF,
+            pdfSettings
+        )
+        val next = stateWithPdfDefaults.copy(
+            rawLibraryBooks = stateWithPdfDefaults.rawLibraryBooks.map { book ->
                 if (book.id == bookId) {
                     book.copy(
                         timestamp = System.currentTimeMillis(),
                         isRecent = true,
-                        readerSettings = settings
+                        readerSettings = pdfSettings
                     ).also { updatedBook = it }
                 } else {
                     book
@@ -3169,11 +3202,21 @@ internal fun EpistemeDesktopApp(
                             onDestinationChange = { settingsDestination = it },
                             readerDefaultSettings = state.readerDefaultSettings,
                             onReaderDefaultSettingsChange = { settings ->
-                                updateState(state.reduce(AppAction.ReaderDefaultSettingsChanged(settings)))
+                                updateState(
+                                    state.withDesktopReaderEngineDefaultSettings(
+                                        DesktopReaderSettingsEngine.TEXT,
+                                        settings
+                                    )
+                                )
                             },
                             pdfReaderDefaultSettings = state.pdfReaderDefaultSettings,
                             onPdfReaderDefaultSettingsChange = { settings ->
-                                updateState(state.reduce(AppAction.PdfReaderDefaultSettingsChanged(settings)))
+                                updateState(
+                                    state.withDesktopReaderEngineDefaultSettings(
+                                        DesktopReaderSettingsEngine.PDF,
+                                        settings
+                                    )
+                                )
                             },
                             readerToolbarPreferences = state.readerToolbarPreferences,
                             onReaderToolbarPreferencesChange = { preferences ->

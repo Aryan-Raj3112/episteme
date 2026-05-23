@@ -9,8 +9,8 @@ import kotlin.test.assertEquals
 
 class DesktopPdfThemeTest {
     @Test
-    fun `desktop pdf defaults to vertical display mode`() {
-        assertEquals(PdfDisplayMode.VERTICAL_SCROLL, DesktopDefaultPdfDisplayMode)
+    fun `desktop pdf defaults to paginated display mode`() {
+        assertEquals(PdfDisplayMode.PAGINATION, DesktopDefaultPdfDisplayMode)
         assertEquals(8.dp, DesktopDefaultPdfVerticalPageGap)
     }
 

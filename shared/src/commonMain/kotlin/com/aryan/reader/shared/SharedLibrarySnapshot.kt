@@ -47,6 +47,7 @@ data class SharedLibrarySnapshot(
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
     val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    val desktopReaderDefaultsVersion: Int = 0,
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
@@ -111,6 +112,7 @@ object SharedLibrarySnapshotJson {
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderSettingsOrNull()
                 ?: ReaderSettings(themeId = "no_theme"),
+            desktopReaderDefaultsVersion = root.int("desktopReaderDefaultsVersion", 0),
             readerToolbarPreferences = root["readerToolbarPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderToolbarPreferencesOrNull()
@@ -156,6 +158,7 @@ object SharedLibrarySnapshotJson {
                 "customAppThemes" to JsonArray(snapshot.customAppThemes.map { it.toJsonObject() }),
                 "readerDefaultSettings" to snapshot.readerDefaultSettings.asJson(),
                 "pdfReaderDefaultSettings" to snapshot.pdfReaderDefaultSettings.asJson(),
+                "desktopReaderDefaultsVersion" to JsonPrimitive(snapshot.desktopReaderDefaultsVersion),
                 "readerToolbarPreferences" to snapshot.readerToolbarPreferences.sanitized().toJsonObject(),
                 "readerHighlightPalette" to snapshot.readerHighlightPalette.sanitized().toJsonObject(),
                 "pdfHighlighterPalette" to snapshot.pdfHighlighterPalette.sanitized().toJsonObject(),

@@ -208,8 +208,11 @@ internal fun PdfReaderScreen(
     val restoredInitialViewport = remember(documentHandleId, initialViewport) {
         initialViewport?.sanitized(document.pageCount, zoomSpec)
     }
+    val initialDesktopPdfReaderSettings = remember(documentHandleId, initialReaderSettings) {
+        initialReaderSettings.toDesktopPdfReaderSettings()
+    }
     var pdfReaderSettings by remember(documentHandleId) {
-        mutableStateOf(initialReaderSettings.toDesktopPdfReaderSettings())
+        mutableStateOf(initialDesktopPdfReaderSettings)
     }
     var pdfState by remember(documentHandleId) {
         mutableStateOf(
@@ -218,7 +221,7 @@ internal fun PdfReaderScreen(
                 initialPageIndex = restoredInitialViewport?.pageIndex ?: initialPageIndex,
                 zoomSpec = zoomSpec
             ).copy(
-                displayMode = restoredInitialViewport?.displayMode ?: DesktopDefaultPdfDisplayMode,
+                displayMode = initialDesktopPdfReaderSettings.toDesktopPdfDisplayMode(),
                 zoom = restoredInitialViewport?.zoom ?: zoomSpec.clamp(zoomSpec.default)
             )
         )
@@ -2405,6 +2408,9 @@ internal fun PdfReaderScreen(
                 ttsReplacementPreferences = ttsReplacementPreferences,
                 onDisplayModeSelected = { mode ->
                     commitActiveTextDraft()
+                    updatePdfReaderSettings(
+                        pdfReaderSettings.copy(readingMode = mode.toDesktopReaderReadingMode())
+                    )
                     dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(mode))
                 },
                 onSelectPanMode = ::selectPdfPanMode,

@@ -79,7 +79,7 @@ internal fun DesktopPdfThemedPageImage(
 }
 
 internal fun ReaderSettings?.toDesktopPdfReaderSettings(): ReaderSettings {
-    val defaults = ReaderSettings(themeId = "no_theme")
+    val defaults = DesktopDefaultPdfReaderSettings
     val settings = this ?: defaults
     val themeId = settings.themeId
     val hasPdfTheme = BuiltInPdfReaderThemes.any { it.id == themeId }
