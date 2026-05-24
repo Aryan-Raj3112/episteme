@@ -572,6 +572,12 @@ internal fun EpistemeDesktopApp(
             desktopCloudConfig.isAuthConfigured
     }
 
+    fun desktopAccountAvailable(): Boolean {
+        return featurePolicy.aiAndCloud &&
+            featurePolicy.networkAccess &&
+            !desktopBuildProfile.byokAiAvailable
+    }
+
     fun saveDesktopCloudSyncSettings(
         syncEnabled: Boolean = state.isSyncEnabled,
         folderSyncEnabled: Boolean = state.isFolderSyncEnabled
@@ -2554,10 +2560,10 @@ internal fun EpistemeDesktopApp(
     }
 
     fun selectAppTab(tab: SharedAppTab) {
-        val nextTab = if (tab == SharedAppTab.CATALOGS && !featurePolicy.opdsCatalogs) {
-            SharedAppTab.LIBRARY
-        } else {
-            tab
+        val nextTab = when {
+            tab == SharedAppTab.CATALOGS && !featurePolicy.opdsCatalogs -> SharedAppTab.LIBRARY
+            tab == SharedAppTab.PRO && !desktopAccountAvailable() -> SharedAppTab.LIBRARY
+            else -> tab
         }
         if (nextTab == SharedAppTab.SETTINGS) {
             settingsQuery = ""
@@ -3143,6 +3149,17 @@ internal fun EpistemeDesktopApp(
                 customAppThemes = state.customAppThemes,
                 isTabsEnabled = state.isTabsEnabled,
                 featurePolicy = featurePolicy,
+                currentUser = if (desktopAccountAvailable()) state.currentUser else null,
+                accountAvailable = desktopAccountAvailable(),
+                isOssBuild = desktopBuildProfile.isOssOffline,
+                onSignInRequested = if (desktopAccountAvailable()) {
+                    ::signInDesktopAccount
+                } else {
+                    null
+                },
+                accountAvatar = { user, modifier ->
+                    DesktopProfileAvatar(user = user, modifier = modifier)
+                },
                 onTabSelected = { tab ->
                     selectAppTab(tab)
                 },

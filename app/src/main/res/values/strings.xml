@@ -1616,6 +1616,7 @@
     <string name="desktop_account_overview">Account overview</string>
     <string name="desktop_ai_hub">AI hub</string>
     <string name="desktop_ai_settings_summaries_desc">Used for EPUB summaries and PDF page summaries.</string>
+    <string name="desktop_app_name_oss">Episteme oss</string>
     <string name="desktop_author_text">Author text</string>
     <!-- %1$s = voice/cache label. -->
     <string name="desktop_cache_format">Cache: %1$s</string>
@@ -1683,6 +1684,7 @@
     <string name="desktop_no_fonts_matching">No fonts found matching \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">No Google account is connected.</string>
     <string name="desktop_no_summary_cached_section">No summary cached for this section.</string>
+    <string name="desktop_offline_oss_reader">Offline desktop reader</string>
     <string name="desktop_open_readers">Open readers</string>
     <!-- %1$s = book or section title. -->
     <string name="desktop_opening_title">Opening %1$s</string>
@@ -1718,6 +1720,7 @@
     <string name="desktop_secure_key_storage_unavailable">Secure key storage is unavailable on this operating system. Keys entered here will be used for this session but will not be persisted.</string>
     <string name="desktop_settings_hub">Settings hub</string>
     <string name="desktop_show_ai_in_reader_desc">Matches the Android hide toggle for smart dictionary, summaries, and recaps.</string>
+    <string name="desktop_sign_in_account_header_desc">Sync account, Pro, and credits</string>
     <string name="desktop_signed_in">Signed in</string>
     <string name="desktop_source_code">Source code</string>
     <string name="desktop_source_code_desc">Browse the project source on GitHub.</string>

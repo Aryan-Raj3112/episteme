@@ -56,11 +56,11 @@ fun sharedAppShellModel(
     val primaryTabs = buildList {
         add(SharedAppTab.LIBRARY)
         if (featurePolicy.opdsCatalogs) add(SharedAppTab.CATALOGS)
+        if (featurePolicy.aiAndCloud) add(SharedAppTab.PRO)
     }
     val selectedPrimaryTab = when (selectedTab) {
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY
         SharedAppTab.SETTINGS,
-        SharedAppTab.PRO,
         SharedAppTab.CUSTOM_FONTS,
         SharedAppTab.SUPPORT,
         SharedAppTab.FEEDBACK,
@@ -69,11 +69,7 @@ fun sharedAppShellModel(
     }.takeIf { it in primaryTabs } ?: SharedAppTab.LIBRARY
     val toolActions = buildList {
         add(SharedAppToolAction.SETTINGS)
-        add(SharedAppToolAction.IMPORT_FILES)
-        add(SharedAppToolAction.IMPORT_FOLDER)
-        add(SharedAppToolAction.SYNC)
         add(SharedAppToolAction.APP_THEME)
-        if (featurePolicy.aiAndCloud) add(SharedAppToolAction.PRO)
         if (aiSettingsAvailable && featurePolicy.aiAndCloud) add(SharedAppToolAction.AI_SETTINGS)
         add(SharedAppToolAction.CUSTOM_FONTS)
         if (featurePolicy.projectLinks) {
@@ -81,7 +77,6 @@ fun sharedAppShellModel(
             add(SharedAppToolAction.SUPPORT)
         }
         add(SharedAppToolAction.ABOUT)
-        add(SharedAppToolAction.TABS_TOGGLE)
     }
     return SharedAppShellModel(
         primaryTabs = primaryTabs,
@@ -112,8 +107,7 @@ fun sharedAppMoreSections(actions: List<SharedAppToolAction>): List<SharedAppMor
                 it == SharedAppToolAction.SETTINGS ||
                     it == SharedAppToolAction.APP_THEME ||
                     it == SharedAppToolAction.AI_SETTINGS ||
-                    it == SharedAppToolAction.CUSTOM_FONTS ||
-                    it == SharedAppToolAction.TABS_TOGGLE
+                    it == SharedAppToolAction.CUSTOM_FONTS
             }
         ),
         SharedAppMoreSection(

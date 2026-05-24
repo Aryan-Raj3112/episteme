@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -13,10 +14,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Favorite
@@ -61,6 +64,7 @@ import com.aryan.reader.shared.AppContrastOption
 import com.aryan.reader.shared.AppThemeMode
 import com.aryan.reader.shared.CustomAppTheme
 import com.aryan.reader.shared.SharedFeaturePolicy
+import com.aryan.reader.shared.UserData
 
 enum class SharedAppTab {
     LIBRARY,
@@ -87,6 +91,11 @@ fun SharedAppShell(
     customAppThemes: List<CustomAppTheme> = emptyList(),
     isTabsEnabled: Boolean = true,
     featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard,
+    currentUser: UserData? = null,
+    accountAvailable: Boolean = featurePolicy.aiAndCloud,
+    isOssBuild: Boolean = false,
+    onSignInRequested: (() -> Unit)? = null,
+    accountAvatar: (@Composable (UserData, Modifier) -> Unit)? = null,
     onTabSelected: (SharedAppTab) -> Unit,
     onImportFiles: () -> Unit,
     onImportFolder: () -> Unit = {},
@@ -130,6 +139,12 @@ fun SharedAppShell(
                         SharedAppSidebar(
                             selectedTab = shellModel.selectedPrimaryTab,
                             primaryTabs = shellModel.primaryTabs,
+                            currentUser = currentUser,
+                            accountAvailable = accountAvailable,
+                            isOssBuild = isOssBuild,
+                            onAccountClick = { onTabSelected(SharedAppTab.PRO) },
+                            onSignInRequested = onSignInRequested,
+                            accountAvatar = accountAvatar,
                             onTabSelected = onTabSelected,
                             moreMenu = {
                                 SharedMoreMenuButton(
@@ -207,6 +222,12 @@ fun SharedAppShell(
 private fun SharedAppSidebar(
     selectedTab: SharedAppTab,
     primaryTabs: List<SharedAppTab>,
+    currentUser: UserData?,
+    accountAvailable: Boolean,
+    isOssBuild: Boolean,
+    onAccountClick: () -> Unit,
+    onSignInRequested: (() -> Unit)?,
+    accountAvatar: (@Composable (UserData, Modifier) -> Unit)?,
     onTabSelected: (SharedAppTab) -> Unit,
     moreMenu: @Composable () -> Unit
 ) {
@@ -223,10 +244,14 @@ private fun SharedAppSidebar(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(SharedUiTokens.compactGap)
         ) {
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 12.dp)) {
-                Text(readerString("app_name", "Episteme"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(readerString("desktop_library_and_reader", "Library and reader"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            SharedSidebarHeader(
+                currentUser = currentUser,
+                accountAvailable = accountAvailable,
+                isOssBuild = isOssBuild,
+                onAccountClick = onAccountClick,
+                onSignInRequested = onSignInRequested,
+                accountAvatar = accountAvatar
+            )
             primaryTabs.forEach { tab ->
                 SharedSidebarNavItem(
                     tab = tab,
@@ -260,6 +285,152 @@ private fun SharedAppCompactRail(
         Spacer(Modifier.weight(1f))
         moreMenu()
     }
+}
+
+@Composable
+private fun SharedSidebarHeader(
+    currentUser: UserData?,
+    accountAvailable: Boolean,
+    isOssBuild: Boolean,
+    onAccountClick: () -> Unit,
+    onSignInRequested: (() -> Unit)?,
+    accountAvatar: (@Composable (UserData, Modifier) -> Unit)?
+) {
+    val signInRequested = onSignInRequested
+    val avatarContent = accountAvatar
+    when {
+        isOssBuild -> {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                SharedInitialAvatar(initial = "E", modifier = Modifier.size(42.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        readerString("desktop_app_name_oss", "Episteme oss"),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        readerString("desktop_offline_oss_reader", "Offline desktop reader"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        currentUser != null -> {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                onClick = onAccountClick
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (avatarContent != null) {
+                        avatarContent(currentUser, Modifier.size(42.dp))
+                    } else {
+                        SharedInitialAvatar(initial = currentUser.initial(), modifier = Modifier.size(42.dp))
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            currentUser.displayName ?: currentUser.email ?: readerString("desktop_signed_in", "Signed in"),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            currentUser.email ?: readerString("desktop_account_and_credits", "Account & credits"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+        accountAvailable && signInRequested != null -> {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                onClick = signInRequested
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AccountCircle,
+                        contentDescription = null,
+                        modifier = Modifier.size(42.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            readerString("drawer_sign_in", "Sign in with Google"),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            readerString("desktop_sign_in_account_header_desc", "Sync account, Pro, and credits"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+        else -> {
+            Column(Modifier.padding(horizontal = 10.dp, vertical = 12.dp)) {
+                Text(readerString("app_name", "Episteme"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(readerString("desktop_library_and_reader", "Library and reader"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedInitialAvatar(
+    initial: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(initial, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+private fun UserData.initial(): String {
+    return (displayName ?: email ?: "E")
+        .trim()
+        .firstOrNull()
+        ?.uppercase()
+        ?: "E"
 }
 
 @Composable

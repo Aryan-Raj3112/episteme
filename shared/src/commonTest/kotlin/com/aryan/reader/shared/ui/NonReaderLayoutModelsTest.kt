@@ -266,40 +266,41 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `shell model keeps primary navigation simple and exposes all tool actions`() {
+    fun `shell model keeps account in primary navigation and exposes more actions`() {
         val model = sharedAppShellModel(
             selectedTab = SharedAppTab.CUSTOM_FONTS,
             aiSettingsAvailable = true
         )
 
         assertEquals(
-            listOf(SharedAppTab.LIBRARY, SharedAppTab.CATALOGS),
+            listOf(SharedAppTab.LIBRARY, SharedAppTab.CATALOGS, SharedAppTab.PRO),
             model.primaryTabs
         )
         assertEquals(SharedAppTab.LIBRARY, model.selectedPrimaryTab)
-        assertTrue(SharedAppToolAction.IMPORT_FILES in model.toolActions)
         assertTrue(SharedAppToolAction.SETTINGS in model.toolActions)
-        assertTrue(SharedAppToolAction.IMPORT_FOLDER in model.toolActions)
-        assertTrue(SharedAppToolAction.SYNC in model.toolActions)
         assertTrue(SharedAppToolAction.APP_THEME in model.toolActions)
-        assertTrue(SharedAppToolAction.PRO in model.toolActions)
         assertTrue(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
         assertTrue(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)
         assertTrue(SharedAppToolAction.SUPPORT in model.toolActions)
         assertTrue(SharedAppToolAction.ABOUT in model.toolActions)
-        assertTrue(SharedAppToolAction.TABS_TOGGLE in model.toolActions)
+        assertFalse(SharedAppToolAction.IMPORT_FILES in model.toolActions)
+        assertFalse(SharedAppToolAction.IMPORT_FOLDER in model.toolActions)
+        assertFalse(SharedAppToolAction.SYNC in model.toolActions)
+        assertFalse(SharedAppToolAction.PRO in model.toolActions)
+        assertFalse(SharedAppToolAction.TABS_TOGGLE in model.toolActions)
         assertTrue(model.showPrimaryNavigation)
 
         assertEquals(
             listOf(
-                SharedAppMoreGroup.LIBRARY,
-                SharedAppMoreGroup.ACCOUNT,
                 SharedAppMoreGroup.PREFERENCES,
                 SharedAppMoreGroup.HELP
             ),
             model.moreSections.map { it.group }
         )
+
+        val accountModel = sharedAppShellModel(SharedAppTab.PRO, aiSettingsAvailable = true)
+        assertEquals(SharedAppTab.PRO, accountModel.selectedPrimaryTab)
 
         val withoutAi = sharedAppShellModel(SharedAppTab.SHELVES, aiSettingsAvailable = false)
         assertEquals(SharedAppTab.LIBRARY, withoutAi.selectedPrimaryTab)
@@ -307,31 +308,20 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `shell model groups more menu actions in desktop app order`() {
+    fun `shell model groups more menu preferences and help only`() {
         val model = sharedAppShellModel(
             selectedTab = SharedAppTab.LIBRARY,
             aiSettingsAvailable = true
         )
 
-        assertEquals(
-            listOf(
-                SharedAppToolAction.IMPORT_FILES,
-                SharedAppToolAction.IMPORT_FOLDER,
-                SharedAppToolAction.SYNC
-            ),
-            model.moreSections.single { it.group == SharedAppMoreGroup.LIBRARY }.actions
-        )
-        assertEquals(
-            listOf(SharedAppToolAction.PRO),
-            model.moreSections.single { it.group == SharedAppMoreGroup.ACCOUNT }.actions
-        )
+        assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.LIBRARY })
+        assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.ACCOUNT })
         assertEquals(
             listOf(
                 SharedAppToolAction.SETTINGS,
                 SharedAppToolAction.APP_THEME,
                 SharedAppToolAction.AI_SETTINGS,
-                SharedAppToolAction.CUSTOM_FONTS,
-                SharedAppToolAction.TABS_TOGGLE
+                SharedAppToolAction.CUSTOM_FONTS
             ),
             model.moreSections.single { it.group == SharedAppMoreGroup.PREFERENCES }.actions
         )
@@ -370,11 +360,12 @@ class NonReaderLayoutModelsTest {
 
         assertEquals(listOf(SharedAppTab.LIBRARY), model.primaryTabs)
         assertEquals(SharedAppTab.LIBRARY, model.selectedPrimaryTab)
-        assertFalse(SharedAppToolAction.PRO in model.toolActions)
         assertFalse(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertFalse(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)
         assertFalse(SharedAppToolAction.SUPPORT in model.toolActions)
+        assertFalse(SharedAppToolAction.PRO in model.toolActions)
         assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.ACCOUNT })
+        assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.LIBRARY })
         assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.HELP && SharedAppToolAction.SUPPORT in it.actions })
         assertTrue(SharedAppToolAction.SETTINGS in model.toolActions)
         assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
