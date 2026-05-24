@@ -1612,6 +1612,8 @@
     <string name="desktop_about_subtitle">Desktop reader</string>
     <string name="desktop_access">Desktop access</string>
     <string name="desktop_account">Account</string>
+    <string name="desktop_account_and_credits">Account &amp; credits</string>
+    <string name="desktop_account_overview">Account overview</string>
     <string name="desktop_ai_hub">AI hub</string>
     <string name="desktop_ai_settings_summaries_desc">Used for EPUB summaries and PDF page summaries.</string>
     <string name="desktop_author_text">Author text</string>
@@ -1664,6 +1666,7 @@
     <string name="desktop_github_sponsors_desc">Support development through GitHub Sponsors.</string>
     <string name="desktop_google_sign_in_not_configured">Google sign-in is not configured for this desktop build.</string>
     <string name="desktop_greater_than">Greater than</string>
+    <string name="desktop_help">Help</string>
     <string name="desktop_help_feedback_desc">Bug reports, feature requests, and support</string>
     <string name="desktop_hide">Hide</string>
     <string name="desktop_import_files">Import files</string>
@@ -1672,6 +1675,8 @@
     <string name="desktop_less_than">Less than</string>
     <string name="desktop_library_and_reader">Library and reader</string>
     <string name="desktop_match_any">Any</string>
+    <string name="desktop_more_library_actions">Library actions</string>
+    <string name="desktop_more_menu">More</string>
     <string name="desktop_no_cached_summaries_book">No cached summaries for this book yet.</string>
     <string name="desktop_no_custom_fonts_desc">Import TTF, OTF, or WOFF2 files to use them in books.</string>
     <!-- %1$s = search query. -->
@@ -1694,9 +1699,11 @@
     <!-- %1$s = PDF title. -->
     <string name="desktop_pdf_password_retry_desc">That password did not open %1$s. Enter the PDF password and try again.</string>
     <string name="desktop_percent">Percent</string>
+    <string name="desktop_plan">Plan</string>
     <string name="desktop_preparing_audio">Preparing audio</string>
-    <string name="desktop_pro">Pro</string>
-    <string name="desktop_pro_and_credits">Pro and credits</string>
+    <string name="desktop_preferences">Preferences</string>
+    <string name="desktop_pro">Account &amp; credits</string>
+    <string name="desktop_pro_and_credits">Account &amp; credits</string>
     <string name="desktop_pro_not_unlocked_account">Pro is not unlocked for this account.</string>
     <string name="desktop_pro_purchase_android_desc">Pro and credits can only be purchased from the Android app. Desktop checks the same signed-in account and uses those credits for cloud TTS, summaries, recaps, and other paid AI features.</string>
     <string name="desktop_pro_sign_in_desc">Sign in to check your account status on desktop.</string>
@@ -1704,6 +1711,8 @@
     <string name="desktop_progress">Progress</string>
     <string name="desktop_project">Project</string>
     <string name="desktop_reader">Reader</string>
+    <string name="desktop_reader_tabs_off">Reader tabs off</string>
+    <string name="desktop_reader_tabs_on">Reader tabs on</string>
     <string name="desktop_refresh">Refresh</string>
     <string name="desktop_release_add_library">Release to add to your library.</string>
     <string name="desktop_secure_key_storage_unavailable">Secure key storage is unavailable on this operating system. Keys entered here will be used for this session but will not be persisted.</string>
@@ -1852,7 +1861,7 @@
     <string name="desktop_toc">TOC</string>
     <string name="desktop_type_to_search_pdf">Type to search this PDF</string>
     <string name="desktop_untitled">Untitled</string>
-    <string name="desktop_view_pro_and_credits">View Pro and credits</string>
+    <string name="desktop_view_pro_and_credits">View account &amp; credits</string>
     <string name="desktop_voice_cache_cleared">Voice cache cleared</string>
     <string name="desktop_zoom">Zoom</string>
     <string name="desktop_zoom_in">Zoom in</string>

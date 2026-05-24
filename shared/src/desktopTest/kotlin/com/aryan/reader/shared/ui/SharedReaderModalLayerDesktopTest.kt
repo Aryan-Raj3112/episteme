@@ -70,12 +70,43 @@ class SharedReaderModalLayerDesktopTest {
     }
 
     @Test
-    fun `chrome layer remains visible when owner window is showing but not focused`() {
+    fun `chrome layer remains visible when owner window is focused`() {
         assertTrue(
             sharedReaderModalChromeLayerVisible(
                 ownerShowing = true,
                 ownerDisplayable = true,
-                ownerMinimized = false
+                ownerMinimized = false,
+                ownerActive = false,
+                ownerFocused = true,
+                ownerModalActive = false
+            )
+        )
+    }
+
+    @Test
+    fun `chrome layer remains visible while its own reader modal is active`() {
+        assertTrue(
+            sharedReaderModalChromeLayerVisible(
+                ownerShowing = true,
+                ownerDisplayable = true,
+                ownerMinimized = false,
+                ownerActive = false,
+                ownerFocused = false,
+                ownerModalActive = true
+            )
+        )
+    }
+
+    @Test
+    fun `chrome layer hides when owner loses focus to another app`() {
+        assertFalse(
+            sharedReaderModalChromeLayerVisible(
+                ownerShowing = true,
+                ownerDisplayable = true,
+                ownerMinimized = false,
+                ownerActive = false,
+                ownerFocused = false,
+                ownerModalActive = false
             )
         )
     }
@@ -86,21 +117,30 @@ class SharedReaderModalLayerDesktopTest {
             sharedReaderModalChromeLayerVisible(
                 ownerShowing = false,
                 ownerDisplayable = true,
-                ownerMinimized = false
+                ownerMinimized = false,
+                ownerActive = true,
+                ownerFocused = true,
+                ownerModalActive = false
             )
         )
         assertFalse(
             sharedReaderModalChromeLayerVisible(
                 ownerShowing = true,
                 ownerDisplayable = false,
-                ownerMinimized = false
+                ownerMinimized = false,
+                ownerActive = true,
+                ownerFocused = true,
+                ownerModalActive = false
             )
         )
         assertFalse(
             sharedReaderModalChromeLayerVisible(
                 ownerShowing = true,
                 ownerDisplayable = true,
-                ownerMinimized = true
+                ownerMinimized = true,
+                ownerActive = true,
+                ownerFocused = true,
+                ownerModalActive = false
             )
         )
     }

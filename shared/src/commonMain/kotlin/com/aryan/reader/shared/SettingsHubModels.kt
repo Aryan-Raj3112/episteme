@@ -646,6 +646,7 @@ data class SharedSettingsHubInput(
     val isSignedIn: Boolean = false,
     val isProUser: Boolean = false,
     val accountAvailable: Boolean = true,
+    val includeAccountAuthActions: Boolean = true,
     val syncAvailable: Boolean = true,
     val folderSyncAvailable: Boolean = true,
     val aiSettingsAvailable: Boolean = true,
@@ -750,7 +751,7 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
         SharedSettingsSectionModel(
             section = SharedSettingsSection.SYNC_ACCOUNTS,
             items = buildList {
-                if (input.accountAvailable && input.featurePolicy.aiAndCloud) {
+                if (input.includeAccountAuthActions && input.accountAvailable && input.featurePolicy.aiAndCloud) {
                     if (input.isSignedIn) {
                         add(
                             SharedSettingsItemModel(

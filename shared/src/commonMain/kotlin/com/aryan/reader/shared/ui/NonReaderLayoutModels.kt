@@ -28,10 +28,23 @@ enum class SharedAppToolAction {
     TABS_TOGGLE
 }
 
+enum class SharedAppMoreGroup {
+    LIBRARY,
+    ACCOUNT,
+    PREFERENCES,
+    HELP
+}
+
+data class SharedAppMoreSection(
+    val group: SharedAppMoreGroup,
+    val actions: List<SharedAppToolAction>
+)
+
 data class SharedAppShellModel(
     val primaryTabs: List<SharedAppTab>,
     val selectedPrimaryTab: SharedAppTab,
     val toolActions: List<SharedAppToolAction>,
+    val moreSections: List<SharedAppMoreSection>,
     val showPrimaryNavigation: Boolean
 )
 
@@ -74,8 +87,44 @@ fun sharedAppShellModel(
         primaryTabs = primaryTabs,
         selectedPrimaryTab = selectedPrimaryTab,
         toolActions = toolActions,
+        moreSections = sharedAppMoreSections(toolActions),
         showPrimaryNavigation = selectedTab != SharedAppTab.READER
     )
+}
+
+fun sharedAppMoreSections(actions: List<SharedAppToolAction>): List<SharedAppMoreSection> {
+    return listOf(
+        SharedAppMoreSection(
+            group = SharedAppMoreGroup.LIBRARY,
+            actions = actions.filter {
+                it == SharedAppToolAction.IMPORT_FILES ||
+                    it == SharedAppToolAction.IMPORT_FOLDER ||
+                    it == SharedAppToolAction.SYNC
+            }
+        ),
+        SharedAppMoreSection(
+            group = SharedAppMoreGroup.ACCOUNT,
+            actions = actions.filter { it == SharedAppToolAction.PRO }
+        ),
+        SharedAppMoreSection(
+            group = SharedAppMoreGroup.PREFERENCES,
+            actions = actions.filter {
+                it == SharedAppToolAction.SETTINGS ||
+                    it == SharedAppToolAction.APP_THEME ||
+                    it == SharedAppToolAction.AI_SETTINGS ||
+                    it == SharedAppToolAction.CUSTOM_FONTS ||
+                    it == SharedAppToolAction.TABS_TOGGLE
+            }
+        ),
+        SharedAppMoreSection(
+            group = SharedAppMoreGroup.HELP,
+            actions = actions.filter {
+                it == SharedAppToolAction.HELP_FEEDBACK ||
+                    it == SharedAppToolAction.SUPPORT ||
+                    it == SharedAppToolAction.ABOUT
+            }
+        )
+    ).filter { it.actions.isNotEmpty() }
 }
 
 data class NonReaderHomeLayoutModel(

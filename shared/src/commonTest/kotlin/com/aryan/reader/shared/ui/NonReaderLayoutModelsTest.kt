@@ -291,9 +291,58 @@ class NonReaderLayoutModelsTest {
         assertTrue(SharedAppToolAction.TABS_TOGGLE in model.toolActions)
         assertTrue(model.showPrimaryNavigation)
 
+        assertEquals(
+            listOf(
+                SharedAppMoreGroup.LIBRARY,
+                SharedAppMoreGroup.ACCOUNT,
+                SharedAppMoreGroup.PREFERENCES,
+                SharedAppMoreGroup.HELP
+            ),
+            model.moreSections.map { it.group }
+        )
+
         val withoutAi = sharedAppShellModel(SharedAppTab.SHELVES, aiSettingsAvailable = false)
         assertEquals(SharedAppTab.LIBRARY, withoutAi.selectedPrimaryTab)
         assertFalse(SharedAppToolAction.AI_SETTINGS in withoutAi.toolActions)
+    }
+
+    @Test
+    fun `shell model groups more menu actions in desktop app order`() {
+        val model = sharedAppShellModel(
+            selectedTab = SharedAppTab.LIBRARY,
+            aiSettingsAvailable = true
+        )
+
+        assertEquals(
+            listOf(
+                SharedAppToolAction.IMPORT_FILES,
+                SharedAppToolAction.IMPORT_FOLDER,
+                SharedAppToolAction.SYNC
+            ),
+            model.moreSections.single { it.group == SharedAppMoreGroup.LIBRARY }.actions
+        )
+        assertEquals(
+            listOf(SharedAppToolAction.PRO),
+            model.moreSections.single { it.group == SharedAppMoreGroup.ACCOUNT }.actions
+        )
+        assertEquals(
+            listOf(
+                SharedAppToolAction.SETTINGS,
+                SharedAppToolAction.APP_THEME,
+                SharedAppToolAction.AI_SETTINGS,
+                SharedAppToolAction.CUSTOM_FONTS,
+                SharedAppToolAction.TABS_TOGGLE
+            ),
+            model.moreSections.single { it.group == SharedAppMoreGroup.PREFERENCES }.actions
+        )
+        assertEquals(
+            listOf(
+                SharedAppToolAction.HELP_FEEDBACK,
+                SharedAppToolAction.SUPPORT,
+                SharedAppToolAction.ABOUT
+            ),
+            model.moreSections.single { it.group == SharedAppMoreGroup.HELP }.actions
+        )
     }
 
     @Test
@@ -325,6 +374,8 @@ class NonReaderLayoutModelsTest {
         assertFalse(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertFalse(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)
         assertFalse(SharedAppToolAction.SUPPORT in model.toolActions)
+        assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.ACCOUNT })
+        assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.HELP && SharedAppToolAction.SUPPORT in it.actions })
         assertTrue(SharedAppToolAction.SETTINGS in model.toolActions)
         assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
         assertTrue(SharedAppToolAction.ABOUT in model.toolActions)

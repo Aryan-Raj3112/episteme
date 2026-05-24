@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Verified
@@ -55,7 +54,7 @@ internal fun DesktopProScreen(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(30.dp), tint = MaterialTheme.colorScheme.primary)
             Column(Modifier.weight(1f)) {
-                Text(readerString("desktop_pro_and_credits", "Pro and credits"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(readerString("desktop_account_and_credits", "Account & credits"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text(
                     readerString("desktop_pro_sign_in_desc", "Sign in to check your account status on desktop."),
                     style = MaterialTheme.typography.bodyMedium,
@@ -73,7 +72,7 @@ internal fun DesktopProScreen(
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Default.Verified, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text(readerString("desktop_account", "Account"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(readerString("desktop_account_overview", "Account overview"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 }
                 if (user == null) {
                     Text(
@@ -92,11 +91,13 @@ internal fun DesktopProScreen(
                         Text(readerString("drawer_sign_in", "Sign in with Google"))
                     }
                 } else {
-                    Text(user.displayName ?: user.email ?: readerString("desktop_signed_in", "Signed in"), style = MaterialTheme.typography.titleMedium)
-                    user.email?.let {
-                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(user.displayName ?: user.email ?: readerString("desktop_signed_in", "Signed in"), style = MaterialTheme.typography.titleMedium)
+                            user.email?.let {
+                                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                         OutlinedButton(onClick = onRefresh, enabled = !isBusy) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(8.dp))
@@ -107,33 +108,26 @@ internal fun DesktopProScreen(
                         }
                     }
                 }
-                statusMessage?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
 
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-        ) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Default.Cloud, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text(readerString("desktop_access", "Desktop access"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                }
-                Text(
-                    if (isProUser) {
-                        readerString("desktop_pro_unlocked_account", "Pro is unlocked for this account.")
-                    } else {
-                        readerString("desktop_pro_not_unlocked_account", "Pro is not unlocked for this account.")
-                    },
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(readerString("desktop_credits_available_format", "%1\$d credits available", credits), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
                 HorizontalDivider()
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    DesktopAccountValue(
+                        label = readerString("desktop_plan", "Plan"),
+                        value = if (isProUser) {
+                            readerString("desktop_pro_unlocked_account", "Pro is unlocked for this account.")
+                        } else {
+                            readerString("desktop_pro_not_unlocked_account", "Pro is not unlocked for this account.")
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    DesktopAccountValue(
+                        label = readerString("credits_tab", "Credits"),
+                        value = readerString("desktop_credits_available_format", "%1\$d credits available", credits),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
                 Text(
                     readerString(
                         "desktop_pro_purchase_android_desc",
@@ -142,9 +136,25 @@ internal fun DesktopProScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                statusMessage?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
 
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun DesktopAccountValue(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     }
 }

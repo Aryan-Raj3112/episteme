@@ -87,6 +87,27 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `desktop can hide account auth rows while preserving sync controls`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.DESKTOP,
+                includeAccountAuthActions = false,
+                accountAvailable = true,
+                syncAvailable = true,
+                folderSyncAvailable = true,
+                isSignedIn = true,
+                isProUser = true
+            )
+        )
+        val actions = model.visibleNestedActions()
+
+        assertFalse(SharedSettingsAction.SIGN_IN in actions)
+        assertFalse(SharedSettingsAction.SIGN_OUT in actions)
+        assertTrue(SharedSettingsAction.CLOUD_SYNC in actions)
+        assertTrue(SharedSettingsAction.FOLDER_SYNC in actions)
+    }
+
+    @Test
     fun `reader tabs setting can be omitted for platforms without visible tabs`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(

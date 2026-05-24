@@ -637,7 +637,7 @@ internal fun EpistemeDesktopApp(
                 desktopAuthRepository.signIn(::openExternalUrl)
             }.onSuccess { session ->
                 updateState(state.copy(currentUser = session.user, isProUser = false, credits = 0))
-                accountStatusMessage = "Signed in. Checking Pro and credits..."
+                accountStatusMessage = "Signed in. Checking account and credits..."
                 refreshDesktopAccountProfile()
             }.onFailure { error ->
                 accountStatusMessage = error.message ?: "Google sign-in failed."
@@ -3177,6 +3177,7 @@ internal fun EpistemeDesktopApp(
                                     isSignedIn = state.currentUser != null,
                                     isProUser = state.isProUser,
                                     accountAvailable = featurePolicy.aiAndCloud && !desktopBuildProfile.byokAiAvailable,
+                                    includeAccountAuthActions = false,
                                     syncAvailable = desktopCloudSyncAvailable(),
                                     folderSyncAvailable = true,
                                     aiSettingsAvailable = desktopBuildProfile.byokAiAvailable,
@@ -4023,7 +4024,7 @@ private fun desktopOutOfCreditsNotice(
         messageKey = messageKey,
         messageFallback = messageFallback,
         confirmKey = "desktop_view_pro_and_credits",
-        confirmFallback = "View Pro and credits",
+        confirmFallback = "View account & credits",
         action = DesktopFeatureNoticeAction.OPEN_PRO
     )
 }
@@ -4038,7 +4039,7 @@ private fun desktopProRequiredNotice(
         messageKey = messageKey,
         messageFallback = messageFallback,
         confirmKey = "desktop_view_pro_and_credits",
-        confirmFallback = "View Pro and credits",
+        confirmFallback = "View account & credits",
         action = DesktopFeatureNoticeAction.OPEN_PRO
     )
 }
