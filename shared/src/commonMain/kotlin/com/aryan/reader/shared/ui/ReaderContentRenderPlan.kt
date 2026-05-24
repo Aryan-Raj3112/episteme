@@ -26,6 +26,7 @@ sealed interface ReaderContentRenderPlan {
     data class WebDocument(
         val html: String,
         val appearanceScript: String,
+        val highlightPaletteScript: String,
         override val background: Color,
         override val foreground: Color,
         override val navigationTarget: ReaderContentNavigationTarget,

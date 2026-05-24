@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.pdf.DEFAULT_SHARED_PDF_COMMENT_AUTHOR
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
-import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
@@ -99,7 +98,7 @@ internal fun DesktopPdfAnnotationEditor(
     onSearch: () -> Unit
 ) {
     val highlighterColors = remember(highlighterPalette) {
-        SharedPdfAndroidHighlightColors.palette
+        SharedPdfHighlighterPalette(highlighterPalette).sanitized().colors
     }
     var editingHighlighterSlot by remember(annotation.id, highlighterColors) { mutableStateOf<Int?>(null) }
     val isHighlighterAnnotation = annotation.kind == PdfAnnotationKind.HIGHLIGHT ||
@@ -218,12 +217,7 @@ internal fun DesktopPdfAnnotationEditor(
                             modifier = Modifier
                                 .size(26.dp)
                                 .clickable {
-                                    val nextColor = if (isHighlighterAnnotation) {
-                                        SharedPdfAndroidHighlightColors.nearestArgb(argb)
-                                    } else {
-                                        argb
-                                    }
-                                    onUpdate(annotation.copy(colorArgb = nextColor))
+                                    onUpdate(annotation.copy(colorArgb = argb))
                                 },
                             color = Color(argb),
                             shape = RoundedCornerShape(13.dp),
@@ -379,16 +373,18 @@ internal fun DesktopPdfAnnotationEditor(
             onDismiss = { editingHighlighterSlot = null },
             onSave = { color ->
                 val nextArgb = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
-                val syncedArgb = SharedPdfAndroidHighlightColors.nearestArgb(nextArgb)
                 onHighlighterPaletteChange(
                     SharedPdfHighlighterPalette(highlighterColors).withColorAt(
                         slotIndex = slot,
                         colorArgb = nextArgb
                     )
                 )
-                onUpdate(annotation.copy(colorArgb = syncedArgb))
+                onUpdate(annotation.copy(colorArgb = nextArgb))
                 editingHighlighterSlot = null
-            }
+            },
+            resetColor = Color(SharedPdfHighlighterPalette.defaultColors.getOrElse(slot) {
+                SharedPdfHighlighterPalette.defaultColors.first()
+            }).copy(alpha = 1f)
         ) { liveColor ->
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),

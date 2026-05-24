@@ -48,7 +48,9 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -141,6 +143,7 @@ import com.aryan.reader.shared.ReaderTtsReplacementSuggestions
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.readerTextureDisplayName
+import com.aryan.reader.shared.sanitizeCustomReaderThemes
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderImageReference
@@ -202,6 +205,8 @@ fun SharedReaderScreen(
     toolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     appThemeControls: (@Composable () -> Unit)? = null,
+    customReaderThemes: List<ReaderTheme> = emptyList(),
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit = {},
     ttsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
@@ -472,6 +477,8 @@ fun SharedReaderScreen(
                 onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange,
                 highlightPalette = highlightPalette,
                 onHighlightPaletteChange = onHighlightPaletteChange,
+                customReaderThemes = customReaderThemes,
+                onCustomReaderThemesChange = onCustomReaderThemesChange,
                 readerCustomTextureIds = readerCustomTextureIds,
                 readerTexturePreviewContent = readerTexturePreviewContent,
                 onImportReaderTexture = onImportReaderTexture,
@@ -579,6 +586,9 @@ fun SharedReaderScreen(
                         textureDataUri = textureDataUri
                     )
                 }
+                val highlightPaletteScript = remember(highlightPalette) {
+                    ReaderHtmlDocumentBuilder.highlightPaletteUpdateScript(highlightPalette)
+                }
                 // Keep the initial locator in the document so its first position report is not the top of the book.
                 val html = remember(
                     readerState.book,
@@ -586,7 +596,6 @@ fun SharedReaderScreen(
                     session.searchQuery,
                     session.searchOptions,
                     readerState.pages,
-                    highlightPalette,
                     byokSettings.areReaderAiFeaturesAvailable,
                     effectiveCloudTtsAvailable,
                     externalLookupAvailable
@@ -609,6 +618,7 @@ fun SharedReaderScreen(
                 ReaderContentRenderPlan.WebDocument(
                     html = html,
                     appearanceScript = appearanceScript,
+                    highlightPaletteScript = highlightPaletteScript,
                     background = background,
                     foreground = foreground,
                     navigationTarget = navigationTarget,
@@ -1294,6 +1304,8 @@ private fun SharedReaderControlPanel(
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
+    customReaderThemes: List<ReaderTheme>,
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit,
     readerCustomTextureIds: List<String>,
     readerTexturePreviewContent: (@Composable (String, Modifier) -> Unit)?,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
@@ -1345,6 +1357,8 @@ private fun SharedReaderControlPanel(
                         onImportTexture = onImportReaderTexture,
                         highlightPalette = highlightPalette,
                         onHighlightPaletteChange = onHighlightPaletteChange,
+                        customThemes = customReaderThemes,
+                        onCustomThemesChange = onCustomReaderThemesChange,
                         texturePreviewContent = readerTexturePreviewContent,
                         onSettingsChange = { onReaderAction(ReaderAction.SettingsChanged(it)) }
                     )
@@ -1688,6 +1702,8 @@ fun SharedReaderFormatControls(
 fun SharedReaderThemeControls(
     settings: ReaderSettings,
     builtInThemes: List<ReaderTheme> = BuiltInReaderThemes,
+    customThemes: List<ReaderTheme> = emptyList(),
+    onCustomThemesChange: ((List<ReaderTheme>) -> Unit)? = null,
     customTextureIds: List<String> = emptyList(),
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     texturePreviewContent: (@Composable (String, Modifier) -> Unit)? = null,
@@ -1695,9 +1711,16 @@ fun SharedReaderThemeControls(
     onHighlightPaletteChange: ((ReaderHighlightPalette) -> Unit)? = null,
     onSettingsChange: (ReaderSettings) -> Unit
 ) {
-    var textured by remember(settings.themeId, settings.textureId) { mutableStateOf(settings.textureId != null) }
+    val activeCustomThemes = remember(customThemes) { customThemes.sanitizeCustomReaderThemes() }
+    val allThemes = remember(builtInThemes, activeCustomThemes) { builtInThemes + activeCustomThemes }
+    val selectedTheme = allThemes.firstOrNull { it.id == settings.themeId }
+    var textured by remember(settings.themeId, settings.textureId, builtInThemes, activeCustomThemes) {
+        mutableStateOf((selectedTheme?.textureId ?: settings.textureId) != null)
+    }
     var editingColorTarget by remember { mutableStateOf<ReaderThemeColorTarget?>(null) }
-    val activeThemes = builtInThemes.filter { (it.textureId != null) == textured }
+    var themeBuilderState by remember { mutableStateOf<ReaderCustomThemeBuilderState?>(null) }
+    val activeBuiltInThemes = builtInThemes.filter { (it.textureId != null) == textured }
+    val activeSavedThemes = activeCustomThemes.filter { (it.textureId != null) == textured }
     val visibleCustomTextureIds = remember(customTextureIds, settings.textureId) {
         buildList {
             addAll(customTextureIds.distinct())
@@ -1721,7 +1744,7 @@ fun SharedReaderThemeControls(
                     label = { Text(readerString("theme_textured", "Textured")) }
                 )
             }
-            activeThemes.chunked(3).forEach { rowThemes ->
+            activeBuiltInThemes.chunked(3).forEach { rowThemes ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     rowThemes.forEach { theme ->
                         SharedReaderThemeChoice(
@@ -1736,11 +1759,38 @@ fun SharedReaderThemeControls(
                     }
                 }
             }
+            SharedReaderCustomThemeSection(
+                activeThemes = activeSavedThemes,
+                currentThemeId = settings.themeId,
+                canEditThemes = onCustomThemesChange != null,
+                onCreateTheme = {
+                    themeBuilderState = ReaderCustomThemeBuilderState(
+                        initialTheme = null,
+                        isTextured = textured
+                    )
+                },
+                onThemeSelected = { theme -> onSettingsChange(theme.toReaderSettings(settings)) },
+                onThemeEdit = { theme ->
+                    themeBuilderState = ReaderCustomThemeBuilderState(
+                        initialTheme = theme,
+                        isTextured = theme.textureId != null
+                    )
+                },
+                onThemeDelete = { theme ->
+                    val updated = activeCustomThemes.filterNot { it.id == theme.id }.sanitizeCustomReaderThemes()
+                    onCustomThemesChange?.invoke(updated)
+                    if (settings.themeId == theme.id) {
+                        builtInThemes.firstOrNull()?.let { fallback ->
+                            onSettingsChange(fallback.toReaderSettings(settings))
+                        }
+                    }
+                }
+            )
         }
 
         SharedReaderPanelSection(readerString("desktop_custom_colors", "Custom colors")) {
-            val backgroundColor = settings.readerBackgroundColor(builtInThemes)
-            val textColor = settings.readerTextColor(builtInThemes)
+            val backgroundColor = settings.readerBackgroundColor(allThemes)
+            val textColor = settings.readerTextColor(allThemes)
             Surface(
                 modifier = Modifier.fillMaxWidth().height(76.dp),
                 color = backgroundColor,
@@ -1842,8 +1892,8 @@ fun SharedReaderThemeControls(
     }
 
     editingColorTarget?.let { target ->
-        val backgroundColor = settings.readerBackgroundColor(builtInThemes)
-        val textColor = settings.readerTextColor(builtInThemes)
+        val backgroundColor = settings.readerBackgroundColor(allThemes)
+        val textColor = settings.readerTextColor(allThemes)
         val initialColor = when (target) {
             ReaderThemeColorTarget.BACKGROUND -> backgroundColor
             ReaderThemeColorTarget.TEXT -> textColor
@@ -1885,6 +1935,32 @@ fun SharedReaderThemeControls(
                 }
             }
         }
+    }
+
+    themeBuilderState?.let { builderState ->
+        SharedReaderCustomThemeDialog(
+            initialTheme = builderState.initialTheme,
+            isTexturedMode = builderState.isTextured,
+            customThemes = activeCustomThemes,
+            customTextureIds = visibleCustomTextureIds,
+            onImportTexture = onImportTexture,
+            texturePreviewContent = texturePreviewContent,
+            onDismiss = { themeBuilderState = null },
+            onSave = { theme ->
+                val updated = if (builderState.initialTheme != null) {
+                    activeCustomThemes.map { if (it.id == theme.id) theme else it }
+                } else {
+                    activeCustomThemes + theme.copy(
+                        id = nextReaderCustomThemeId(activeCustomThemes),
+                        isCustom = true
+                    )
+                }.sanitizeCustomReaderThemes()
+                val savedTheme = updated.firstOrNull { it.id == theme.id } ?: updated.lastOrNull() ?: theme
+                onCustomThemesChange?.invoke(updated)
+                onSettingsChange(savedTheme.toReaderSettings(settings))
+                themeBuilderState = null
+            }
+        )
     }
 }
 
@@ -2023,6 +2099,288 @@ private fun SharedReaderTextureFallbackPreview(
 }
 
 private const val ReaderCustomThemeId = "custom_reader"
+
+private data class ReaderCustomThemeBuilderState(
+    val initialTheme: ReaderTheme?,
+    val isTextured: Boolean
+)
+
+@Composable
+private fun SharedReaderCustomThemeSection(
+    activeThemes: List<ReaderTheme>,
+    currentThemeId: String?,
+    canEditThemes: Boolean,
+    onCreateTheme: () -> Unit,
+    onThemeSelected: (ReaderTheme) -> Unit,
+    onThemeEdit: (ReaderTheme) -> Unit,
+    onThemeDelete: (ReaderTheme) -> Unit
+) {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            readerString("theme_my_themes", "My themes"),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f)
+        )
+        if (canEditThemes) {
+            IconButton(onClick = onCreateTheme, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Add, contentDescription = readerString("theme_new", "New"))
+            }
+        }
+    }
+    if (activeThemes.isEmpty()) {
+        Text(
+            readerString("theme_no_custom", "No custom themes yet"),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else {
+        activeThemes.chunked(3).forEach { rowThemes ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                rowThemes.forEach { theme ->
+                    SharedReaderThemeChoice(
+                        theme = theme,
+                        selected = currentThemeId == theme.id,
+                        onSelected = { onThemeSelected(theme) },
+                        onEdit = if (canEditThemes) ({ onThemeEdit(theme) }) else null,
+                        onDelete = if (canEditThemes) ({ onThemeDelete(theme) }) else null,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                repeat(3 - rowThemes.size) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderCustomThemeDialog(
+    initialTheme: ReaderTheme?,
+    isTexturedMode: Boolean,
+    customThemes: List<ReaderTheme>,
+    customTextureIds: List<String>,
+    onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
+    texturePreviewContent: (@Composable (String, Modifier) -> Unit)?,
+    onDismiss: () -> Unit,
+    onSave: (ReaderTheme) -> Unit
+) {
+    val defaultName = if (isTexturedMode) {
+        readerString("theme_custom_textured_default", "Custom textured")
+    } else {
+        readerString("theme_custom_solid_default", "Custom solid")
+    }
+    val dialogCustomTextureIds = remember(customTextureIds, initialTheme?.textureId) {
+        buildList {
+            addAll(customTextureIds.distinct())
+            initialTheme?.textureId
+                ?.takeIf { it.startsWith(ReaderTextureFilePrefix) && it !in this }
+                ?.let(::add)
+        }
+    }
+    var name by remember(initialTheme?.id, isTexturedMode) { mutableStateOf(initialTheme?.name ?: defaultName) }
+    var backgroundColor by remember(initialTheme?.id) { mutableStateOf(initialTheme?.backgroundColor ?: Color(0xFFF5F5F5)) }
+    var textColor by remember(initialTheme?.id) { mutableStateOf(initialTheme?.textColor ?: Color(0xFF111111)) }
+    var textureId by remember(initialTheme?.id, dialogCustomTextureIds) {
+        mutableStateOf(initialTheme?.textureId ?: dialogCustomTextureIds.firstOrNull())
+    }
+    var editingColorTarget by remember { mutableStateOf<ReaderThemeColorTarget?>(null) }
+    val contrast = readerThemeContrastRatio(backgroundColor, textColor)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (initialTheme == null) {
+                    readerString("theme_new", "New theme")
+                } else {
+                    readerString("theme_edit", "Edit theme")
+                }
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                SharedStableOutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(readerString("theme_name", "Theme name")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    selectionKey = initialTheme?.id ?: defaultName
+                )
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(116.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = backgroundColor,
+                    contentColor = textColor,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        if (isTexturedMode && textureId != null) {
+                            if (texturePreviewContent != null) {
+                                texturePreviewContent(textureId.orEmpty(), Modifier.fillMaxSize())
+                            } else {
+                                SharedReaderTextureFallbackPreview(textureId.orEmpty(), Modifier.fillMaxSize())
+                            }
+                            Box(Modifier.fillMaxSize().background(backgroundColor.copy(alpha = 0.54f)))
+                        }
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(readerString("theme_preview_quote", "Reading should feel easy."), fontWeight = FontWeight.SemiBold)
+                            Text(readerString("theme_preview_author", "Theme preview"), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                if (contrast < 4.5f) {
+                    Text(
+                        readerString("theme_low_contrast_warning", "Low contrast may be hard to read."),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    SharedReaderThemeColorButton(
+                        label = readerString("theme_page_color", "Page color"),
+                        color = backgroundColor,
+                        onClick = { editingColorTarget = ReaderThemeColorTarget.BACKGROUND },
+                        modifier = Modifier.weight(1f)
+                    )
+                    SharedReaderThemeColorButton(
+                        label = readerString("theme_text_color", "Text color"),
+                        color = textColor,
+                        onClick = { editingColorTarget = ReaderThemeColorTarget.TEXT },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (isTexturedMode) {
+                    Text(
+                        readerString("theme_select_custom_texture", "Select texture"),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    val textureChoices = buildList {
+                        if (onImportTexture != null) {
+                            add(
+                                SharedReaderTextureChoiceModel(
+                                    textureId = null,
+                                    label = readerString("action_import", "Import"),
+                                    icon = Icons.Default.Add,
+                                    isImportAction = true
+                                )
+                            )
+                        }
+                        ReaderTexture.entries.forEach { texture ->
+                            add(SharedReaderTextureChoiceModel(textureId = texture.id, label = texture.displayName))
+                        }
+                        dialogCustomTextureIds.forEach { importedTextureId ->
+                            add(
+                                SharedReaderTextureChoiceModel(
+                                    textureId = importedTextureId,
+                                    label = readerTextureDisplayName(importedTextureId)
+                                )
+                            )
+                        }
+                    }
+                    textureChoices.chunked(3).forEach { rowChoices ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                            rowChoices.forEach { choice ->
+                                SharedReaderTextureChoice(
+                                    choice = choice,
+                                    selected = !choice.isImportAction && textureId == choice.textureId,
+                                    texturePreviewContent = texturePreviewContent,
+                                    onSelected = {
+                                        if (choice.isImportAction) {
+                                            val imported = onImportTexture?.invoke(
+                                                ReaderSettings(
+                                                    textureId = textureId,
+                                                    backgroundColorArgb = backgroundColor.toArgb().toLong(),
+                                                    textColorArgb = textColor.toArgb().toLong()
+                                                )
+                                            )
+                                            textureId = imported?.textureId ?: textureId
+                                        } else {
+                                            textureId = choice.textureId
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            repeat(3 - rowChoices.size) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = {
+                    onSave(
+                        ReaderTheme(
+                            id = initialTheme?.id ?: nextReaderCustomThemeId(customThemes),
+                            name = name.trim().ifBlank { defaultName },
+                            backgroundColor = backgroundColor,
+                            textColor = textColor,
+                            isDark = backgroundColor.luminance() < 0.5f,
+                            textureId = if (isTexturedMode) textureId else null,
+                            isCustom = true
+                        )
+                    )
+                }
+            ) {
+                Text(readerString("action_save", "Save"))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(readerString("action_cancel", "Cancel"))
+            }
+        }
+    )
+
+    editingColorTarget?.let { target ->
+        SharedHsvColorPickerDialog(
+            initialColor = if (target == ReaderThemeColorTarget.BACKGROUND) backgroundColor else textColor,
+            title = target.localizedTitle(),
+            onDismiss = { editingColorTarget = null },
+            onSave = { color ->
+                if (target == ReaderThemeColorTarget.BACKGROUND) {
+                    backgroundColor = color
+                } else {
+                    textColor = color
+                }
+                editingColorTarget = null
+            }
+        )
+    }
+}
+
+private fun nextReaderCustomThemeId(customThemes: List<ReaderTheme>): String {
+    val usedIds = customThemes.mapTo(mutableSetOf()) { it.id }
+    var index = customThemes.size + 1
+    while ("reader_theme_$index" in usedIds) {
+        index += 1
+    }
+    return "reader_theme_$index"
+}
+
+private fun readerThemeContrastRatio(color1: Color, color2: Color): Float {
+    val l1 = maxOf(color1.luminance(), color2.luminance())
+    val l2 = minOf(color1.luminance(), color2.luminance())
+    return (l1 + 0.05f) / (l2 + 0.05f)
+}
 
 private enum class ReaderThemeColorTarget {
     BACKGROUND,
@@ -2944,6 +3302,8 @@ private fun SharedReaderThemeChoice(
     theme: ReaderTheme,
     selected: Boolean,
     onSelected: () -> Unit,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val swatch = if (theme.backgroundColor == Color.Unspecified) {
@@ -2988,6 +3348,30 @@ private fun SharedReaderThemeChoice(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+        if (theme.isCustom && (onEdit != null || onDelete != null)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (onEdit != null) {
+                    IconButton(onClick = onEdit, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = readerString("action_edit", "Edit"),
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                if (onDelete != null) {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = readerString("action_delete", "Delete"),
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3918,11 +4302,6 @@ private fun SharedHighlightPaletteEditor(
         if (colors.isEmpty()) return
         val next = colors.toMutableList()
         val slot = selectedSlotIndex.coerceIn(0, next.lastIndex)
-        val previousColor = next[slot]
-        val existingIndex = next.indexOf(color)
-        if (existingIndex >= 0 && existingIndex != slot) {
-            next[existingIndex] = previousColor
-        }
         next[slot] = color
         onPaletteChange(ReaderHighlightPalette(colors = next).sanitized())
     }
@@ -3938,7 +4317,7 @@ private fun SharedHighlightPaletteEditor(
                 val selected = index == selectedSlotIndex.coerceIn(0, colors.lastIndex)
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(color.color)
                         .border(
@@ -3954,7 +4333,7 @@ private fun SharedHighlightPaletteEditor(
                             imageVector = Icons.Default.Check,
                             contentDescription = null,
                             tint = if (color.color.luminance() > 0.5f) Color.Black else Color.White,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
@@ -3965,7 +4344,7 @@ private fun SharedHighlightPaletteEditor(
                 rowColors.forEach { color ->
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(36.dp)
                             .clip(CircleShape)
                             .background(color.color)
                             .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), CircleShape)

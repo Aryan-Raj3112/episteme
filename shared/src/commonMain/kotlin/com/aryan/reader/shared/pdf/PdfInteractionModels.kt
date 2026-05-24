@@ -1,7 +1,5 @@
 package com.aryan.reader.shared.pdf
 
-import androidx.compose.ui.graphics.toArgb
-import com.aryan.reader.shared.ReaderHighlightPalette
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -196,9 +194,7 @@ object SharedPdfAnnotationDefaults {
         0xFFFFFFFF.toInt()
     )
 
-    val highlighterPalette: List<Int> = ReaderHighlightPalette.defaultColors
-        .take(SharedPdfHighlighterPalette.MaxColors)
-        .map { it.color.toArgb().withPdfHighlighterAlpha() }
+    val highlighterPalette: List<Int> = SharedPdfAndroidHighlightColors.palette
 
     fun configFor(tool: PdfInkTool): PdfToolConfig {
         return when (tool) {
@@ -239,7 +235,7 @@ data class SharedPdfHighlighterPalette(
 
     companion object {
         const val DefaultAlpha: Int = 0x8C
-        const val MaxColors: Int = 5
+        const val MaxColors: Int = 4
         val defaultColors: List<Int>
             get() = SharedPdfAnnotationDefaults.highlighterPalette.map { it.withPdfHighlighterAlpha() }
     }
@@ -249,6 +245,8 @@ object SharedPdfAndroidHighlightColors {
     const val StoredAlpha: Int = 0x8C
     const val RenderAlpha: Float = 0.4f
 
+    val orderedNames: List<String> = listOf("YELLOW", "GREEN", "BLUE", "RED")
+
     val colorsByName: Map<String, Int> = mapOf(
         "YELLOW" to 0xFFFBC02D.toInt(),
         "GREEN" to 0xFF388E3C.toInt(),
@@ -257,7 +255,7 @@ object SharedPdfAndroidHighlightColors {
     )
 
     val palette: List<Int>
-        get() = colorsByName.keys.map(::argbForName)
+        get() = orderedNames.map(::argbForName)
 
     fun argbForName(name: String): Int {
         val opaqueArgb = colorsByName[name.uppercase()] ?: colorsByName.getValue("YELLOW")

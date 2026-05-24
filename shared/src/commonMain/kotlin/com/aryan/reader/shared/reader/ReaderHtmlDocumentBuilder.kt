@@ -155,6 +155,17 @@ object ReaderHtmlDocumentBuilder {
         """.trimIndent()
     }
 
+    fun highlightPaletteUpdateScript(highlightPalette: ReaderHighlightPalette): String {
+        val highlightButtons = highlightPalette.toSelectionColorButtons()
+        return """
+            (function () {
+              var container = document.querySelector('#reader-selection-menu .reader-selection-colors');
+              if (!container) return;
+              container.innerHTML = ${highlightButtons.toJsStringLiteral()};
+            })();
+        """.trimIndent()
+    }
+
     private fun pageSectionHtml(
         book: SharedEpubBook,
         page: ReaderPage,
@@ -230,9 +241,7 @@ object ReaderHtmlDocumentBuilder {
                 else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
             }
         }
-        val highlightButtons = highlightPalette.sanitized().colors.joinToString("\n") { color ->
-            """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
-        }
+        val highlightButtons = highlightPalette.toSelectionColorButtons()
         val defineButton = if (readerAiFeaturesEnabled) {
             readerSelectionActionButton("define", "Define", ReaderSelectionIconDefinePath)
         } else {
@@ -3695,6 +3704,12 @@ object ReaderHtmlDocumentBuilder {
     private fun readerSelectionActionButton(action: String, label: String, pathData: String): String {
         val safeLabel = label.escapeHtml()
         return """<button type="button" class="reader-selection-action" data-action="${action.escapeHtml()}" aria-label="$safeLabel"><span class="reader-selection-icon" aria-hidden="true">${readerSelectionSvg(pathData)}</span><span>$safeLabel</span></button>"""
+    }
+
+    private fun ReaderHighlightPalette.toSelectionColorButtons(): String {
+        return sanitized().colors.joinToString("\n") { color ->
+            """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
+        }
     }
 
     private fun readerSelectionSvg(pathData: String): String {

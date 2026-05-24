@@ -553,7 +553,10 @@ fun SharedPdfHighlighterPaletteEditor(
                     )
                 )
                 editingSlot = null
-            }
+            },
+            resetColor = Color(SharedPdfHighlighterPalette.defaultColors.getOrElse(slot) {
+                SharedPdfHighlighterPalette.defaultColors.first()
+            }).copy(alpha = 1f)
         ) { color ->
             Row(
                 modifier = Modifier.fillMaxWidth(),

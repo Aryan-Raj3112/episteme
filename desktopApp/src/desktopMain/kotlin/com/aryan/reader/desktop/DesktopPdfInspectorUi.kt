@@ -42,6 +42,7 @@ import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderExtrasState
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
@@ -65,6 +66,8 @@ internal fun DesktopPdfInspectorPanel(
     displayMode: PdfDisplayMode,
     pdfReaderSettings: ReaderSettings,
     appThemeControls: (@Composable () -> Unit)? = null,
+    customReaderThemes: List<ReaderTheme>,
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit,
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
@@ -138,6 +141,8 @@ internal fun DesktopPdfInspectorPanel(
                 displayMode = displayMode,
                 pdfReaderSettings = pdfReaderSettings,
                 appThemeControls = appThemeControls,
+                customReaderThemes = customReaderThemes,
+                onCustomReaderThemesChange = onCustomReaderThemesChange,
                 customTextureIds = customTextureIds,
                 onImportTexture = onImportTexture,
                 onReaderSettingsChange = onReaderSettingsChange,
@@ -216,6 +221,8 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     displayMode: PdfDisplayMode,
     pdfReaderSettings: ReaderSettings,
     appThemeControls: (@Composable () -> Unit)?,
+    customReaderThemes: List<ReaderTheme>,
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit,
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
@@ -274,6 +281,8 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                             SharedReaderThemeControls(
                                 settings = pdfReaderSettings,
                                 builtInThemes = BuiltInPdfReaderThemes,
+                                customThemes = customReaderThemes,
+                                onCustomThemesChange = onCustomReaderThemesChange,
                                 customTextureIds = customTextureIds,
                                 onImportTexture = onImportTexture,
                                 texturePreviewContent = { textureId, previewModifier ->

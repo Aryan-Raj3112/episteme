@@ -383,17 +383,36 @@ class ReaderHtmlDocumentBuilderTest {
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
             highlightPalette = ReaderHighlightPalette(
                 listOf(
-                    HighlightColor.YELLOW,
-                    HighlightColor.GREEN,
-                    HighlightColor.BLUE,
-                    HighlightColor.RED,
-                    HighlightColor.PURPLE
+                    HighlightColor.CYAN,
+                    HighlightColor.MAGENTA,
+                    HighlightColor.LIME,
+                    HighlightColor.PINK
                 )
             )
         )
 
-        assertEquals(5, Regex("""class="reader-selection-color"""").findAll(html).count())
-        assertTrue(html.contains("""data-color-id="purple""""))
+        assertEquals(4, Regex("""class="reader-selection-color"""").findAll(html).count())
+        assertTrue(html.contains("""data-color-id="cyan""""))
+        assertTrue(html.contains("""data-color-id="pink""""))
+    }
+
+    @Test
+    fun `highlight palette update script replaces selection menu colors without document reload`() {
+        val script = ReaderHtmlDocumentBuilder.highlightPaletteUpdateScript(
+            ReaderHighlightPalette(
+                listOf(
+                    HighlightColor.CYAN,
+                    HighlightColor.MAGENTA,
+                    HighlightColor.LIME,
+                    HighlightColor.PINK
+                )
+            )
+        )
+
+        assertTrue(script.contains("reader-selection-colors"))
+        assertTrue(script.contains("""data-color-id=\"cyan\""""))
+        assertTrue(script.contains("""data-color-id=\"pink\""""))
+        assertFalse(script.contains("location.reload"))
     }
 
     @Test

@@ -85,6 +85,7 @@ import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.SaveMode
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFeaturePolicy
@@ -99,7 +100,6 @@ import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.pdf.PdfVisiblePageLayout
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
-import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfEmbeddedAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.pdf.SharedPdfJumpHistory
@@ -178,6 +178,8 @@ internal fun PdfReaderScreen(
     onReaderSettingsChange: (ReaderSettings) -> Unit = {},
     pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
     onPdfHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit = {},
+    customReaderThemes: List<ReaderTheme> = emptyList(),
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     customTextureIds: List<String> = emptyList(),
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     onLocalSidecarsChanged: () -> Unit = {},
@@ -1322,7 +1324,7 @@ internal fun PdfReaderScreen(
                     bounds = highlightBounds.firstOrNull(),
                     boundsList = highlightBounds,
                     text = selection.text,
-                    colorArgb = SharedPdfAndroidHighlightColors.nearestArgb(colorArgb),
+                    colorArgb = SharedPdfHighlighterPalette(listOf(colorArgb)).sanitized().colors.first(),
                     rangeStartIndex = selection.startIndex,
                     rangeEndIndex = selection.endIndex,
                     createdAt = now
@@ -2389,6 +2391,8 @@ internal fun PdfReaderScreen(
                 displayMode = displayMode,
                 pdfReaderSettings = pdfReaderSettings,
                 appThemeControls = appThemeControls,
+                customReaderThemes = customReaderThemes,
+                onCustomReaderThemesChange = onCustomReaderThemesChange,
                 customTextureIds = customTextureIds,
                 onImportTexture = onImportTexture,
                 onReaderSettingsChange = ::updatePdfReaderSettings,

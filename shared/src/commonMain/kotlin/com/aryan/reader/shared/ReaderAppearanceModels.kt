@@ -101,6 +101,20 @@ data class ReaderTheme(
     val isCustom: Boolean = false
 )
 
+fun List<ReaderTheme>.sanitizeCustomReaderThemes(): List<ReaderTheme> {
+    val seenIds = mutableSetOf<String>()
+    return asReversed()
+        .filter { theme ->
+            theme.isCustom &&
+                theme.id.isNotBlank() &&
+                theme.name.isNotBlank() &&
+                theme.backgroundColor.isSpecified &&
+                theme.textColor.isSpecified &&
+                seenIds.add(theme.id)
+        }
+        .asReversed()
+}
+
 private val StandardReaderSolidThemes = listOf(
     ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
     ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),

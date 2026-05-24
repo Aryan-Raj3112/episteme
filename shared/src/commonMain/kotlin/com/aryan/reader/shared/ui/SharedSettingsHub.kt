@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderAction
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.SharedSettingsAction
@@ -78,6 +79,8 @@ fun SharedSettingsHub(
     onReaderToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
     customFonts: List<CustomFontItem> = emptyList(),
     onPickCustomFont: (() -> String?)? = null,
+    customReaderThemes: List<ReaderTheme> = emptyList(),
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
     showTopBar: Boolean = true,
@@ -167,6 +170,8 @@ fun SharedSettingsHub(
                     onTtsReplacementPreferencesChange = onTtsReplacementPreferencesChange,
                     customFonts = customFonts,
                     onPickCustomFont = onPickCustomFont,
+                    customReaderThemes = customReaderThemes,
+                    onCustomReaderThemesChange = onCustomReaderThemesChange,
                     readerCustomTextureIds = readerCustomTextureIds,
                     onImportReaderTexture = onImportReaderTexture,
                     modifier = Modifier.weight(1f)
@@ -490,6 +495,8 @@ private fun SharedSettingsDetailPage(
     onTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit,
     customFonts: List<CustomFontItem>,
     onPickCustomFont: (() -> String?)?,
+    customReaderThemes: List<ReaderTheme>,
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit,
     readerCustomTextureIds: List<String>,
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)?,
     modifier: Modifier
@@ -520,6 +527,8 @@ private fun SharedSettingsDetailPage(
                 SharedSettingsDestination.EPUB_THEME_TEXTURE -> {
                     SharedReaderThemeControls(
                         settings = settings,
+                        customThemes = customReaderThemes,
+                        onCustomThemesChange = onCustomReaderThemesChange,
                         customTextureIds = readerCustomTextureIds,
                         onImportTexture = onImportReaderTexture,
                         onSettingsChange = onSettingsChange
@@ -546,6 +555,8 @@ private fun SharedSettingsDetailPage(
                         SharedReaderThemeControls(
                             settings = pdfSettings,
                             builtInThemes = BuiltInPdfReaderThemes,
+                            customThemes = customReaderThemes,
+                            onCustomThemesChange = onCustomReaderThemesChange,
                             customTextureIds = readerCustomTextureIds,
                             onImportTexture = onImportReaderTexture,
                             onSettingsChange = onPdfSettingsChange

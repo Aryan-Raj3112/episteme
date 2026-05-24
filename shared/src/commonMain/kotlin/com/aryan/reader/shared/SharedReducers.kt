@@ -89,6 +89,9 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
                 appSeedColor = if (shouldClearSeed) null else appSeedColor
             )
         }
+        is AppAction.CustomReaderThemesChanged -> copy(
+            customReaderThemes = action.themes.sanitizeCustomReaderThemes()
+        )
         is AppAction.SyncEnabledChanged -> copy(isSyncEnabled = action.enabled)
         is AppAction.FolderSyncEnabledChanged -> copy(isFolderSyncEnabled = action.enabled)
         is AppAction.TabsEnabledChanged -> copy(

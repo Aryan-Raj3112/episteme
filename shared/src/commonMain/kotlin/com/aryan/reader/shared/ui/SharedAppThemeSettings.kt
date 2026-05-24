@@ -691,6 +691,7 @@ fun SharedHsvColorPickerDialog(
     onDismiss: () -> Unit,
     onSave: (Color) -> Unit,
     modifier: Modifier = Modifier,
+    resetColor: Color? = null,
     preview: @Composable (Color) -> Unit = {}
 ) {
     var hsv by remember(initialColor) { mutableStateOf(initialColor.toSharedHsvColor()) }
@@ -802,9 +803,14 @@ fun SharedHsvColorPickerDialog(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (resetColor != null) {
+                        TextButton(onClick = { updateFromColor(resetColor) }) {
+                            Text(readerString("action_reset", "Reset"), color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
                     TextButton(onClick = onDismiss) {
                         Text(readerString("action_cancel", "Cancel"))
                     }

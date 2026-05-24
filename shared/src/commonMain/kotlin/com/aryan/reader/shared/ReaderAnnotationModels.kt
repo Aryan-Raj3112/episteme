@@ -150,8 +150,8 @@ data class ReaderHighlightPalette(
     val colors: List<HighlightColor> = defaultColors
 ) {
     fun sanitized(): ReaderHighlightPalette {
-        val distinct = colors.distinct().filter { it in HighlightColor.entries }
-        return copy(colors = distinct.ifEmpty { defaultColors })
+        val knownColors = colors.filter { it in HighlightColor.entries }
+        return copy(colors = knownColors.takeIf { it.size == PaletteSize } ?: defaultColors)
     }
 
     fun contains(color: HighlightColor): Boolean {
@@ -168,14 +168,13 @@ data class ReaderHighlightPalette(
     }
 
     companion object {
+        const val PaletteSize: Int = 4
         val defaultColors: List<HighlightColor>
             get() = listOf(
                 HighlightColor.YELLOW,
                 HighlightColor.GREEN,
                 HighlightColor.BLUE,
-                HighlightColor.RED,
-                HighlightColor.PURPLE,
-                HighlightColor.ORANGE
+                HighlightColor.RED
             )
     }
 }

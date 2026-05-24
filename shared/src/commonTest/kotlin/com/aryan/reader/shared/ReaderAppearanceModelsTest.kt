@@ -1,7 +1,9 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import kotlin.test.Test
@@ -71,16 +73,35 @@ class ReaderAppearanceModelsTest {
     }
 
     @Test
-    fun `pdf highlighter defaults follow the reader highlight palette`() {
-        val expectedPdfColors = ReaderHighlightPalette.defaultColors
-            .take(SharedPdfHighlighterPalette.MaxColors)
-            .map { color ->
-                (SharedPdfHighlighterPalette.DefaultAlpha shl 24) or (color.color.toArgb() and 0x00FFFFFF)
-            }
+    fun `pdf highlighter defaults follow android pdf highlight slots`() {
+        val expectedPdfColors = SharedPdfAndroidHighlightColors.palette
 
+        assertEquals(4, SharedPdfHighlighterPalette.MaxColors)
         assertEquals(expectedPdfColors, SharedPdfHighlighterPalette.defaultColors)
         assertEquals(expectedPdfColors[0], SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb)
         assertEquals(expectedPdfColors[1], SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER_ROUND).colorArgb)
+
+        val custom = SharedPdfHighlighterPalette(
+            colors = expectedPdfColors + listOf(0xFFFF00FF.toInt())
+        ).sanitized()
+        assertEquals(4, custom.colors.size)
+        assertEquals(expectedPdfColors, custom.colors)
+    }
+
+    @Test
+    fun `custom reader themes keep android persisted shape`() {
+        val first = ReaderTheme(
+            id = "custom",
+            name = "Custom",
+            backgroundColor = Color(0xFFF5F5F5),
+            textColor = Color(0xFF111111),
+            isDark = false,
+            isCustom = true
+        )
+        val replacement = first.copy(name = "Replacement")
+        val builtIn = BuiltInReaderThemes.first().copy(isCustom = false)
+
+        assertEquals(listOf(replacement), listOf(first, builtIn, replacement).sanitizeCustomReaderThemes())
     }
 
     @Test

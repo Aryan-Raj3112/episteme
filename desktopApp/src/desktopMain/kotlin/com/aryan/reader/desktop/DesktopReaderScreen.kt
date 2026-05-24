@@ -38,6 +38,7 @@ import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsReadScope
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderLinkTarget
@@ -68,6 +69,8 @@ internal fun DesktopReaderScreen(
     toolbarPreferences: ReaderToolbarPreferences,
     onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
     appThemeControls: (@Composable () -> Unit)? = null,
+    customReaderThemes: List<ReaderTheme>,
+    onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit,
     highlightPalette: ReaderHighlightPalette,
     onHighlightPaletteChange: (ReaderHighlightPalette) -> Unit,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
@@ -366,6 +369,8 @@ internal fun DesktopReaderScreen(
         toolbarPreferences = toolbarPreferences,
         onToolbarPreferencesChange = onToolbarPreferencesChange,
         appThemeControls = appThemeControls,
+        customReaderThemes = customReaderThemes,
+        onCustomReaderThemesChange = onCustomReaderThemesChange,
         highlightPalette = highlightPalette,
         onHighlightPaletteChange = onHighlightPaletteChange,
         ttsReplacementPreferences = ttsReplacementPreferences,
@@ -446,6 +451,7 @@ internal fun DesktopReaderScreen(
                             DesktopEpubWebView(
                                 html = renderPlan.html,
                                 appearanceScript = renderPlan.appearanceScript,
+                                highlightPaletteScript = renderPlan.highlightPaletteScript,
                                 navigationTarget = renderPlan.navigationTarget,
                                 highlights = renderPlan.highlights,
                                 onHighlightCreated = { highlight ->

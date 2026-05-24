@@ -155,6 +155,25 @@ class SharedLibrarySnapshotJsonTest {
             customAppThemes = listOf(
                 CustomAppTheme(id = "forest", name = "Forest", seedColor = Color(0xFF006C4C))
             ),
+            customReaderThemes = listOf(
+                ReaderTheme(
+                    id = "my_solid",
+                    name = "My Solid",
+                    backgroundColor = Color(0xFFF5F5F5),
+                    textColor = Color(0xFF111111),
+                    isDark = false,
+                    isCustom = true
+                ),
+                ReaderTheme(
+                    id = "my_texture",
+                    name = "My Texture",
+                    backgroundColor = Color(0xFF222222),
+                    textColor = Color(0xFFEFEFEF),
+                    isDark = true,
+                    textureId = ReaderTexture.CANVAS.id,
+                    isCustom = true
+                )
+            ),
             readerDefaultSettings = ReaderSettings(themeId = "sepia"),
             pdfReaderDefaultSettings = ReaderSettings(themeId = "reverse"),
             readerToolbarPreferences = ReaderToolbarPreferences(
@@ -163,7 +182,7 @@ class SharedLibrarySnapshotJsonTest {
                 bottomToolIds = setOf(ReaderTool.BOOKMARK.id)
             ).sanitized(),
             readerHighlightPalette = ReaderHighlightPalette(
-                colors = listOf(HighlightColor.YELLOW, HighlightColor.CYAN)
+                colors = listOf(HighlightColor.YELLOW, HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.WHITE)
             ),
             readerTtsReplacementPreferences = ReaderTtsReplacementPreferences(
                 globalRules = listOf(

@@ -36,7 +36,7 @@ class ReaderToolbarPreferencesTest {
     }
 
     @Test
-    fun `highlight palette reducer sanitizes colors`() {
+    fun `highlight palette reducer follows android four slot palette`() {
         val state = SharedReaderScreenState()
             .reduce(
                 AppAction.ReaderHighlightPaletteChanged(
@@ -46,6 +46,19 @@ class ReaderToolbarPreferencesTest {
                 )
             )
 
-        assertEquals(listOf(HighlightColor.CYAN, HighlightColor.YELLOW), state.readerHighlightPalette.colors)
+        assertEquals(ReaderHighlightPalette.defaultColors, state.readerHighlightPalette.colors)
+
+        val customized = state.reduce(
+            AppAction.ReaderHighlightPaletteChanged(
+                ReaderHighlightPalette(
+                    colors = listOf(HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.PINK, HighlightColor.WHITE)
+                )
+            )
+        )
+
+        assertEquals(
+            listOf(HighlightColor.CYAN, HighlightColor.CYAN, HighlightColor.PINK, HighlightColor.WHITE),
+            customized.readerHighlightPalette.colors
+        )
     }
 }

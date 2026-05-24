@@ -45,6 +45,7 @@ data class SharedLibrarySnapshot(
     val appSeedColor: Color? = null,
     val appFontPreference: AppFontPreference = AppFontPreference.System,
     val customAppThemes: List<CustomAppTheme> = emptyList(),
+    val customReaderThemes: List<ReaderTheme> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
     val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
     val desktopReaderDefaultsVersion: Int = 0,
@@ -55,7 +56,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 20
+    private const val SCHEMA_VERSION = 21
 
     private val json = Json {
         prettyPrint = true
@@ -107,6 +108,9 @@ object SharedLibrarySnapshotJson {
                 ?.asAppFontPreferenceOrNull()
                 ?: AppFontPreference.System,
             customAppThemes = root.array("customAppThemes").mapNotNull { it.asCustomAppThemeOrNull() },
+            customReaderThemes = root.array("customReaderThemes")
+                .mapNotNull { it.asReaderThemeOrNull() }
+                .sanitizeCustomReaderThemes(),
             readerDefaultSettings = readerDefaultSettings.migrateLegacyDefaultReadingMode(schemaVersion),
             pdfReaderDefaultSettings = root["pdfReaderDefaultSettings"]
                 ?.takeUnless { it is JsonNull }
@@ -156,6 +160,9 @@ object SharedLibrarySnapshotJson {
                 "appSeedColor" to snapshot.appSeedColor.asJson(),
                 "appFontPreference" to snapshot.appFontPreference.sanitized().toJsonObject(),
                 "customAppThemes" to JsonArray(snapshot.customAppThemes.map { it.toJsonObject() }),
+                "customReaderThemes" to JsonArray(
+                    snapshot.customReaderThemes.sanitizeCustomReaderThemes().map { it.toJsonObject() }
+                ),
                 "readerDefaultSettings" to snapshot.readerDefaultSettings.asJson(),
                 "pdfReaderDefaultSettings" to snapshot.pdfReaderDefaultSettings.asJson(),
                 "desktopReaderDefaultsVersion" to JsonPrimitive(snapshot.desktopReaderDefaultsVersion),
@@ -352,6 +359,19 @@ private fun JsonElement.asCustomAppThemeOrNull(): CustomAppTheme? {
     )
 }
 
+private fun JsonElement.asReaderThemeOrNull(): ReaderTheme? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return ReaderTheme(
+        id = obj.string("id") ?: return null,
+        name = obj.string("name") ?: return null,
+        backgroundColor = obj.int("bgColor")?.let { Color(it) } ?: return null,
+        textColor = obj.int("textColor")?.let { Color(it) } ?: return null,
+        isDark = obj.boolean("isDark", false),
+        textureId = obj.string("textureId")?.takeIf { it.isNotBlank() },
+        isCustom = true
+    )
+}
+
 private fun JsonElement.asAppFontPreferenceOrNull(): AppFontPreference? {
     val obj = runCatching { jsonObject }.getOrNull() ?: return null
     val kind = obj.string("kind")
@@ -467,6 +487,18 @@ private fun CustomAppTheme.toJsonObject(): JsonObject {
             "seedColor" to JsonPrimitive(seedColor.toArgb())
         )
     )
+}
+
+private fun ReaderTheme.toJsonObject(): JsonObject {
+    val values = mutableMapOf<String, JsonElement>(
+        "id" to JsonPrimitive(id),
+        "name" to JsonPrimitive(name),
+        "bgColor" to JsonPrimitive(backgroundColor.toArgb()),
+        "textColor" to JsonPrimitive(textColor.toArgb()),
+        "isDark" to JsonPrimitive(isDark)
+    )
+    textureId?.let { values["textureId"] = JsonPrimitive(it) }
+    return JsonObject(values)
 }
 
 private fun AppFontPreference.toJsonObject(): JsonObject {

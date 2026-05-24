@@ -76,6 +76,7 @@ sealed interface AppAction {
     data class AppFontPreferenceChanged(val preference: AppFontPreference) : AppAction
     data class CustomAppThemeAdded(val theme: CustomAppTheme) : AppAction
     data class CustomAppThemeDeleted(val themeId: String) : AppAction
+    data class CustomReaderThemesChanged(val themes: List<ReaderTheme>) : AppAction
     data class SyncEnabledChanged(val enabled: Boolean) : AppAction
     data class FolderSyncEnabledChanged(val enabled: Boolean) : AppAction
     data class TabsEnabledChanged(val enabled: Boolean) : AppAction

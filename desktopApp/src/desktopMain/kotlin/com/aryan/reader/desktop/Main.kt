@@ -3228,6 +3228,10 @@ internal fun EpistemeDesktopApp(
                             },
                             customFonts = customFonts,
                             onPickCustomFont = { importCustomFont(chooseFontFile())?.path },
+                            customReaderThemes = state.customReaderThemes,
+                            onCustomReaderThemesChange = { themes ->
+                                updateState(state.reduce(AppAction.CustomReaderThemesChanged(themes)))
+                            },
                             readerCustomTextureIds = readerCustomTextureIds,
                             onImportReaderTexture = ::importDesktopReaderTexture,
                             onAction = { action ->
@@ -3574,6 +3578,10 @@ internal fun EpistemeDesktopApp(
                                         onPdfHighlighterPaletteChange = { palette ->
                                             updateState(state.reduce(AppAction.PdfHighlighterPaletteChanged(palette)))
                                         },
+                                        customReaderThemes = state.customReaderThemes,
+                                        onCustomReaderThemesChange = { themes ->
+                                            updateState(state.reduce(AppAction.CustomReaderThemesChanged(themes)))
+                                        },
                                         customTextureIds = readerCustomTextureIds,
                                         onImportTexture = ::importDesktopReaderTexture,
                                         onLocalSidecarsChanged = {
@@ -3652,6 +3660,10 @@ internal fun EpistemeDesktopApp(
                                             updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))
                                         },
                                         appThemeControls = appThemeControls,
+                                        customReaderThemes = state.customReaderThemes,
+                                        onCustomReaderThemesChange = { themes ->
+                                            updateState(state.reduce(AppAction.CustomReaderThemesChanged(themes)))
+                                        },
                                         highlightPalette = state.readerHighlightPalette,
                                         onHighlightPaletteChange = { palette ->
                                             updateState(state.reduce(AppAction.ReaderHighlightPaletteChanged(palette)))

@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 internal fun DesktopEpubWebView(
     html: String,
     appearanceScript: String,
+    highlightPaletteScript: String,
     navigationTarget: ReaderContentNavigationTarget,
     highlights: List<UserHighlight>,
     onHighlightCreated: (UserHighlight) -> Unit,
@@ -207,6 +208,11 @@ internal fun DesktopEpubWebView(
         LaunchedEffect(appearanceScript, state.loadingState) {
             if (!state.loadingState.isFinished()) return@LaunchedEffect
             navigator.evaluateJavaScript(appearanceScript)
+        }
+
+        LaunchedEffect(highlightPaletteScript, state.loadingState) {
+            if (!state.loadingState.isFinished()) return@LaunchedEffect
+            navigator.evaluateJavaScript(highlightPaletteScript)
         }
 
         LaunchedEffect(

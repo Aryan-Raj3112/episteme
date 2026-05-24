@@ -53,7 +53,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.pdf.PdfPageBounds
-import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.ui.SharedHsvColorPickerDialog
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
@@ -292,7 +291,7 @@ internal fun PdfSelectionMenu(
     val anchor = menuOffset ?: return
     val selectionBounds = selection.canvasBounds(canvasSize)
     val paletteColors = remember(highlighterPalette) {
-        SharedPdfAndroidHighlightColors.palette
+        SharedPdfHighlighterPalette(highlighterPalette).sanitized().colors
     }
     var editingHighlighterSlot by remember(selection.startIndex, selection.endIndex, paletteColors) {
         mutableStateOf<Int?>(null)
@@ -450,7 +449,10 @@ internal fun PdfSelectionMenu(
                     )
                 )
                 editingHighlighterSlot = null
-            }
+            },
+            resetColor = Color(SharedPdfHighlighterPalette.defaultColors.getOrElse(slot) {
+                SharedPdfHighlighterPalette.defaultColors.first()
+            }).copy(alpha = 1f)
         ) { liveColor ->
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
