@@ -115,6 +115,22 @@ class DesktopCloudSyncMappingTest {
     }
 
     @Test
+    fun `empty epub annotations upload as empty arrays`() {
+        val book = BookItem(
+            id = "book-1",
+            path = "C:/books/Book.epub",
+            type = FileType.EPUB,
+            displayName = "Book.epub",
+            timestamp = 1_000L
+        )
+
+        val metadata = book.toDesktopCloudBookMetadata(hasAnnotations = false)
+
+        assertEquals("[]", metadata.bookmarksJson)
+        assertEquals("[]", metadata.highlightsJson)
+    }
+
+    @Test
     fun `remote pdf metadata moves stale desktop viewport to remote page`() {
         val existing = BookItem(
             id = "book-1",

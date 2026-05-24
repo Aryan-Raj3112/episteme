@@ -3282,7 +3282,7 @@
                 var self = this;
 
                 highlights.forEach(function (h) {
-                    self.applyHighlight(h.cfi, h.text, h.cssClass);
+                    self.applyHighlightObject(h);
                 });
             } catch (e) {
                 console.log(
@@ -3295,135 +3295,233 @@
             }
         },
 
-        applyHighlight: function (cfi, text, cssClass) {
+        applyHighlightObject: function (highlight) {
+            if (!highlight) return;
+            this.applyHighlight(highlight.cfi, highlight.text, highlight.cssClass, highlight.locator || null);
+        },
+
+        highlightTextRoot: function () {
+            return document.getElementById("content-container") || document.body;
+        },
+
+        highlightTextNodes: function (root) {
+            var nodes = [];
+            if (!root) return nodes;
+            var walker = document.createTreeWalker(
+                root,
+                NodeFilter.SHOW_TEXT,
+                {
+                    acceptNode: function (node) {
+                        if (!node || !node.nodeValue) return NodeFilter.FILTER_REJECT;
+                        var parent = node.parentElement;
+                        if (!parent) return NodeFilter.FILTER_REJECT;
+                        if (parent.closest && parent.closest("script, style, noscript")) return NodeFilter.FILTER_REJECT;
+                        return NodeFilter.FILTER_ACCEPT;
+                    },
+                },
+                false,
+            );
+            while (walker.nextNode()) nodes.push(walker.currentNode);
+            return nodes;
+        },
+
+        rangeFromTextOffsets: function (root, startOffset, endOffset) {
+            var start = parseInt(startOffset, 10);
+            var end = parseInt(endOffset, 10);
+            if (!root || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+
+            var nodes = this.highlightTextNodes(root);
+            var cursor = 0;
+            var startNode = null;
+            var startInNode = 0;
+            var endNode = null;
+            var endInNode = 0;
+
+            for (var i = 0; i < nodes.length; i++) {
+                var value = nodes[i].nodeValue || "";
+                var next = cursor + value.length;
+                if (!startNode && start >= cursor && start <= next) {
+                    startNode = nodes[i];
+                    startInNode = Math.max(0, Math.min(value.length, start - cursor));
+                }
+                if (startNode && end >= cursor && end <= next) {
+                    endNode = nodes[i];
+                    endInNode = Math.max(0, Math.min(value.length, end - cursor));
+                    break;
+                }
+                cursor = next;
+            }
+
+            if (!startNode || !endNode) return null;
+            var range = document.createRange();
+            range.setStart(startNode, startInNode);
+            range.setEnd(endNode, endInNode);
+            return range.collapsed ? null : range;
+        },
+
+        rangeMatchesText: function (range, text) {
+            if (!range || !text) return true;
+            var actual = (range.toString() || "").trim();
+            var expected = String(text || "").trim();
+            if (!expected) return true;
+            return actual === expected || actual.replace(/\s+/g, " ") === expected.replace(/\s+/g, " ");
+        },
+
+        rangeFromVisibleTextSearch: function (text, locator) {
+            if (!text) return null;
+            var root = this.highlightTextRoot();
+            var nodes = this.highlightTextNodes(root);
+            if (!nodes.length) return null;
+
+            var fullText = nodes.map(function (node) { return node.nodeValue || ""; }).join("");
+            var expected = String(text);
+            var candidates = [];
+            var index = fullText.indexOf(expected);
+            while (index !== -1) {
+                candidates.push(index);
+                index = fullText.indexOf(expected, index + 1);
+            }
+            if (!candidates.length) {
+                var lowerFull = fullText.toLowerCase();
+                var lowerExpected = expected.toLowerCase();
+                index = lowerFull.indexOf(lowerExpected);
+                while (index !== -1) {
+                    candidates.push(index);
+                    index = lowerFull.indexOf(lowerExpected, index + 1);
+                }
+            }
+            if (!candidates.length && expected.length > 20) {
+                var partial = expected.substring(0, Math.min(expected.length, 40));
+                index = fullText.indexOf(partial);
+                while (index !== -1) {
+                    candidates.push(index);
+                    index = fullText.indexOf(partial, index + 1);
+                }
+            }
+            if (!candidates.length) return null;
+
+            var preferred = locator && locator.startOffset !== undefined && locator.startOffset !== null
+                ? parseInt(locator.startOffset, 10)
+                : candidates[0];
+            if (!Number.isFinite(preferred)) preferred = candidates[0];
+            var best = candidates.reduce(function (currentBest, candidate) {
+                return Math.abs(candidate - preferred) < Math.abs(currentBest - preferred) ? candidate : currentBest;
+            }, candidates[0]);
+            return this.rangeFromTextOffsets(root, best, best + expected.length);
+        },
+
+        rangeFromLocator: function (locator, text) {
+            if (!locator) return null;
+            var root = this.highlightTextRoot();
+            var range = this.rangeFromTextOffsets(root, locator.startOffset, locator.endOffset);
+            if (range && this.rangeMatchesText(range, text)) return range;
+            return this.rangeFromVisibleTextSearch(text || locator.textQuote || "", locator);
+        },
+
+        rangeFromCfi: function (cfi, text) {
+            if (!cfi || cfi.indexOf("desktop:") === 0) return null;
+            const location = window.getNodeAndOffsetFromCfi(cfi);
+            if (!location || !location.node) return null;
+
+            let startNode = location.node;
+            let startOffset = location.offset;
+
+            if (startNode.nodeType === Node.TEXT_NODE) {
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+                walker.currentNode = startNode;
+
+                while (startNode && startOffset >= startNode.nodeValue.length) {
+                    if (startOffset === startNode.nodeValue.length) {
+                        const next = walker.nextNode();
+
+                        if (next) {
+                            startOffset -= startNode.nodeValue.length;
+                            startNode = next;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        startOffset -= startNode.nodeValue.length;
+                        startNode = walker.nextNode();
+                    }
+                }
+            }
+
+            if (text && text.length > 0 && startNode && startNode.nodeType === Node.TEXT_NODE) {
+                const nodeVal = startNode.nodeValue;
+                const substring = nodeVal.substring(startOffset, startOffset + text.length);
+
+                if (substring !== text && substring.trim() !== text.trim()) {
+                    console.log("HIGHLIGHT_DEBUG: Text mismatch at CFI. Searching nearby.");
+                    const foundIndex = nodeVal.indexOf(text);
+
+                    if (foundIndex !== -1) {
+                        startOffset = foundIndex;
+                    } else {
+                        const partial = text.substring(0, Math.min(text.length, 20));
+                        const partialIndex = nodeVal.indexOf(partial);
+
+                        if (partialIndex !== -1) {
+                            startOffset = partialIndex;
+                        }
+                    }
+                }
+            }
+
+            if (!startNode) return null;
+
+            const range = document.createRange();
+
+            if (startNode.nodeType === Node.TEXT_NODE && startOffset > startNode.nodeValue.length) {
+                startOffset = Math.max(0, startNode.nodeValue.length - 1);
+            }
+
+            range.setStart(startNode, startOffset);
+
+            const treeWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+            treeWalker.currentNode = startNode;
+
+            let remainingLen = text.length;
+            let endNode = treeWalker.currentNode;
+            let endOffset = startOffset;
+
+            while (remainingLen > 0 && endNode) {
+                let avail = endNode.nodeValue.length - endOffset;
+
+                if (avail >= remainingLen) {
+                    endOffset += remainingLen;
+                    remainingLen = 0;
+                } else {
+                    remainingLen -= avail;
+                    endNode = treeWalker.nextNode();
+                    endOffset = 0;
+                }
+            }
+
+            if (!endNode) return null;
+            range.setEnd(endNode, endOffset);
+            return range.collapsed ? null : range;
+        },
+
+        applyHighlight: function (cfi, text, cssClass, locator) {
             try {
+                cssClass = cssClass || "user-highlight-yellow";
                 var alreadyApplied = false;
                 var spans = document.querySelectorAll(`span[data-cfi]`);
                 for (var i = 0; i < spans.length; i++) {
-                    if ((spans[i].getAttribute("data-cfi") || "").split(";;").includes(cfi)) {
+                    if (cfi && (spans[i].getAttribute("data-cfi") || "").split(";;").includes(cfi)) {
                         alreadyApplied = true;
                         break;
                     }
                 }
                 if (alreadyApplied) return;
 
-                const location = window.getNodeAndOffsetFromCfi(cfi);
-                if (!location || !location.node) return;
-
-                let startNode = location.node;
-                let startOffset = location.offset;
-
-                if (startNode.nodeType === Node.TEXT_NODE) {
-                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-                    walker.currentNode = startNode;
-
-                    while (startNode && startOffset >= startNode.nodeValue.length) {
-                        if (startOffset === startNode.nodeValue.length) {
-                            const next = walker.nextNode();
-
-                            if (next) {
-                                startOffset -= startNode.nodeValue.length;
-                                startNode = next;
-                            } else {
-                                break;
-                            }
-                        } else {
-                            startOffset -= startNode.nodeValue.length;
-                            startNode = walker.nextNode();
-                        }
-                    }
-                }
-
-                // 1. Text Verification / Healing
-                if (text && text.length > 0 && startNode && startNode.nodeType === Node.TEXT_NODE) {
-                    const nodeVal = startNode.nodeValue;
-                    // Check if text matches at exact offset
-                    const substring = nodeVal.substring(startOffset, startOffset + text.length);
-
-                    // Allow for some whitespace looseness (trim comparison)
-                    if (substring !== text && substring.trim() !== text.trim()) {
-                        console.log(`$ {
-                            HL_LOG_TAG
-                        }
-
-                        : Text mismatch at CFI. Searching nearby... Expected: '${text.substring(0, 10)}...', Found: '${substring.substring(0, 10)}...' `);
-
-                        // Try finding the text in the whole node
-                        const foundIndex = nodeVal.indexOf(text);
-
-                        if (foundIndex !== -1) {
-                            console.log(`$ {
-                                HL_LOG_TAG
-                            }
-
-                            : Found text elsewhere in node. Adjusting offset from $ {
-                                startOffset
-                            }
-
-                            to $ {
-                                foundIndex
-                            }
-
-                            .`);
-                            startOffset = foundIndex;
-                        } else {
-                            // Simple fuzzy: Try finding first 20 chars
-                            const partial = text.substring(0, Math.min(text.length, 20));
-                            const partialIndex = nodeVal.indexOf(partial);
-
-                            if (partialIndex !== -1) {
-                                console.log(`$ {
-                                    HL_LOG_TAG
-                                }
-
-                                : Found partial match. Adjusting offset.`);
-                                startOffset = partialIndex;
-                            }
-                        }
-                    }
-                }
-
-                if (!startNode) return;
-
-                const range = document.createRange();
-
-                // Set Start
-                if (startNode.nodeType === Node.TEXT_NODE) {
-                    // Ensure offset is valid
-                    if (startOffset > startNode.nodeValue.length) {
-                        startOffset = Math.max(0, startNode.nodeValue.length - 1);
-                    }
-                }
-
-                range.setStart(startNode, startOffset);
-
-                const treeWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-                treeWalker.currentNode = startNode;
-
-                let currentNode = treeWalker.currentNode;
-                let remainingOffset = startOffset;
-                let remainingLen = text.length;
-                let endNode = currentNode;
-                let endOffset = startOffset;
-
-                while (remainingLen > 0 && endNode) {
-                    let avail = endNode.nodeValue.length - endOffset;
-
-                    if (avail >= remainingLen) {
-                        endOffset += remainingLen;
-                        remainingLen = 0;
-                    } else {
-                        remainingLen -= avail;
-                        endNode = treeWalker.nextNode();
-                        endOffset = 0;
-                    }
-                }
-
-                if (endNode) {
-                    range.setEnd(endNode, endOffset);
-                    var normalizedRange = this.normalizeRangeBoundaries(range);
-                    this.highlightRangeSafe(normalizedRange, cssClass, cfi);
-                }
+                var range = this.rangeFromLocator(locator, text) ||
+                    this.rangeFromCfi(cfi, text || "") ||
+                    this.rangeFromVisibleTextSearch(text || "", locator);
+                if (!range) return;
+                var normalizedRange = this.normalizeRangeBoundaries(range);
+                this.highlightRangeSafe(normalizedRange, cssClass, cfi);
             } catch (e) {
                 console.log(e);
             }

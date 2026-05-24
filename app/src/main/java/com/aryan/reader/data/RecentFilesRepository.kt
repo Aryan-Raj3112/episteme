@@ -33,6 +33,7 @@ import com.aryan.reader.logCloudSyncTrace
 import com.aryan.reader.scaledToCanvasLimit
 import timber.log.Timber
 import com.aryan.reader.BookImporter
+import com.aryan.reader.cloudSyncAnnotationSummary
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.pdf.PdfRichTextRepository
 import com.aryan.reader.epub.ImportedFileCache
@@ -275,7 +276,9 @@ class RecentFilesRepository(private val context: Context) {
                 "existingChapter=${existingItem?.lastChapterIndex} finalTs=${entityToInsert.lastModifiedTimestamp} " +
                 "finalPage=${entityToInsert.lastPage} finalChapter=${entityToInsert.lastChapterIndex} " +
                 "finalBlock=${entityToInsert.locatorBlockIndex} finalChar=${entityToInsert.locatorCharOffset} " +
-                "finalProgress=${entityToInsert.progressPercentage} finalCfi=${entityToInsert.lastPositionCfi.cloudSyncPreview()}"
+                "finalProgress=${entityToInsert.progressPercentage} finalCfi=${entityToInsert.lastPositionCfi.cloudSyncPreview()} " +
+                "finalBookmarks=${entityToInsert.bookmarks.cloudSyncAnnotationSummary()} " +
+                "finalHighlights=${entityToInsert.highlights.cloudSyncAnnotationSummary()}"
         }
         recentFileDao.insertOrUpdateFile(entityToInsert)
         Timber.d("Added/Updated recent file in DB: ${item.displayName}")

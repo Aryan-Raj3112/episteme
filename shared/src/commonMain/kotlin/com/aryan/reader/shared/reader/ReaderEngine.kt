@@ -529,7 +529,9 @@ class ReaderEngine(
             blockIndex = blockPosition?.blockIndex,
             charOffset = blockPosition?.charOffset,
             textQuote = preview ?: page.text.preview(),
-            cfi = locator.cfi ?: "desktop:${page.chapterIndex}:${locator.startOffset ?: page.startOffset}:${locator.endOffset ?: locator.startOffset ?: page.startOffset}"
+            cfi = locator.cfi
+                ?: blockPosition?.androidStyleCfi()
+                ?: "desktop:${page.chapterIndex}:${locator.startOffset ?: page.startOffset}:${locator.endOffset ?: locator.startOffset ?: page.startOffset}"
         )
         val existing = state.bookmarks.firstOrNull {
             it.locator.sameLocation(normalizedLocator) ||
@@ -819,8 +821,18 @@ private fun List<ReaderPage>.findPageIndexForBlockLocator(locator: ReaderLocator
 
 private data class ReaderBlockPosition(
     val blockIndex: Int,
-    val charOffset: Int
-)
+    val charOffset: Int,
+    val cfi: String? = null,
+    val localCharOffset: Int = 0
+) {
+    fun androidStyleCfi(): String? {
+        val base = cfi
+            ?.takeIf { it.startsWith("/") }
+            ?.substringBefore(':')
+            ?: return null
+        return "$base:${localCharOffset.coerceAtLeast(0)}"
+    }
+}
 
 private fun ReaderPage.firstLocatorBlockPosition(): ReaderBlockPosition? {
     val blocks = semanticBlocks.flattenSemanticBlocks()
@@ -831,11 +843,18 @@ private fun ReaderPage.firstLocatorBlockPosition(): ReaderBlockPosition? {
     if (textBlock != null) {
         return ReaderBlockPosition(
             blockIndex = textBlock.blockIndex,
-            charOffset = textBlock.startCharOffsetInSource
+            charOffset = textBlock.startCharOffsetInSource,
+            cfi = textBlock.cfi,
+            localCharOffset = 0
         )
     }
     val firstBlock = blocks.firstOrNull() ?: return null
-    return ReaderBlockPosition(blockIndex = firstBlock.blockIndex, charOffset = 0)
+    return ReaderBlockPosition(
+        blockIndex = firstBlock.blockIndex,
+        charOffset = 0,
+        cfi = firstBlock.cfi,
+        localCharOffset = 0
+    )
 }
 
 private fun List<SemanticBlock>.flattenSemanticBlocks(): List<SemanticBlock> {
@@ -875,7 +894,7 @@ private fun ReaderLocator.normalizedForResolvedPage(
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
-        cfi = cfi ?: "desktop:${page.chapterIndex}:$start:$end"
+        cfi = cfi ?: blockPosition?.androidStyleCfi() ?: "desktop:${page.chapterIndex}:$start:$end"
     )
 }
 
@@ -897,7 +916,7 @@ private fun ReaderBookmark.normalizedForBook(book: SharedEpubBook, pages: List<R
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = preview.ifBlank { page.text.preview() },
-        cfi = locator.cfi ?: page.toDesktopCfi()
+        cfi = locator.cfi ?: blockPosition?.androidStyleCfi() ?: page.toDesktopCfi()
     )
     return copy(
         pageIndex = targetPageIndex,
@@ -961,7 +980,7 @@ private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
-        cfi = cfi ?: "desktop:${page.chapterIndex}:$start:$end"
+        cfi = cfi ?: blockPosition?.androidStyleCfi() ?: "desktop:${page.chapterIndex}:$start:$end"
     )
 }
 
@@ -978,7 +997,7 @@ private fun ReaderPage.toLocator(book: SharedEpubBook): ReaderLocator {
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = text.preview(),
-        cfi = toDesktopCfi()
+        cfi = blockPosition?.androidStyleCfi() ?: toDesktopCfi()
     )
 }
 

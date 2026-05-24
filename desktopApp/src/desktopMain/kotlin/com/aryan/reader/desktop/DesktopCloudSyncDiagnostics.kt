@@ -18,14 +18,16 @@ internal fun BookItem.desktopCloudSyncSummary(prefix: String = "local"): String 
     return "$prefix{id=$id type=$type ts=$timestamp contentTs=$fileContentModifiedTimestamp " +
         "page=$page chapter=${position?.chapterIndex} " +
         "block=${position?.blockIndex} char=${position?.charOffset} progress=$progressPercentage " +
-        "cfi=${position?.cfi.cloudSyncPreview()} sourceFolder=${sourceFolder != null}}"
+        "cfi=${position?.cfi.cloudSyncPreview()} sourceFolder=${sourceFolder != null} " +
+        "bookmarks=${readerBookmarks.size} highlights=${readerHighlights.size}}"
 }
 
 internal fun DesktopCloudBookMetadata.desktopCloudSyncSummary(prefix: String = "remote"): String {
     return "$prefix{id=$bookId type=$type ts=$lastModifiedTimestamp contentTs=$fileContentModifiedTimestamp " +
         "page=$lastPage chapter=$lastChapterIndex block=$locatorBlockIndex char=$locatorCharOffset " +
         "progress=$progressPercentage cfi=${lastPositionCfi.cloudSyncPreview()} deleted=$isDeleted " +
-        "recent=$isRecent hasAnnotations=$hasAnnotations}"
+        "recent=$isRecent hasAnnotations=$hasAnnotations bookmarks=${bookmarksJson.cloudSyncAnnotationSummary()} " +
+        "highlights=${highlightsJson.cloudSyncAnnotationSummary()}}"
 }
 
 internal fun BookItem.hasSameCloudReaderPosition(other: BookItem): Boolean {
@@ -65,4 +67,13 @@ private fun com.aryan.reader.shared.FileType.usesCloudLocatorForDiagnostics(): B
 private fun String?.cloudSyncPreview(maxLength: Int = 80): String {
     val value = this ?: return "null"
     return if (value.length <= maxLength) value else value.take(maxLength) + "..."
+}
+
+private fun String?.cloudSyncAnnotationSummary(): String {
+    val value = this?.trim() ?: return "null"
+    return when {
+        value.isEmpty() -> "blank"
+        value == "[]" -> "empty"
+        else -> "present(${value.length})"
+    }
 }

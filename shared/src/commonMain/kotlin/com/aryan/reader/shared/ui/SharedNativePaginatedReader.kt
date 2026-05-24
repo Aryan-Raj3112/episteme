@@ -1097,14 +1097,24 @@ private fun ReaderPage.toNativeReaderLocator(): ReaderLocator {
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = text.replace(Regex("\\s+"), " ").trim().take(160),
-        cfi = "desktop:$chapterIndex:$startOffset:$endOffset"
+        cfi = blockPosition?.androidStyleCfi() ?: "desktop:$chapterIndex:$startOffset:$endOffset"
     )
 }
 
 private data class SharedNativeLocatorBlockPosition(
     val blockIndex: Int,
-    val charOffset: Int
-)
+    val charOffset: Int,
+    val cfi: String? = null,
+    val localCharOffset: Int = 0
+) {
+    fun androidStyleCfi(): String? {
+        val base = cfi
+            ?.takeIf { it.startsWith("/") }
+            ?.substringBefore(':')
+            ?: return null
+        return "$base:${localCharOffset.coerceAtLeast(0)}"
+    }
+}
 
 private fun ReaderPage.firstNativeLocatorBlockPosition(): SharedNativeLocatorBlockPosition? {
     val blocks = semanticBlocks.flattenNativeSemanticBlocks()
@@ -1115,11 +1125,13 @@ private fun ReaderPage.firstNativeLocatorBlockPosition(): SharedNativeLocatorBlo
     if (textBlock != null) {
         return SharedNativeLocatorBlockPosition(
             blockIndex = textBlock.blockIndex,
-            charOffset = textBlock.startCharOffsetInSource
+            charOffset = textBlock.startCharOffsetInSource,
+            cfi = textBlock.cfi,
+            localCharOffset = 0
         )
     }
     val firstBlock = blocks.firstOrNull() ?: return null
-    return SharedNativeLocatorBlockPosition(firstBlock.blockIndex, 0)
+    return SharedNativeLocatorBlockPosition(firstBlock.blockIndex, 0, firstBlock.cfi, 0)
 }
 
 private fun List<SemanticBlock>.flattenNativeSemanticBlocks(): List<SemanticBlock> {

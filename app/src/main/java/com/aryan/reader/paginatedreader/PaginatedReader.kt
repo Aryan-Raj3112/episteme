@@ -1522,14 +1522,6 @@ private fun findFuzzyMatch(source: String, target: String, ignoreCase: Boolean =
 internal fun getHighlightOffsetsInBlock(
     block: TextContentBlock, highlight: UserHighlight
 ): IntRange? {
-    if (block.cfi == null) return null
-
-    val blockPath = CfiUtils.getPath(block.cfi!!)
-    val parts = highlight.cfi.split('|')
-    val startCfi = parts.firstOrNull() ?: highlight.cfi
-    val endCfi = parts.lastOrNull()
-    val isMultipartHighlight = endCfi != null && endCfi != startCfi
-
     @Suppress("REDUNDANT_ELSE_IN_WHEN") val blockStartAbs = when (block) {
         is ParagraphBlock -> block.startCharOffsetInSource
         is HeaderBlock -> block.startCharOffsetInSource
@@ -1540,6 +1532,22 @@ internal fun getHighlightOffsetsInBlock(
     val blockEndAbs = block.endCharOffsetInSource
         .takeIf { it > blockStartAbs }
         ?: (blockStartAbs + block.content.text.length)
+    val blockText = block.content.text
+
+    locatorHighlightOffsetsInBlock(
+        blockText = blockText,
+        blockStartAbs = blockStartAbs,
+        blockEndAbs = blockEndAbs,
+        highlight = highlight
+    )?.let { return it }
+
+    if (block.cfi == null) return null
+
+    val blockPath = CfiUtils.getPath(block.cfi!!)
+    val parts = highlight.cfi.split('|')
+    val startCfi = parts.firstOrNull() ?: highlight.cfi
+    val endCfi = parts.lastOrNull()
+    val isMultipartHighlight = endCfi != null && endCfi != startCfi
 
     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
         "map_check blockCfi=${block.cfi} blockPath=$blockPath " +
@@ -1587,7 +1595,6 @@ internal fun getHighlightOffsetsInBlock(
         )
     }
 
-    val blockText = block.content.text
     val highlightText = highlight.text
 
     if (blockText.isEmpty() || highlightText.isEmpty()) return null
@@ -1810,6 +1817,23 @@ internal fun getHighlightOffsetsInBlock(
     return null
 }
 
+private fun locatorHighlightOffsetsInBlock(
+    blockText: String,
+    blockStartAbs: Int,
+    blockEndAbs: Int,
+    highlight: UserHighlight
+): IntRange? {
+    if (blockText.isEmpty()) return null
+    val start = highlight.locator.startOffset ?: return null
+    val end = highlight.locator.endOffset ?: return null
+    val rangeStartAbs = minOf(start, end)
+    val rangeEndAbs = maxOf(start, end)
+    if (rangeEndAbs <= blockStartAbs || rangeStartAbs >= blockEndAbs) return null
+    val localStart = (rangeStartAbs - blockStartAbs).coerceIn(0, blockText.length)
+    val localEnd = (rangeEndAbs - blockStartAbs).coerceIn(localStart, blockText.length)
+    return if (localStart < localEnd) localStart until localEnd else null
+}
+
 private fun List<ContentBlock>.extractTextBlocks(): List<TextContentBlock> {
     val result = mutableListOf<TextContentBlock>()
     for (block in this) {
@@ -1862,7 +1886,7 @@ private fun TextWithEmphasis(
         val startTime = System.currentTimeMillis()
         val paths = mutableListOf<Pair<Path, Color>>()
         val layout = textLayoutResult
-        if (layout != null && block.cfi != null && userHighlights.isNotEmpty()) {
+        if (layout != null && userHighlights.isNotEmpty()) {
             userHighlights.forEach { highlight ->
                 val range = getHighlightOffsetsInBlock(block, highlight)
                 if (range != null) {

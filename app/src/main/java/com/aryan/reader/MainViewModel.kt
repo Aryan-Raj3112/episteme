@@ -2081,7 +2081,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             try {
                 val deviceId = getInstallationId()
-                logCloudSyncTrace { "android.upload.start device=$deviceId ${book.cloudSyncTraceSummary()}" }
+                var bookForMetadata = book
+                if (book.needsRemoteEpubAnnotationMetadataGuard()) {
+                    val remote = firestoreRepository.getBookMetadata(currentUser.uid, book.bookId)
+                    val merged = bookForMetadata.mergeRemoteEpubAnnotationMetadata(remote)
+                    if (merged != bookForMetadata) {
+                        logCloudSyncTrace {
+                            "android.upload.epub_annotation_preserve book=${book.bookId} " +
+                                "local=${bookForMetadata.cloudSyncTraceSummary()} " +
+                                "remote=${remote?.cloudSyncTraceSummary() ?: "null"} " +
+                                "merged=${merged.cloudSyncTraceSummary()}"
+                        }
+                        recentFilesRepository.addRecentFile(merged)
+                        bookForMetadata = merged
+                    }
+                }
+                logCloudSyncTrace { "android.upload.start device=$deviceId ${bookForMetadata.cloudSyncTraceSummary()}" }
                 Timber.tag("AnnotationSync").d("Preparing to sync book: ${book.bookId}")
 
                 val inkFile = pdfAnnotationRepository.getAnnotationFileForSync(book.bookId)
@@ -2194,15 +2209,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 val newTimestamp = System.currentTimeMillis()
-                val metadataToSync = book.toBookMetadata().copy(
+                val metadataToSync = bookForMetadata.toBookMetadata().copy(
                     lastModifiedTimestamp = newTimestamp, hasAnnotations = hasAnyData
                 )
 
                 firestoreRepository.syncBookMetadata(currentUser.uid, metadataToSync, deviceId)
-                recentFilesRepository.addRecentFile(book.copy(lastModifiedTimestamp = newTimestamp))
+                recentFilesRepository.addRecentFile(bookForMetadata.copy(lastModifiedTimestamp = newTimestamp))
                 logCloudSyncTrace {
-                    "android.upload.metadata_success user=${currentUser.uid} oldTs=${book.lastModifiedTimestamp} " +
-                        "newTs=$newTimestamp hasAnnotations=$hasAnyData ${book.cloudSyncTraceSummary()}"
+                    "android.upload.metadata_success user=${currentUser.uid} oldTs=${bookForMetadata.lastModifiedTimestamp} " +
+                        "newTs=$newTimestamp hasAnnotations=$hasAnyData ${bookForMetadata.cloudSyncTraceSummary()}"
                 }
                 Timber.tag("AnnotationSync")
                     .d("Firestore metadata updated for ${book.bookId} (hasData=$hasAnyData)")
@@ -3271,13 +3286,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                             return@forEach
                         }
-                        val shouldDownloadContent = shouldDownloadRemoteBookContent(local, remoteItem)
+                        val localWithRemoteEpubAnnotations = local.mergeRemoteEpubAnnotationMetadata(remote)
+                        val effectiveLocal = if (localWithRemoteEpubAnnotations != local) {
+                            logCloudSyncTrace {
+                                "android.full_sync.decision action=merge_remote_epub_annotations book=$bookId " +
+                                    "local=${local.cloudSyncTraceSummary()} ${remote.cloudSyncTraceSummary()} " +
+                                    "merged=${localWithRemoteEpubAnnotations.cloudSyncTraceSummary()}"
+                            }
+                            recentFilesRepository.addRecentFile(localWithRemoteEpubAnnotations)
+                            localWithRemoteEpubAnnotations
+                        } else {
+                            local
+                        }
+                        val shouldDownloadContent = shouldDownloadRemoteBookContent(effectiveLocal, remoteItem)
                         val downloadedRemoteContent = if (shouldDownloadContent) {
                             logCloudSyncTrace {
                                 "android.full_sync.content_download_start book=$bookId " +
-                                    "localContentTs=${local.fileContentModifiedTimestamp} remoteContentTs=${remote.fileContentModifiedTimestamp}"
+                                    "localContentTs=${effectiveLocal.fileContentModifiedTimestamp} remoteContentTs=${remote.fileContentModifiedTimestamp}"
                             }
-                            downloadCloudBookFile(accessToken, remoteItem.copy(displayName = remoteItem.displayName.ifBlank { local.displayName }))
+                            downloadCloudBookFile(accessToken, remoteItem.copy(displayName = remoteItem.displayName.ifBlank { effectiveLocal.displayName }))
                         } else {
                             false
                         }
@@ -3287,36 +3314,36 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
 
                         if (shouldUploadLocalCloudBookMetadataUpdate(
-                                localModifiedTimestamp = local.lastModifiedTimestamp,
+                                localModifiedTimestamp = effectiveLocal.lastModifiedTimestamp,
                                 remoteModifiedTimestamp = remote.lastModifiedTimestamp
                             )
                         ) {
                             logCloudSyncTrace {
                                 "android.full_sync.decision action=upload_local book=$bookId " +
-                                    "localTs=${local.lastModifiedTimestamp} remoteTs=${remote.lastModifiedTimestamp} sidecarTs=$fileLastModified " +
-                                    "uploadContent=${shouldUploadLocalBookContent(local, remoteItem)}"
+                                    "localTs=${effectiveLocal.lastModifiedTimestamp} remoteTs=${remote.lastModifiedTimestamp} sidecarTs=$fileLastModified " +
+                                    "uploadContent=${shouldUploadLocalBookContent(effectiveLocal, remoteItem)}"
                             }
-                            if (shouldUploadLocalBookContent(local, remoteItem)) {
-                                uploadNewBookAndMetadata(local)
+                            if (shouldUploadLocalBookContent(effectiveLocal, remoteItem)) {
+                                uploadNewBookAndMetadata(effectiveLocal)
                             } else {
-                                uploadSingleBookMetadata(local)
+                                uploadSingleBookMetadata(effectiveLocal)
                             }
                         } else {
                             val isMetadataNewer =
                                 shouldApplyRemoteCloudBookMetadataUpdate(
-                                    localModifiedTimestamp = local.lastModifiedTimestamp,
+                                    localModifiedTimestamp = effectiveLocal.lastModifiedTimestamp,
                                     remoteModifiedTimestamp = remote.lastModifiedTimestamp
                                 )
 
                             if (isMetadataNewer) {
                                 logCloudSyncTrace {
                                     "android.full_sync.decision action=apply_remote_metadata book=$bookId " +
-                                        "localTs=${local.lastModifiedTimestamp} remoteTs=${remote.lastModifiedTimestamp} sidecarTs=$fileLastModified " +
+                                        "localTs=${effectiveLocal.lastModifiedTimestamp} remoteTs=${remote.lastModifiedTimestamp} sidecarTs=$fileLastModified " +
                                         "downloadedContent=$downloadedRemoteContent"
                                 }
                                 val remoteForLocalDb = if (shouldDownloadContent && !downloadedRemoteContent) {
                                     remote.toRecentFileItem().copy(
-                                        fileContentModifiedTimestamp = local.fileContentModifiedTimestamp
+                                        fileContentModifiedTimestamp = effectiveLocal.fileContentModifiedTimestamp
                                     )
                                 } else {
                                     remote.toRecentFileItem()
@@ -3336,14 +3363,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             } else {
                                 logCloudSyncTrace {
                                     "android.full_sync.decision action=metadata_noop book=$bookId " +
-                                        "localTs=${local.lastModifiedTimestamp} remoteTs=${remote.lastModifiedTimestamp} sidecarTs=$fileLastModified"
+                                        "localTs=${effectiveLocal.lastModifiedTimestamp} remoteTs=${remote.lastModifiedTimestamp} sidecarTs=$fileLastModified"
                                 }
                                 if (localAnnotationsShouldUpload) {
                                     logCloudSyncTrace {
                                         "android.full_sync.decision action=upload_local_annotations book=$bookId " +
-                                            "metadataEqual=${local.lastModifiedTimestamp == remote.lastModifiedTimestamp} sidecarTs=$fileLastModified"
+                                            "metadataEqual=${effectiveLocal.lastModifiedTimestamp == remote.lastModifiedTimestamp} sidecarTs=$fileLastModified"
                                     }
-                                    uploadSingleBookMetadata(local)
+                                    uploadSingleBookMetadata(effectiveLocal)
                                 }
                             }
 
@@ -4218,9 +4245,28 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val currentBookUri = _internalState.value.selectedPdfUri ?: _internalState.value.selectedEpubUri
             if (currentBookUri != null) {
                 recentFilesRepository.getFileByUri(currentBookUri.toString())?.let { item ->
+                    if (annotationJsonEquivalentForNoop(item.highlightsJson, highlightsJson)) {
+                        logCloudSyncTrace {
+                            "android.reader.highlights_save_noop book=${item.bookId} highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+                        }
+                        return@launch
+                    }
+                    logCloudSyncTrace {
+                        "android.reader.highlights_save book=${item.bookId} highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+                    }
                     recentFilesRepository.updateHighlights(item.bookId, highlightsJson)
                 }
             } else if (bookId.isNotBlank()) {
+                val existing = recentFilesRepository.getFileByBookId(bookId)
+                if (annotationJsonEquivalentForNoop(existing?.highlightsJson, highlightsJson)) {
+                    logCloudSyncTrace {
+                        "android.reader.highlights_save_noop book=$bookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+                    }
+                    return@launch
+                }
+                logCloudSyncTrace {
+                    "android.reader.highlights_save book=$bookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+                }
                 recentFilesRepository.updateHighlights(bookId, highlightsJson)
             }
         }

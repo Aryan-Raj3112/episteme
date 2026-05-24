@@ -1006,13 +1006,14 @@ object ReaderHtmlDocumentBuilder {
                     var offset = usePreferredOffset ? preferredOffset : visible.offset;
                     var page = pageForLocator(chapterIndex, offset) || readerPageAnchors[0];
                     if (!page) return null;
+                    var positionCfi = readerCfiPointForOffset(content, offset, false) || ('desktop:' + chapterIndex + ':' + offset + ':' + offset);
                     return {
                       pageIndex: page.pageIndex,
                       chapterIndex: chapterIndex,
                       startOffset: offset,
                       endOffset: offset,
                       textQuote: snippetFromContentOffset(content, offset),
-                      cfi: 'desktop:' + chapterIndex + ':' + offset + ':' + offset
+                      cfi: positionCfi
                     };
                   }
                   function currentVisiblePosition() {
@@ -1791,6 +1792,39 @@ object ReaderHtmlDocumentBuilder {
                     if (host && (host === root || root.contains(host))) return host;
                     return null;
                   }
+                  function readerTextHostForOffset(content, offset, preferEnd) {
+                    if (!content || !Number.isFinite(offset)) return null;
+                    var hosts = Array.prototype.slice.call(content.querySelectorAll('[data-reader-text-start][data-reader-text-end][data-reader-cfi]'));
+                    for (var i = 0; i < hosts.length; i++) {
+                      var host = hosts[i];
+                      var start = numberAttribute(host, 'data-reader-text-start', null);
+                      var end = numberAttribute(host, 'data-reader-text-end', null);
+                      var cfi = host.getAttribute && host.getAttribute('data-reader-cfi');
+                      if (start === null || end === null || !cfi || cfi.charAt(0) !== '/') continue;
+                      if (preferEnd) {
+                        if (offset > start && offset <= end) return host;
+                      } else if (offset >= start && offset < end) {
+                        return host;
+                      }
+                    }
+                    return null;
+                  }
+                  function readerCfiPointForOffset(content, offset, preferEnd) {
+                    var host = readerTextHostForOffset(content, offset, preferEnd);
+                    if (!host) return null;
+                    var baseCfi = String(host.getAttribute('data-reader-cfi') || '').split(':')[0];
+                    var hostStart = numberAttribute(host, 'data-reader-text-start', null);
+                    var hostEnd = numberAttribute(host, 'data-reader-text-end', null);
+                    if (!baseCfi || hostStart === null || hostEnd === null) return null;
+                    var localOffset = Math.max(0, Math.min(offset - hostStart, Math.max(0, hostEnd - hostStart)));
+                    return baseCfi + ':' + localOffset;
+                  }
+                  function readerHighlightCfiForRange(startSegment, endSegment, chapterIndex, startOffset, endOffset) {
+                    var startPoint = readerCfiPointForOffset(startSegment && startSegment.content, startOffset, false);
+                    var endPoint = readerCfiPointForOffset(endSegment && endSegment.content, endOffset, true);
+                    if (startPoint && endPoint) return startPoint + '|' + endPoint;
+                    return 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;
+                  }
                   function absoluteOffsetForBoundary(root, container, offset) {
                     var host = explicitTextHostForBoundary(root, container);
                     if (!host) return null;
@@ -2238,6 +2272,46 @@ object ReaderHtmlDocumentBuilder {
                     );
                     return range;
                   }
+                  function readerCfiPointBase(cfiPoint) {
+                    return String(cfiPoint || '').split(':')[0];
+                  }
+                  function readerCfiPointLocalOffset(cfiPoint) {
+                    var parts = String(cfiPoint || '').split(':');
+                    if (parts.length < 2) return 0;
+                    var parsed = parseInt(parts[1], 10);
+                    return Number.isFinite(parsed) ? parsed : 0;
+                  }
+                  function readerHostElementForCfiPoint(chapterIndex, cfiPoint) {
+                    var baseCfi = readerCfiPointBase(cfiPoint);
+                    if (!baseCfi || baseCfi.charAt(0) !== '/') return null;
+                    var hosts = readerHostsForLocator(chapterIndex, null, null);
+                    for (var i = 0; i < hosts.length; i++) {
+                      var content = hosts[i].querySelector('.reader-content') || hosts[i];
+                      var cfiHost = content.querySelector('[data-reader-cfi="' + selectorValue(baseCfi) + '"]');
+                      if (cfiHost) return cfiHost;
+                    }
+                    return null;
+                  }
+                  function readerContentOffsetForCfiPoint(chapterIndex, cfiPoint) {
+                    var cfiHost = readerHostElementForCfiPoint(chapterIndex, cfiPoint);
+                    if (!cfiHost) return null;
+                    var hostStart = numberAttribute(cfiHost, 'data-reader-text-start', null);
+                    var hostEnd = numberAttribute(cfiHost, 'data-reader-text-end', null);
+                    if (hostStart === null || hostEnd === null || hostEnd < hostStart) return null;
+                    var localOffset = Math.max(0, readerCfiPointLocalOffset(cfiPoint));
+                    return Math.max(hostStart, Math.min(hostEnd, hostStart + localOffset));
+                  }
+                  function readerOffsetsForSourceCfi(chapterIndex, sourceCfi, expectedText) {
+                    if (!sourceCfi || sourceCfi.charAt(0) !== '/') return null;
+                    var parts = String(sourceCfi).split('|');
+                    var startPoint = parts[0];
+                    var endPoint = parts[parts.length - 1] || startPoint;
+                    var startOffset = readerContentOffsetForCfiPoint(chapterIndex, startPoint);
+                    var endOffset = readerContentOffsetForCfiPoint(chapterIndex, endPoint);
+                    if (startOffset === null || endOffset === null || endOffset < startOffset) return null;
+                    if (endOffset === startOffset && expectedText) endOffset = startOffset + String(expectedText).length;
+                    return { startOffset: startOffset, endOffset: endOffset };
+                  }
                   function applyHighlightObject(highlight) {
                     if (!highlight) return;
                     var locator = highlight.locator || {};
@@ -2245,6 +2319,13 @@ object ReaderHtmlDocumentBuilder {
                     if (chapterIndex === undefined || chapterIndex === null) chapterIndex = highlight.chapterIndex;
                     var startOffset = locator.startOffset;
                     var endOffset = locator.endOffset;
+                    var sourceCfi = locator.cfi || highlight.cfi;
+                    var expectedText = locator.textQuote || highlight.text || '';
+                    var cfiOffsets = readerOffsetsForSourceCfi(chapterIndex, sourceCfi, expectedText);
+                    if (cfiOffsets && (startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset)) {
+                      startOffset = cfiOffsets.startOffset;
+                      endOffset = cfiOffsets.endOffset;
+                    }
                     if (chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) {
                       applyHighlightTextFallback(highlight);
                       return;
@@ -2254,8 +2335,6 @@ object ReaderHtmlDocumentBuilder {
                       applyHighlightTextFallback(highlight);
                       return;
                     }
-                    var sourceCfi = locator.cfi || highlight.cfi;
-                    var expectedText = locator.textQuote || highlight.text || '';
                     var expectedNormalized = readerTtsNormalized(expectedText);
                     var applied = false;
                     targetChapters.forEach(function (targetChapter) {
@@ -2345,6 +2424,10 @@ object ReaderHtmlDocumentBuilder {
                       : readerHostForLocator(chapterIndex, locator.startOffset, locator.endOffset);
                     if (!root) root = document.body;
                     var content = root.querySelector ? (root.querySelector('.reader-content') || root) : root;
+                    var sourceCfi = locator.cfi || highlight.cfi;
+                    var cfiPoint = sourceCfi ? String(sourceCfi).split('|')[0] : null;
+                    var cfiHost = readerHostElementForCfiPoint(chapterIndex, cfiPoint);
+                    if (cfiHost) content = cfiHost;
                     var range = normalizedRangeForText(content, expectedText, false);
                     if (!range || range.collapsed) return false;
                     wrapRangeTextSegments(range, function () {
@@ -2540,7 +2623,7 @@ object ReaderHtmlDocumentBuilder {
                         var anchorPage = pageForLocator(chapterIndex, startOffset);
                         if (anchorPage) pageIndex = anchorPage.pageIndex;
                       }
-                      var cfi = 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;
+                      var cfi = readerHighlightCfiForRange(firstSegment, lastSegment, chapterIndex, startOffset, endOffset);
                       payloads.push({
                         cfi: cfi,
                         text: text,
@@ -2559,7 +2642,7 @@ object ReaderHtmlDocumentBuilder {
                       });
                     } else {
                       segments.forEach(function (segment) {
-                        var cfi = 'desktop:' + segment.chapterIndex + ':' + segment.startOffset + ':' + segment.endOffset;
+                        var cfi = readerHighlightCfiForRange(segment, segment, segment.chapterIndex, segment.startOffset, segment.endOffset);
                         payloads.push({
                           cfi: cfi,
                           text: segment.text,

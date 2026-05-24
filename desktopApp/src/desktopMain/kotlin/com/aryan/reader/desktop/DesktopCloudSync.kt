@@ -611,14 +611,20 @@ internal fun BookItem.toDesktopCloudBookMetadata(
     contentTimestampOverride: Long? = null
 ): DesktopCloudBookMetadata {
     val position = readerPosition.takeIf { type.usesCloudLocatorMetadata() }
+    val supportsReaderAnnotations = type.usesCloudLocatorMetadata()
     val bookmarksJson = desktopPdfBookmarksMetadataJson(this)
-        ?: readerBookmarks
-            .mapNotNull { it.toDesktopCloudEpubBookmarkOrNull() }
-            .takeIf { it.isNotEmpty() }
-            ?.let(EpubAnnotationSerializer::bookmarksToJson)
-    val highlightsJson = readerHighlights
-        .takeIf { it.isNotEmpty() }
-        ?.let(EpubAnnotationSerializer::highlightsToJson)
+        ?: if (supportsReaderAnnotations) {
+            readerBookmarks
+                .mapNotNull { it.toDesktopCloudEpubBookmarkOrNull() }
+                .let(EpubAnnotationSerializer::bookmarksToJson)
+        } else {
+            null
+        }
+    val highlightsJson = if (supportsReaderAnnotations) {
+        EpubAnnotationSerializer.highlightsToJson(readerHighlights)
+    } else {
+        null
+    }
     val localFile = path?.let(::File)
     val contentTimestamp = contentTimestampOverride
         ?: fileContentModifiedTimestamp.takeIf { it > 0L }

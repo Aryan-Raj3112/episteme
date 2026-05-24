@@ -39,6 +39,40 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `visible locator and bookmarks prefer android style cfi when semantic blocks provide it`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(
+            SharedEpubBook(
+                id = "semantic",
+                fileName = "semantic.epub",
+                title = "Semantic",
+                chapters = listOf(
+                    SharedEpubChapter(
+                        id = "one",
+                        title = "One",
+                        plainText = "Alpha beta",
+                        semanticBlocks = listOf(
+                            SemanticParagraph(
+                                text = "Alpha beta",
+                                spans = emptyList(),
+                                style = CssStyle(),
+                                elementId = null,
+                                cfi = "/4/2/2",
+                                startCharOffsetInSource = 0
+                            )
+                        )
+                    )
+                )
+            )
+        )
+
+        val bookmarked = engine.toggleBookmark(session)
+
+        assertEquals("/4/2/2:0", session.navigationLocator?.cfi)
+        assertEquals("/4/2/2:0", bookmarked.bookmarks.single().locator.cfi)
+    }
+
+    @Test
     fun `visual settings update does not repaginate or move current page`() {
         val engine = ReaderEngine()
         val session = engine.goToPage(engine.createSession(longBook()), 1)

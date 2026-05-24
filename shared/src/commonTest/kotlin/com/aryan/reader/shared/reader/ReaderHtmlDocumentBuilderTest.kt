@@ -143,6 +143,8 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("highlight_bridge_error attempt="))
         assertTrue(html.contains("var marker = document.createElement('span');"))
         assertTrue(html.contains("range.intersectsNode(node)"))
+        assertTrue(html.contains("function readerHighlightCfiForRange(startSegment, endSegment, chapterIndex, startOffset, endOffset)"))
+        assertTrue(html.contains("function readerOffsetsForSourceCfi(chapterIndex, sourceCfi, expectedText)"))
         assertFalse(html.contains("paintUserHighlightRange(payload"))
         assertTrue(localWrapIndex >= 0)
         assertTrue(bridgeSendIndex > localWrapIndex)
@@ -508,7 +510,8 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertTrue(html.contains("function selectionSegmentsForRange(range)"))
         assertTrue(html.contains("var sameChapter = segments.every(function (segment)"))
-        assertTrue(html.contains("var cfi = 'desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset;"))
+        assertTrue(html.contains("var cfi = readerHighlightCfiForRange(firstSegment, lastSegment, chapterIndex, startOffset, endOffset);"))
+        assertTrue(html.contains("return startPoint + '|' + endPoint;"))
         assertTrue(html.contains("payloads.forEach(function (payload)"))
         assertTrue(html.contains("wrapRangeTextSegments(segment.range"))
     }

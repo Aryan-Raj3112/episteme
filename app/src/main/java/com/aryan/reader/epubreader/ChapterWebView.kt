@@ -386,6 +386,36 @@ private data class CustomMenuState(
     val selectedColor: HighlightColor? = null
 )
 
+internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): String {
+    val jsonArray = org.json.JSONArray()
+    userHighlights.forEach { highlight ->
+        val obj = JSONObject()
+        obj.put("id", highlight.id)
+        obj.put("cfi", highlight.cfi)
+        obj.put("text", highlight.text)
+        obj.put("cssClass", highlight.color.cssClass)
+        obj.put("colorId", highlight.color.id)
+        obj.put("chapterIndex", highlight.chapterIndex)
+        obj.put(
+            "locator",
+            JSONObject().apply {
+                highlight.locator.chapterIndex?.let { put("chapterIndex", it) }
+                highlight.locator.chapterId?.let { put("chapterId", it) }
+                highlight.locator.href?.let { put("href", it) }
+                highlight.locator.pageIndex?.let { put("pageIndex", it) }
+                highlight.locator.startOffset?.let { put("startOffset", it) }
+                highlight.locator.endOffset?.let { put("endOffset", it) }
+                highlight.locator.blockIndex?.let { put("blockIndex", it) }
+                highlight.locator.charOffset?.let { put("charOffset", it) }
+                highlight.locator.textQuote?.let { put("textQuote", it) }
+                highlight.locator.cfi?.let { put("cfi", it) }
+            }
+        )
+        jsonArray.put(obj)
+    }
+    return jsonArray.toString()
+}
+
 @Suppress("unused")
 class AiJsBridge(
     private val scope: CoroutineScope, private val onContentReady: suspend (String) -> Unit
@@ -526,17 +556,7 @@ fun ChapterWebView(
         )
     }
 
-    val highlightsJson = remember(userHighlights) {
-        val jsonArray = org.json.JSONArray()
-        userHighlights.forEach { h ->
-            val obj = JSONObject()
-            obj.put("cfi", h.cfi)
-            obj.put("text", h.text)
-            obj.put("cssClass", h.color.cssClass)
-            jsonArray.put(obj)
-        }
-        jsonArray.toString()
-    }
+    val highlightsJson = remember(userHighlights) { highlightsJsonForWebView(userHighlights) }
 
     if (showExternalLinkDialog != null) {
         val urlToShow = showExternalLinkDialog!!
