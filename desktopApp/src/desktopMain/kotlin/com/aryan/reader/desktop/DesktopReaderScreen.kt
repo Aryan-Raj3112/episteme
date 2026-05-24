@@ -447,7 +447,22 @@ internal fun DesktopReaderScreen(
             } else {
                 when (renderPlan) {
                     is ReaderContentRenderPlan.WebDocument -> {
-                        if (webViewRuntimeState.initialized) {
+                        val canRenderWebDocument = desktopEpubWebViewCanRender(webViewRuntimeState)
+                        LaunchedEffect(
+                            renderPlan.html,
+                            canRenderWebDocument,
+                            webViewRuntimeState,
+                            webViewNetworkAccessEnabled
+                        ) {
+                            logDesktopWebView2(
+                                "reader_screen_web_document canRender=$canRenderWebDocument " +
+                                    "backend=${if (desktopEpubWebViewUsesWebView2()) "webview2" else "kcef"} " +
+                                    "runtimeInitialized=${webViewRuntimeState.initialized} restart=${webViewRuntimeState.restartRequired} " +
+                                    "error=${webViewRuntimeState.errorMessage != null} network=$webViewNetworkAccessEnabled " +
+                                    "htmlChars=${renderPlan.html.length} htmlHash=${renderPlan.html.hashCode()}"
+                            )
+                        }
+                        if (canRenderWebDocument) {
                             DesktopEpubWebView(
                                 html = renderPlan.html,
                                 appearanceScript = renderPlan.appearanceScript,

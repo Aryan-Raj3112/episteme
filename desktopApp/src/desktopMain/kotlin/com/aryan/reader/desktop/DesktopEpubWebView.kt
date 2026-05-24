@@ -49,14 +49,86 @@ internal fun DesktopEpubWebView(
     networkAccessEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
-    val latestOnHighlightSelected by rememberUpdatedState(onHighlightSelected)
-    val latestOnKeyboardNavigation by rememberUpdatedState(onKeyboardNavigation)
-    val latestOnSelectionAction by rememberUpdatedState(onSelectionAction)
+    if (desktopEpubWebViewUsesWebView2()) {
+        LaunchedEffect(html, networkAccessEnabled, highlights.size, navigationTarget.readingMode) {
+            logDesktopWebView2(
+                "backend_selected backend=webview2 htmlChars=${html.length} htmlHash=${html.hashCode()} " +
+                    "network=$networkAccessEnabled highlights=${highlights.size} navMode=${navigationTarget.readingMode}"
+            )
+        }
+        DesktopWindowsWebView2EpubWebView(
+            html = html,
+            appearanceScript = appearanceScript,
+            highlightPaletteScript = highlightPaletteScript,
+            navigationTarget = navigationTarget,
+            highlights = highlights,
+            onHighlightCreated = onHighlightCreated,
+            onHighlightSelected = onHighlightSelected,
+            isFullscreen = isFullscreen,
+            onKeyboardNavigation = onKeyboardNavigation,
+            onSelectionAction = onSelectionAction,
+            onLinkClicked = onLinkClicked,
+            onVisiblePageChanged = onVisiblePageChanged,
+            onPointerActivity = onPointerActivity,
+            networkAccessEnabled = networkAccessEnabled,
+            modifier = modifier
+        )
+    } else {
+        LaunchedEffect(html, networkAccessEnabled, highlights.size, navigationTarget.readingMode) {
+            logDesktopWebView2(
+                "backend_selected backend=kcef htmlChars=${html.length} htmlHash=${html.hashCode()} " +
+                    "network=$networkAccessEnabled highlights=${highlights.size} navMode=${navigationTarget.readingMode}"
+            )
+        }
+        DesktopKcefEpubWebView(
+            html = html,
+            appearanceScript = appearanceScript,
+            highlightPaletteScript = highlightPaletteScript,
+            navigationTarget = navigationTarget,
+            highlights = highlights,
+            onHighlightCreated = onHighlightCreated,
+            onHighlightSelected = onHighlightSelected,
+            isFullscreen = isFullscreen,
+            onKeyboardNavigation = onKeyboardNavigation,
+            onSelectionAction = onSelectionAction,
+            onLinkClicked = onLinkClicked,
+            onVisiblePageChanged = onVisiblePageChanged,
+            onPointerActivity = onPointerActivity,
+            networkAccessEnabled = networkAccessEnabled,
+            modifier = modifier
+        )
+    }
+}
+
+@Composable
+private fun DesktopKcefEpubWebView(
+    html: String,
+    appearanceScript: String,
+    highlightPaletteScript: String,
+    navigationTarget: ReaderContentNavigationTarget,
+    highlights: List<UserHighlight>,
+    onHighlightCreated: (UserHighlight) -> Unit,
+    onHighlightSelected: (String) -> Unit,
+    isFullscreen: Boolean,
+    onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
+    onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
+    onLinkClicked: (DesktopEpubLinkClick) -> Unit,
+    onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
+    onPointerActivity: () -> Unit = {},
+    networkAccessEnabled: Boolean,
+    modifier: Modifier = Modifier
+) {
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
-    val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
-    val latestOnPointerActivity by rememberUpdatedState(onPointerActivity)
     val scope = rememberCoroutineScope()
+    val bridgeHandlers = rememberDesktopEpubBridgeHandlers(
+        onHighlightCreated = onHighlightCreated,
+        onHighlightSelected = onHighlightSelected,
+        onKeyboardNavigation = onKeyboardNavigation,
+        onSelectionAction = onSelectionAction,
+        onLinkClicked = onLinkClicked,
+        onVisiblePageChanged = onVisiblePageChanged,
+        onPointerActivity = onPointerActivity
+    )
     val linkRequestInterceptor = remember(scope, networkAccessEnabled) {
         object : RequestInterceptor {
             override fun onInterceptUrlRequest(
@@ -83,76 +155,12 @@ internal fun DesktopEpubWebView(
     val navigator = rememberWebViewNavigator(requestInterceptor = linkRequestInterceptor)
     val bridge = rememberWebViewJsBridge()
 
-    DisposableEffect(bridge) {
-        val handlers = listOf(
-            desktopEpubBridgeHandler("readerHighlightCreated") { message ->
-                logEpubHighlightFlow("bridge_received method=readerHighlightCreated params=\"${message.params.logPreview(900)}\"")
-                val highlight = EpubAnnotationSerializer.parseHighlightJsonLenient(message.params)
-                if (highlight == null) {
-                    logEpubHighlightFlow("bridge_parse_failed method=readerHighlightCreated")
-                    logEpubSelectionDebug("highlight_parse_failed params=${message.params.logPreview(900)}")
-                } else {
-                    logEpubHighlightFlow(
-                        "bridge_parse_success id=${highlight.id} color=${highlight.color.id} " +
-                            "chapter=${highlight.chapterIndex} offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
-                            "page=${highlight.locator.pageIndex} textChars=${highlight.text.length} cfi=\"${highlight.cfi.logPreview()}\""
-                    )
-                    scope.launch { latestOnHighlightCreated(highlight) }
-                }
-            },
-            desktopEpubBridgeHandler("readerHighlightClicked") { message ->
-                message.params.readerHighlightClickOrNull()?.let { highlightClick ->
-                    scope.launch { latestOnHighlightSelected(highlightClick.highlightId) }
-                }
-            },
-            desktopEpubBridgeHandler("readerPositionChanged") { message ->
-                message.params.readerPositionOrNull()?.let { position ->
-                    scope.launch { latestOnVisiblePageChanged(position.pageIndex, position.locator) }
-                }
-            },
-            desktopEpubBridgeHandler("readerSelectionAction") { message ->
-                val selectionAction = message.params.readerSelectionActionOrNull()
-                if (selectionAction != null) {
-                    scope.launch { latestOnSelectionAction(selectionAction.action, selectionAction.text) }
-                }
-            },
-            desktopEpubBridgeHandler("readerKeyNavigation") { message ->
-                message.params.readerKeyNavigationOrNull()?.let { action ->
-                    scope.launch { latestOnKeyboardNavigation(action) }
-                }
-            },
-            desktopEpubBridgeHandler("readerPointerActivity") { _ ->
-                scope.launch { latestOnPointerActivity() }
-            },
-            desktopEpubBridgeHandler("readerTtsHighlightLog") { message ->
-                logDesktopTts("epub_highlight_js ${message.params.logPreview(500)}")
-            },
-            desktopEpubBridgeHandler("readerSelectionDebugLog") { message ->
-                logEpubSelectionDebug(message.params.readerSelectionDebugMessageOrNull() ?: message.params.logPreview(900))
-            },
-            desktopEpubBridgeHandler("readerHighlightFlowLog") { message ->
-                logEpubHighlightFlow(message.params.readerSelectionDebugMessageOrNull() ?: message.params.logPreview(900))
-            },
-            desktopEpubBridgeHandler("readerPaginationLayoutLog") { message ->
-                logEpubPagination(message.params.readerPaginationLogMessageOrNull() ?: message.params.logPreview(900))
-            },
-            desktopEpubBridgeHandler("readerGapLayoutLog") { message ->
-                logReaderGap(message.params.readerPaginationLogMessageOrNull() ?: message.params.logPreview(900))
-            },
-            desktopEpubBridgeHandler("readerLinkClicked") { message ->
-                logEpubLink("bridge_message params=\"${message.params.logPreview()}\"")
-                val link = message.params.readerLinkClickOrNull()
-                if (link == null) {
-                    logEpubLink("bridge_message_ignored reason=parse_failed")
-                } else {
-                    logEpubLink(
-                        "bridge_message_parsed href=\"${link.href.logPreview()}\" " +
-                            "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\""
-                    )
-                    scope.launch { latestOnLinkClicked(link) }
-                }
+    DisposableEffect(bridge, bridgeHandlers) {
+        val handlers = bridgeHandlers.map { handler ->
+            desktopEpubBridgeHandler(handler.methodName) { message ->
+                handler.onMessage(message.params)
             }
-        )
+        }
         handlers.forEach { bridge.register(it) }
         onDispose {
             handlers.forEach { bridge.unregister(it) }
@@ -285,9 +293,105 @@ private fun desktopEpubBridgeHandler(
     }
 }
 
+internal data class DesktopEpubBridgeHandler(
+    val methodName: String,
+    val onMessage: (String) -> Unit
+)
+
+@Composable
+internal fun rememberDesktopEpubBridgeHandlers(
+    onHighlightCreated: (UserHighlight) -> Unit,
+    onHighlightSelected: (String) -> Unit,
+    onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
+    onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
+    onLinkClicked: (DesktopEpubLinkClick) -> Unit,
+    onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
+    onPointerActivity: () -> Unit
+): List<DesktopEpubBridgeHandler> {
+    val latestOnHighlightCreated by rememberUpdatedState(onHighlightCreated)
+    val latestOnHighlightSelected by rememberUpdatedState(onHighlightSelected)
+    val latestOnKeyboardNavigation by rememberUpdatedState(onKeyboardNavigation)
+    val latestOnSelectionAction by rememberUpdatedState(onSelectionAction)
+    val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
+    val latestOnVisiblePageChanged by rememberUpdatedState(onVisiblePageChanged)
+    val latestOnPointerActivity by rememberUpdatedState(onPointerActivity)
+    val scope = rememberCoroutineScope()
+    return remember(scope) {
+        listOf(
+            DesktopEpubBridgeHandler("readerHighlightCreated") { params ->
+                logEpubHighlightFlow("bridge_received method=readerHighlightCreated params=\"${params.logPreview(900)}\"")
+                val highlight = EpubAnnotationSerializer.parseHighlightJsonLenient(params)
+                if (highlight == null) {
+                    logEpubHighlightFlow("bridge_parse_failed method=readerHighlightCreated")
+                    logEpubSelectionDebug("highlight_parse_failed params=${params.logPreview(900)}")
+                } else {
+                    logEpubHighlightFlow(
+                        "bridge_parse_success id=${highlight.id} color=${highlight.color.id} " +
+                            "chapter=${highlight.chapterIndex} offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                            "page=${highlight.locator.pageIndex} textChars=${highlight.text.length} cfi=\"${highlight.cfi.logPreview()}\""
+                    )
+                    scope.launch { latestOnHighlightCreated(highlight) }
+                }
+            },
+            DesktopEpubBridgeHandler("readerHighlightClicked") { params ->
+                params.readerHighlightClickOrNull()?.let { highlightClick ->
+                    scope.launch { latestOnHighlightSelected(highlightClick.highlightId) }
+                }
+            },
+            DesktopEpubBridgeHandler("readerPositionChanged") { params ->
+                params.readerPositionOrNull()?.let { position ->
+                    scope.launch { latestOnVisiblePageChanged(position.pageIndex, position.locator) }
+                }
+            },
+            DesktopEpubBridgeHandler("readerSelectionAction") { params ->
+                val selectionAction = params.readerSelectionActionOrNull()
+                if (selectionAction != null) {
+                    scope.launch { latestOnSelectionAction(selectionAction.action, selectionAction.text) }
+                }
+            },
+            DesktopEpubBridgeHandler("readerKeyNavigation") { params ->
+                params.readerKeyNavigationOrNull()?.let { action ->
+                    scope.launch { latestOnKeyboardNavigation(action) }
+                }
+            },
+            DesktopEpubBridgeHandler("readerPointerActivity") {
+                scope.launch { latestOnPointerActivity() }
+            },
+            DesktopEpubBridgeHandler("readerTtsHighlightLog") { params ->
+                logDesktopTts("epub_highlight_js ${params.logPreview(500)}")
+            },
+            DesktopEpubBridgeHandler("readerSelectionDebugLog") { params ->
+                logEpubSelectionDebug(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900))
+            },
+            DesktopEpubBridgeHandler("readerHighlightFlowLog") { params ->
+                logEpubHighlightFlow(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900))
+            },
+            DesktopEpubBridgeHandler("readerPaginationLayoutLog") { params ->
+                logEpubPagination(params.readerPaginationLogMessageOrNull() ?: params.logPreview(900))
+            },
+            DesktopEpubBridgeHandler("readerGapLayoutLog") { params ->
+                logReaderGap(params.readerPaginationLogMessageOrNull() ?: params.logPreview(900))
+            },
+            DesktopEpubBridgeHandler("readerLinkClicked") { params ->
+                logEpubLink("bridge_message params=\"${params.logPreview()}\"")
+                val link = params.readerLinkClickOrNull()
+                if (link == null) {
+                    logEpubLink("bridge_message_ignored reason=parse_failed")
+                } else {
+                    logEpubLink(
+                        "bridge_message_parsed href=\"${link.href.logPreview()}\" " +
+                            "chapterIndex=${link.chapterIndex} chapterHref=\"${link.chapterHref.orEmpty().logPreview()}\""
+                    )
+                    scope.launch { latestOnLinkClicked(link) }
+                }
+            }
+        )
+    }
+}
+
 private fun LoadingState.isFinished(): Boolean = this is LoadingState.Finished
 
-private val DesktopEpubKeyNavigationScript = """
+internal val DesktopEpubKeyNavigationScript = """
     (function () {
       if (!window.readerDesktopChromeTapInstalled) {
         window.readerDesktopChromeTapInstalled = true;

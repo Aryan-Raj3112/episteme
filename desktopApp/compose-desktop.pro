@@ -12,6 +12,8 @@
 # the Windows MSI path, so keep ProGuard from treating them as release blockers.
 -dontwarn com.jetbrains.cef.**
 -dontwarn com.jetbrains.JBR
+-dontwarn com.multiplatform.webview.**
+-dontwarn dev.datlag.kcef.**
 -dontwarn org.cef.**
 -dontwarn com.jogamp.**
 -dontwarn jogamp.**

@@ -147,15 +147,16 @@ class DesktopBuildProfileTest {
     }
 
     @Test
-    fun `bundled webview detection requires cef binaries`() {
+    fun `windows bundled webview detection is disabled for webview2`() {
         val dir = Files.createTempDirectory("episteme-kcef-test").toFile()
         try {
             val windowsX64 = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+            assertEquals(emptyList(), bundledDesktopWebViewRequiredPaths(windowsX64))
             assertFalse(isBundledDesktopWebViewPresent(dir, windowsX64))
             File(dir, "jcef.dll").writeText("jcef")
             File(dir, "libcef.dll").writeText("cef")
 
-            assertTrue(isBundledDesktopWebViewPresent(dir, windowsX64))
+            assertFalse(isBundledDesktopWebViewPresent(dir, windowsX64))
         } finally {
             dir.deleteRecursively()
         }

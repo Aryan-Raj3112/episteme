@@ -100,10 +100,17 @@ fun desktopKcefBundleDirectoryName(
 
 fun bundledWebViewRequiredPaths(osName: String, osArch: String): List<String> {
     return when (desktopOsId(osName)) {
-        "windows" -> listOf("jcef.dll", "libcef.dll")
+        "windows" -> emptyList()
         "linux" -> listOf("libcef.so", "chrome-sandbox", "icudtl.dat", "locales")
         "macos" -> listOf("jcef Helper.app", "Chromium Embedded Framework.framework")
         else -> emptyList()
+    }
+}
+
+fun desktopSwtWindowsArtifactId(osArch: String = System.getProperty("os.arch")): String {
+    return when (desktopArchId(osArch)) {
+        "arm64" -> "org.eclipse.swt.win32.win32.aarch64"
+        else -> "org.eclipse.swt.win32.win32.x86_64"
     }
 }
 
@@ -358,7 +365,12 @@ val desktopPackageDescription = if (isOssOfflineDesktop) {
 val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan")
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
+val desktopUsesWindowsWebView2 = desktopOsId(desktopOsName) == "windows"
+val desktopRequiresBundledWebViewRuntime = !desktopUsesWindowsWebView2
 val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
+val desktopKmpWebViewDependency = "io.github.kevinnzou:compose-webview-multiplatform:2.0.3"
+val desktopSwtVersion = "3.133.0"
+val desktopSwtWindowsDependency = "org.eclipse.platform:${desktopSwtWindowsArtifactId(desktopOsArch)}:$desktopSwtVersion"
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
 val generatedDesktopStringResourcesDir = layout.buildDirectory.dir("generated/desktopStringResources")
 val rootLocalProperties = Properties()
@@ -469,18 +481,21 @@ val checkBundledPdfiumRuntime by tasks.registering(CheckBundledPdfiumRuntimeTask
 }
 
 val prepareBundledDesktopResources by tasks.registering(Sync::class) {
-    dependsOn(checkBundledWebViewRuntime, checkBundledPdfiumRuntime)
-    from(bundledWebViewDir) {
-        exclude(bundledWebViewTrimmedRuntimeFiles)
-        val localeExcludes = bundledWebViewDir.asFile
-            .resolve("locales")
-            .listFiles { file -> file.isFile && file.extension.equals("pak", ignoreCase = true) }
-            .orEmpty()
-            .map { it.name }
-            .filterNot { it in bundledWebViewKeptLocales }
-            .map { "locales/$it" }
-        exclude(localeExcludes)
-        into("common/kcef-bundle")
+    dependsOn(checkBundledPdfiumRuntime)
+    if (desktopRequiresBundledWebViewRuntime) {
+        dependsOn(checkBundledWebViewRuntime)
+        from(bundledWebViewDir) {
+            exclude(bundledWebViewTrimmedRuntimeFiles)
+            val localeExcludes = bundledWebViewDir.asFile
+                .resolve("locales")
+                .listFiles { file -> file.isFile && file.extension.equals("pak", ignoreCase = true) }
+                .orEmpty()
+                .map { it.name }
+                .filterNot { it in bundledWebViewKeptLocales }
+                .map { "locales/$it" }
+            exclude(localeExcludes)
+            into("common/kcef-bundle")
+        }
     }
     from(bundledPdfiumDir) {
         into("common/third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}")
@@ -524,7 +539,14 @@ kotlin {
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
                 implementation(compose.materialIconsExtended)
-                implementation("io.github.kevinnzou:compose-webview-multiplatform:2.0.3")
+                compileOnly(desktopKmpWebViewDependency)
+                if (desktopRequiresBundledWebViewRuntime) {
+                    runtimeOnly(desktopKmpWebViewDependency)
+                }
+                compileOnly(desktopSwtWindowsDependency)
+                if (desktopUsesWindowsWebView2) {
+                    runtimeOnly(desktopSwtWindowsDependency)
+                }
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("net.java.dev.jna:jna:5.17.0")
                 implementation("org.apache.commons:commons-compress:1.28.0")

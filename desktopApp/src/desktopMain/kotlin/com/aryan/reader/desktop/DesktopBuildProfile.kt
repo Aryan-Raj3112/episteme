@@ -102,7 +102,8 @@ internal fun isBundledDesktopWebViewPresent(
     dir: File,
     platform: DesktopPlatform = currentDesktopPlatform()
 ): Boolean {
-    return dir.isDirectory &&
+    return desktopEpubWebViewUsesBundledRuntime(platform) &&
+        dir.isDirectory &&
         bundledDesktopWebViewRequiredPaths(platform).all { requiredPath ->
             dir.resolve(requiredPath).exists()
         }
@@ -112,7 +113,7 @@ internal fun bundledDesktopWebViewRequiredPaths(
     platform: DesktopPlatform = currentDesktopPlatform()
 ): List<String> {
     return when (platform.os) {
-        DesktopOperatingSystem.WINDOWS -> listOf("jcef.dll", "libcef.dll")
+        DesktopOperatingSystem.WINDOWS -> emptyList()
         DesktopOperatingSystem.LINUX -> listOf("libcef.so", "chrome-sandbox", "icudtl.dat", "locales")
         DesktopOperatingSystem.MACOS -> listOf("jcef Helper.app", "Chromium Embedded Framework.framework")
         DesktopOperatingSystem.OTHER -> emptyList()

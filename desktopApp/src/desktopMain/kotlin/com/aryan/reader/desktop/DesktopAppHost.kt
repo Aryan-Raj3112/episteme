@@ -192,13 +192,31 @@ internal const val ComposeInteropBlendingProperty = "compose.interop.blending"
 internal const val ComposeInteropBlendingEnabled = "true"
 private const val DesktopWindowStatePersistDebounceMillis = 450L
 
-internal fun configureComposeSwingInterop() {
-    // Must run before Compose creates the desktop window. Vertical EPUB embeds a Swing-backed
-    // JCEF WebView, and current Compose interop can leave a stale black native rectangle after
-    // that reader surface is removed unless interop blending is enabled.
-    if (System.getProperty(ComposeInteropBlendingProperty).isNullOrBlank()) {
-        System.setProperty(ComposeInteropBlendingProperty, ComposeInteropBlendingEnabled)
+internal fun composeInteropBlendingDefault(
+    platform: DesktopPlatform = currentDesktopPlatform()
+): String? {
+    return if (desktopEpubWebViewUsesWebView2(platform)) {
+        null
+    } else {
+        ComposeInteropBlendingEnabled
     }
+}
+
+internal fun configureComposeSwingInterop(
+    platform: DesktopPlatform = currentDesktopPlatform()
+) {
+    // Must run before Compose creates the desktop window. Vertical EPUB embeds native webview
+    // surfaces, and current Compose interop can leave a stale black rectangle after that reader
+    // surface is removed unless interop blending is enabled. WebView2 uses a heavyweight SWT/AWT
+    // child on Windows, where the blending path can prevent the native browser from painting.
+    if (System.getProperty(ComposeInteropBlendingProperty).isNullOrBlank()) {
+        composeInteropBlendingDefault(platform)?.let { defaultValue ->
+            System.setProperty(ComposeInteropBlendingProperty, defaultValue)
+        }
+    }
+    logDesktopWebView2(
+        "compose_interop platform=${platform.os} blending=${System.getProperty(ComposeInteropBlendingProperty).orEmpty().ifBlank { "default" }}"
+    )
 }
 
 @Composable
@@ -531,15 +549,43 @@ internal data class DesktopWebViewRuntimeState(
     val errorMessage: String? = null
 )
 
-internal fun shouldRequestDesktopWebViewRuntime(readerSurface: ReaderFeatureSurface?): Boolean {
-    return readerSurface == ReaderFeatureSurface.TEXT_READER
+internal fun desktopEpubWebViewUsesWebView2(
+    platform: DesktopPlatform = currentDesktopPlatform()
+): Boolean {
+    return platform.os == DesktopOperatingSystem.WINDOWS
+}
+
+internal fun desktopEpubWebViewUsesBundledRuntime(
+    platform: DesktopPlatform = currentDesktopPlatform()
+): Boolean {
+    return !desktopEpubWebViewUsesWebView2(platform)
+}
+
+internal fun desktopEpubWebViewCanRender(
+    state: DesktopWebViewRuntimeState,
+    platform: DesktopPlatform = currentDesktopPlatform()
+): Boolean {
+    return desktopEpubWebViewUsesWebView2(platform) || state.initialized
+}
+
+internal fun shouldRequestDesktopWebViewRuntime(
+    readerSurface: ReaderFeatureSurface?,
+    platform: DesktopPlatform = currentDesktopPlatform()
+): Boolean {
+    return desktopEpubWebViewUsesBundledRuntime(platform) &&
+        (readerSurface == ReaderFeatureSurface.EPUB_READER || readerSurface == ReaderFeatureSurface.TEXT_READER)
 }
 
 internal fun shouldStartDesktopWebViewRuntime(
     requested: Boolean,
-    state: DesktopWebViewRuntimeState
+    state: DesktopWebViewRuntimeState,
+    platform: DesktopPlatform = currentDesktopPlatform()
 ): Boolean {
-    return requested && !state.initialized && !state.restartRequired && state.errorMessage == null
+    return desktopEpubWebViewUsesBundledRuntime(platform) &&
+        requested &&
+        !state.initialized &&
+        !state.restartRequired &&
+        state.errorMessage == null
 }
 
 @Composable

@@ -27,35 +27,67 @@ class DesktopStartupTest {
     }
 
     @Test
-    fun `embedded webview starts only for epub backed reader surfaces`() {
-        assertTrue(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.EPUB_READER))
-        assertTrue(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.TEXT_READER))
-        assertFalse(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.PDF_VIEWER))
-        assertFalse(shouldRequestDesktopWebViewRuntime(null))
+    fun `bundled webview starts only for epub backed reader surfaces on non windows`() {
+        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+
+        assertTrue(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.EPUB_READER, linux))
+        assertTrue(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.TEXT_READER, linux))
+        assertFalse(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.PDF_VIEWER, linux))
+        assertFalse(shouldRequestDesktopWebViewRuntime(null, linux))
+
+        assertFalse(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.EPUB_READER, windows))
+        assertFalse(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.TEXT_READER, windows))
     }
 
     @Test
     fun `embedded webview startup skips terminal runtime states`() {
-        assertFalse(shouldStartDesktopWebViewRuntime(requested = false, state = DesktopWebViewRuntimeState()))
-        assertTrue(shouldStartDesktopWebViewRuntime(requested = true, state = DesktopWebViewRuntimeState()))
+        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+
+        assertFalse(shouldStartDesktopWebViewRuntime(requested = true, state = DesktopWebViewRuntimeState(), platform = windows))
+        assertFalse(shouldStartDesktopWebViewRuntime(requested = false, state = DesktopWebViewRuntimeState(), platform = linux))
+        assertTrue(shouldStartDesktopWebViewRuntime(requested = true, state = DesktopWebViewRuntimeState(), platform = linux))
         assertFalse(
             shouldStartDesktopWebViewRuntime(
                 requested = true,
-                state = DesktopWebViewRuntimeState(initialized = true)
+                state = DesktopWebViewRuntimeState(initialized = true),
+                platform = linux
             )
         )
         assertFalse(
             shouldStartDesktopWebViewRuntime(
                 requested = true,
-                state = DesktopWebViewRuntimeState(restartRequired = true)
+                state = DesktopWebViewRuntimeState(restartRequired = true),
+                platform = linux
             )
         )
         assertFalse(
             shouldStartDesktopWebViewRuntime(
                 requested = true,
-                state = DesktopWebViewRuntimeState(errorMessage = "missing bundle")
+                state = DesktopWebViewRuntimeState(errorMessage = "missing bundle"),
+                platform = linux
             )
         )
+    }
+
+    @Test
+    fun `windows webview2 can render without bundled runtime state`() {
+        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+
+        assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(), windows))
+        assertFalse(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(), linux))
+        assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(initialized = true), linux))
+    }
+
+    @Test
+    fun `compose interop blending stays off by default for windows webview2`() {
+        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+
+        assertNull(composeInteropBlendingDefault(windows))
+        assertEquals(ComposeInteropBlendingEnabled, composeInteropBlendingDefault(linux))
     }
 
     @Test

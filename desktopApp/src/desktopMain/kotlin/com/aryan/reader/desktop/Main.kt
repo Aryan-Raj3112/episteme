@@ -240,7 +240,9 @@ internal fun EpistemeDesktopApp(
 
     DisposableEffect(Unit) {
         onDispose {
-            KCEF.disposeBlocking()
+            if (desktopEpubWebViewUsesBundledRuntime()) {
+                KCEF.disposeBlocking()
+            }
         }
     }
 
@@ -375,7 +377,7 @@ internal fun EpistemeDesktopApp(
         }
     }
     LaunchedEffect(readerWindows) {
-        if (readerWindows.any { window ->
+        if (desktopEpubWebViewUsesBundledRuntime() && readerWindows.any { window ->
                 val content = window.content
                 content is DesktopReaderWindowContent.Text &&
                     content.session.reader.book.chapters.isNotEmpty() &&
