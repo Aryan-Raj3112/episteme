@@ -48,6 +48,12 @@ data class SharedAppShellModel(
     val showPrimaryNavigation: Boolean
 )
 
+data class SharedSidebarSyncToggleModel(
+    val visible: Boolean,
+    val enabled: Boolean,
+    val checked: Boolean
+)
+
 fun sharedAppShellModel(
     selectedTab: SharedAppTab,
     aiSettingsAvailable: Boolean,
@@ -90,18 +96,6 @@ fun sharedAppShellModel(
 fun sharedAppMoreSections(actions: List<SharedAppToolAction>): List<SharedAppMoreSection> {
     return listOf(
         SharedAppMoreSection(
-            group = SharedAppMoreGroup.LIBRARY,
-            actions = actions.filter {
-                it == SharedAppToolAction.IMPORT_FILES ||
-                    it == SharedAppToolAction.IMPORT_FOLDER ||
-                    it == SharedAppToolAction.SYNC
-            }
-        ),
-        SharedAppMoreSection(
-            group = SharedAppMoreGroup.ACCOUNT,
-            actions = actions.filter { it == SharedAppToolAction.PRO }
-        ),
-        SharedAppMoreSection(
             group = SharedAppMoreGroup.PREFERENCES,
             actions = actions.filter {
                 it == SharedAppToolAction.SETTINGS ||
@@ -119,6 +113,25 @@ fun sharedAppMoreSections(actions: List<SharedAppToolAction>): List<SharedAppMor
             }
         )
     ).filter { it.actions.isNotEmpty() }
+}
+
+fun sharedSidebarSyncToggleModel(
+    isSignedIn: Boolean,
+    accountAvailable: Boolean,
+    syncAvailable: Boolean,
+    isProUser: Boolean,
+    isSyncEnabled: Boolean,
+    featurePolicy: SharedFeaturePolicy = SharedFeaturePolicy.Standard
+): SharedSidebarSyncToggleModel {
+    val visible = isSignedIn &&
+        accountAvailable &&
+        syncAvailable &&
+        featurePolicy.aiAndCloud
+    return SharedSidebarSyncToggleModel(
+        visible = visible,
+        enabled = visible && isProUser,
+        checked = visible && isSyncEnabled
+    )
 }
 
 data class NonReaderHomeLayoutModel(

@@ -333,6 +333,24 @@ class NonReaderLayoutModelsTest {
             ),
             model.moreSections.single { it.group == SharedAppMoreGroup.HELP }.actions
         )
+
+        val legacyActions = sharedAppMoreSections(
+            listOf(
+                SharedAppToolAction.IMPORT_FILES,
+                SharedAppToolAction.PRO,
+                SharedAppToolAction.SETTINGS,
+                SharedAppToolAction.TABS_TOGGLE,
+                SharedAppToolAction.ABOUT
+            )
+        )
+        assertEquals(
+            listOf(SharedAppMoreGroup.PREFERENCES, SharedAppMoreGroup.HELP),
+            legacyActions.map { it.group }
+        )
+        assertEquals(
+            listOf(SharedAppToolAction.SETTINGS),
+            legacyActions.single { it.group == SharedAppMoreGroup.PREFERENCES }.actions
+        )
     }
 
     @Test
@@ -371,6 +389,53 @@ class NonReaderLayoutModelsTest {
         assertTrue(SharedAppToolAction.CUSTOM_FONTS in model.toolActions)
         assertTrue(SharedAppToolAction.ABOUT in model.toolActions)
         assertTrue(model.showPrimaryNavigation)
+    }
+
+    @Test
+    fun `sidebar sync toggle is visible only for signed in account builds and follows pro gating`() {
+        assertEquals(
+            SharedSidebarSyncToggleModel(visible = false, enabled = false, checked = false),
+            sharedSidebarSyncToggleModel(
+                isSignedIn = false,
+                accountAvailable = true,
+                syncAvailable = true,
+                isProUser = true,
+                isSyncEnabled = true
+            )
+        )
+
+        assertEquals(
+            SharedSidebarSyncToggleModel(visible = true, enabled = true, checked = true),
+            sharedSidebarSyncToggleModel(
+                isSignedIn = true,
+                accountAvailable = true,
+                syncAvailable = true,
+                isProUser = true,
+                isSyncEnabled = true
+            )
+        )
+
+        assertEquals(
+            SharedSidebarSyncToggleModel(visible = true, enabled = false, checked = true),
+            sharedSidebarSyncToggleModel(
+                isSignedIn = true,
+                accountAvailable = true,
+                syncAvailable = true,
+                isProUser = false,
+                isSyncEnabled = true
+            )
+        )
+
+        assertFalse(
+            sharedSidebarSyncToggleModel(
+                isSignedIn = true,
+                accountAvailable = false,
+                syncAvailable = true,
+                isProUser = true,
+                isSyncEnabled = true,
+                featurePolicy = SharedFeaturePolicy.OssOffline
+            ).visible
+        )
     }
 
     @Test

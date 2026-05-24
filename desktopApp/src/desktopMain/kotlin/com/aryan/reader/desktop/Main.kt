@@ -89,6 +89,9 @@ import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.readerCloudTtsControlsModel
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.sharedSettingsHubModel
+import com.aryan.reader.shared.shouldApplyRemoteCloudBookMetadataUpdate
+import com.aryan.reader.shared.shouldUploadLocalCloudBookContent
+import com.aryan.reader.shared.shouldUploadLocalCloudBookMetadataUpdate
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.SharedAboutScreen
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
@@ -124,6 +127,8 @@ import java.net.URI
 import java.util.Base64
 import java.util.UUID
 import kotlin.math.max
+
+private const val DesktopReaderCloseDisposeSyncDelayMillis = 350L
 
 private enum class DesktopFeatureNoticeAction {
     SIGN_IN,
@@ -403,6 +408,11 @@ internal fun EpistemeDesktopApp(
     var desktopCloudSyncJob by remember { mutableStateOf<Job?>(null) }
     var pendingDesktopCloudSyncAfterActive by remember { mutableStateOf(false) }
     val desktopBookCloudSyncJobs = remember { mutableMapOf<String, Job>() }
+    var readerCloudDirtyBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var readerCloudDirtyBaseTimestamps by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var readerCloudDirtySidecarBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var readerCloudStalePositionGuards by remember { mutableStateOf<Map<String, BookItem>>(emptyMap()) }
+    var closingReaderBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var initialDesktopCloudSyncDone by remember { mutableStateOf(false) }
     val readerWindowDefaults = remember(desktopBuildProfile) { epistemeDesktopWindowDefaults(desktopBuildProfile) }
     val readerWindowStateStore = remember {
@@ -462,13 +472,22 @@ internal fun EpistemeDesktopApp(
         persistSnapshot(projected)
     }
 
+    fun DesktopReaderWindowState.cancelReaderWork() {
+        when (val content = content) {
+            DesktopReaderWindowContent.Opening,
+            is DesktopReaderWindowContent.PasswordRequired,
+            is DesktopReaderWindowContent.Pdf -> Unit
+            is DesktopReaderWindowContent.Text -> content.ttsJob?.cancel()
+        }
+    }
+
     fun DesktopReaderWindowState.closeReaderResources() {
+        cancelReaderWork()
         when (val content = content) {
             DesktopReaderWindowContent.Opening,
             is DesktopReaderWindowContent.PasswordRequired -> Unit
-            // PdfReaderScreen cancels PDF work and closes the document from its dispose effect.
-            is DesktopReaderWindowContent.Pdf -> Unit
-            is DesktopReaderWindowContent.Text -> content.ttsJob?.cancel()
+            is DesktopReaderWindowContent.Pdf -> content.document.close()
+            is DesktopReaderWindowContent.Text -> Unit
         }
     }
 
@@ -500,46 +519,38 @@ internal fun EpistemeDesktopApp(
         }
     }
 
-    fun closeReaderWindow(windowId: String) {
-        val closing = readerWindows.firstOrNull { it.id == windowId } ?: return
-        val shouldStopTts = (closing.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
-            it.isLoading || it.isPlaying || it.isPaused
-        } == true
-        closing.closeReaderResources()
-        if (shouldStopTts) {
-            scope.launch { desktopTtsAdapter.stop() }
+    fun markReaderCloudDirty(
+        bookId: String,
+        baseTimestamp: Long? = null,
+        sidecarsDirty: Boolean = false
+    ) {
+        if (bookId.isBlank()) return
+        if (bookId !in readerCloudDirtyBookIds) {
+            val resolvedBaseTimestamp = baseTimestamp
+                ?: state.rawLibraryBooks.firstOrNull { it.id == bookId }?.timestamp
+                ?: 0L
+            readerCloudDirtyBaseTimestamps = readerCloudDirtyBaseTimestamps + (bookId to resolvedBaseTimestamp)
+            logDesktopCloudSync {
+                "desktop.reader.dirty_start book=$bookId baseTs=$resolvedBaseTimestamp sidecarsDirty=$sidecarsDirty"
+            }
         }
-        readerWindows = readerWindows.withoutDesktopReaderWindow(windowId)
-        updateState(state.reduce(AppAction.BookTabClosed(closing.bookId)))
+        if (sidecarsDirty) {
+            readerCloudDirtySidecarBookIds = readerCloudDirtySidecarBookIds + bookId
+        }
+        readerCloudDirtyBookIds = readerCloudDirtyBookIds + bookId
     }
 
-    fun closeReaderWindowsForBookIds(bookIds: Set<String>) {
+    fun clearReaderCloudDirty(bookIds: Set<String>) {
         if (bookIds.isEmpty()) return
-        val closing = readerWindows.filter { it.bookId in bookIds }
-        val shouldStopTts = closing.any { window ->
-            (window.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
-                it.isLoading || it.isPlaying || it.isPaused
-            } == true
-        }
-        closing.forEach { it.closeReaderResources() }
-        if (shouldStopTts) {
-            scope.launch { desktopTtsAdapter.stop() }
-        }
-        readerWindows = readerWindows.withoutDesktopReaderBookIds(bookIds)
+        readerCloudDirtyBookIds = readerCloudDirtyBookIds - bookIds
+        readerCloudDirtyBaseTimestamps = readerCloudDirtyBaseTimestamps - bookIds
+        readerCloudDirtySidecarBookIds = readerCloudDirtySidecarBookIds - bookIds
     }
 
-    fun closeAllReaderWindows() {
-        val shouldStopTts = readerWindows.any { window ->
-            (window.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
-                it.isLoading || it.isPlaying || it.isPaused
-            } == true
-        }
-        readerWindows.forEach { it.closeReaderResources() }
-        if (shouldStopTts) {
-            scope.launch { desktopTtsAdapter.stop() }
-        }
-        readerWindows = emptyList()
-        updateState(state.reduce(AppAction.AllTabsClosed))
+    fun markReaderBooksClosing(bookIds: Set<String>) {
+        if (bookIds.isEmpty()) return
+        closingReaderBookIds = closingReaderBookIds + bookIds
+        readerCloudStalePositionGuards = readerCloudStalePositionGuards - bookIds
     }
 
     fun downloadReaderImage(image: ReaderImageReference) {
@@ -708,14 +719,27 @@ internal fun EpistemeDesktopApp(
     }
 
     fun syncDesktopCloud(showBanner: Boolean = false): Job {
-        desktopCloudSyncJob?.takeIf { it.isActive }?.let { return it }
+        desktopCloudSyncJob?.takeIf { it.isActive }?.let {
+            logDesktopCloudSync { "desktop.full_sync.reuse_active showBanner=$showBanner" }
+            return it
+        }
         val job = scope.launch {
-            if (!state.isSyncEnabled) return@launch
-            val credentials = desktopCloudSyncCredentials(showBanner) ?: return@launch
+            if (!state.isSyncEnabled) {
+                logDesktopCloudSync { "desktop.full_sync.skip reason=sync_disabled showBanner=$showBanner" }
+                return@launch
+            }
+            val credentials = desktopCloudSyncCredentials(showBanner) ?: run {
+                logDesktopCloudSync { "desktop.full_sync.skip reason=missing_credentials showBanner=$showBanner" }
+                return@launch
+            }
             val snapshotState = state
             val snapshotShelfRecords = shelfRecords
             val snapshotShelfRefs = shelfRefs
             val snapshotFonts = customFonts
+            logDesktopCloudSync {
+                "desktop.full_sync.start user=${credentials.userId} device=${credentials.deviceId} showBanner=$showBanner " +
+                    "books=${snapshotState.rawLibraryBooks.size} shelves=${snapshotShelfRecords.size} folderSync=${snapshotState.isFolderSyncEnabled}"
+            }
 
             if (showBanner) {
                 updateState(state.copy(isRefreshing = true).withBanner("Cloud sync: checking library..."))
@@ -738,6 +762,30 @@ internal fun EpistemeDesktopApp(
                     )
                 }
             }.onSuccess { result ->
+                val openBookIds = readerWindows.mapTo(mutableSetOf()) { it.bookId }
+                val snapshotBooksById = snapshotState.rawLibraryBooks.associateBy { it.id }
+                val syncedBooksById = result.state.rawLibraryBooks.associateBy { it.id }
+                val staleGuards = openBookIds.mapNotNull { bookId ->
+                    val before = snapshotBooksById[bookId] ?: return@mapNotNull null
+                    val after = syncedBooksById[bookId] ?: return@mapNotNull null
+                    if (after.timestamp > before.timestamp && !before.hasSameCloudReaderPosition(after)) {
+                        bookId to before
+                    } else {
+                        null
+                    }
+                }.toMap()
+                if (staleGuards.isNotEmpty()) {
+                    readerCloudStalePositionGuards = readerCloudStalePositionGuards + staleGuards
+                    clearReaderCloudDirty(staleGuards.keys)
+                    logDesktopCloudSync {
+                        "desktop.full_sync.open_reader_guard books=${staleGuards.keys.joinToString()} " +
+                            "reason=remote_advanced_while_reader_open"
+                    }
+                }
+                logDesktopCloudSync {
+                    "desktop.full_sync.success user=${credentials.userId} uploaded=${result.uploadedBooks} " +
+                        "downloaded=${result.downloadedBooks} books=${result.state.rawLibraryBooks.size}"
+                }
                 customFonts = result.customFonts
                 val syncedState = result.state.copy(
                     isSyncEnabled = state.isSyncEnabled,
@@ -751,6 +799,7 @@ internal fun EpistemeDesktopApp(
                     fonts = result.customFonts
                 )
             }.onFailure { error ->
+                logDesktopCloudSync { "desktop.full_sync.failed user=${credentials.userId} error=${error.message.orEmpty()}" }
                 val failed = state.copy(isRefreshing = false)
                 if (showBanner) {
                     updateState(failed.withBanner(error.message ?: "Cloud sync failed.", isError = true))
@@ -797,26 +846,129 @@ internal fun EpistemeDesktopApp(
         }
     }
 
-    fun queueCloudBookMetadataSync(book: BookItem, uploadContent: Boolean = false) {
+    fun queueCloudBookMetadataSync(
+        book: BookItem,
+        uploadContent: Boolean = false,
+        debounce: Boolean = true,
+        dirtyBaseTimestamp: Long? = null,
+        forceUploadAnnotations: Boolean = false
+    ) {
         if (!state.isSyncEnabled) return
         if (isDesktopPdfReflowBookId(book.id)) return
         if (book.sourceFolder != null) return
         if (book.path?.startsWith("opds-pse") == true) return
         if (SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)) return
 
+        logDesktopCloudSync {
+            "desktop.book_queue.request uploadContent=$uploadContent debounce=$debounce dirtyBaseTs=$dirtyBaseTimestamp " +
+                "forceAnnotations=$forceUploadAnnotations ${book.desktopCloudSyncSummary()}"
+        }
         desktopBookCloudSyncJobs.remove(book.id)?.cancel()
         val job = scope.launch {
-            if (!uploadContent) delay(1_200L)
-            val credentials = desktopCloudSyncCredentials(showBanner = false) ?: return@launch
-            val latestBook = state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: return@launch
+            if (!uploadContent && debounce) delay(1_200L)
+            val credentials = desktopCloudSyncCredentials(showBanner = false) ?: run {
+                logDesktopCloudSync { "desktop.book_queue.skip reason=missing_credentials book=${book.id}" }
+                return@launch
+            }
+            val latestBook = state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: run {
+                logDesktopCloudSync { "desktop.book_queue.skip reason=missing_local book=${book.id}" }
+                return@launch
+            }
             if (isDesktopPdfReflowBookId(latestBook.id)) return@launch
             if (latestBook.sourceFolder != null) return@launch
+            if (latestBook.path?.startsWith("opds-pse") == true) return@launch
+            if (SharedFileCapabilities.isManualOnlyReaderFileName(latestBook.displayName)) return@launch
 
             if (uploadContent) {
                 updateState(state.copy(uploadingBookIds = state.uploadingBookIds + latestBook.id))
             }
 
             try {
+                val remoteBook = withContext(Dispatchers.IO) {
+                    desktopFirestoreRepository.getBookMetadata(
+                        userId = credentials.userId,
+                        bookId = latestBook.id,
+                        idToken = credentials.idToken
+                    )
+                }
+                val localSidecarTimestamp = withContext(Dispatchers.IO) {
+                    DesktopCloudSidecarSync.localAnnotationTimestamp(latestBook)
+                }
+                val hasLocalAnnotations = withContext(Dispatchers.IO) {
+                    DesktopCloudSidecarSync.hasLocalAnnotationData(latestBook)
+                }
+                val localFile = latestBook.path?.let(::File)
+                val localFileAvailable = localFile?.isFile == true
+                val localContentTimestamp = latestBook.fileContentModifiedTimestamp.takeIf { it > 0L }
+                    ?: localFile?.takeIf { it.isFile }?.lastModified()
+                    ?: 0L
+                val remoteChangedSinceDirtyStart = dirtyBaseTimestamp != null &&
+                    remoteBook != null &&
+                    remoteBook.lastModifiedTimestamp != dirtyBaseTimestamp
+                logDesktopCloudSync {
+                    "desktop.book_queue.preflight book=${latestBook.id} dirtyBaseTs=$dirtyBaseTimestamp " +
+                        "remoteChangedSinceDirtyStart=$remoteChangedSinceDirtyStart " +
+                        latestBook.desktopCloudSyncSummary() + " " +
+                        (remoteBook?.desktopCloudSyncSummary() ?: "remote=null") +
+                        " localSidecarTs=$localSidecarTimestamp localContentTs=$localContentTimestamp"
+                }
+                if (remoteChangedSinceDirtyStart) {
+                    logDesktopCloudSync { "desktop.book_queue.decision action=pull_remote_changed_since_dirty book=${latestBook.id}" }
+                    syncDesktopCloud(showBanner = false).join()
+                    return@launch
+                }
+                val canUploadMetadata = remoteBook == null || shouldUploadLocalCloudBookMetadataUpdate(
+                    localModifiedTimestamp = latestBook.timestamp,
+                    remoteModifiedTimestamp = remoteBook.lastModifiedTimestamp
+                )
+                val canUploadContent = when {
+                    remoteBook?.isDeleted == true && canUploadMetadata -> localFileAvailable
+                    uploadContent -> shouldUploadLocalCloudBookContent(
+                        localFileAvailable = localFileAvailable,
+                        localContentModifiedTimestamp = localContentTimestamp,
+                        remoteContentModifiedTimestamp = remoteBook?.fileContentModifiedTimestamp
+                    )
+                    else -> false
+                }
+                val canUploadAnnotations = forceUploadAnnotations ||
+                    (hasLocalAnnotations &&
+                        (remoteBook == null ||
+                            !remoteBook.hasAnnotations ||
+                            localSidecarTimestamp > remoteBook.lastModifiedTimestamp))
+                val shouldApplyRemote = remoteBook != null && shouldApplyRemoteCloudBookMetadataUpdate(
+                    localModifiedTimestamp = latestBook.timestamp,
+                    remoteModifiedTimestamp = remoteBook.lastModifiedTimestamp
+                )
+
+                if (remoteBook != null && !canUploadMetadata && !canUploadContent && !canUploadAnnotations) {
+                    logDesktopCloudSync {
+                        "desktop.book_queue.decision action=${if (remoteBook.isDeleted || shouldApplyRemote) "pull_remote" else "noop"} " +
+                            "book=${latestBook.id} canUploadMetadata=$canUploadMetadata canUploadContent=$canUploadContent " +
+                            "canUploadAnnotations=$canUploadAnnotations shouldApplyRemote=$shouldApplyRemote"
+                    }
+                    if (remoteBook.isDeleted || shouldApplyRemote) {
+                        syncDesktopCloud(showBanner = false).join()
+                    }
+                    return@launch
+                }
+
+                val usesRemoteMetadataForUpload = !canUploadMetadata && shouldApplyRemote && remoteBook != null
+                val bookForUpload = if (usesRemoteMetadataForUpload && remoteBook != null) {
+                    remoteBook.toDesktopBookItem(existing = latestBook).let { remoteMetadataBook ->
+                        if (canUploadContent) {
+                            remoteMetadataBook.copy(fileContentModifiedTimestamp = localContentTimestamp)
+                        } else {
+                            remoteMetadataBook
+                        }
+                    }
+                } else {
+                    latestBook
+                }
+                logDesktopCloudSync {
+                    "desktop.book_queue.decision action=${if (usesRemoteMetadataForUpload) "upload_annotations_with_remote_metadata" else "upload_local"} " +
+                        "book=${latestBook.id} canUploadMetadata=$canUploadMetadata canUploadContent=$canUploadContent " +
+                        "canUploadAnnotations=$canUploadAnnotations shouldApplyRemote=$shouldApplyRemote"
+                }
                 val syncedBook = withContext(Dispatchers.IO) {
                     desktopCloudSync.uploadBookAndMetadata(
                         input = DesktopCloudSyncInput(
@@ -830,16 +982,23 @@ internal fun EpistemeDesktopApp(
                             customFonts = customFonts,
                             includeFolderBooks = state.isFolderSyncEnabled
                         ),
-                        book = latestBook,
-                        uploadContent = uploadContent
+                        book = bookForUpload,
+                        uploadContent = canUploadContent,
+                        uploadAnnotations = canUploadAnnotations,
+                        remoteHasAnnotations = remoteBook?.hasAnnotations == true,
+                        remoteContentModifiedTimestamp = remoteBook?.fileContentModifiedTimestamp
                     )
                 } ?: return@launch
 
+                logDesktopCloudSync {
+                    "desktop.book_queue.upload_success oldTs=${latestBook.timestamp} newTs=${syncedBook.timestamp} " +
+                        syncedBook.desktopCloudSyncSummary("synced")
+                }
                 updateState(
                     state.copy(
                         rawLibraryBooks = state.rawLibraryBooks.map { current ->
                             if (current.id == syncedBook.id && current.timestamp == latestBook.timestamp) {
-                                current.copy(timestamp = syncedBook.timestamp)
+                                syncedBook
                             } else {
                                 current
                             }
@@ -858,6 +1017,105 @@ internal fun EpistemeDesktopApp(
                 desktopBookCloudSyncJobs.remove(book.id)
             }
         }
+    }
+
+    fun syncClosedReaderBooksIfDirty(bookIds: Set<String>) {
+        val dirtyBookIds = bookIds.intersect(readerCloudDirtyBookIds)
+        if (dirtyBookIds.isEmpty()) return
+        logDesktopCloudSync { "desktop.reader.close_dirty books=${dirtyBookIds.joinToString()} requested=${bookIds.joinToString()}" }
+        val dirtyBooks = dirtyBookIds.mapNotNull { bookId ->
+            state.rawLibraryBooks.firstOrNull { it.id == bookId }
+                ?.let { book ->
+                    Triple(
+                        book,
+                        readerCloudDirtyBaseTimestamps[bookId],
+                        bookId in readerCloudDirtySidecarBookIds
+                    )
+                }
+        }
+        clearReaderCloudDirty(dirtyBookIds)
+        dirtyBooks.forEach { (book, baseTimestamp, sidecarsDirty) ->
+            queueCloudBookMetadataSync(
+                book = book,
+                debounce = false,
+                dirtyBaseTimestamp = baseTimestamp,
+                forceUploadAnnotations = sidecarsDirty
+            )
+        }
+    }
+
+    fun syncClosedReaderBooksAfterDispose(bookIds: Set<String>) {
+        if (bookIds.isEmpty()) return
+        scope.launch {
+            delay(DesktopReaderCloseDisposeSyncDelayMillis)
+            val stillClosedBookIds = bookIds
+                .filter { bookId -> readerWindows.none { it.bookId == bookId } }
+                .toSet()
+            closingReaderBookIds = closingReaderBookIds - bookIds
+            readerCloudStalePositionGuards = readerCloudStalePositionGuards - stillClosedBookIds
+            syncClosedReaderBooksIfDirty(stillClosedBookIds)
+            clearReaderCloudDirty(stillClosedBookIds)
+        }
+    }
+
+    fun closeReaderWindow(windowId: String) {
+        val closing = readerWindows.firstOrNull { it.id == windowId } ?: return
+        val closingBookIds = setOf(closing.bookId)
+        val shouldStopTts = (closing.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
+            it.isLoading || it.isPlaying || it.isPaused
+        } == true
+        markReaderBooksClosing(closingBookIds)
+        closing.cancelReaderWork()
+        readerWindows = readerWindows.withoutDesktopReaderWindow(windowId)
+        updateState(state.reduce(AppAction.BookTabClosed(closing.bookId)))
+        if (shouldStopTts) {
+            scope.launch { desktopTtsAdapter.stop() }
+        }
+        syncClosedReaderBooksAfterDispose(closingBookIds)
+    }
+
+    fun closeReaderWindowsForBookIds(bookIds: Set<String>) {
+        if (bookIds.isEmpty()) return
+        val closing = readerWindows.filter { it.bookId in bookIds }
+        val closingBookIds = closing.mapTo(mutableSetOf()) { it.bookId }
+        val shouldStopTts = closing.any { window ->
+            (window.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
+                it.isLoading || it.isPlaying || it.isPaused
+            } == true
+        }
+        markReaderBooksClosing(closingBookIds)
+        closing.forEach { it.cancelReaderWork() }
+        readerWindows = readerWindows.withoutDesktopReaderBookIds(bookIds)
+        if (closingBookIds.isNotEmpty()) {
+            var nextState = state
+            closingBookIds.forEach { bookId ->
+                nextState = nextState.reduce(AppAction.BookTabClosed(bookId))
+            }
+            updateState(nextState)
+        }
+        if (shouldStopTts) {
+            scope.launch { desktopTtsAdapter.stop() }
+        }
+        closingReaderBookIds = closingReaderBookIds - closingBookIds
+        readerCloudStalePositionGuards = readerCloudStalePositionGuards - closingBookIds
+        clearReaderCloudDirty(closingBookIds)
+    }
+
+    fun closeAllReaderWindows() {
+        val closingBookIds = readerWindows.mapTo(mutableSetOf()) { it.bookId }
+        val shouldStopTts = readerWindows.any { window ->
+            (window.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
+                it.isLoading || it.isPlaying || it.isPaused
+            } == true
+        }
+        markReaderBooksClosing(closingBookIds)
+        readerWindows.forEach { it.cancelReaderWork() }
+        readerWindows = emptyList()
+        updateState(state.reduce(AppAction.AllTabsClosed))
+        if (shouldStopTts) {
+            scope.launch { desktopTtsAdapter.stop() }
+        }
+        syncClosedReaderBooksAfterDispose(closingBookIds)
     }
 
     fun syncCloudShelfChange(record: ShelfRecord, refs: List<BookShelfRef>, isDeleted: Boolean = false) {
@@ -1500,6 +1758,43 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun BookItem.matchesIncomingReaderPosition(
+        pageIndex: Int,
+        progress: Float,
+        session: ReaderSessionState?
+    ): Boolean {
+        val savedPage = if (type in setOf(FileType.PDF, FileType.PPTX, FileType.CBZ, FileType.CBR, FileType.CB7)) {
+            lastPageIndex
+        } else {
+            readerPosition?.pageIndex ?: lastPageIndex
+        }
+        val savedProgress = progressPercentage
+        val progressMatches = savedProgress != null && kotlin.math.abs(savedProgress - progress) < 0.001f
+        val locatorMatches = session == null || readerPosition == session.navigationLocator
+        return savedPage == pageIndex && progressMatches && locatorMatches
+    }
+
+    fun shouldIgnoreStaleReaderEcho(
+        bookId: String,
+        pageIndex: Int,
+        progress: Float,
+        session: ReaderSessionState?
+    ): Boolean {
+        val guard = readerCloudStalePositionGuards[bookId] ?: return false
+        if (guard.matchesIncomingReaderPosition(pageIndex, progress, session)) {
+            logDesktopCloudSync {
+                "desktop.reader.position_skip_stale_echo book=$bookId page=$pageIndex progress=$progress " +
+                    guard.desktopCloudSyncSummary("guard")
+            }
+            return true
+        }
+        readerCloudStalePositionGuards = readerCloudStalePositionGuards - bookId
+        logDesktopCloudSync {
+            "desktop.reader.position_guard_cleared book=$bookId page=$pageIndex progress=$progress"
+        }
+        return false
+    }
+
     fun updateBookReadingState(
         bookId: String,
         pageIndex: Int,
@@ -1507,8 +1802,18 @@ internal fun EpistemeDesktopApp(
         session: ReaderSessionState? = null,
         pdfViewport: SharedPdfReaderViewport? = null
     ) {
+        val hasOpenReaderWindow = readerWindows.any { it.bookId == bookId }
+        if (!hasOpenReaderWindow && bookId !in closingReaderBookIds) {
+            logDesktopCloudSync {
+                "desktop.reader.position_skip_closed book=$bookId page=$pageIndex progress=$progress"
+            }
+            return
+        }
+        if (shouldIgnoreStaleReaderEcho(bookId, pageIndex, progress, session)) return
+
         var updatedBook: BookItem? = null
         var shouldSyncSidecars = false
+        var dirtyBaseTimestamp: Long? = null
         val textReaderSettings = session?.reader?.settings
         val updatedTextReaderDefaults = textReaderSettings
             ?.takeIf { it != state.readerDefaultSettings }
@@ -1524,11 +1829,15 @@ internal fun EpistemeDesktopApp(
             readerDefaultSettings = textReaderSettings ?: state.readerDefaultSettings,
             rawLibraryBooks = stateWithReaderDefaults.rawLibraryBooks.map { book ->
                 if (book.id == bookId) {
-                    val readerPosition = session?.navigationLocator ?: book.readerPosition
-                    shouldSyncSidecars = session != null ||
+                    val readerPosition = session?.navigationLocator
+                    val isReaderDirty = session != null ||
                         book.lastPageIndex != pageIndex ||
                         book.progressPercentage != progress ||
                         book.readerPosition != readerPosition
+                    shouldSyncSidecars = isReaderDirty
+                    if (isReaderDirty && book.id !in readerCloudDirtyBookIds) {
+                        dirtyBaseTimestamp = book.timestamp
+                    }
                     book.copy(
                         progressPercentage = progress,
                         timestamp = System.currentTimeMillis(),
@@ -1564,13 +1873,14 @@ internal fun EpistemeDesktopApp(
         }
         if (shouldSyncSidecars) {
             updatedBook?.let(::syncBookSidecars)
+            markReaderCloudDirty(bookId, baseTimestamp = dirtyBaseTimestamp)
         }
-        updatedBook?.let { queueCloudBookMetadataSync(it) }
     }
 
     fun updateBookReaderSettings(bookId: String, settings: ReaderSettings) {
         val pdfSettings = settings.toDesktopPdfReaderSettings()
         var updatedBook: BookItem? = null
+        var dirtyBaseTimestamp: Long? = null
         val stateWithPdfDefaults = state.withDesktopReaderEngineDefaultSettings(
             DesktopReaderSettingsEngine.PDF,
             pdfSettings
@@ -1578,6 +1888,9 @@ internal fun EpistemeDesktopApp(
         val next = stateWithPdfDefaults.copy(
             rawLibraryBooks = stateWithPdfDefaults.rawLibraryBooks.map { book ->
                 if (book.id == bookId) {
+                    if (book.id !in readerCloudDirtyBookIds) {
+                        dirtyBaseTimestamp = book.timestamp
+                    }
                     book.copy(
                         timestamp = System.currentTimeMillis(),
                         isRecent = true,
@@ -1590,7 +1903,7 @@ internal fun EpistemeDesktopApp(
         )
         updateState(next)
         updatedBook?.let(::syncBookSidecars)
-        updatedBook?.let { queueCloudBookMetadataSync(it) }
+        markReaderCloudDirty(bookId, baseTimestamp = dirtyBaseTimestamp)
     }
 
     fun importDesktopReaderTexture(settings: ReaderSettings): ReaderSettings? {
@@ -2120,7 +2433,7 @@ internal fun EpistemeDesktopApp(
                             book.withDesktopImportMetadata(
                                 enriched = enriched,
                                 original = originalTargetBooksById[book.id]
-                            )
+                            ).copy(timestamp = System.currentTimeMillis())
                         }
                     )
                 )
@@ -2247,7 +2560,7 @@ internal fun EpistemeDesktopApp(
             readerWindows = readerWindows.mapNotNull { window ->
                 val migratedBookId = result.idMigrations[window.bookId] ?: window.bookId
                 if (migratedBookId !in existingBookIds) {
-                    window.closeReaderResources()
+                    window.cancelReaderWork()
                     null
                 } else if (migratedBookId != window.bookId) {
                     val migratedContent = when (val content = window.content) {
@@ -2509,7 +2822,6 @@ internal fun EpistemeDesktopApp(
         updateState(openedState)
         openedState.rawLibraryBooks.firstOrNull { it.id == bookId }?.let { book ->
             syncBookSidecars(book)
-            queueCloudBookMetadataSync(book)
         }
     }
 
@@ -2524,13 +2836,16 @@ internal fun EpistemeDesktopApp(
                     rawLibraryBooks = state.rawLibraryBooks.map { current ->
                         if (current.id == book.id) {
                             current.withDesktopImportMetadata(enriched = enriched, original = book)
+                                .copy(timestamp = System.currentTimeMillis())
                         } else {
                             current
                         }
                     }
                 )
             )
-            state.rawLibraryBooks.firstOrNull { it.id == book.id }?.let { queueCloudBookMetadataSync(it) }
+            state.rawLibraryBooks.firstOrNull { it.id == book.id }?.let {
+                markReaderCloudDirty(it.id, baseTimestamp = book.timestamp)
+            }
         }
     }
 
@@ -2694,7 +3009,7 @@ internal fun EpistemeDesktopApp(
         )
         val readerDefaultSettings = state.readerDefaultSettings
         if (force) {
-            readerWindows.firstOrNull { it.bookId == book.id }?.closeReaderResources()
+            readerWindows.firstOrNull { it.bookId == book.id }?.cancelReaderWork()
         }
         val openDecision = readerWindows.openOrFocusDesktopReaderWindow(opening, force)
         readerWindows = openDecision.windows
@@ -3152,6 +3467,9 @@ internal fun EpistemeDesktopApp(
                 currentUser = if (desktopAccountAvailable()) state.currentUser else null,
                 accountAvailable = desktopAccountAvailable(),
                 isOssBuild = desktopBuildProfile.isOssOffline,
+                isProUser = state.isProUser,
+                isSyncEnabled = state.isSyncEnabled,
+                syncAvailable = desktopCloudSyncAvailable(),
                 onSignInRequested = if (desktopAccountAvailable()) {
                     ::signInDesktopAccount
                 } else {
@@ -3159,6 +3477,9 @@ internal fun EpistemeDesktopApp(
                 },
                 accountAvatar = { user, modifier ->
                     DesktopProfileAvatar(user = user, modifier = modifier)
+                },
+                onSyncEnabledChange = { enabled ->
+                    setDesktopCloudSyncEnabled(enabled)
                 },
                 onTabSelected = { tab ->
                     selectAppTab(tab)
@@ -3488,6 +3809,12 @@ internal fun EpistemeDesktopApp(
                     icon = painterResource(readerWindowDefaults.iconResourcePath)
                 ) {
                     val readerAwtWindow = this.window
+                    val latestReaderWindowForDispose by rememberUpdatedState(readerWindow)
+                    DisposableEffect(readerWindow.id) {
+                        onDispose {
+                            latestReaderWindowForDispose.closeReaderResources()
+                        }
+                    }
                     DesktopWindowStatePersistenceEffect(
                         windowState = windowState,
                         store = readerWindowStateStore,
@@ -3605,7 +3932,11 @@ internal fun EpistemeDesktopApp(
                                         onLocalSidecarsChanged = {
                                             state.rawLibraryBooks.firstOrNull { it.id == content.book.id }?.let { book ->
                                                 syncBookSidecars(book)
-                                                queueCloudBookMetadataSync(book)
+                                                markReaderCloudDirty(
+                                                    bookId = book.id,
+                                                    baseTimestamp = book.timestamp,
+                                                    sidecarsDirty = true
+                                                )
                                             }
                                         },
                                         aiByokSettings = effectiveAiSettings(),

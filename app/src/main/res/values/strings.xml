@@ -1626,6 +1626,7 @@
     <string name="desktop_clear_book_cache_desc">Delete generated desktop book and EPUB pagination cache files? They will be recreated the next time books are opened.</string>
     <string name="desktop_clear_voice_cache">Clear voice cache</string>
     <string name="desktop_close_tools">Close tools</string>
+    <string name="desktop_cloud_sync">Cloud sync</string>
     <string name="desktop_cloud_tts_needs_gemini">Cloud TTS needs Gemini</string>
     <string name="desktop_cloud_tts_needs_signed_in_credits">Cloud TTS needs signed-in credits</string>
     <string name="desktop_cloud_tts_ready">Cloud TTS ready</string>

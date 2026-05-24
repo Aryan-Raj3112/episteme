@@ -27,6 +27,9 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.aryan.reader.FileType
 import com.aryan.reader.ReaderPerfLog
+import com.aryan.reader.cloudSyncPreview
+import com.aryan.reader.cloudSyncTraceSummary
+import com.aryan.reader.logCloudSyncTrace
 import com.aryan.reader.scaledToCanvasLimit
 import timber.log.Timber
 import com.aryan.reader.BookImporter
@@ -266,6 +269,14 @@ class RecentFilesRepository(private val context: Context) {
         }
 
         Timber.d("SyncDebug:   -> Final entity to insert: uri='${entityToInsert.uriString}', isAvailable=${entityToInsert.isAvailable}, isDeleted=${entityToInsert.isDeleted}, isRecent=${entityToInsert.isRecent}")
+        logCloudSyncTrace {
+            "android.db.upsert book=${item.bookId} ${item.cloudSyncTraceSummary("incoming")} " +
+                "existingTs=${existingItem?.lastModifiedTimestamp} existingPage=${existingItem?.lastPage} " +
+                "existingChapter=${existingItem?.lastChapterIndex} finalTs=${entityToInsert.lastModifiedTimestamp} " +
+                "finalPage=${entityToInsert.lastPage} finalChapter=${entityToInsert.lastChapterIndex} " +
+                "finalBlock=${entityToInsert.locatorBlockIndex} finalChar=${entityToInsert.locatorCharOffset} " +
+                "finalProgress=${entityToInsert.progressPercentage} finalCfi=${entityToInsert.lastPositionCfi.cloudSyncPreview()}"
+        }
         recentFileDao.insertOrUpdateFile(entityToInsert)
         Timber.d("Added/Updated recent file in DB: ${item.displayName}")
     }
@@ -466,7 +477,11 @@ class RecentFilesRepository(private val context: Context) {
         )
     }
 
-    suspend fun importAnnotationBundle(bookId: String, jsonString: String) = withContext(Dispatchers.IO) {
+    suspend fun importAnnotationBundle(
+        bookId: String,
+        jsonString: String,
+        lastModifiedTimestamp: Long? = null
+    ) = withContext(Dispatchers.IO) {
         Timber.tag("FolderAnnotationSync").d("importAnnotationBundle: Processing bundle for $bookId")
         try {
             val bundle = JSONObject(
@@ -482,6 +497,7 @@ class RecentFilesRepository(private val context: Context) {
                     file.parentFile?.mkdirs()
                     val contentStr = bundle.get(key).toString()
                     file.writeText(contentStr)
+                    lastModifiedTimestamp?.takeIf { it > 0L }?.let(file::setLastModified)
                     if (key == "text") {
                         Timber.d(
                             "android.folder.import.writeRichText book=$bookId rawLen=${contentStr.length} file=${file.absolutePath}"

@@ -7,9 +7,14 @@ import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.EpubBookmark
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.SharedCloudBookMetadataWinner
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.ShelfRecord
+import com.aryan.reader.shared.sharedCloudBookMetadataWinner
+import com.aryan.reader.shared.shouldDownloadRemoteCloudBookContent
+import com.aryan.reader.shared.shouldUploadLocalCloudBookContent
+import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
 import java.io.File
 
@@ -48,12 +53,20 @@ internal class DesktopCloudSync(
         var uploadedBooks = 0
         var downloadedBooks = 0
 
+        logDesktopCloudSync {
+            "desktop.engine.full_sync.start user=${input.userId} device=${input.deviceId} " +
+                "localBooks=${input.state.rawLibraryBooks.size} includeFolderBooks=${input.includeFolderBooks}"
+        }
         val remoteBooks = firestoreRepository.getAllBooks(input.userId, input.idToken)
             .filterNot { isDesktopPdfReflowBookId(it.bookId) }
             .filterNot { SharedFileCapabilities.isManualOnlyReaderFileName(it.displayName) }
         val remoteShelves = firestoreRepository.getAllShelves(input.userId, input.idToken)
         val remoteFonts = firestoreRepository.getAllFonts(input.userId, input.idToken)
         var driveFiles = driveRepository.getFiles(input.driveAccessToken).associateBy { it.name }
+        logDesktopCloudSync {
+            "desktop.engine.full_sync.loaded user=${input.userId} remoteBooks=${remoteBooks.size} " +
+                "remoteShelves=${remoteShelves.size} remoteFonts=${remoteFonts.size} driveFiles=${driveFiles.size}"
+        }
 
         val localBooks = state.rawLibraryBooks
             .filterNot { isDesktopPdfReflowBookId(it.id) }
@@ -71,6 +84,7 @@ internal class DesktopCloudSync(
 
             when {
                 local != null && remote == null -> {
+                    logDesktopCloudSync { "desktop.engine.book_decision action=upload_new ${local.desktopCloudSyncSummary()}" }
                     uploadBookAndMetadata(input, local, uploadContent = true)?.let { synced ->
                         state = state.upsertCloudBook(synced)
                         uploadedBooks += 1
@@ -78,7 +92,11 @@ internal class DesktopCloudSync(
                 }
 
                 local == null && remote != null -> {
-                    if (remote.isDeleted) return@forEach
+                    if (remote.isDeleted) {
+                        logDesktopCloudSync { "desktop.engine.book_decision action=skip_deleted_remote_only ${remote.desktopCloudSyncSummary()}" }
+                        return@forEach
+                    }
+                    logDesktopCloudSync { "desktop.engine.book_decision action=apply_remote_new ${remote.desktopCloudSyncSummary()}" }
                     val downloaded = downloadRemoteBook(input.driveAccessToken, remote, null, driveFiles)
                     val remoteBook = downloaded ?: remote.toDesktopBookItem()
                     state = state.upsertCloudBook(remoteBook)
@@ -90,11 +108,6 @@ internal class DesktopCloudSync(
                 }
 
                 local != null && remote != null -> {
-                    if (remote.isDeleted) {
-                        state = state.removeCloudBook(bookId)
-                        return@forEach
-                    }
-
                     val remoteBook = remote.toDesktopBookItem(existing = local)
                     val shouldDownloadContent = shouldDownloadRemoteBookContent(local, remote)
                     val downloaded = if (shouldDownloadContent) {
@@ -103,28 +116,110 @@ internal class DesktopCloudSync(
                         null
                     }
                     val localSidecarTimestampBeforeMerge = DesktopCloudSidecarSync.localAnnotationTimestamp(local)
-                    val localMetadataTimestamp = maxOf(local.timestamp, localSidecarTimestampBeforeMerge)
-                    val localMetadataWins = localMetadataTimestamp > remote.lastModifiedTimestamp
+                    val metadataWinner = sharedCloudBookMetadataWinner(
+                        localModifiedTimestamp = local.timestamp,
+                        remoteModifiedTimestamp = remote.lastModifiedTimestamp
+                    )
+                    val localMetadataWins = metadataWinner == SharedCloudBookMetadataWinner.LOCAL
+                    val localAnnotationsShouldUpload = shouldUploadLocalAnnotations(
+                        local = local,
+                        remote = remote,
+                        localSidecarTimestamp = localSidecarTimestampBeforeMerge
+                    )
+                    logDesktopCloudSync {
+                        "desktop.engine.book_compare book=$bookId winner=$metadataWinner shouldDownloadContent=$shouldDownloadContent " +
+                            "downloadedContent=${downloaded != null} sidecarTs=$localSidecarTimestampBeforeMerge " +
+                            "uploadAnnotations=$localAnnotationsShouldUpload " +
+                            local.desktopCloudSyncSummary() + " " + remote.desktopCloudSyncSummary()
+                    }
+
+                    if (remote.isDeleted) {
+                        if (localMetadataWins) {
+                            logDesktopCloudSync { "desktop.engine.book_decision action=resurrect_upload_local book=$bookId" }
+                            uploadBookAndMetadata(
+                                input = input,
+                                book = local,
+                                uploadContent = shouldUploadLocalBookContent(local, null),
+                                uploadAnnotations = DesktopCloudSidecarSync.hasLocalAnnotationData(local)
+                            )?.let { synced ->
+                                state = state.upsertCloudBook(synced)
+                                uploadedBooks += 1
+                            }
+                        } else if (metadataWinner == SharedCloudBookMetadataWinner.REMOTE) {
+                            logDesktopCloudSync { "desktop.engine.book_decision action=apply_remote_delete book=$bookId" }
+                            state = state.removeCloudBook(bookId)
+                        } else {
+                            logDesktopCloudSync { "desktop.engine.book_decision action=skip_equal_delete book=$bookId" }
+                        }
+                        return@forEach
+                    }
 
                     if (localMetadataWins) {
+                        logDesktopCloudSync {
+                            "desktop.engine.book_decision action=upload_local book=$bookId " +
+                                "uploadContent=${shouldUploadLocalBookContent(local, remote)} " +
+                                "uploadAnnotations=$localAnnotationsShouldUpload"
+                        }
                         val bookForMetadata = local.withDownloadedCloudContent(downloaded, replacePath = false)
-                        uploadBookAndMetadata(input, bookForMetadata, uploadContent = shouldUploadLocalBookContent(local, remote))?.let { synced ->
+                        uploadBookAndMetadata(
+                            input = input,
+                            book = bookForMetadata,
+                            uploadContent = shouldUploadLocalBookContent(local, remote),
+                            uploadAnnotations = localAnnotationsShouldUpload,
+                            remoteHasAnnotations = remote.hasAnnotations,
+                            remoteContentModifiedTimestamp = remote.fileContentModifiedTimestamp
+                        )?.let { synced ->
                             state = state.upsertCloudBook(synced.withDownloadedCloudContent(downloaded))
                             uploadedBooks += 1
                         }
-                    } else if (remote.lastModifiedTimestamp > local.timestamp || downloaded != null) {
+                    } else if (metadataWinner == SharedCloudBookMetadataWinner.REMOTE || downloaded != null) {
+                        logDesktopCloudSync {
+                            "desktop.engine.book_decision action=apply_remote book=$bookId " +
+                                "metadataWinner=$metadataWinner downloadedContent=${downloaded != null}"
+                        }
                         val mergedBook = downloaded ?: remoteBook
                         state = state.upsertCloudBook(mergedBook)
                         importDesktopPdfBookmarksMetadata(mergedBook, remote.bookmarksJson, remote.lastModifiedTimestamp)
                     }
 
+                    if (!localMetadataWins && localAnnotationsShouldUpload) {
+                        val metadataBook = state.rawLibraryBooks.firstOrNull { it.id == bookId }
+                            ?: remoteBook
+                        logDesktopCloudSync {
+                            "desktop.engine.book_decision action=upload_local_annotations book=$bookId " +
+                                "metadataWinner=$metadataWinner sidecarTs=$localSidecarTimestampBeforeMerge " +
+                                metadataBook.desktopCloudSyncSummary()
+                        }
+                        uploadBookAndMetadata(
+                            input = input,
+                            book = metadataBook,
+                            uploadContent = false,
+                            uploadAnnotations = true,
+                            remoteHasAnnotations = remote.hasAnnotations,
+                            remoteContentModifiedTimestamp = remote.fileContentModifiedTimestamp
+                        )?.let { synced ->
+                            state = state.upsertCloudBook(synced.withDownloadedCloudContent(downloaded))
+                            uploadedBooks += 1
+                        }
+                    }
+
                     val localSidecarTimestamp = DesktopCloudSidecarSync.localAnnotationPayloadTimestamp(downloaded ?: local)
                     val needsAnnotationDownload = !localMetadataWins &&
+                        !localAnnotationsShouldUpload &&
                         remote.hasAnnotations &&
                         (remote.lastModifiedTimestamp > localSidecarTimestamp || localSidecarTimestamp == 0L)
                     if (needsAnnotationDownload) {
+                        logDesktopCloudSync {
+                            "desktop.engine.sidecar_download_start book=$bookId remoteTs=${remote.lastModifiedTimestamp} " +
+                                "localSidecarTs=$localSidecarTimestamp localMetadataWins=$localMetadataWins"
+                        }
                         val targetBook = downloaded ?: state.rawLibraryBooks.firstOrNull { it.id == bookId } ?: local
                         downloadAnnotations(input.driveAccessToken, targetBook, remote.lastModifiedTimestamp)
+                    } else {
+                        logDesktopCloudSync {
+                            "desktop.engine.sidecar_download_skip book=$bookId remoteHasAnnotations=${remote.hasAnnotations} " +
+                                "localSidecarTs=$localSidecarTimestamp localMetadataWins=$localMetadataWins"
+                        }
                     }
                 }
             }
@@ -141,6 +236,7 @@ internal class DesktopCloudSync(
                 val localFile = book.path?.let(::File)
                 when {
                     localFile?.isFile == true && driveFiles[driveName] == null -> {
+                        logDesktopCloudSync { "desktop.engine.content_upload_missing_remote book=${book.id} driveName=$driveName" }
                         if (driveRepository.uploadFile(input.driveAccessToken, book.id, localFile, book.type) != null) {
                             uploadedBooks += 1
                         }
@@ -148,6 +244,7 @@ internal class DesktopCloudSync(
 
                     (localFile == null || !localFile.isFile) && driveFiles[driveName] != null -> {
                         val remote = remoteBooksMap[book.id] ?: return@forEach
+                        logDesktopCloudSync { "desktop.engine.content_download_missing_local book=${book.id} driveName=$driveName" }
                         downloadRemoteBook(input.driveAccessToken, remote, book, driveFiles)?.let { downloaded ->
                             state = state.upsertCloudBook(downloaded)
                             downloadedBooks += 1
@@ -178,6 +275,10 @@ internal class DesktopCloudSync(
             remoteFonts = remoteFonts
         )
 
+        logDesktopCloudSync {
+            "desktop.engine.full_sync.complete user=${input.userId} uploaded=$uploadedBooks downloaded=$downloadedBooks " +
+                "books=${state.rawLibraryBooks.size}"
+        }
         return DesktopCloudSyncResult(
             state = state,
             shelfRecords = shelfRecords,
@@ -191,23 +292,51 @@ internal class DesktopCloudSync(
     suspend fun uploadBookAndMetadata(
         input: DesktopCloudSyncInput,
         book: BookItem,
-        uploadContent: Boolean
+        uploadContent: Boolean,
+        uploadAnnotations: Boolean = true,
+        remoteHasAnnotations: Boolean = false,
+        remoteContentModifiedTimestamp: Long? = null
     ): BookItem? {
-        if (isDesktopPdfReflowBookId(book.id)) return null
-        if (book.sourceFolder != null) return null
-        if (book.path?.startsWith("opds-pse") == true) return null
-        if (SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)) return null
+        if (isDesktopPdfReflowBookId(book.id)) {
+            logDesktopCloudSync { "desktop.upload.skip reason=reflow ${book.desktopCloudSyncSummary()}" }
+            return null
+        }
+        if (book.sourceFolder != null) {
+            logDesktopCloudSync { "desktop.upload.skip reason=folder_book ${book.desktopCloudSyncSummary()}" }
+            return null
+        }
+        if (book.path?.startsWith("opds-pse") == true) {
+            logDesktopCloudSync { "desktop.upload.skip reason=opds_stream ${book.desktopCloudSyncSummary()}" }
+            return null
+        }
+        if (SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)) {
+            logDesktopCloudSync { "desktop.upload.skip reason=manual_only ${book.desktopCloudSyncSummary()}" }
+            return null
+        }
+        logDesktopCloudSync {
+            "desktop.upload.start uploadContent=$uploadContent uploadAnnotations=$uploadAnnotations " +
+                "remoteHasAnnotations=$remoteHasAnnotations ${book.desktopCloudSyncSummary()}"
+        }
         if (uploadContent) {
             val source = book.path?.let(::File)?.takeIf { it.isFile }
             if (source != null && driveRepository.uploadFile(input.driveAccessToken, book.id, source, book.type) == null) {
+                logDesktopCloudSync { "desktop.upload.content_failed book=${book.id} path=${source.absolutePath}" }
                 return null
             }
+            logDesktopCloudSync { "desktop.upload.content_success book=${book.id} path=${source?.absolutePath ?: "none"}" }
         }
 
-        val bundle = DesktopCloudSidecarSync.exportAnnotationBundle(book)
+        val hasLocalAnnotations = DesktopCloudSidecarSync.hasLocalAnnotationData(book)
+        val shouldUploadAnnotations = uploadAnnotations || (!remoteHasAnnotations && hasLocalAnnotations)
+        val bundle = if (shouldUploadAnnotations) DesktopCloudSidecarSync.exportAnnotationBundle(book) else null
         try {
             if (bundle != null && driveRepository.uploadAnnotationFile(input.driveAccessToken, book.id, bundle) == null) {
+                logDesktopCloudSync { "desktop.upload.sidecar_failed book=${book.id} bytes=${bundle.length()}" }
                 return null
+            }
+            logDesktopCloudSync {
+                "desktop.upload.sidecar_decision book=${book.id} hasLocal=$hasLocalAnnotations " +
+                    "shouldUpload=$shouldUploadAnnotations uploaded=${bundle != null} bytes=${bundle?.length() ?: 0L}"
             }
         } finally {
             bundle?.delete()
@@ -218,12 +347,22 @@ internal class DesktopCloudSync(
         firestoreRepository.syncBookMetadata(
             userId = input.userId,
             book = syncedBook.toDesktopCloudBookMetadata(
-                hasAnnotations = bundle != null,
-                timestamp = now
+                hasAnnotations = if (uploadAnnotations) {
+                    bundle != null || hasLocalAnnotations
+                } else {
+                    remoteHasAnnotations || bundle != null || hasLocalAnnotations
+                },
+                timestamp = now,
+                contentTimestampOverride = if (uploadContent) null else remoteContentModifiedTimestamp
             ),
             originDeviceId = input.deviceId,
             idToken = input.idToken
         )
+        logDesktopCloudSync {
+            "desktop.upload.metadata_success user=${input.userId} device=${input.deviceId} " +
+                "oldTs=${book.timestamp} newTs=$now hasAnnotations=${remoteHasAnnotations || bundle != null || hasLocalAnnotations} " +
+                syncedBook.desktopCloudSyncSummary("synced")
+        }
         return syncedBook
     }
 
@@ -299,8 +438,16 @@ internal class DesktopCloudSync(
     private suspend fun downloadAnnotations(accessToken: String, book: BookItem, timestamp: Long): Boolean {
         val temp = File(desktopUserCacheRoot(), "temp_download_${book.id.toDesktopSafeFileName()}_${System.nanoTime()}.json")
         return try {
-            if (!driveRepository.downloadAnnotationFile(accessToken, book.id, temp) || !temp.isFile) return false
-            DesktopCloudSidecarSync.importAnnotationBundle(book, temp.readText(), timestamp)
+            logDesktopCloudSync { "desktop.sidecar_download.start book=${book.id} remoteTs=$timestamp temp=${temp.name}" }
+            if (!driveRepository.downloadAnnotationFile(accessToken, book.id, temp) || !temp.isFile) {
+                logDesktopCloudSync { "desktop.sidecar_download.missing book=${book.id} remoteTs=$timestamp" }
+                return false
+            }
+            val applied = DesktopCloudSidecarSync.importAnnotationBundle(book, temp.readText(), timestamp)
+            logDesktopCloudSync {
+                "desktop.sidecar_download.applied book=${book.id} remoteTs=$timestamp bytes=${temp.length()} applied=$applied"
+            }
+            applied
         } finally {
             temp.delete()
         }
@@ -317,16 +464,23 @@ internal class DesktopCloudSync(
         val driveFile = driveFiles[driveName] ?: return null
         val extension = SharedFileCapabilities.primaryExtensionFor(type) ?: return null
         val destination = bookImporter.createBookFile("${remote.bookId.toDesktopSafeFileName()}.$extension")
+        logDesktopCloudSync { "desktop.content_download.start book=${remote.bookId} driveName=$driveName remoteContentTs=${remote.fileContentModifiedTimestamp}" }
         if (!driveRepository.downloadFile(accessToken, driveFile.id, destination)) {
             destination.delete()
+            logDesktopCloudSync { "desktop.content_download.failed book=${remote.bookId} driveName=$driveName" }
             return null
         }
         val contentTimestamp = remote.fileContentModifiedTimestamp.takeIf { it > 0L } ?: destination.lastModified()
         if (contentTimestamp > 0L) destination.setLastModified(contentTimestamp)
-        return remote.toDesktopBookItem(existing = existing, downloadedPath = destination.absolutePath).copy(
+        val downloaded = remote.toDesktopBookItem(existing = existing, downloadedPath = destination.absolutePath).copy(
             fileSize = destination.length(),
             fileContentModifiedTimestamp = contentTimestamp
         )
+        logDesktopCloudSync {
+            "desktop.content_download.success book=${remote.bookId} bytes=${destination.length()} contentTs=$contentTimestamp " +
+                downloaded.desktopCloudSyncSummary("downloaded")
+        }
+        return downloaded
     }
 
     private suspend fun syncFonts(
@@ -453,9 +607,10 @@ internal class DesktopCloudSync(
 
 internal fun BookItem.toDesktopCloudBookMetadata(
     hasAnnotations: Boolean,
-    timestamp: Long = this.timestamp
+    timestamp: Long = this.timestamp,
+    contentTimestampOverride: Long? = null
 ): DesktopCloudBookMetadata {
-    val position = readerPosition
+    val position = readerPosition.takeIf { type.usesCloudLocatorMetadata() }
     val bookmarksJson = desktopPdfBookmarksMetadataJson(this)
         ?: readerBookmarks
             .mapNotNull { it.toDesktopCloudEpubBookmarkOrNull() }
@@ -465,7 +620,8 @@ internal fun BookItem.toDesktopCloudBookMetadata(
         .takeIf { it.isNotEmpty() }
         ?.let(EpubAnnotationSerializer::highlightsToJson)
     val localFile = path?.let(::File)
-    val contentTimestamp = fileContentModifiedTimestamp.takeIf { it > 0L }
+    val contentTimestamp = contentTimestampOverride
+        ?: fileContentModifiedTimestamp.takeIf { it > 0L }
         ?: localFile?.takeIf { it.isFile }?.lastModified()
         ?: 0L
     return DesktopCloudBookMetadata(
@@ -478,7 +634,7 @@ internal fun BookItem.toDesktopCloudBookMetadata(
         lastChapterIndex = position?.chapterIndex,
         locatorBlockIndex = position?.blockIndex,
         locatorCharOffset = position?.charOffset,
-        lastPage = position?.pageIndex ?: lastPageIndex,
+        lastPage = if (type.usesCloudLocatorMetadata()) position?.pageIndex ?: lastPageIndex else lastPageIndex,
         progressPercentage = progressPercentage,
         isRecent = isRecent,
         isDeleted = false,
@@ -505,14 +661,18 @@ internal fun DesktopCloudBookMetadata.toDesktopBookItem(
 ): BookItem {
     val type = fileType()
     val pageIndex = lastPage
-    val locator = ReaderLocator.fromLegacy(
-        chapterIndex = lastChapterIndex,
-        cfi = lastPositionCfi,
-        pageIndex = pageIndex
-    ).withFallbacks(
-        blockIndex = locatorBlockIndex,
-        charOffset = locatorCharOffset
-    )
+    val locator = if (type.usesCloudLocatorMetadata()) {
+        ReaderLocator.fromLegacy(
+            chapterIndex = lastChapterIndex,
+            cfi = lastPositionCfi,
+            pageIndex = pageIndex
+        ).withFallbacks(
+            blockIndex = locatorBlockIndex,
+            charOffset = locatorCharOffset
+        )
+    } else {
+        null
+    }
     return BookItem(
         id = bookId,
         path = downloadedPath ?: existing?.path,
@@ -540,13 +700,17 @@ internal fun DesktopCloudBookMetadata.toDesktopBookItem(
         seriesIndex = seriesIndex ?: existing?.seriesIndex,
         tags = existing?.tags.orEmpty(),
         lastPageIndex = pageIndex ?: existing?.lastPageIndex,
-        readerPosition = locator.takeIf {
-            it.chapterIndex != null ||
-                it.pageIndex != null ||
-                it.cfi != null ||
-                it.startOffset != null ||
-                it.blockIndex != null
-        } ?: existing?.readerPosition,
+        readerPosition = if (type.usesCloudLocatorMetadata()) {
+            locator?.takeIf {
+                it.chapterIndex != null ||
+                    it.pageIndex != null ||
+                    it.cfi != null ||
+                    it.startOffset != null ||
+                    it.blockIndex != null
+            } ?: existing?.readerPosition
+        } else {
+            null
+        },
         readerSettings = existing?.readerSettings,
         readerBookmarks = if (type == FileType.PDF || bookmarksJson.isNullOrBlank()) {
             existing?.readerBookmarks.orEmpty()
@@ -566,8 +730,27 @@ internal fun DesktopCloudBookMetadata.toDesktopBookItem(
         } else {
             EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
         },
-        pdfReaderViewport = existing?.pdfReaderViewport
+        pdfReaderViewport = remotePdfViewport(existing, pageIndex)
     )
+}
+
+private fun DesktopCloudBookMetadata.remotePdfViewport(
+    existing: BookItem?,
+    pageIndex: Int?
+): SharedPdfReaderViewport? {
+    if (fileType().usesCloudLocatorMetadata() || pageIndex == null) return existing?.pdfReaderViewport
+    val base = existing?.pdfReaderViewport ?: SharedPdfReaderViewport()
+    return base.copy(
+        pageIndex = pageIndex,
+        horizontalScrollOffset = 0,
+        paginatedVerticalScrollOffset = 0,
+        verticalFirstPageIndex = pageIndex,
+        verticalFirstPageScrollOffset = 0
+    )
+}
+
+private fun FileType.usesCloudLocatorMetadata(): Boolean {
+    return this !in setOf(FileType.PDF, FileType.PPTX, FileType.CBZ, FileType.CBR, FileType.CB7)
 }
 
 internal fun CustomFontItem.toDesktopCloudFontMetadata(): DesktopCloudFontMetadata {
@@ -627,18 +810,33 @@ private fun shouldDownloadRemoteBookContent(local: BookItem, remote: DesktopClou
         ?: localFile?.takeIf { it.isFile }?.lastModified()
         ?: 0L
     return local.sourceFolder == null &&
-        !remote.isDeleted &&
         remote.fileType() == local.type &&
-        remote.fileContentModifiedTimestamp > 0L &&
-        (localFile == null || !localFile.isFile || remote.fileContentModifiedTimestamp > localTimestamp)
+        shouldDownloadRemoteCloudBookContent(
+            localFileAvailable = localFile?.isFile == true,
+            localContentModifiedTimestamp = localTimestamp,
+            remoteContentModifiedTimestamp = remote.fileContentModifiedTimestamp,
+            remoteDeleted = remote.isDeleted
+        )
 }
 
 private fun shouldUploadLocalBookContent(local: BookItem, remote: DesktopCloudBookMetadata?): Boolean {
     val localFile = local.path?.let(::File)?.takeIf { it.isFile } ?: return false
     val localTimestamp = local.fileContentModifiedTimestamp.takeIf { it > 0L } ?: localFile.lastModified()
     return local.sourceFolder == null &&
-        localTimestamp > 0L &&
-        localTimestamp > (remote?.fileContentModifiedTimestamp ?: 0L)
+        shouldUploadLocalCloudBookContent(
+            localFileAvailable = true,
+            localContentModifiedTimestamp = localTimestamp,
+            remoteContentModifiedTimestamp = remote?.fileContentModifiedTimestamp
+        )
+}
+
+private fun shouldUploadLocalAnnotations(
+    local: BookItem,
+    remote: DesktopCloudBookMetadata?,
+    localSidecarTimestamp: Long = DesktopCloudSidecarSync.localAnnotationTimestamp(local)
+): Boolean {
+    return DesktopCloudSidecarSync.hasLocalAnnotationData(local) &&
+        (remote == null || !remote.hasAnnotations || localSidecarTimestamp > remote.lastModifiedTimestamp)
 }
 
 private fun BookItem.withDownloadedCloudContent(downloaded: BookItem?, replacePath: Boolean = true): BookItem {

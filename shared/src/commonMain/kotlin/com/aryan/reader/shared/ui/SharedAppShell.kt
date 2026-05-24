@@ -94,8 +94,12 @@ fun SharedAppShell(
     currentUser: UserData? = null,
     accountAvailable: Boolean = featurePolicy.aiAndCloud,
     isOssBuild: Boolean = false,
+    isProUser: Boolean = false,
+    isSyncEnabled: Boolean = false,
+    syncAvailable: Boolean = featurePolicy.aiAndCloud,
     onSignInRequested: (() -> Unit)? = null,
     accountAvatar: (@Composable (UserData, Modifier) -> Unit)? = null,
+    onSyncEnabledChange: (Boolean) -> Unit = {},
     onTabSelected: (SharedAppTab) -> Unit,
     onImportFiles: () -> Unit,
     onImportFolder: () -> Unit = {},
@@ -117,6 +121,23 @@ fun SharedAppShell(
         sharedAppShellModel(
             selectedTab = selectedTab,
             aiSettingsAvailable = aiSettingsAvailable,
+            featurePolicy = featurePolicy
+        )
+    }
+    val sidebarSyncToggleModel = remember(
+        currentUser != null,
+        accountAvailable,
+        syncAvailable,
+        isProUser,
+        isSyncEnabled,
+        featurePolicy
+    ) {
+        sharedSidebarSyncToggleModel(
+            isSignedIn = currentUser != null,
+            accountAvailable = accountAvailable,
+            syncAvailable = syncAvailable,
+            isProUser = isProUser,
+            isSyncEnabled = isSyncEnabled,
             featurePolicy = featurePolicy
         )
     }
@@ -142,9 +163,11 @@ fun SharedAppShell(
                             currentUser = currentUser,
                             accountAvailable = accountAvailable,
                             isOssBuild = isOssBuild,
+                            syncToggleModel = sidebarSyncToggleModel,
                             onAccountClick = { onTabSelected(SharedAppTab.PRO) },
                             onSignInRequested = onSignInRequested,
                             accountAvatar = accountAvatar,
+                            onSyncEnabledChange = onSyncEnabledChange,
                             onTabSelected = onTabSelected,
                             moreMenu = {
                                 SharedMoreMenuButton(
@@ -225,9 +248,11 @@ private fun SharedAppSidebar(
     currentUser: UserData?,
     accountAvailable: Boolean,
     isOssBuild: Boolean,
+    syncToggleModel: SharedSidebarSyncToggleModel,
     onAccountClick: () -> Unit,
     onSignInRequested: (() -> Unit)?,
     accountAvatar: (@Composable (UserData, Modifier) -> Unit)?,
+    onSyncEnabledChange: (Boolean) -> Unit,
     onTabSelected: (SharedAppTab) -> Unit,
     moreMenu: @Composable () -> Unit
 ) {
@@ -258,6 +283,12 @@ private fun SharedAppSidebar(
                     selected = selectedTab == tab,
                     onClick = { onTabSelected(tab) }
                 )
+                if (tab == SharedAppTab.PRO && syncToggleModel.visible) {
+                    SharedSidebarSyncToggle(
+                        model = syncToggleModel,
+                        onSyncEnabledChange = onSyncEnabledChange
+                    )
+                }
             }
             Spacer(Modifier.weight(1f))
             HorizontalDivider()
@@ -463,6 +494,68 @@ private fun SharedSidebarNavItem(
         ) {
             Icon(tab.icon, contentDescription = null, modifier = Modifier.size(21.dp))
             Text(tab.localizedLabel(), style = MaterialTheme.typography.bodyMedium, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        }
+    }
+}
+
+@Composable
+private fun SharedSidebarSyncToggle(
+    model: SharedSidebarSyncToggleModel,
+    onSyncEnabledChange: (Boolean) -> Unit
+) {
+    val title = readerString("desktop_cloud_sync", "Cloud sync")
+    val summary = when {
+        !model.enabled -> readerString("desktop_pro_required", "Pro required")
+        model.checked -> readerString("content_desc_enabled", "Enabled")
+        else -> readerString("desktop_disabled", "Disabled")
+    }
+    val contentColor = if (model.enabled) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = contentColor,
+        onClick = {
+            if (model.enabled) {
+                onSyncEnabledChange(!model.checked)
+            }
+        }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Switch(
+                checked = model.checked,
+                enabled = model.enabled,
+                onCheckedChange = { checked ->
+                    if (model.enabled) {
+                        onSyncEnabledChange(checked)
+                    }
+                }
+            )
         }
     }
 }

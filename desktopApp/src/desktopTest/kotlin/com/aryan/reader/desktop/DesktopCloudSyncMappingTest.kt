@@ -7,6 +7,7 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
+import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.pdf.SharedPdfRichDocument
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.reader.ReaderBookmark
@@ -91,6 +92,81 @@ class DesktopCloudSyncMappingTest {
         assertEquals(50, restored.readerHighlights.single().locator.startOffset)
         assertEquals(64, restored.readerHighlights.single().locator.endOffset)
         assertEquals("desktop:2:50:64", restored.readerHighlights.single().locator.cfi)
+    }
+
+    @Test
+    fun `metadata only upload can preserve remote content timestamp`() {
+        val book = BookItem(
+            id = "book-1",
+            path = null,
+            type = FileType.PDF,
+            displayName = "Book.pdf",
+            timestamp = 1_000L,
+            fileContentModifiedTimestamp = 111L
+        )
+
+        val metadata = book.toDesktopCloudBookMetadata(
+            hasAnnotations = false,
+            timestamp = 2_000L,
+            contentTimestampOverride = 999L
+        )
+
+        assertEquals(999L, metadata.fileContentModifiedTimestamp)
+    }
+
+    @Test
+    fun `remote pdf metadata moves stale desktop viewport to remote page`() {
+        val existing = BookItem(
+            id = "book-1",
+            path = "C:/books/Book.pdf",
+            type = FileType.PDF,
+            displayName = "Book.pdf",
+            timestamp = 1_000L,
+            lastPageIndex = 264,
+            progressPercentage = 33.125f,
+            readerPosition = ReaderLocator(pageIndex = 264),
+            pdfReaderViewport = SharedPdfReaderViewport(
+                pageIndex = 264,
+                verticalFirstPageIndex = 264,
+                verticalFirstPageScrollOffset = 120
+            )
+        )
+        val remote = DesktopCloudBookMetadata(
+            bookId = "book-1",
+            displayName = "Book.pdf",
+            type = FileType.PDF.name,
+            lastModifiedTimestamp = 2_000L,
+            lastPage = 69,
+            progressPercentage = 8.75f
+        )
+
+        val restored = remote.toDesktopBookItem(existing = existing)
+
+        assertEquals(69, restored.lastPageIndex)
+        assertEquals(8.75f, restored.progressPercentage)
+        assertNull(restored.readerPosition)
+        assertEquals(69, restored.pdfReaderViewport?.pageIndex)
+        assertEquals(69, restored.pdfReaderViewport?.verticalFirstPageIndex)
+        assertEquals(0, restored.pdfReaderViewport?.verticalFirstPageScrollOffset)
+    }
+
+    @Test
+    fun `pdf metadata upload ignores stale text locator page`() {
+        val book = BookItem(
+            id = "book-1",
+            path = "C:/books/Book.pdf",
+            type = FileType.PDF,
+            displayName = "Book.pdf",
+            timestamp = 1_000L,
+            lastPageIndex = 264,
+            progressPercentage = 33.125f,
+            readerPosition = ReaderLocator(pageIndex = 69)
+        )
+
+        val metadata = book.toDesktopCloudBookMetadata(hasAnnotations = false)
+
+        assertEquals(264, metadata.lastPage)
+        assertNull(metadata.lastPositionCfi)
     }
 
     @Test
