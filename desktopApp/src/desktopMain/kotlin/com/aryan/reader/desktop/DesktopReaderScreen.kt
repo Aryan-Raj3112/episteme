@@ -449,7 +449,18 @@ internal fun DesktopReaderScreen(
                                 navigationTarget = renderPlan.navigationTarget,
                                 highlights = renderPlan.highlights,
                                 onHighlightCreated = { highlight ->
-                                    onSessionChange(session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine))
+                                    logEpubHighlightFlow(
+                                        "state_reduce_start id=${highlight.id} before=${session.highlights.size} " +
+                                            "color=${highlight.color.id} chapter=${highlight.chapterIndex} " +
+                                            "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                                            "page=${highlight.locator.pageIndex} textChars=${highlight.text.length}"
+                                    )
+                                    val nextSession = session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine)
+                                    logEpubHighlightFlow(
+                                        "state_reduce_done id=${highlight.id} after=${nextSession.highlights.size} " +
+                                            "contains=${nextSession.highlights.any { it.id == highlight.id }}"
+                                    )
+                                    onSessionChange(nextSession)
                                 },
                                 onHighlightSelected = onHighlightSelected,
                                 isFullscreen = isFullscreen,

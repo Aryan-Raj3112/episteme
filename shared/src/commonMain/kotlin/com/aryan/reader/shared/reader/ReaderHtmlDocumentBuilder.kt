@@ -617,6 +617,20 @@ object ReaderHtmlDocumentBuilder {
                     }
                   }
                   window.readerSelectionDebugLog = readerSelectionDebugLog;
+                  function readerHighlightFlowLog(message) {
+                    var line = 'EpistemeEpubHighlightFlow ' + message;
+                    var delivered = false;
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerHighlightFlowLog', JSON.stringify({ message: message }));
+                        delivered = true;
+                      } catch (error) {}
+                    }
+                    if (!delivered) {
+                      try { console.log(line); } catch (error) {}
+                    }
+                  }
+                  window.readerHighlightFlowLog = readerHighlightFlowLog;
                   function readerTtsPreview(value, limit) {
                     return String(value || '').replace(/\s+/g, ' ').trim().substring(0, limit || 120);
                   }
@@ -1075,8 +1089,16 @@ object ReaderHtmlDocumentBuilder {
                     if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
                       try {
                         window.kmpJsBridge.callNative('readerHighlightCreated', JSON.stringify(payload));
+                        readerHighlightFlowLog(
+                          'bridge_send_success attempt=' + attempt +
+                          ' cfi="' + readerTtsPreview(payload && payload.cfi, 120) + '"' +
+                          ' color=' + ((payload && payload.colorId) || 'null') +
+                          ' chapter=' + ((payload && payload.chapterIndex) !== undefined ? payload.chapterIndex : 'null') +
+                          ' textChars=' + (((payload && payload.text) || '').length)
+                        );
                         return true;
                       } catch (error) {
+                        readerHighlightFlowLog('bridge_send_error attempt=' + attempt + ' error=' + readerTtsPreview(error, 180));
                         readerSelectionDebugLog('highlight_bridge_error attempt=' + attempt + ' error=' + readerTtsPreview(error, 180));
                       }
                     }
@@ -1086,6 +1108,7 @@ object ReaderHtmlDocumentBuilder {
                       }, attempt === 0 ? 80 : 240);
                       return true;
                     }
+                    readerHighlightFlowLog('bridge_send_missing attempts=' + (attempt + 1));
                     readerSelectionDebugLog('highlight_bridge_missing attempts=' + (attempt + 1));
                     return false;
                   }
@@ -1665,6 +1688,92 @@ object ReaderHtmlDocumentBuilder {
                     }
                     return text;
                   }
+                  function readerTextBlock(node) {
+                    var parent = node && node.parentElement;
+                    return parent && parent.closest
+                      ? parent.closest('p, li, blockquote, pre, h1, h2, h3, h4, h5, h6, td, th, figcaption, div, section')
+                      : null;
+                  }
+                  function contentStartOffset(content) {
+                    var pageHost = content && content.closest ? content.closest('[data-reader-page-start]') : null;
+                    return numberAttribute(content, 'data-reader-content-start', numberAttribute(pageHost, 'data-reader-page-start', 0));
+                  }
+                  function normalizedOffsetForBoundary(root, container, offset) {
+                    if (!root || !container) return null;
+                    var nodes = textNodesUnder(root, true);
+                    if (!nodes.length) return 0;
+                    var boundary = document.createRange();
+                    try {
+                      boundary.setStart(container, offset);
+                      boundary.collapse(true);
+                    } catch (error) {
+                      boundary.detach && boundary.detach();
+                      return null;
+                    }
+                    var state = {
+                      cursor: 0,
+                      sawText: false,
+                      inWhitespace: false,
+                      previousBlock: null
+                    };
+                    function applyBlockBoundary(node) {
+                      var currentBlock = readerTextBlock(node);
+                      if (state.previousBlock && currentBlock && currentBlock !== state.previousBlock && state.sawText && !state.inWhitespace) {
+                        state.inWhitespace = true;
+                        state.cursor += 1;
+                      }
+                      if (currentBlock) state.previousBlock = currentBlock;
+                    }
+                    function consumeNormalizedText(value, limit) {
+                      var safeLimit = Math.max(0, Math.min(value.length, limit));
+                      for (var i = 0; i < safeLimit; i++) {
+                        if (/^\s$/.test(value[i])) {
+                          if (!state.sawText) continue;
+                          if (!state.inWhitespace) {
+                            state.inWhitespace = true;
+                            state.cursor += 1;
+                          }
+                          continue;
+                        }
+                        if (state.inWhitespace) state.inWhitespace = false;
+                        state.sawText = true;
+                        state.cursor += 1;
+                      }
+                    }
+                    try {
+                      for (var n = 0; n < nodes.length; n++) {
+                        var node = nodes[n];
+                        var value = node.nodeValue || '';
+                        if (node === container) {
+                          applyBlockBoundary(node);
+                          consumeNormalizedText(value, offset);
+                          return state.cursor;
+                        }
+                        var nodeRange = document.createRange();
+                        var endsBeforeBoundary = false;
+                        var startsAfterBoundary = false;
+                        try {
+                          nodeRange.selectNodeContents(node);
+                          endsBeforeBoundary = nodeRange.compareBoundaryPoints(Range.END_TO_START, boundary) <= 0;
+                          startsAfterBoundary = nodeRange.compareBoundaryPoints(Range.START_TO_START, boundary) >= 0;
+                        } catch (error) {
+                          startsAfterBoundary = true;
+                        } finally {
+                          nodeRange.detach && nodeRange.detach();
+                        }
+                        if (endsBeforeBoundary) {
+                          applyBlockBoundary(node);
+                          consumeNormalizedText(value, value.length);
+                          continue;
+                        }
+                        if (startsAfterBoundary) return state.cursor;
+                        return state.cursor;
+                      }
+                      return state.cursor;
+                    } finally {
+                      boundary.detach && boundary.detach();
+                    }
+                  }
                   function explicitTextHostForBoundary(root, container) {
                     if (!root || !container) return null;
                     var element = container.nodeType === Node.TEXT_NODE ? container.parentElement : container;
@@ -1681,6 +1790,12 @@ object ReaderHtmlDocumentBuilder {
                     var localOffset = offsetForBoundary(host, container, offset);
                     return localOffset === null ? null : hostStart + localOffset;
                   }
+                  function boundaryOffsetWithinContent(content, container, offset) {
+                    var explicitOffset = absoluteOffsetForBoundary(content, container, offset);
+                    if (explicitOffset !== null) return explicitOffset;
+                    var normalizedOffset = normalizedOffsetForBoundary(content, container, offset);
+                    return normalizedOffset === null ? null : contentStartOffset(content) + normalizedOffset;
+                  }
                   function trimSourceOffsets(rawStart, rawEnd, text) {
                     if (rawStart === null || rawEnd === null || rawEnd < rawStart) return { start: null, end: null };
                     var selectedText = String(text || '');
@@ -1695,8 +1810,8 @@ object ReaderHtmlDocumentBuilder {
                   }
                   function rangeOffsetsWithinContent(content, range) {
                     if (!content || !range) return { start: null, end: null };
-                    var rawStart = absoluteOffsetForBoundary(content, range.startContainer, range.startOffset);
-                    var rawEnd = absoluteOffsetForBoundary(content, range.endContainer, range.endOffset);
+                    var rawStart = boundaryOffsetWithinContent(content, range.startContainer, range.startOffset);
+                    var rawEnd = boundaryOffsetWithinContent(content, range.endContainer, range.endOffset);
                     return trimSourceOffsets(rawStart, rawEnd, range.toString());
                   }
                   function rangeIntersectsRange(range, candidate) {
@@ -1729,7 +1844,12 @@ object ReaderHtmlDocumentBuilder {
                     var contentRange = document.createRange();
                     try {
                       contentRange.selectNodeContents(content);
-                      if (!rangeIntersectsRange(range, contentRange)) return null;
+                      var boundaryInside = nodeInside(content, range.startContainer) || nodeInside(content, range.endContainer);
+                      var intersectsContent = boundaryInside;
+                      if (!intersectsContent && range.intersectsNode) {
+                        try { intersectsContent = range.intersectsNode(content); } catch (error) {}
+                      }
+                      if (!intersectsContent && !rangeIntersectsRange(range, contentRange)) return null;
                       var clipped = document.createRange();
                       if (nodeInside(content, range.startContainer)) {
                         clipped.setStart(range.startContainer, range.startOffset);
@@ -1766,21 +1886,39 @@ object ReaderHtmlDocumentBuilder {
                       var content = container && container.closest ? container.closest('.reader-content') : null;
                       if (content) contents = [content];
                     }
-                    return contents.map(function (content) {
+                    var diagnostics = {
+                      noRange: 0,
+                      badOffsets: [],
+                      missingHost: 0,
+                      blankText: 0
+                    };
+                    var segments = contents.map(function (content) {
                       var segmentRange = clippedRangeForContent(content, range);
-                      if (!segmentRange) return null;
+                      if (!segmentRange) {
+                        diagnostics.noRange += 1;
+                        return null;
+                      }
                       var offsets = rangeOffsetsWithinContent(content, segmentRange);
                       if (offsets.start === null || offsets.end === null || offsets.end <= offsets.start) {
+                        if (diagnostics.badOffsets.length < 4) {
+                          diagnostics.badOffsets.push(
+                            'start=' + offsets.start +
+                            ',end=' + offsets.end +
+                            ',textChars=' + segmentRange.toString().trim().length
+                          );
+                        }
                         segmentRange.detach && segmentRange.detach();
                         return null;
                       }
                       var readerHost = content.closest ? content.closest('[data-reader-chapter-index]') : null;
                       if (!readerHost) {
+                        diagnostics.missingHost += 1;
                         segmentRange.detach && segmentRange.detach();
                         return null;
                       }
                       var segmentText = segmentRange.toString().trim();
                       if (!segmentText) {
+                        diagnostics.blankText += 1;
                         segmentRange.detach && segmentRange.detach();
                         return null;
                       }
@@ -1797,6 +1935,18 @@ object ReaderHtmlDocumentBuilder {
                         endOffset: offsets.end
                       };
                     }).filter(Boolean);
+                    if (!segments.length) {
+                      readerHighlightFlowLog(
+                        'selection_segments_rejected contents=' + contents.length +
+                        ' noRange=' + diagnostics.noRange +
+                        ' badOffsets=' + diagnostics.badOffsets.length +
+                        ' missingHost=' + diagnostics.missingHost +
+                        ' blankText=' + diagnostics.blankText +
+                        ' common=' + selectionDebugNode(range.commonAncestorContainer) +
+                        ' badOffsetSamples="' + diagnostics.badOffsets.join('; ') + '"'
+                      );
+                    }
+                    return segments;
                   }
                   function rangeMatchesStoredOffsets(content, range, startOffset, endOffset) {
                     var offsets = rangeOffsetsWithinContent(content, range);
@@ -2341,11 +2491,31 @@ object ReaderHtmlDocumentBuilder {
                     var range = selection.getRangeAt(0);
                     var text = selection.toString().trim();
                     if (!text) return;
+                    readerHighlightFlowLog(
+                      'selection_begin mode=' + selectionDebugMode() +
+                      ' color=' + (colorId || 'yellow') +
+                      ' textChars=' + text.length +
+                      ' range=' + selectionDebugRange(range)
+                    );
                     var segments = selectionSegmentsForRange(range);
                     if (!segments.length) {
+                      readerHighlightFlowLog(
+                        'selection_segments_missing mode=' + selectionDebugMode() +
+                        ' text="' + readerTtsPreview(text, 120) + '"' +
+                        ' range=' + selectionDebugRange(range)
+                      );
                       readerSelectionDebugLog('highlight_selection_segments_missing text="' + readerTtsPreview(text, 120) + '"');
                       return;
                     }
+                    readerHighlightFlowLog(
+                      'selection_segments count=' + segments.length +
+                      ' details="' + segments.map(function (segment) {
+                        return 'chapter=' + segment.chapterIndex +
+                          ',page=' + segment.pageIndex +
+                          ',offsets=' + segment.startOffset + '..' + segment.endOffset +
+                          ',chars=' + segment.text.length;
+                      }).join('; ') + '"'
+                    );
                     var firstSegment = segments[0];
                     var lastSegment = segments[segments.length - 1];
                     var sameChapter = segments.every(function (segment) {
@@ -2399,12 +2569,26 @@ object ReaderHtmlDocumentBuilder {
                         });
                       });
                     }
+                    readerHighlightFlowLog(
+                      'payloads_built count=' + payloads.length +
+                      ' sameChapter=' + sameChapter +
+                      ' details="' + payloads.map(function (payload) {
+                        var locator = payload.locator || {};
+                        return 'cfi=' + readerTtsPreview(payload.cfi, 80) +
+                          ',color=' + payload.colorId +
+                          ',chapter=' + payload.chapterIndex +
+                          ',page=' + locator.pageIndex +
+                          ',offsets=' + locator.startOffset + '..' + locator.endOffset +
+                          ',textChars=' + (payload.text || '').length;
+                      }).join('; ') + '"'
+                    );
                     try {
                       if (sameChapter) {
                         var payload = payloads[0];
                         var localRange = range.cloneRange ? range.cloneRange() : range;
+                        var wrappedSingle = false;
                         try {
-                          wrapRangeTextSegments(localRange, function () {
+                          wrappedSingle = wrapRangeTextSegments(localRange, function () {
                             var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset);
                             marker.setAttribute('data-cfi', payload.cfi);
                             return marker;
@@ -2412,17 +2596,27 @@ object ReaderHtmlDocumentBuilder {
                         } finally {
                           if (localRange !== range && localRange.detach) localRange.detach();
                         }
+                        readerHighlightFlowLog(
+                          'local_wrap_done sameChapter=true wrapped=' + wrappedSingle +
+                          ' cfi="' + readerTtsPreview(payload.cfi, 120) + '"'
+                        );
                       } else {
                         segments.forEach(function (segment, index) {
                           var payload = payloads[index];
-                          wrapRangeTextSegments(segment.range, function () {
+                          var wrappedSegment = wrapRangeTextSegments(segment.range, function () {
                             var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset);
                             marker.setAttribute('data-cfi', payload.cfi);
                             return marker;
                           });
+                          readerHighlightFlowLog(
+                            'local_wrap_done sameChapter=false segment=' + index +
+                            ' wrapped=' + wrappedSegment +
+                            ' cfi="' + readerTtsPreview(payload.cfi, 120) + '"'
+                          );
                         });
                       }
                     } catch (error) {
+                      readerHighlightFlowLog('local_wrap_error error=' + readerTtsPreview(error, 180));
                       readerSelectionDebugLog('highlight_local_wrap_error error=' + readerTtsPreview(error, 180));
                     } finally {
                       segments.forEach(function (segment) {
@@ -2432,6 +2626,7 @@ object ReaderHtmlDocumentBuilder {
                     payloads.forEach(function (payload) {
                       if (payload.text.length > 0) sendReaderHighlightCreated(payload, 0);
                     });
+                    readerHighlightFlowLog('selection_end sentPayloads=' + payloads.length);
                     scheduleReaderHighlightReconcile();
                     selection.removeAllRanges();
                     hideMenu();

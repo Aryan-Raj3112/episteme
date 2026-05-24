@@ -85,10 +85,17 @@ internal fun DesktopEpubWebView(
     DisposableEffect(bridge) {
         val handlers = listOf(
             desktopEpubBridgeHandler("readerHighlightCreated") { message ->
+                logEpubHighlightFlow("bridge_received method=readerHighlightCreated params=\"${message.params.logPreview(900)}\"")
                 val highlight = EpubAnnotationSerializer.parseHighlightJsonLenient(message.params)
                 if (highlight == null) {
+                    logEpubHighlightFlow("bridge_parse_failed method=readerHighlightCreated")
                     logEpubSelectionDebug("highlight_parse_failed params=${message.params.logPreview(900)}")
                 } else {
+                    logEpubHighlightFlow(
+                        "bridge_parse_success id=${highlight.id} color=${highlight.color.id} " +
+                            "chapter=${highlight.chapterIndex} offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                            "page=${highlight.locator.pageIndex} textChars=${highlight.text.length} cfi=\"${highlight.cfi.logPreview()}\""
+                    )
                     scope.launch { latestOnHighlightCreated(highlight) }
                 }
             },
@@ -121,6 +128,9 @@ internal fun DesktopEpubWebView(
             },
             desktopEpubBridgeHandler("readerSelectionDebugLog") { message ->
                 logEpubSelectionDebug(message.params.readerSelectionDebugMessageOrNull() ?: message.params.logPreview(900))
+            },
+            desktopEpubBridgeHandler("readerHighlightFlowLog") { message ->
+                logEpubHighlightFlow(message.params.readerSelectionDebugMessageOrNull() ?: message.params.logPreview(900))
             },
             desktopEpubBridgeHandler("readerPaginationLayoutLog") { message ->
                 logEpubPagination(message.params.readerPaginationLogMessageOrNull() ?: message.params.logPreview(900))

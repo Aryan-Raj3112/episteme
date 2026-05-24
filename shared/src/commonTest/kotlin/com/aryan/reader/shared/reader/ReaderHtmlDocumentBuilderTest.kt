@@ -18,6 +18,7 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTableCell
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.UserHighlight
 import kotlin.test.Test
@@ -341,6 +342,58 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("document.addEventListener('mouseup'"))
         assertTrue(html.contains("document.addEventListener('touchend'"))
         assertTrue(html.contains("document.addEventListener('contextmenu'"))
+    }
+
+    @Test
+    fun `vertical selection script derives offsets from raw html chapters`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = SharedEpubBook(
+                id = "book",
+                fileName = "book.epub",
+                title = "Book",
+                chapters = listOf(
+                    SharedEpubChapter(
+                        id = "one",
+                        title = "One",
+                        plainText = "Alpha beta Gamma delta",
+                        htmlContent = "<p><span>Alpha beta</span></p><p><span>Gamma delta</span></p>"
+                    )
+                )
+            ),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+
+        assertTrue(html.contains("function normalizedOffsetForBoundary(root, container, offset)"))
+        assertTrue(html.contains("var explicitOffset = absoluteOffsetForBoundary(content, container, offset);"))
+        assertTrue(html.contains("var normalizedOffset = normalizedOffsetForBoundary(content, container, offset);"))
+        assertTrue(html.contains("return normalizedOffset === null ? null : contentStartOffset(content) + normalizedOffset;"))
+        assertTrue(html.contains("var boundaryInside = nodeInside(content, range.startContainer) || nodeInside(content, range.endContainer);"))
+        assertTrue(html.contains("range.intersectsNode(content)"))
+        assertTrue(html.contains("selection_segments_rejected contents="))
+        assertTrue(html.contains("function readerHighlightFlowLog(message)"))
+        assertTrue(html.contains("selection_begin mode="))
+        assertTrue(html.contains("bridge_send_success attempt="))
+        assertTrue(html.contains("<p><span>Alpha beta</span></p><p><span>Gamma delta</span></p>"))
+    }
+
+    @Test
+    fun `vertical selection menu renders every configured highlight palette slot`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            highlightPalette = ReaderHighlightPalette(
+                listOf(
+                    HighlightColor.YELLOW,
+                    HighlightColor.GREEN,
+                    HighlightColor.BLUE,
+                    HighlightColor.RED,
+                    HighlightColor.PURPLE
+                )
+            )
+        )
+
+        assertEquals(5, Regex("""class="reader-selection-color"""").findAll(html).count())
+        assertTrue(html.contains("""data-color-id="purple""""))
     }
 
     @Test

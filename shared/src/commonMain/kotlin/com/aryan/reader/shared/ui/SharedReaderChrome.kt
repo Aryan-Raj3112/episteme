@@ -586,6 +586,7 @@ fun SharedReaderScreen(
                     session.searchQuery,
                     session.searchOptions,
                     readerState.pages,
+                    highlightPalette,
                     byokSettings.areReaderAiFeaturesAvailable,
                     effectiveCloudTtsAvailable,
                     externalLookupAvailable
