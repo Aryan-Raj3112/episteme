@@ -366,10 +366,10 @@ object ReaderHtmlDocumentBuilder {
                   width: 100%;
                   max-width: 100%;
                   min-height: 100vh;
+                  min-height: 100dvh;
                   min-width: 0;
                   overflow-x: hidden;
-                  padding-top: var(--reader-vertical-margin-y);
-                  padding-bottom: var(--reader-vertical-margin-y);
+                  padding: 0;
                   scrollbar-gutter: auto;
                 }
                 body.reader-paginated {
@@ -384,20 +384,47 @@ object ReaderHtmlDocumentBuilder {
                   z-index: 1;
                 }
                 body.reader-vertical .chapter,
+                body.reader-vertical .chapter > :not(.reader-content),
+                body.reader-vertical .chapter-title,
                 body.reader-vertical .reader-content {
-                  box-sizing: border-box;
-                  min-width: 0;
+                  box-sizing: border-box !important;
+                  min-width: 0 !important;
                 }
                 body.reader-vertical .chapter {
-                  width: 100%;
-                  max-width: var(--reader-vertical-content-width);
-                  margin-left: auto;
-                  margin-right: auto;
-                  min-height: max(0px, calc(100vh - (var(--reader-vertical-margin-y) * 2)));
+                  width: 100% !important;
+                  max-width: none !important;
+                  margin: 0 !important;
                 }
+                body.reader-vertical .chapter > :not(.reader-content),
+                body.reader-vertical .chapter-title,
                 body.reader-vertical .reader-content {
-                  width: 100%;
-                  max-width: 100%;
+                  width: min(var(--reader-vertical-content-width), max(0px, calc(100% - (var(--reader-margin-x) * 2)))) !important;
+                  max-width: none !important;
+                  margin-left: auto !important;
+                  margin-right: auto !important;
+                }
+                body.reader-vertical .chapter > :not(.reader-content) {
+                  position: static !important;
+                  left: auto !important;
+                  right: auto !important;
+                  top: auto !important;
+                  bottom: auto !important;
+                  transform: none !important;
+                  float: none !important;
+                  clear: none !important;
+                }
+                body.reader-vertical .reader-content,
+                body.reader-vertical .reader-content p,
+                body.reader-vertical .reader-content li,
+                body.reader-vertical .reader-content div,
+                body.reader-vertical .reader-content h1,
+                body.reader-vertical .reader-content h2,
+                body.reader-vertical .reader-content h3,
+                body.reader-vertical .reader-content h4,
+                body.reader-vertical .reader-content h5,
+                body.reader-vertical .reader-content h6,
+                body.reader-vertical .reader-content blockquote {
+                  text-align: var(--reader-align) !important;
                 }
                 body.reader-vertical .reader-content p,
                 body.reader-vertical .reader-content div,
@@ -425,6 +452,19 @@ object ReaderHtmlDocumentBuilder {
                   top: auto !important;
                   bottom: auto !important;
                   transform: none !important;
+                  float: none !important;
+                  clear: none !important;
+                }
+                body.reader-vertical .reader-content div,
+                body.reader-vertical .reader-content section,
+                body.reader-vertical .reader-content article,
+                body.reader-vertical .reader-content header,
+                body.reader-vertical .reader-content footer,
+                body.reader-vertical .reader-content aside,
+                body.reader-vertical .reader-content figure {
+                  width: auto !important;
+                  margin-left: 0 !important;
+                  margin-right: 0 !important;
                 }
                 body.reader-vertical .reader-content > p,
                 body.reader-vertical .reader-content > div,

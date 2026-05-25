@@ -563,6 +563,7 @@ internal fun DesktopReaderScreen(
         if (renderPlan is ReaderContentRenderPlan.WebDocument) {
             Box(
                 modifier = readerSurfaceModifier
+                    .fillMaxSize()
                     .background(renderPlan.background)
             ) {
                 ReaderSurfaceContent()

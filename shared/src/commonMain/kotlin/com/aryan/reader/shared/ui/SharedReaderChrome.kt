@@ -256,6 +256,11 @@ fun SharedReaderScreen(
     val chromeContentColor = MaterialTheme.colorScheme.onSurface
     val pageInfoText = readerState.pageInfoText()
     val shouldShowPageInfo = settings.pageInfoMode != PageInfoMode.HIDDEN
+    val reserveTopPageInfoSpace =
+        settings.readingMode != ReaderReadingMode.VERTICAL &&
+            !isFullscreen &&
+            shouldShowPageInfo &&
+            settings.pageInfoPosition == PageInfoPosition.TOP
     val activeTtsProgress = readerExtrasState.cloudTts.progress
     val activeTtsChunk = activeTtsProgress.currentChunk
     val activeTtsLocator = activeTtsChunk?.toLocator()
@@ -560,12 +565,12 @@ fun SharedReaderScreen(
                     logReaderGapChrome(
                         layer = "reader_content_column",
                         bounds = coordinates.boundsInWindow(),
-                        details = "mode=${settings.readingMode} columnGap=12 pageInfoTop=${shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP}"
+                        details = "mode=${settings.readingMode} columnGap=${if (reserveTopPageInfoSpace) 12 else 0} pageInfoTop=$reserveTopPageInfoSpace"
                     )
                 },
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(if (reserveTopPageInfoSpace) 12.dp else 0.dp)
         ) {
-            if (!isFullscreen && shouldShowPageInfo && settings.pageInfoPosition == PageInfoPosition.TOP) {
+            if (reserveTopPageInfoSpace) {
                 Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 

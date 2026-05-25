@@ -270,42 +270,64 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `vertical document expands chapter content across reader surface`() {
+    fun `vertical document lays out continuous full width content`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL, pageWidth = 520)
         )
         val verticalExpansionCss = Regex(
             "body\\.reader-vertical \\.chapter,\\s*" +
+                "body\\.reader-vertical \\.chapter > :not\\(\\.reader-content\\),\\s*" +
+                "body\\.reader-vertical \\.chapter-title,\\s*" +
                 "body\\.reader-vertical \\.reader-content \\{\\s*" +
-                "box-sizing: border-box;\\s*" +
-                "min-width: 0;"
+                "box-sizing: border-box !important;\\s*" +
+                "min-width: 0 !important;"
         )
         val verticalMarginCss = Regex(
             "body\\.reader-vertical \\.chapter \\{\\s*" +
-                "width: 100%;\\s*" +
-                "max-width: var\\(--reader-vertical-content-width\\);\\s*" +
-                "margin-left: auto;\\s*" +
-                "margin-right: auto;\\s*" +
-                "min-height: max\\(0px, calc\\(100vh - \\(var\\(--reader-vertical-margin-y\\) \\* 2\\)\\)\\);"
+                "width: 100% !important;\\s*" +
+                "max-width: none !important;\\s*" +
+                "margin: 0 !important;"
         )
         val verticalContentCss = Regex(
-            "body\\.reader-vertical \\.reader-content \\{\\s*" +
-                "width: 100%;\\s*" +
-                "max-width: 100%;"
+            "body\\.reader-vertical \\.chapter > :not\\(\\.reader-content\\),\\s*" +
+                "body\\.reader-vertical \\.chapter-title,\\s*" +
+                "body\\.reader-vertical \\.reader-content \\{\\s*" +
+                "width: min\\(var\\(--reader-vertical-content-width\\), max\\(0px, calc\\(100% - \\(var\\(--reader-margin-x\\) \\* 2\\)\\)\\)\\) !important;\\s*" +
+                "max-width: none !important;\\s*" +
+                "margin-left: auto !important;\\s*" +
+                "margin-right: auto !important;"
+        )
+        val verticalChapterSiblingResetCss = Regex(
+            "body\\.reader-vertical \\.chapter > :not\\(\\.reader-content\\) \\{\\s*" +
+                "position: static !important;\\s*" +
+                "left: auto !important;\\s*" +
+                "right: auto !important;"
         )
         val verticalContentClampCss = Regex(
             "body\\.reader-vertical \\.reader-content p,\\s*" +
                 "body\\.reader-vertical \\.reader-content div,\\s*" +
                 "body\\.reader-vertical \\.reader-content h1,"
         )
+        val verticalTextAlignCss = Regex(
+            "body\\.reader-vertical \\.reader-content,\\s*" +
+                "body\\.reader-vertical \\.reader-content p,\\s*" +
+                "body\\.reader-vertical \\.reader-content li,"
+        )
         val verticalPositionResetCss = Regex(
             "position: static !important;\\s*" +
-                "left: auto !important;\\s*" +
-                "right: auto !important;\\s*" +
-                "top: auto !important;\\s*" +
-                "bottom: auto !important;\\s*" +
-                "transform: none !important;"
+            "left: auto !important;\\s*" +
+            "right: auto !important;\\s*" +
+            "top: auto !important;\\s*" +
+            "bottom: auto !important;\\s*" +
+            "transform: none !important;\\s*" +
+            "float: none !important;\\s*" +
+            "clear: none !important;"
+        )
+        val verticalNestedWrapperResetCss = Regex(
+            "body\\.reader-vertical \\.reader-content div,\\s*" +
+                "body\\.reader-vertical \\.reader-content section,\\s*" +
+                "body\\.reader-vertical \\.reader-content article,"
         )
         val verticalMarginResetCss = Regex(
             "body\\.reader-vertical \\.reader-content > p,\\s*" +
@@ -321,10 +343,10 @@ class ReaderHtmlDocumentBuilderTest {
                 "width: 100%;\\s*" +
                 "max-width: 100%;\\s*" +
                 "min-height: 100vh;\\s*" +
+                "min-height: 100dvh;\\s*" +
                 "min-width: 0;\\s*" +
                 "overflow-x: hidden;\\s*" +
-                "padding-top: var\\(--reader-vertical-margin-y\\);\\s*" +
-                "padding-bottom: var\\(--reader-vertical-margin-y\\);"
+                "padding: 0;"
         )
 
         assertTrue(html.contains("--reader-vertical-margin-y: 16px;"))
@@ -333,8 +355,14 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(verticalExpansionCss.containsMatchIn(html))
         assertTrue(verticalMarginCss.containsMatchIn(html))
         assertTrue(verticalContentCss.containsMatchIn(html))
+        assertTrue(verticalChapterSiblingResetCss.containsMatchIn(html))
+        assertTrue(verticalTextAlignCss.containsMatchIn(html))
+        assertFalse(html.contains("body.reader-vertical .reader-content {\n                  flex: 1 0 auto;"))
+        assertFalse(html.contains("min-height: 100dvh;\n                  display: flex;"))
+        assertTrue(html.contains("text-align: var(--reader-align) !important;"))
         assertTrue(verticalContentClampCss.containsMatchIn(html))
         assertTrue(verticalPositionResetCss.containsMatchIn(html))
+        assertTrue(verticalNestedWrapperResetCss.containsMatchIn(html))
         assertTrue(verticalMarginResetCss.containsMatchIn(html))
         assertTrue(paginatedWidthCss.containsMatchIn(html))
     }

@@ -192,10 +192,10 @@ private fun DesktopKcefEpubWebView(
         )
     }
 
-    Box(modifier = modifier) {
+    Box(modifier = modifier.fillMaxSize()) {
         WebView(
             state = state,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.matchParentSize(),
             captureBackPresses = false,
             navigator = navigator,
             webViewJsBridge = bridge

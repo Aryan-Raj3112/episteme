@@ -48,6 +48,7 @@ import java.awt.event.ComponentEvent
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 @Composable
 internal fun DesktopWindowsWebView2EpubWebView(
@@ -103,7 +104,7 @@ internal fun DesktopWindowsWebView2EpubWebView(
     }
 
     Box(
-        modifier = modifier.onSizeChanged { size ->
+        modifier = modifier.fillMaxSize().onSizeChanged { size ->
             logWebViewLayoutDiag(
                 "compose_webview_box panel=${panel.instanceId} size=${size.width}x${size.height} " +
                     "loaded=$loaded network=$networkAccessEnabled navMode=${navigationTarget.readingMode} " +
@@ -131,7 +132,7 @@ internal fun DesktopWindowsWebView2EpubWebView(
                 )
             },
             modifier = Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .onSizeChanged { size ->
                     logWebViewLayoutDiag(
                         "compose_swing_panel panel=${panel.instanceId} size=${size.width}x${size.height} " +
@@ -495,23 +496,7 @@ private class DesktopWindowsWebView2Controller(
     fun resize(width: Int, height: Int) {
         DesktopSwtWebView2EventLoop.asyncExec(reportError) {
             if (disposed) return@asyncExec
-            val safeWidth = width.coerceAtLeast(1)
-            val safeHeight = height.coerceAtLeast(1)
-            val hostScale = canvas.webView2HostScale()
-            shell?.setSize(safeWidth, safeHeight)
-            browser?.setBounds(0, 0, safeWidth, safeHeight)
-            logDesktopWebView2(
-                "controller_resize panel=$instanceId requested=${width}x${height} applied=${safeWidth}x$safeHeight " +
-                    "shellBounds=${shell?.bounds?.width ?: -1}x${shell?.bounds?.height ?: -1} " +
-                    "browserBounds=${browser?.bounds?.width ?: -1}x${browser?.bounds?.height ?: -1}"
-            )
-            logWebViewLayoutDiag(
-                "controller_resize panel=$instanceId requested=${width}x${height} applied=${safeWidth}x$safeHeight " +
-                    "hostScale=${hostScale.scaleX.formatLogFloat()}x${hostScale.scaleY.formatLogFloat()} " +
-                    "canvas=${canvas.width}x${canvas.height} canvasBounds=${canvas.bounds.formatAwtBounds()} " +
-                    "shellBounds=${shell?.bounds?.formatSwtBounds().orEmpty()} " +
-                    "browserBounds=${browser?.bounds?.formatSwtBounds().orEmpty()}"
-            )
+            applyCanvasSizeToBrowser(width, height, reason = "resize")
         }
     }
 
@@ -556,7 +541,7 @@ private class DesktopWindowsWebView2Controller(
                         if (method.isBlank()) return null
                         val params = arguments.getOrNull(1)?.toString() ?: "{}"
                         if (method == DesktopWebView2DiagnosticMethodName) {
-                            val preview = params.logPreview(2400)
+                            val preview = params.logPreview(6000)
                             logDesktopWebView2("bridge_diagnostic panel=$instanceId params=\"$preview\"")
                             logWebViewLayoutDiag("document_probe panel=$instanceId params=\"$preview\"")
                         } else {
@@ -621,6 +606,7 @@ private class DesktopWindowsWebView2Controller(
 
                         override fun completed(event: ProgressEvent) {
                             val bridgeInjected = webView.execute(DesktopWebView2BridgeRuntimeScript)
+                            applyCanvasSizeToBrowser(canvas.width, canvas.height, reason = "load_completed")
                             val probeInjected = webView.execute(desktopWebView2DocumentProbeScript("load_completed"))
                             logDesktopWebView2(
                                 "progress_completed panel=$instanceId bridgeInjected=$bridgeInjected probeInjected=$probeInjected " +
@@ -635,21 +621,17 @@ private class DesktopWindowsWebView2Controller(
                     }
                 )
             }
-            val initialWidth = canvas.width.coerceAtLeast(1)
-            val initialHeight = canvas.height.coerceAtLeast(1)
-            val initialHostScale = canvas.webView2HostScale()
-            shell?.setSize(initialWidth, initialHeight)
-            browser?.setBounds(0, 0, initialWidth, initialHeight)
+            applyCanvasSizeToBrowser(canvas.width, canvas.height, reason = "open")
             shell?.open()
             logDesktopWebView2(
                 "controller_open panel=$instanceId shellVisible=${shell?.isVisible == true} " +
-                    "initial=${canvas.width}x${canvas.height} applied=${initialWidth}x$initialHeight " +
+                    "initial=${canvas.width}x${canvas.height} " +
                     "browserBounds=${browser?.bounds?.width ?: -1}x${browser?.bounds?.height ?: -1}"
             )
             logWebViewLayoutDiag(
                 "controller_open panel=$instanceId shellVisible=${shell?.isVisible == true} " +
-                    "initial=${canvas.width}x${canvas.height} applied=${initialWidth}x$initialHeight " +
-                    "hostScale=${initialHostScale.scaleX.formatLogFloat()}x${initialHostScale.scaleY.formatLogFloat()} " +
+                    "initial=${canvas.width}x${canvas.height} " +
+                    "hostScale=${canvas.webView2HostScale().scaleX.formatLogFloat()}x${canvas.webView2HostScale().scaleY.formatLogFloat()} " +
                     "shellBounds=${shell?.bounds?.formatSwtBounds().orEmpty()} " +
                     "browserBounds=${browser?.bounds?.formatSwtBounds().orEmpty()} canvasBounds=${canvas.bounds.formatAwtBounds()}"
             )
@@ -660,6 +642,40 @@ private class DesktopWindowsWebView2Controller(
             reportError(error)
             dispose()
         }
+    }
+
+    private fun applyCanvasSizeToBrowser(width: Int, height: Int, reason: String) {
+        val webShell = shell ?: return
+        val webBrowser = browser
+        if (webShell.isDisposed || webBrowser?.isDisposed == true) return
+        val hostScale = canvas.webView2HostScale()
+        if (width <= 0 || height <= 0) {
+            logWebViewLayoutDiag(
+                "controller_resize_skip panel=$instanceId reason=$reason requested=${width}x${height} " +
+                    "hostScale=${hostScale.scaleX.formatLogFloat()}x${hostScale.scaleY.formatLogFloat()} " +
+                    "canvas=${canvas.width}x${canvas.height} shellBounds=${webShell.bounds.formatSwtBounds()} " +
+                    "browserBounds=${webBrowser?.bounds?.formatSwtBounds().orEmpty()}"
+            )
+            return
+        }
+        val targetWidth = width.coerceAtLeast(1)
+        val targetHeight = (height * hostScale.scaleY).roundToInt().coerceAtLeast(1)
+        webShell.setBounds(0, 0, targetWidth, targetHeight)
+        webBrowser?.setBounds(0, 0, targetWidth, targetHeight)
+        logDesktopWebView2(
+            "controller_resize panel=$instanceId reason=$reason requested=${width}x${height} " +
+                "target=${targetWidth}x$targetHeight axisMode=logicalWidth_scaledHeight_zeroOrigin " +
+                "shellBounds=${webShell.bounds.x},${webShell.bounds.y} ${webShell.bounds.width}x${webShell.bounds.height} " +
+                "browserBounds=${webBrowser?.bounds?.width ?: -1}x${webBrowser?.bounds?.height ?: -1}"
+        )
+        logWebViewLayoutDiag(
+            "controller_resize panel=$instanceId reason=$reason requested=${width}x${height} " +
+                "target=${targetWidth}x$targetHeight axisMode=logicalWidth_scaledHeight_zeroOrigin " +
+                "hostScale=${hostScale.scaleX.formatLogFloat()}x${hostScale.scaleY.formatLogFloat()} " +
+                "canvas=${canvas.width}x${canvas.height} canvasBounds=${canvas.bounds.formatAwtBounds()} " +
+                "shellBounds=${webShell.bounds.formatSwtBounds()} " +
+                "browserBounds=${webBrowser?.bounds?.formatSwtBounds().orEmpty()}"
+        )
     }
 }
 
@@ -785,6 +801,10 @@ private fun String.withDesktopWebView2Bootstrap(networkAccessEnabled: Boolean): 
         append(DesktopWebView2ReaderSurfaceCssTag)
         append('\n')
         append(DesktopWebView2BridgeScriptTag)
+        if (DesktopDiagnosticsEnabled) {
+            append('\n')
+            append(DesktopWebView2LayoutOverlayTag)
+        }
     }
     val headStart = Regex("<head\\b[^>]*>", RegexOption.IGNORE_CASE).find(this)
     if (headStart != null) {
@@ -822,6 +842,8 @@ private fun desktopWebView2DocumentProbeScript(eventName: String): String {
               if (!element) return null;
               var rect = element.getBoundingClientRect();
               var centerX = rect.left + (rect.width / 2);
+              var centerY = rect.top + (rect.height / 2);
+              var viewportHeight = window.innerHeight || 0;
               return {
                 left: round(rect.left),
                 top: round(rect.top),
@@ -831,12 +853,21 @@ private fun desktopWebView2DocumentProbeScript(eventName: String): String {
                 height: round(rect.height),
                 centerX: round(centerX),
                 centerDelta: round(centerX - ((window.innerWidth || 0) / 2)),
+                centerY: round(centerY),
+                viewportHeightDelta: round(rect.height - viewportHeight),
                 marginLeft: cssValue(element, 'margin-left').trim(),
                 marginRight: cssValue(element, 'margin-right').trim(),
+                paddingLeft: cssValue(element, 'padding-left').trim(),
+                paddingRight: cssValue(element, 'padding-right').trim(),
                 paddingTop: cssValue(element, 'padding-top').trim(),
                 paddingBottom: cssValue(element, 'padding-bottom').trim(),
                 textAlign: cssValue(element, 'text-align').trim(),
+                display: cssValue(element, 'display').trim(),
+                cssFloat: cssValue(element, 'float').trim(),
+                clear: cssValue(element, 'clear').trim(),
+                cssWidth: cssValue(element, 'width').trim(),
                 maxWidth: cssValue(element, 'max-width').trim(),
+                minHeight: cssValue(element, 'min-height').trim(),
                 boxSizing: cssValue(element, 'box-sizing').trim()
               };
             }
@@ -871,8 +902,12 @@ private fun desktopWebView2DocumentProbeScript(eventName: String): String {
             var content = chapter ? (chapter.querySelector('.reader-content') || chapter) : firstContent;
             var firstBlock = firstContent ? firstContent.querySelector(blockSelector) : null;
             var visibleBlock = visibleBlockIn(content);
+            var viewportCenterX = Math.max(0, Math.min((window.innerWidth || 0) - 1, Math.round((window.innerWidth || 0) / 2)));
+            var viewportTopY = Math.max(0, Math.min((window.innerHeight || 0) - 1, 8));
+            var topElement = document.elementFromPoint(viewportCenterX, viewportTopY);
+            var topBlock = topElement && topElement.closest ? topElement.closest(blockSelector) : null;
             var sampledElement = document.elementFromPoint(
-              Math.max(0, Math.min((window.innerWidth || 0) - 1, Math.round((window.innerWidth || 0) / 2))),
+              viewportCenterX,
               Math.max(0, Math.min((window.innerHeight || 0) - 1, Math.round((window.innerHeight || 0) / 2)))
             );
             var sampledBlock = sampledElement && sampledElement.closest ? sampledElement.closest(blockSelector) : null;
@@ -890,6 +925,7 @@ private fun desktopWebView2DocumentProbeScript(eventName: String): String {
               readerVerticalMarginY: cssVar('--reader-vertical-margin-y'),
               readerVerticalContentWidth: cssVar('--reader-vertical-content-width'),
               readerFontSize: cssVar('--reader-font-size'),
+              bodyZoom: cssValue(body, 'zoom').trim(),
               bodyChildren: body ? body.children.length : -1,
               bodyTextChars: body && body.innerText ? body.innerText.length : 0,
               bodyHtmlChars: body && body.innerHTML ? body.innerHTML.length : 0,
@@ -901,7 +937,14 @@ private fun desktopWebView2DocumentProbeScript(eventName: String): String {
               clientHeight: root ? root.clientHeight : -1,
               viewportWidth: window.innerWidth || -1,
               viewportHeight: window.innerHeight || -1,
+              visualViewportWidth: window.visualViewport ? round(window.visualViewport.width) : -1,
+              visualViewportHeight: window.visualViewport ? round(window.visualViewport.height) : -1,
+              visualViewportScale: window.visualViewport ? window.visualViewport.scale : -1,
               scrollX: window.scrollX || 0,
+              topElementTag: topElement ? topElement.tagName : '',
+              topElementClass: topElement && topElement.className ? String(topElement.className) : '',
+              topBlockTag: topBlock ? topBlock.tagName : '',
+              topBlockRect: rectPayload(topBlock),
               bodyRect: rectPayload(body),
               rootRect: rectPayload(root),
               firstChapterRect: rectPayload(firstChapter),
@@ -972,24 +1015,51 @@ private val DesktopWebView2ReaderSurfaceCssTag = """
       }
       body.reader-vertical {
         min-height: 100vh !important;
-        padding-top: var(--reader-vertical-margin-y) !important;
-        padding-bottom: var(--reader-vertical-margin-y) !important;
+        min-height: 100dvh !important;
+        padding: 0 !important;
       }
       body.reader-vertical .chapter,
+      body.reader-vertical .chapter > :not(.reader-content),
+      body.reader-vertical .chapter-title,
       body.reader-vertical .reader-content {
         box-sizing: border-box !important;
         min-width: 0 !important;
       }
       body.reader-vertical .chapter {
         width: 100% !important;
-        max-width: var(--reader-vertical-content-width) !important;
+        max-width: none !important;
+        margin: 0 !important;
+      }
+      body.reader-vertical .chapter > :not(.reader-content),
+      body.reader-vertical .chapter-title,
+      body.reader-vertical .reader-content {
+        width: min(var(--reader-vertical-content-width), max(0px, calc(100% - (var(--reader-margin-x) * 2)))) !important;
+        max-width: none !important;
         margin-left: auto !important;
         margin-right: auto !important;
-        min-height: max(0px, calc(100vh - (var(--reader-vertical-margin-y) * 2))) !important;
       }
-      body.reader-vertical .reader-content {
-        width: 100% !important;
-        max-width: 100% !important;
+      body.reader-vertical .chapter > :not(.reader-content) {
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
+        top: auto !important;
+        bottom: auto !important;
+        transform: none !important;
+        float: none !important;
+        clear: none !important;
+      }
+      body.reader-vertical .reader-content,
+      body.reader-vertical .reader-content p,
+      body.reader-vertical .reader-content li,
+      body.reader-vertical .reader-content div,
+      body.reader-vertical .reader-content h1,
+      body.reader-vertical .reader-content h2,
+      body.reader-vertical .reader-content h3,
+      body.reader-vertical .reader-content h4,
+      body.reader-vertical .reader-content h5,
+      body.reader-vertical .reader-content h6,
+      body.reader-vertical .reader-content blockquote {
+        text-align: var(--reader-align) !important;
       }
       body.reader-vertical .reader-content p,
       body.reader-vertical .reader-content div,
@@ -1017,6 +1087,19 @@ private val DesktopWebView2ReaderSurfaceCssTag = """
         top: auto !important;
         bottom: auto !important;
         transform: none !important;
+        float: none !important;
+        clear: none !important;
+      }
+      body.reader-vertical .reader-content div,
+      body.reader-vertical .reader-content section,
+      body.reader-vertical .reader-content article,
+      body.reader-vertical .reader-content header,
+      body.reader-vertical .reader-content footer,
+      body.reader-vertical .reader-content aside,
+      body.reader-vertical .reader-content figure {
+        width: auto !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
       }
       body.reader-vertical .reader-content > p,
       body.reader-vertical .reader-content > div,
@@ -1095,6 +1178,138 @@ private val DesktopWebView2BridgeScriptTag = """
     <script>
     ${DesktopWebView2BridgeRuntimeScript}
     ${DesktopWebView2HorizontalClampScript}
+    </script>
+""".trimIndent()
+
+private val DesktopWebView2LayoutOverlayTag = """
+    <style id="episteme-webview2-layout-overlay-style">
+      .episteme-webview2-layout-overlay {
+        position: fixed;
+        z-index: 2147483647;
+        pointer-events: none;
+        box-sizing: border-box;
+        font: 12px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+      #episteme-webview2-overlay-viewport {
+        inset: 0;
+        border: 2px solid rgba(239, 68, 68, 0.95);
+      }
+      #episteme-webview2-overlay-content {
+        border: 2px solid rgba(34, 197, 94, 0.95);
+        background: rgba(34, 197, 94, 0.06);
+      }
+      #episteme-webview2-overlay-block {
+        border: 2px dashed rgba(59, 130, 246, 0.95);
+        background: rgba(59, 130, 246, 0.05);
+      }
+      #episteme-webview2-overlay-center {
+        top: 0;
+        bottom: 0;
+        width: 0;
+        border-left: 1px solid rgba(234, 179, 8, 0.95);
+      }
+      #episteme-webview2-overlay-label {
+        left: 8px;
+        top: 8px;
+        max-width: min(720px, calc(100vw - 16px));
+        padding: 6px 8px;
+        color: #111827;
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(17, 24, 39, 0.32);
+        border-radius: 4px;
+        white-space: pre-wrap;
+      }
+    </style>
+    <script>
+    (function () {
+      if (window.readerWebView2LayoutOverlayInstalled) return;
+      window.readerWebView2LayoutOverlayInstalled = true;
+      function overlay(id) {
+        var node = document.getElementById(id);
+        if (!node) {
+          node = document.createElement('div');
+          node.id = id;
+          node.className = 'episteme-webview2-layout-overlay';
+          document.documentElement.appendChild(node);
+        }
+        return node;
+      }
+      var viewport = overlay('episteme-webview2-overlay-viewport');
+      var contentBox = overlay('episteme-webview2-overlay-content');
+      var blockBox = overlay('episteme-webview2-overlay-block');
+      var centerLine = overlay('episteme-webview2-overlay-center');
+      var label = overlay('episteme-webview2-overlay-label');
+      function round(value) {
+        return Math.round((Number(value) || 0) * 10) / 10;
+      }
+      function setRect(node, rect) {
+        if (!rect) {
+          node.style.display = 'none';
+          return;
+        }
+        node.style.display = 'block';
+        node.style.left = round(rect.left) + 'px';
+        node.style.top = round(rect.top) + 'px';
+        node.style.width = Math.max(0, round(rect.width)) + 'px';
+        node.style.height = Math.max(0, round(rect.height)) + 'px';
+      }
+      function rectText(name, rect) {
+        if (!rect) return name + '=none';
+        return name + '=' + round(rect.left) + ',' + round(rect.top) + ' ' +
+          round(rect.width) + 'x' + round(rect.height) + ' right=' + round(rect.right);
+      }
+      function visibleContent() {
+        var x = Math.max(0, Math.min((window.innerWidth || 0) - 1, Math.round((window.innerWidth || 0) / 2)));
+        var y = Math.max(0, Math.min((window.innerHeight || 0) - 1, Math.round((window.innerHeight || 0) / 2)));
+        var element = document.elementFromPoint(x, y);
+        return element && element.closest
+          ? (element.closest('.reader-content') || document.querySelector('.reader-content'))
+          : document.querySelector('.reader-content');
+      }
+      function visibleBlock(content) {
+        if (!content) return null;
+        var blocks = Array.prototype.slice.call(content.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote, figure, table, pre'));
+        var height = window.innerHeight || 0;
+        for (var i = 0; i < blocks.length; i++) {
+          var rect = blocks[i].getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= height) return blocks[i];
+        }
+        return blocks[0] || null;
+      }
+      var queued = false;
+      function update() {
+        queued = false;
+        var viewportWidth = window.innerWidth || 0;
+        var viewportHeight = window.innerHeight || 0;
+        var content = visibleContent();
+        var block = visibleBlock(content);
+        var contentRect = content ? content.getBoundingClientRect() : null;
+        var blockRect = block ? block.getBoundingClientRect() : null;
+        viewport.style.display = 'block';
+        centerLine.style.left = Math.round(viewportWidth / 2) + 'px';
+        setRect(contentBox, contentRect);
+        setRect(blockBox, blockRect);
+        label.textContent =
+          'red=viewport green=visible .reader-content blue=visible block yellow=center\n' +
+          'viewport=' + viewportWidth + 'x' + viewportHeight +
+          ' dpr=' + (window.devicePixelRatio || 1) +
+          ' scroll=' + Math.round(window.scrollX || 0) + ',' + Math.round(window.scrollY || 0) + '\n' +
+          rectText('content', contentRect) + '\n' +
+          rectText('block', blockRect);
+      }
+      function schedule() {
+        if (queued) return;
+        queued = true;
+        window.requestAnimationFrame(update);
+      }
+      window.addEventListener('resize', schedule, { passive: true });
+      window.addEventListener('scroll', schedule, { passive: true });
+      document.addEventListener('scroll', schedule, true);
+      document.addEventListener('DOMContentLoaded', schedule, { once: true });
+      window.addEventListener('load', schedule, { once: true });
+      window.setInterval(schedule, 1000);
+      schedule();
+    })();
     </script>
 """.trimIndent()
 
