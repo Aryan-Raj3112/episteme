@@ -11,7 +11,13 @@ import org.gradle.jvm.tasks.Jar
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Properties
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -64,6 +70,124 @@ abstract class CheckBundledPdfiumRuntimeTask : DefaultTask() {
                     "Expected ${libraryPath.get()} inside ${bundleRoot.absolutePath}."
             )
         }
+    }
+}
+
+@DisableCachingByDefault(because = "Renames package output produced by jpackage.")
+abstract class RenameDesktopMsiOutputTask : DefaultTask() {
+    @get:Input
+    abstract val msiDirectoryPath: Property<String>
+
+    @get:Input
+    abstract val packageName: Property<String>
+
+    @get:Input
+    abstract val packageVersion: Property<String>
+
+    @get:Input
+    abstract val architecture: Property<String>
+
+    @TaskAction
+    fun renameOutput() {
+        val msiDirectory = File(msiDirectoryPath.get())
+        val outputPackageName = packageName.get()
+        val outputPackageVersion = packageVersion.get()
+        val source = msiDirectory.resolve("$outputPackageName-$outputPackageVersion.msi")
+        if (!source.isFile) return
+
+        val target = msiDirectory.resolve("$outputPackageName-$outputPackageVersion-${architecture.get()}.msi")
+        if (target.exists() && !target.delete()) {
+            throw GradleException("Could not replace existing MSI at ${target.absolutePath}.")
+        }
+        if (!source.renameTo(target)) {
+            throw GradleException("Could not rename MSI from ${source.absolutePath} to ${target.absolutePath}.")
+        }
+    }
+}
+
+@DisableCachingByDefault(because = "Strips stale jar signatures in-place after ProGuard rewrites signed dependencies.")
+abstract class StripInvalidJarSignaturesTask : DefaultTask() {
+    @get:Input
+    abstract val jarDirectoryPath: Property<String>
+
+    @TaskAction
+    fun stripSignatures() {
+        val jarDirectory = File(jarDirectoryPath.get())
+        if (!jarDirectory.isDirectory) return
+
+        var strippedJarCount = 0
+        jarDirectory.walkTopDown()
+            .filter { it.isFile && it.extension.equals("jar", ignoreCase = true) }
+            .forEach { jar ->
+                val strippedEntries = stripInvalidJarSignatures(jar)
+                if (strippedEntries > 0) {
+                    strippedJarCount += 1
+                    logger.lifecycle("Stripped $strippedEntries stale jar signature entr${if (strippedEntries == 1) "y" else "ies"} from ${jar.name}")
+                }
+            }
+
+        if (strippedJarCount > 0) {
+            logger.lifecycle("Stripped stale jar signatures from $strippedJarCount ProGuard output jar${if (strippedJarCount == 1) "" else "s"}.")
+        }
+    }
+
+    private fun stripInvalidJarSignatures(jar: File): Int {
+        val temp = Files.createTempFile(jar.parentFile.toPath(), "${jar.nameWithoutExtension}-unsigned-", ".jar")
+        var strippedEntries = 0
+
+        ZipFile(jar).use { source ->
+            ZipOutputStream(Files.newOutputStream(temp)).use { target ->
+                val seenEntries = mutableSetOf<String>()
+                val entries = source.entries()
+                while (entries.hasMoreElements()) {
+                    val sourceEntry = entries.nextElement()
+                    val entryName = sourceEntry.name
+                    if (!seenEntries.add(entryName)) continue
+                    if (isJarSignatureResource(entryName)) {
+                        strippedEntries += 1
+                        continue
+                    }
+
+                    val targetEntry = ZipEntry(entryName)
+                    if (sourceEntry.time >= 0) {
+                        targetEntry.time = sourceEntry.time
+                    }
+                    target.putNextEntry(targetEntry)
+                    if (!sourceEntry.isDirectory) {
+                        source.getInputStream(sourceEntry).use { input ->
+                            input.copyTo(target)
+                        }
+                    }
+                    target.closeEntry()
+                }
+            }
+        }
+
+        if (strippedEntries > 0) {
+            try {
+                Files.move(temp, jar.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temp, jar.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } else {
+            Files.deleteIfExists(temp)
+        }
+
+        return strippedEntries
+    }
+
+    private fun isJarSignatureResource(entryName: String): Boolean {
+        val normalized = entryName.replace('\\', '/').uppercase()
+        if (!normalized.startsWith("META-INF/")) return false
+
+        val metaInfName = normalized.removePrefix("META-INF/")
+        if (metaInfName.contains("/")) return false
+
+        return metaInfName.startsWith("SIG-") ||
+            metaInfName.endsWith(".SF") ||
+            metaInfName.endsWith(".DSA") ||
+            metaInfName.endsWith(".RSA") ||
+            metaInfName.endsWith(".EC")
     }
 }
 
@@ -320,24 +444,6 @@ fun normalizeDesktopPackageArchitecture(osArch: String): String {
     }
 }
 
-fun renameDesktopMsiOutput(
-    msiDirectory: File,
-    packageName: String,
-    packageVersion: String,
-    architecture: String
-) {
-    val source = msiDirectory.resolve("$packageName-$packageVersion.msi")
-    if (!source.isFile) return
-
-    val target = msiDirectory.resolve("$packageName-$packageVersion-$architecture.msi")
-    if (target.exists() && !target.delete()) {
-        throw GradleException("Could not replace existing MSI at ${target.absolutePath}.")
-    }
-    if (!source.renameTo(target)) {
-        throw GradleException("Could not rename MSI from ${source.absolutePath} to ${target.absolutePath}.")
-    }
-}
-
 val desktopVersionName = "1.0.0"
 val desktopFlavor = providers.gradleProperty("desktopFlavor")
     .orElse("standard")
@@ -547,10 +653,10 @@ kotlin {
                 if (desktopUsesWindowsWebView2) {
                     runtimeOnly(desktopSwtWindowsDependency)
                 }
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.1")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
                 implementation("net.java.dev.jna:jna:5.17.0")
                 implementation("org.apache.commons:commons-compress:1.28.0")
-                implementation("org.apache.thrift:libthrift:0.22.0")
                 implementation("org.tukaani:xz:1.10")
                 implementation("com.twelvemonkeys.imageio:imageio-webp:3.13.1")
             }
@@ -585,7 +691,15 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
-            modules("java.net.http")
+            modules(
+                "java.datatransfer",
+                "java.desktop",
+                "java.logging",
+                "java.management",
+                "java.net.http",
+                "jdk.charsets",
+                "jdk.unsupported"
+            )
             packageName = desktopPackageName
             packageVersion = desktopPackageVersion.get()
             description = desktopPackageDescription
@@ -634,19 +748,37 @@ tasks.withType<Jar>().configureEach {
     }
 }
 
+val stripReleaseProguardJarSignatures by tasks.registering(StripInvalidJarSignaturesTask::class) {
+    dependsOn("proguardReleaseJars")
+    jarDirectoryPath.set(layout.buildDirectory.dir("compose/tmp/main-release/proguard").map { it.asFile.absolutePath })
+}
+
+tasks.matching {
+    it.name in setOf(
+        "createReleaseDistributable",
+        "packageReleaseDistributionForCurrentOS",
+        "packageReleaseExe",
+        "packageReleaseMsi",
+        "packageReleaseDeb",
+        "packageReleaseRpm",
+        "runReleaseDistributable"
+    )
+}.configureEach {
+    dependsOn(stripReleaseProguardJarSignatures)
+}
+
 mapOf(
     "packageMsi" to "main",
     "packageReleaseMsi" to "main-release"
 ).forEach { (taskName, distributionName) ->
+    val renameTask = tasks.register<RenameDesktopMsiOutputTask>("rename${taskName.replaceFirstChar(Char::titlecase)}Output") {
+        msiDirectoryPath.set(layout.buildDirectory.dir("compose/binaries/$distributionName/msi").get().asFile.absolutePath)
+        packageName.set(desktopPackageName)
+        packageVersion.set(desktopPackageVersion.get())
+        architecture.set(desktopPackageArchitecture)
+    }
     tasks.matching { it.name == taskName }.configureEach {
-        doLast {
-            renameDesktopMsiOutput(
-                msiDirectory = layout.buildDirectory.dir("compose/binaries/$distributionName/msi").get().asFile,
-                packageName = desktopPackageName,
-                packageVersion = desktopPackageVersion.get(),
-                architecture = desktopPackageArchitecture
-            )
-        }
+        finalizedBy(renameTask)
     }
 }
 

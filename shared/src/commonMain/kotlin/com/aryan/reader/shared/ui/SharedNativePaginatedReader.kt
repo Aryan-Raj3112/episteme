@@ -94,6 +94,7 @@ import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
@@ -304,7 +305,7 @@ fun SharedNativePaginatedReader(
             val pageGap = 28.dp
             val horizontalMargin = renderPlan.settings.resolvedHorizontalMargin.dp
             val configuredContentWidth = renderPlan.settings.pageWidth.dp
-            val pageOuterWidth = if (visiblePages.size > 1) {
+            val pageOuterWidth = if (renderPlan.settings.usesNativePaginatedSpreadPageSlot()) {
                 val availablePageOuterWidth = ((maxWidth - pageGap).coerceAtLeast(1.dp)) / 2f
                 val availableContentWidth = (availablePageOuterWidth - (horizontalMargin * 2f)).coerceAtLeast(1.dp)
                 minOf(availableContentWidth, configuredContentWidth) + (horizontalMargin * 2f)
@@ -415,6 +416,10 @@ fun SharedNativePaginatedReader(
             }
         }
     }
+}
+
+private fun ReaderSettings.usesNativePaginatedSpreadPageSlot(): Boolean {
+    return readingMode == ReaderReadingMode.PAGINATED
 }
 
 @Composable

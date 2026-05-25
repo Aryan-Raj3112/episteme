@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
@@ -47,6 +48,7 @@ internal fun DesktopEpubWebView(
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
     onPointerActivity: () -> Unit = {},
     networkAccessEnabled: Boolean,
+    backgroundColor: Color,
     modifier: Modifier = Modifier
 ) {
     if (desktopEpubWebViewUsesWebView2()) {
@@ -71,6 +73,7 @@ internal fun DesktopEpubWebView(
             onVisiblePageChanged = onVisiblePageChanged,
             onPointerActivity = onPointerActivity,
             networkAccessEnabled = networkAccessEnabled,
+            backgroundColor = backgroundColor,
             modifier = modifier
         )
     } else {

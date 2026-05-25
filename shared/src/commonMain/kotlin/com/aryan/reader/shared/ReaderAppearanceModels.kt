@@ -180,6 +180,27 @@ fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): Reade
     )
 }
 
+fun ReaderSettings.resetReaderFormatSettings(): ReaderSettings {
+    val defaults = ReaderSettings()
+    return copy(
+        fontSize = defaults.fontSize,
+        lineSpacing = defaults.lineSpacing,
+        margin = defaults.margin,
+        horizontalMargin = defaults.horizontalMargin,
+        verticalMargin = defaults.verticalMargin,
+        textAlign = defaults.textAlign,
+        pageWidth = defaults.pageWidth,
+        fontFamily = defaults.fontFamily,
+        paragraphSpacing = defaults.paragraphSpacing,
+        imageScale = defaults.imageScale,
+        customFontPath = defaults.customFontPath
+    )
+}
+
+fun ReaderSettings.shouldShowPageWidthFormatControl(): Boolean {
+    return readingMode == ReaderReadingMode.PAGINATED
+}
+
 fun readerThemeById(themeId: String?): ReaderTheme? {
     return BuiltInReaderThemes.firstOrNull { it.id == themeId }
 }

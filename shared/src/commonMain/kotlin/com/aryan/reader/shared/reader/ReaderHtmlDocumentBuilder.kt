@@ -133,6 +133,7 @@ object ReaderHtmlDocumentBuilder {
         textureDataUri: String? = null
     ): String {
         val appearance = settings.toDocumentAppearanceCss(textureDataUri)
+        val customFontCss = settings.readerCustomFontFaceCss()
         return """
             (function () {
               var root = document.documentElement;
@@ -144,6 +145,29 @@ object ReaderHtmlDocumentBuilder {
               root.style.setProperty('--reader-link-decoration', ${appearance.linkColors.decoration.toJsStringLiteral()});
               root.style.setProperty('--reader-link-bg', ${appearance.linkColors.background.toJsStringLiteral()});
               root.style.setProperty('--reader-highlight', ${appearance.highlight.toJsStringLiteral()});
+              root.style.setProperty('--reader-font-size', ${"${settings.fontSize}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-line-height', ${settings.lineSpacing.toString().toJsStringLiteral()});
+              root.style.setProperty('--reader-page-width', ${"${settings.pageWidth}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-margin', ${"${settings.margin}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-margin-x', ${"${settings.resolvedHorizontalMargin}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-margin-y', ${"${settings.resolvedVerticalMargin}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-vertical-margin-y', ${"${settings.readerVerticalMarginY()}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-paragraph-spacing', ${settings.paragraphSpacing.toString().toJsStringLiteral()});
+              root.style.setProperty('--reader-image-scale', ${settings.readerImageScaleCss().toJsStringLiteral()});
+              root.style.setProperty('--reader-align', ${settings.readerTextAlignCss().toJsStringLiteral()});
+              root.style.setProperty('--reader-family', ${settings.readerFontFamilyCss().toJsStringLiteral()});
+              var customFontCss = ${customFontCss.toJsStringLiteral()};
+              var customFontStyle = document.getElementById('reader-custom-font-style');
+              if (customFontCss) {
+                if (!customFontStyle) {
+                  customFontStyle = document.createElement('style');
+                  customFontStyle.id = 'reader-custom-font-style';
+                  document.head.appendChild(customFontStyle);
+                }
+                customFontStyle.textContent = customFontCss;
+              } else if (customFontStyle && customFontStyle.parentNode) {
+                customFontStyle.parentNode.removeChild(customFontStyle);
+              }
               var textureStyle = document.getElementById('reader-texture-style');
               if (!textureStyle) {
                 textureStyle = document.createElement('style');
@@ -151,6 +175,17 @@ object ReaderHtmlDocumentBuilder {
                 document.head.appendChild(textureStyle);
               }
               textureStyle.textContent = ${appearance.textureOverlayCss.toJsStringLiteral()};
+            })();
+        """.trimIndent()
+    }
+
+    fun pageAnchorsUpdateScript(pages: List<ReaderPage>): String {
+        val pageAnchorJson = pages.toPageAnchorJson()
+        return """
+            (function () {
+              if (window.readerSetPageAnchors) {
+                window.readerSetPageAnchors($pageAnchorJson);
+              }
             })();
         """.trimIndent()
     }
@@ -221,26 +256,9 @@ object ReaderHtmlDocumentBuilder {
         textureDataUri: String?
     ): String {
         val appearance = settings.toDocumentAppearanceCss(textureDataUri)
-        val align = when (settings.textAlign) {
-            SharedReaderTextAlign.START -> "left"
-            SharedReaderTextAlign.RIGHT -> "right"
-            SharedReaderTextAlign.JUSTIFY -> "justify"
-            SharedReaderTextAlign.CENTER -> "center"
-        }
-        val customFontUrl = settings.customFontPath?.takeIf { it.isNotBlank() }?.toCssFontUrl()
-        val customFontCss = customFontUrl?.let {
-            "@font-face { font-family: 'ReaderCustomFont'; src: url('$it'); font-display: swap; }"
-        }.orEmpty()
-        val family = if (customFontUrl != null) {
-            "'ReaderCustomFont', Georgia, 'Times New Roman', serif"
-        } else {
-            when (settings.fontFamily) {
-                "Serif" -> "Georgia, 'Times New Roman', serif"
-                "Sans" -> "Inter, Segoe UI, Arial, sans-serif"
-                "Mono" -> "'Roboto Mono', Consolas, monospace"
-                else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            }
-        }
+        val align = settings.readerTextAlignCss()
+        val customFontCss = settings.readerCustomFontFaceCss()
+        val family = settings.readerFontFamilyCss()
         val highlightButtons = highlightPalette.toSelectionColorButtons()
         val defineButton = if (readerAiFeaturesEnabled) {
             readerSelectionActionButton("define", "Define", ReaderSelectionIconDefinePath)
@@ -259,9 +277,10 @@ object ReaderHtmlDocumentBuilder {
         }
         val navigationAttributes = navigationLocator?.toNavigationAttributes().orEmpty()
         val pageAnchorJson = pageAnchors.toPageAnchorJson()
+        val verticalMarginY = settings.readerVerticalMarginY()
         return """
             <!doctype html>
-            <html>
+            <html class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated-root" else "reader-vertical-root"}">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -286,8 +305,10 @@ object ReaderHtmlDocumentBuilder {
                   --reader-margin: ${settings.margin}px;
                   --reader-margin-x: ${settings.resolvedHorizontalMargin}px;
                   --reader-margin-y: ${settings.resolvedVerticalMargin}px;
+                  --reader-vertical-margin-y: ${verticalMarginY}px;
+                  --reader-vertical-content-width: 92ch;
                   --reader-paragraph-spacing: ${settings.paragraphSpacing};
-                  --reader-image-scale: ${(settings.imageScale * 100f).roundToInt().coerceIn(50, 200)}%;
+                  --reader-image-scale: ${settings.readerImageScaleCss()};
                   --reader-align: $align;
                   --reader-family: $family;
                 }
@@ -304,10 +325,21 @@ object ReaderHtmlDocumentBuilder {
                   scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track);
                   scrollbar-width: thin;
                 }
+                html.reader-vertical-root {
+                  width: 100%;
+                  min-width: 0;
+                  scrollbar-width: none;
+                }
                 html::-webkit-scrollbar,
                 body.reader-vertical::-webkit-scrollbar {
                   width: 12px;
                   height: 12px;
+                }
+                html.reader-vertical-root::-webkit-scrollbar,
+                body.reader-vertical::-webkit-scrollbar {
+                  width: 0;
+                  height: 0;
+                  display: none;
                 }
                 html::-webkit-scrollbar-track,
                 body.reader-vertical::-webkit-scrollbar-track {
@@ -331,7 +363,14 @@ object ReaderHtmlDocumentBuilder {
                   position: relative;
                 }
                 body.reader-vertical {
-                  scrollbar-gutter: stable;
+                  width: 100%;
+                  max-width: 100%;
+                  min-height: 100vh;
+                  min-width: 0;
+                  overflow-x: hidden;
+                  padding-top: var(--reader-vertical-margin-y);
+                  padding-bottom: var(--reader-vertical-margin-y);
+                  scrollbar-gutter: auto;
                 }
                 body.reader-paginated {
                   height: 100vh;
@@ -343,6 +382,69 @@ object ReaderHtmlDocumentBuilder {
                   text-align: var(--reader-align);
                   position: relative;
                   z-index: 1;
+                }
+                body.reader-vertical .chapter,
+                body.reader-vertical .reader-content {
+                  box-sizing: border-box;
+                  min-width: 0;
+                }
+                body.reader-vertical .chapter {
+                  width: 100%;
+                  max-width: var(--reader-vertical-content-width);
+                  margin-left: auto;
+                  margin-right: auto;
+                  min-height: max(0px, calc(100vh - (var(--reader-vertical-margin-y) * 2)));
+                }
+                body.reader-vertical .reader-content {
+                  width: 100%;
+                  max-width: 100%;
+                }
+                body.reader-vertical .reader-content p,
+                body.reader-vertical .reader-content div,
+                body.reader-vertical .reader-content h1,
+                body.reader-vertical .reader-content h2,
+                body.reader-vertical .reader-content h3,
+                body.reader-vertical .reader-content h4,
+                body.reader-vertical .reader-content h5,
+                body.reader-vertical .reader-content h6,
+                body.reader-vertical .reader-content blockquote,
+                body.reader-vertical .reader-content section,
+                body.reader-vertical .reader-content article,
+                body.reader-vertical .reader-content header,
+                body.reader-vertical .reader-content footer,
+                body.reader-vertical .reader-content aside,
+                body.reader-vertical .reader-content figure,
+                body.reader-vertical .reader-content table,
+                body.reader-vertical .reader-content pre {
+                  box-sizing: border-box !important;
+                  max-width: 100% !important;
+                  min-width: 0 !important;
+                  position: static !important;
+                  left: auto !important;
+                  right: auto !important;
+                  top: auto !important;
+                  bottom: auto !important;
+                  transform: none !important;
+                }
+                body.reader-vertical .reader-content > p,
+                body.reader-vertical .reader-content > div,
+                body.reader-vertical .reader-content > h1,
+                body.reader-vertical .reader-content > h2,
+                body.reader-vertical .reader-content > h3,
+                body.reader-vertical .reader-content > h4,
+                body.reader-vertical .reader-content > h5,
+                body.reader-vertical .reader-content > h6,
+                body.reader-vertical .reader-content > blockquote,
+                body.reader-vertical .reader-content > section,
+                body.reader-vertical .reader-content > article,
+                body.reader-vertical .reader-content > header,
+                body.reader-vertical .reader-content > footer,
+                body.reader-vertical .reader-content > aside,
+                body.reader-vertical .reader-content > figure,
+                body.reader-vertical .reader-content > table,
+                body.reader-vertical .reader-content > pre {
+                  margin-left: 0 !important;
+                  margin-right: 0 !important;
                 }
                 body.reader-paginated .page {
                   box-sizing: border-box;
@@ -582,6 +684,11 @@ object ReaderHtmlDocumentBuilder {
                   var endHandle = document.getElementById('reader-selection-end-handle');
                   var savedRange = null;
                   var readerPageAnchors = $pageAnchorJson;
+                  window.readerSetPageAnchors = function (anchors) {
+                    if (Array.isArray(anchors)) {
+                      readerPageAnchors = anchors;
+                    }
+                  };
                   var lastReportedPageIndex = -1;
                   var lastReportedStartOffset = -1;
                   var reportTimer = null;
@@ -3426,6 +3533,45 @@ object ReaderHtmlDocumentBuilder {
                 ?.toTextureOverlayCss(textureAlpha, darkMode, textureDataUri)
                 .orEmpty()
         )
+    }
+
+    private fun ReaderSettings.readerTextAlignCss(): String {
+        return when (textAlign) {
+            SharedReaderTextAlign.START -> "left"
+            SharedReaderTextAlign.RIGHT -> "right"
+            SharedReaderTextAlign.JUSTIFY -> "justify"
+            SharedReaderTextAlign.CENTER -> "center"
+        }
+    }
+
+    private fun ReaderSettings.readerCustomFontUrl(): String? {
+        return customFontPath?.takeIf { it.isNotBlank() }?.toCssFontUrl()
+    }
+
+    private fun ReaderSettings.readerCustomFontFaceCss(): String {
+        val customFontUrl = readerCustomFontUrl() ?: return ""
+        return "@font-face { font-family: 'ReaderCustomFont'; src: url('$customFontUrl'); font-display: swap; }"
+    }
+
+    private fun ReaderSettings.readerFontFamilyCss(): String {
+        return if (readerCustomFontUrl() != null) {
+            "'ReaderCustomFont', Georgia, 'Times New Roman', serif"
+        } else {
+            when (fontFamily) {
+                "Serif" -> "Georgia, 'Times New Roman', serif"
+                "Sans" -> "Inter, Segoe UI, Arial, sans-serif"
+                "Mono" -> "'Roboto Mono', Consolas, monospace"
+                else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            }
+        }
+    }
+
+    private fun ReaderSettings.readerVerticalMarginY(): Int {
+        return (resolvedVerticalMargin / 3f).roundToInt().coerceIn(0, 56)
+    }
+
+    private fun ReaderSettings.readerImageScaleCss(): String {
+        return "${(imageScale * 100f).roundToInt().coerceIn(50, 200)}%"
     }
 
     private fun String.toCssFontUrl(): String {

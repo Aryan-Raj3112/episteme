@@ -202,6 +202,27 @@ fun ReaderWorkspaceShell(
         } else {
             0.dp
         }
+        LaunchedEffect(
+            this@shellConstraints.maxWidth,
+            this@shellConstraints.maxHeight,
+            wide,
+            leftPanelOpen,
+            rightPanelOpen,
+            showLeftPanel,
+            showRightPanel,
+            showTopChrome,
+            showBottomChrome,
+            isFullscreen,
+            chromeLockedVisible
+        ) {
+            logReaderWorkspaceWebViewLayout(
+                "workspace_shell size=${this@shellConstraints.maxWidth}x${this@shellConstraints.maxHeight} " +
+                    "wide=$wide fullscreen=$isFullscreen leftPanelOpen=$leftPanelOpen rightPanelOpen=$rightPanelOpen " +
+                    "showLeftPanel=$showLeftPanel showRightPanel=$showRightPanel " +
+                    "showTopChrome=$showTopChrome showBottomChrome=$showBottomChrome " +
+                    "topSearchBar=$chromeLockedVisible chromeSuppressedByPanel=$chromeSuppressedByPanel"
+            )
+        }
         LaunchedEffect(wide, leftPanelOpen, rightPanelOpen) {
             if (!wide && leftPanelOpen && rightPanelOpen) {
                 rightPanelOpen = false
@@ -896,13 +917,14 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
 }
 
 private const val ReaderGapLogTag = "EpistemeReaderGap"
+private const val WebViewLayoutLogTag = "EpistemeWebViewLayout"
 
 private fun logReaderGapLayout(
     layer: String,
     bounds: Rect,
     details: String = ""
 ) {
-    logSharedReaderDiagnostic(ReaderGapLogTag) {
+    val message = {
         buildString {
             append("compose_shell layer=")
             append(layer)
@@ -922,6 +944,14 @@ private fun logReaderGapLayout(
             }
         }
     }
+    logSharedReaderDiagnostic(ReaderGapLogTag, message)
+    if (layer == "shell_column" || layer == "content_slot") {
+        logSharedReaderDiagnostic(WebViewLayoutLogTag, message)
+    }
+}
+
+private fun logReaderWorkspaceWebViewLayout(message: String) {
+    logSharedReaderDiagnostic(WebViewLayoutLogTag) { message }
 }
 
 @Composable

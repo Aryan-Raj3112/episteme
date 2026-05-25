@@ -48,6 +48,34 @@ class SharedMeasuredEpubPaginatorTest {
     }
 
     @Test
+    fun `paginated single page geometry matches one rendered page in a spread`() {
+        val singlePageGeometry = measuredPageGeometryFor(
+            settings = ReaderSettings(
+                pageWidth = 760,
+                horizontalMargin = 80,
+                verticalMargin = 40,
+                readingMode = ReaderReadingMode.PAGINATED,
+                pageSpreadMode = ReaderPageSpreadMode.SINGLE
+            ),
+            viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
+        )
+        val twoPageGeometry = measuredPageGeometryFor(
+            settings = ReaderSettings(
+                pageWidth = 760,
+                horizontalMargin = 80,
+                verticalMargin = 40,
+                readingMode = ReaderReadingMode.PAGINATED,
+                pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE
+            ),
+            viewport = ReaderViewportSpec(widthPx = 1_300, heightPx = 900)
+        )
+
+        assertEquals(twoPageGeometry, singlePageGeometry)
+        assertEquals(476, singlePageGeometry.pageWidthPx)
+        assertEquals(820, singlePageGeometry.pageHeightPx)
+    }
+
+    @Test
     fun `geometry does not invent minimum page space beyond the rendered viewport`() {
         val geometry = measuredPageGeometryFor(
             settings = ReaderSettings(

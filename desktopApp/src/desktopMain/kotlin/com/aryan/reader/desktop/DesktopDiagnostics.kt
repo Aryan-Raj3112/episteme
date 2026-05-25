@@ -2,10 +2,15 @@ package com.aryan.reader.desktop
 
 internal const val DesktopDiagnosticsProperty = "episteme.desktop.diagnostics"
 private const val DesktopDiagnosticsTagsProperty = "episteme.desktop.diagnostics.tags"
+private const val DesktopDiagnosticsEnv = "EPISTEME_DESKTOP_DIAGNOSTICS"
+private const val DesktopDiagnosticsTagsEnv = "EPISTEME_DESKTOP_DIAGNOSTICS_TAGS"
 
 private val DesktopDiagnosticTags: Set<String> =
-    System.getProperty(DesktopDiagnosticsTagsProperty)
-        .orEmpty()
+    listOfNotNull(
+        System.getProperty(DesktopDiagnosticsTagsProperty),
+        System.getenv(DesktopDiagnosticsTagsEnv)
+    )
+        .joinToString(" ")
         .split(',', ';', ' ', '\t', '\n')
         .mapNotNull { rawTag ->
             rawTag.trim()
@@ -16,6 +21,7 @@ private val DesktopDiagnosticTags: Set<String> =
 
 internal val DesktopDiagnosticsEnabled: Boolean =
     desktopDiagnosticsFlag(System.getProperty(DesktopDiagnosticsProperty)) ||
+        desktopDiagnosticsFlag(System.getenv(DesktopDiagnosticsEnv)) ||
         DesktopDiagnosticTags.isNotEmpty()
 
 internal fun desktopDiagnosticsFlag(rawValue: String?): Boolean {

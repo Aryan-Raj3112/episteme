@@ -254,7 +254,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `vertical document styles native scrollbar from reader theme variables`() {
+    fun `vertical document hides native webview scrollbar like android`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
@@ -262,9 +262,136 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertTrue(html.contains("--reader-scrollbar-track: color-mix(in srgb, var(--reader-bg)"))
         assertTrue(html.contains("--reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg)"))
-        assertTrue(html.contains("scrollbar-color: var(--reader-scrollbar-thumb) var(--reader-scrollbar-track)"))
-        assertTrue(html.contains("body.reader-vertical::-webkit-scrollbar-thumb"))
-        assertTrue(html.contains("body.reader-vertical::-webkit-scrollbar-thumb:hover"))
+        assertTrue(html.contains("""<html class="reader-vertical-root">"""))
+        assertTrue(Regex("html\\.reader-vertical-root \\{\\s*width: 100%;\\s*min-width: 0;\\s*scrollbar-width: none;").containsMatchIn(html))
+        assertTrue(html.contains("html.reader-vertical-root::-webkit-scrollbar"))
+        assertTrue(html.contains("display: none;"))
+        assertTrue(html.contains("scrollbar-gutter: auto;"))
+    }
+
+    @Test
+    fun `vertical document expands chapter content across reader surface`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL, pageWidth = 520)
+        )
+        val verticalExpansionCss = Regex(
+            "body\\.reader-vertical \\.chapter,\\s*" +
+                "body\\.reader-vertical \\.reader-content \\{\\s*" +
+                "box-sizing: border-box;\\s*" +
+                "min-width: 0;"
+        )
+        val verticalMarginCss = Regex(
+            "body\\.reader-vertical \\.chapter \\{\\s*" +
+                "width: 100%;\\s*" +
+                "max-width: var\\(--reader-vertical-content-width\\);\\s*" +
+                "margin-left: auto;\\s*" +
+                "margin-right: auto;\\s*" +
+                "min-height: max\\(0px, calc\\(100vh - \\(var\\(--reader-vertical-margin-y\\) \\* 2\\)\\)\\);"
+        )
+        val verticalContentCss = Regex(
+            "body\\.reader-vertical \\.reader-content \\{\\s*" +
+                "width: 100%;\\s*" +
+                "max-width: 100%;"
+        )
+        val verticalContentClampCss = Regex(
+            "body\\.reader-vertical \\.reader-content p,\\s*" +
+                "body\\.reader-vertical \\.reader-content div,\\s*" +
+                "body\\.reader-vertical \\.reader-content h1,"
+        )
+        val verticalPositionResetCss = Regex(
+            "position: static !important;\\s*" +
+                "left: auto !important;\\s*" +
+                "right: auto !important;\\s*" +
+                "top: auto !important;\\s*" +
+                "bottom: auto !important;\\s*" +
+                "transform: none !important;"
+        )
+        val verticalMarginResetCss = Regex(
+            "body\\.reader-vertical \\.reader-content > p,\\s*" +
+                "body\\.reader-vertical \\.reader-content > div,\\s*" +
+                "body\\.reader-vertical \\.reader-content > h1,"
+        )
+        val paginatedWidthCss = Regex(
+            "\\.chapter, \\.page \\{\\s*" +
+                "max-width: var\\(--reader-page-width\\);"
+        )
+        val verticalBodyCss = Regex(
+            "body\\.reader-vertical \\{\\s*" +
+                "width: 100%;\\s*" +
+                "max-width: 100%;\\s*" +
+                "min-height: 100vh;\\s*" +
+                "min-width: 0;\\s*" +
+                "overflow-x: hidden;\\s*" +
+                "padding-top: var\\(--reader-vertical-margin-y\\);\\s*" +
+                "padding-bottom: var\\(--reader-vertical-margin-y\\);"
+        )
+
+        assertTrue(html.contains("--reader-vertical-margin-y: 16px;"))
+        assertTrue(html.contains("--reader-vertical-content-width: 92ch;"))
+        assertTrue(verticalBodyCss.containsMatchIn(html))
+        assertTrue(verticalExpansionCss.containsMatchIn(html))
+        assertTrue(verticalMarginCss.containsMatchIn(html))
+        assertTrue(verticalContentCss.containsMatchIn(html))
+        assertTrue(verticalContentClampCss.containsMatchIn(html))
+        assertTrue(verticalPositionResetCss.containsMatchIn(html))
+        assertTrue(verticalMarginResetCss.containsMatchIn(html))
+        assertTrue(paginatedWidthCss.containsMatchIn(html))
+    }
+
+    @Test
+    fun `vertical document exposes page anchor updater for in place format changes`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            pages = listOf(
+                ReaderPage(0, 0, "One", "alpha", 0, 5),
+                ReaderPage(1, 0, "One", "beta", 6, 10)
+            )
+        )
+
+        assertTrue(html.contains("var readerPageAnchors = ["))
+        assertTrue(html.contains("window.readerSetPageAnchors = function (anchors)"))
+        assertTrue(html.contains("readerPageAnchors = anchors;"))
+    }
+
+    @Test
+    fun `appearance update script carries vertical format settings`() {
+        val script = ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+            settings = ReaderSettings(
+                fontSize = 24,
+                lineSpacing = 1.8f,
+                margin = 60,
+                horizontalMargin = 72,
+                verticalMargin = 90,
+                pageWidth = 940,
+                paragraphSpacing = 1.4f,
+                imageScale = 1.35f,
+                textAlign = SharedReaderTextAlign.JUSTIFY,
+                fontFamily = "Serif"
+            )
+        )
+
+        assertTrue(script.contains("root.style.setProperty('--reader-font-size', \"24px\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-line-height', \"1.8\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-page-width', \"940px\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-margin-x', \"72px\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-vertical-margin-y', \"30px\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-image-scale', \"135%\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-align', \"justify\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-family', \"Georgia, 'Times New Roman', serif\");"))
+    }
+
+    @Test
+    fun `page anchor update script avoids full vertical document reload`() {
+        val script = ReaderHtmlDocumentBuilder.pageAnchorsUpdateScript(
+            listOf(
+                ReaderPage(3, 1, "Two", "chapter", 42, 84)
+            )
+        )
+
+        assertTrue(script.contains("window.readerSetPageAnchors"))
+        assertTrue(script.contains("""{"pageIndex":3,"chapterIndex":1,"startOffset":42,"endOffset":84}"""))
     }
 
     @Test

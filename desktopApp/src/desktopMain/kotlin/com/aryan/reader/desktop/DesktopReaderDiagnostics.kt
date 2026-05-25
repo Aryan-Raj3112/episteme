@@ -12,6 +12,7 @@ private const val ReaderGapLogTag = "EpistemeReaderGap"
 private const val EpubSelectionDebugLogTag = "EPUB_SELECTION_DEBUG"
 private const val EpubHighlightFlowLogTag = "EpistemeEpubHighlightFlow"
 private const val DesktopWebView2LogTag = "EpistemeWebView2"
+private const val WebViewLayoutLogTag = "EpistemeWebViewLayout"
 
 internal fun logPdfSelection(message: String) {
 }
@@ -54,6 +55,10 @@ internal fun logEpubHighlightFlow(message: String) {
 
 internal fun logDesktopWebView2(message: String) {
     logDesktopDiagnostic(DesktopWebView2LogTag) { message }
+}
+
+internal fun logWebViewLayoutDiag(message: String) {
+    logDesktopDiagnostic(WebViewLayoutLogTag) { message }
 }
 
 internal fun DesktopPdfLinkTarget.formatLogTarget(): String {

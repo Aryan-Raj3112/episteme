@@ -1,5 +1,7 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ColumnScope
@@ -56,7 +58,10 @@ import com.aryan.reader.shared.ui.ReaderContentRenderPlan
 import com.aryan.reader.shared.ui.SharedNativePaginatedReader
 import com.aryan.reader.shared.ui.SharedNativeReaderSelectionAction
 import com.aryan.reader.shared.ui.SharedReaderScreen
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.awt.event.KeyEvent as AwtKeyEvent
 
 @Composable
@@ -265,11 +270,13 @@ internal fun DesktopReaderScreen(
                     "pageWidthSetting=${settings.pageWidth} oldPages=${reflowStartSession.reader.pages.size} " +
                     "anchorPage=${reflowAnchor?.pageIndex} anchorOffsets=${reflowAnchor?.startOffset}..${reflowAnchor?.endOffset}"
             )
-            val pages = measuredPaginator.paginate(
-                book = session.reader.book,
-                settings = settings,
-                viewport = request.viewport
-            )
+            val pages = withContext(Dispatchers.Default) {
+                measuredPaginator.paginate(
+                    book = session.reader.book,
+                    settings = settings,
+                    viewport = request.viewport
+                )
+            }
             val layoutChanged = pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)
             logEpubPagination(
                 "reflow_result book=\"${session.reader.book.title.logPreview()}\" pages=${pages.size} " +
@@ -288,6 +295,13 @@ internal fun DesktopReaderScreen(
             if (pages.isNotEmpty()) {
                 completedMeasuredPaginationRequest = request
             }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            logEpubPagination(
+                "reflow_failed book=\"${session.reader.book.title.logPreview()}\" " +
+                    "viewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
+                    "error=\"${error.message.orEmpty().logPreview(300)}\""
+            )
         } finally {
             if (runningMeasuredPaginationRequest == request) {
                 runningMeasuredPaginationRequest = null
@@ -409,36 +423,42 @@ internal fun DesktopReaderScreen(
         useDetachedChromeLayer = useDetachedChromeLayer,
         useDetachedPanelLayer = useDetachedPanelLayer
     ) { renderPlan, onVisiblePageChanged, onHighlightSelected, onChromeActivity ->
-        Surface(
-            color = renderPlan.background,
-            shape = RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
-                .onSizeChanged { size ->
-                    val next = ReaderViewportSpec(size.width, size.height)
-                    logReaderGap(
-                        "desktop_epub_reader_surface size=${size.width}x${size.height} " +
-                            "mode=${session.reader.settings.readingMode} " +
-                            "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)}"
+        val readerSurfaceModifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)
+            .onSizeChanged { size ->
+                val next = ReaderViewportSpec(size.width, size.height)
+                logReaderGap(
+                    "desktop_epub_reader_surface size=${size.width}x${size.height} " +
+                        "mode=${session.reader.settings.readingMode} " +
+                        "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)}"
+                )
+                logEpubCutoff(
+                    "cutoff_probe layer=desktop_surface size=${size.width}x${size.height} " +
+                        "mode=${session.reader.settings.readingMode} spread=${session.reader.settings.pageSpreadMode} " +
+                        "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)} " +
+                        "margins=${session.reader.settings.resolvedHorizontalMargin}x${session.reader.settings.resolvedVerticalMargin} " +
+                        "pageWidthSetting=${session.reader.settings.pageWidth}"
+                )
+                logWebViewLayoutDiag(
+                    "compose_reader_surface size=${size.width}x${size.height} " +
+                        "renderPlan=${if (renderPlan is ReaderContentRenderPlan.WebDocument) "web" else "native"} " +
+                        "mode=${session.reader.settings.readingMode} " +
+                        "fullscreen=$isFullscreen margins=${session.reader.settings.resolvedHorizontalMargin}x${session.reader.settings.resolvedVerticalMargin} " +
+                        "pageWidth=${session.reader.settings.pageWidth} fontSize=${session.reader.settings.fontSize} " +
+                        "lineSpacing=${session.reader.settings.lineSpacing} textAlign=${session.reader.settings.textAlign} " +
+                        "paragraphSpacing=${session.reader.settings.paragraphSpacing} imageScale=${session.reader.settings.imageScale}"
+                )
+                if (next != readerViewport) {
+                    logEpubPagination(
+                        "viewport_changed width=${next.widthPx} height=${next.heightPx} " +
+                            "previous=${readerViewport.widthPx}x${readerViewport.heightPx}"
                     )
-                    logEpubCutoff(
-                        "cutoff_probe layer=desktop_surface size=${size.width}x${size.height} " +
-                            "mode=${session.reader.settings.readingMode} spread=${session.reader.settings.pageSpreadMode} " +
-                            "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)} " +
-                            "margins=${session.reader.settings.resolvedHorizontalMargin}x${session.reader.settings.resolvedVerticalMargin} " +
-                            "pageWidthSetting=${session.reader.settings.pageWidth}"
-                    )
-                    if (next != readerViewport) {
-                        logEpubPagination(
-                            "viewport_changed width=${next.widthPx} height=${next.heightPx} " +
-                                "previous=${readerViewport.widthPx}x${readerViewport.heightPx}"
-                        )
-                        readerViewport = next
-                    }
+                    readerViewport = next
                 }
-        ) {
+            }
+        @Composable
+        fun ReaderSurfaceContent() {
             if (renderPlan is ReaderContentRenderPlan.NativePaginatedPages && !paginatedLayoutReady) {
                 DesktopEpubPaginationPreparing(
                     active = runningMeasuredPaginationRequest != null,
@@ -500,6 +520,7 @@ internal fun DesktopReaderScreen(
                                 onVisiblePageChanged = onVisiblePageChanged,
                                 onPointerActivity = onChromeActivity,
                                 networkAccessEnabled = webViewNetworkAccessEnabled,
+                                backgroundColor = renderPlan.background,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
@@ -536,6 +557,24 @@ internal fun DesktopReaderScreen(
                         )
                     }
                 }
+            }
+        }
+
+        if (renderPlan is ReaderContentRenderPlan.WebDocument) {
+            Box(
+                modifier = readerSurfaceModifier
+                    .background(renderPlan.background)
+            ) {
+                ReaderSurfaceContent()
+            }
+        } else {
+            Surface(
+                color = renderPlan.background,
+                shape = RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp),
+                modifier = readerSurfaceModifier
+                    .clip(RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
+            ) {
+                ReaderSurfaceContent()
             }
         }
     }

@@ -1,5 +1,4 @@
 -keep class org.cef.** { *; }
--keep class org.apache.thrift.** { *; }
 -keep class io.ktor.serialization.kotlinx.** { *; }
 -keep class io.ktor.serialization.kotlinx.json.** { *; }
 -keep class com.sun.jna.** { *; }
@@ -19,7 +18,6 @@
 -dontwarn jogamp.**
 -dontwarn org.apache.commons.compress.harmony.pack200.**
 -dontwarn org.objectweb.asm.**
--dontwarn org.apache.thrift.**
 -dontwarn io.ktor.serialization.kotlinx.**
 -dontwarn com.sun.jna.**
 -dontwarn org.eclipse.swt.**

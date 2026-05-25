@@ -38,6 +38,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlin.math.roundToInt
 
 class SharedMeasuredEpubPaginator(
@@ -109,6 +110,7 @@ class SharedMeasuredEpubPaginator(
         val pages = mutableListOf<ReaderPage>()
         book.chapters.forEachIndexed { chapterIndex, chapter ->
             currentCoroutineContext().ensureActive()
+            yield()
             pages += paginateChapter(
                 chapter = chapter,
                 chapterIndex = chapterIndex,
@@ -233,8 +235,11 @@ class SharedMeasuredEpubPaginator(
             usedHeight = 0
         }
 
+        var processedBlocks = 0
         while (queue.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
+            processedBlocks += 1
+            if (processedBlocks % 8 == 0) yield()
             val block = queue.removeFirst()
             val blockHeight = measureBlock(block, geometry, baseStyle, settings)
             val spaceBeforeBlock = block.collapsedMarginBefore(pageBlocks.lastOrNull(), settings)
@@ -438,6 +443,7 @@ class SharedMeasuredEpubPaginator(
         style: TextStyle,
         widthPx: Int
     ): TextLayoutResult {
+        currentCoroutineContext().ensureActive()
         return withContext(Dispatchers.Main) {
             textMeasurer.measure(
                 text = text,
@@ -792,11 +798,12 @@ private fun measuredPageGeometryTerms(
     val pageHorizontalMargin = settings.resolvedHorizontalMargin.scaleCssPx(scale)
     val pageVerticalMargin = settings.resolvedVerticalMargin.scaleCssPx(scale)
     val configuredPageWidth = settings.pageWidth.scaleCssPx(scale).coerceAtLeast(1)
-    val gutter = if (settings.isTwoPageSpreadEnabled()) MeasuredSpreadGutterPx.scaleCssPx(scale) else 0
+    val usesSpreadPageSlot = settings.usesMeasuredPaginatedSpreadPageSlot()
+    val gutter = if (usesSpreadPageSlot) MeasuredSpreadGutterPx.scaleCssPx(scale) else 0
     val singlePageContentWidth = (safeWidth - (pageHorizontalMargin * 2)).coerceAtLeast(1)
     val twoPageAvailableOuterWidth = ((safeWidth - gutter).coerceAtLeast(1) / 2).coerceAtLeast(1)
     val twoPageAvailableContentWidth = (twoPageAvailableOuterWidth - (pageHorizontalMargin * 2)).coerceAtLeast(1)
-    val pageWidth = if (settings.isTwoPageSpreadEnabled()) {
+    val pageWidth = if (usesSpreadPageSlot) {
         twoPageAvailableContentWidth.coerceAtMost(configuredPageWidth).coerceAtLeast(1)
     } else {
         singlePageContentWidth.coerceAtMost(configuredPageWidth).coerceAtLeast(1)
@@ -825,6 +832,10 @@ internal fun measuredPageGeometryFor(
 }
 
 private const val MeasuredSpreadGutterPx = 28
+
+private fun ReaderSettings.usesMeasuredPaginatedSpreadPageSlot(): Boolean {
+    return readingMode == ReaderReadingMode.PAGINATED
+}
 
 private fun Int.scaleCssPx(scale: Float): Int {
     return (this * scale).roundToInt()

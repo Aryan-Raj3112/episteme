@@ -143,7 +143,9 @@ import com.aryan.reader.shared.ReaderTtsReplacementSuggestions
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.readerTextureDisplayName
+import com.aryan.reader.shared.resetReaderFormatSettings
 import com.aryan.reader.shared.sanitizeCustomReaderThemes
+import com.aryan.reader.shared.shouldShowPageWidthFormatControl
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderImageReference
@@ -567,7 +569,6 @@ fun SharedReaderScreen(
                 Text(pageInfoText, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            val documentLayoutSignature = settings.layoutSignature()
             val textureDataUri = remember(settings.textureId) {
                 settings.textureId?.let(readerTextureDataUri)
             }
@@ -580,11 +581,18 @@ fun SharedReaderScreen(
             )
             val renderPlan = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
                 val appearanceSignature = settings.appearanceSignature()
-                val appearanceScript = remember(appearanceSignature, textureDataUri) {
-                    ReaderHtmlDocumentBuilder.appearanceUpdateScript(
-                        settings = settings,
-                        textureDataUri = textureDataUri
-                    )
+                val formatSignature = settings.layoutSignature()
+                val appearanceScript = remember(appearanceSignature, formatSignature, textureDataUri, readerState.pages) {
+                    buildString {
+                        append(
+                            ReaderHtmlDocumentBuilder.appearanceUpdateScript(
+                                settings = settings,
+                                textureDataUri = textureDataUri
+                            )
+                        )
+                        append('\n')
+                        append(ReaderHtmlDocumentBuilder.pageAnchorsUpdateScript(readerState.pages))
+                    }
                 }
                 val highlightPaletteScript = remember(highlightPalette) {
                     ReaderHtmlDocumentBuilder.highlightPaletteUpdateScript(highlightPalette)
@@ -592,10 +600,8 @@ fun SharedReaderScreen(
                 // Keep the initial locator in the document so its first position report is not the top of the book.
                 val html = remember(
                     readerState.book,
-                    documentLayoutSignature,
                     session.searchQuery,
                     session.searchOptions,
-                    readerState.pages,
                     byokSettings.areReaderAiFeaturesAvailable,
                     effectiveCloudTtsAvailable,
                     externalLookupAvailable
@@ -1479,6 +1485,16 @@ fun SharedReaderFormatControls(
     onReaderAction: (ReaderAction) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(
+                onClick = {
+                    onReaderAction(ReaderAction.SettingsChanged(settings.resetReaderFormatSettings()))
+                }
+            ) {
+                Text(readerString("action_reset", "Reset"))
+            }
+        }
+
         SharedReaderPanelSection(readerString("section_font_alignment", "Font & Alignment")) {
                 val customFontName = settings.customFontPath
                     ?.substringAfterLast('/')
@@ -1683,17 +1699,19 @@ fun SharedReaderFormatControls(
                     stepSize = 4f,
                     formatValue = { it.roundToInt().toString() }
                 )
-                SharedReaderSettingSlider(
-                    label = readerString("desktop_page_width", "Page width"),
-                    value = settings.pageWidth.toFloat(),
-                    onValueChange = { value ->
-                        onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.roundToInt())))
-                    },
-                    valueRange = 520f..1100f,
-                    valueLabel = settings.pageWidth.toString(),
-                    stepSize = 20f,
-                    formatValue = { it.roundToInt().toString() }
-                )
+                if (settings.shouldShowPageWidthFormatControl()) {
+                    SharedReaderSettingSlider(
+                        label = readerString("desktop_page_width", "Page width"),
+                        value = settings.pageWidth.toFloat(),
+                        onValueChange = { value ->
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(pageWidth = value.roundToInt())))
+                        },
+                        valueRange = 520f..1100f,
+                        valueLabel = settings.pageWidth.toString(),
+                        stepSize = 20f,
+                        formatValue = { it.roundToInt().toString() }
+                    )
+                }
         }
     }
 }
@@ -3376,13 +3394,14 @@ private fun SharedReaderThemeChoice(
 }
 
 private const val ReaderGapChromeLogTag = "EpistemeReaderGap"
+private const val ReaderChromeWebViewLayoutLogTag = "EpistemeWebViewLayout"
 
 private fun logReaderGapChrome(
     layer: String,
     bounds: Rect,
     details: String = ""
 ) {
-    logSharedReaderDiagnostic(ReaderGapChromeLogTag) {
+    val message = {
         buildString {
             append("compose_reader layer=")
             append(layer)
@@ -3401,6 +3420,10 @@ private fun logReaderGapChrome(
                 append(details)
             }
         }
+    }
+    logSharedReaderDiagnostic(ReaderGapChromeLogTag, message)
+    if (layer == "reader_content_column") {
+        logSharedReaderDiagnostic(ReaderChromeWebViewLayoutLogTag, message)
     }
 }
 

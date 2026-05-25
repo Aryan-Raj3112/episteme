@@ -6,6 +6,10 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import com.aryan.reader.shared.reader.ReaderPageSpreadMode
+import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -137,5 +141,66 @@ class ReaderAppearanceModelsTest {
         assertTrue(settings.darkMode)
         assertEquals(theme.backgroundColor.toArgb().toLong(), settings.backgroundColorArgb)
         assertEquals(theme.textColor.toArgb().toLong(), settings.textColorArgb)
+    }
+
+    @Test
+    fun `reset reader format settings keeps reader mode and appearance choices`() {
+        val settings = ReaderSettings(
+            fontSize = 26,
+            lineSpacing = 2.0f,
+            margin = 96,
+            horizontalMargin = 128,
+            verticalMargin = 72,
+            textAlign = SharedReaderTextAlign.RIGHT,
+            pageWidth = 1040,
+            fontFamily = "Imported",
+            customFontPath = "C:\\fonts\\Imported.ttf",
+            paragraphSpacing = 2.2f,
+            imageScale = 1.8f,
+            readingMode = ReaderReadingMode.PAGINATED,
+            pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
+            themeId = "sepia",
+            textureId = ReaderTexture.PAPER.id,
+            textureAlpha = 0.35f,
+            darkMode = true,
+            backgroundColorArgb = 0xFF101010,
+            textColorArgb = 0xFFEAEAEA
+        )
+
+        val reset = settings.resetReaderFormatSettings()
+        val defaults = ReaderSettings()
+
+        assertEquals(defaults.fontSize, reset.fontSize)
+        assertEquals(defaults.lineSpacing, reset.lineSpacing)
+        assertEquals(defaults.margin, reset.margin)
+        assertEquals(defaults.horizontalMargin, reset.horizontalMargin)
+        assertEquals(defaults.verticalMargin, reset.verticalMargin)
+        assertEquals(defaults.textAlign, reset.textAlign)
+        assertEquals(defaults.pageWidth, reset.pageWidth)
+        assertEquals(defaults.fontFamily, reset.fontFamily)
+        assertEquals(defaults.customFontPath, reset.customFontPath)
+        assertEquals(defaults.paragraphSpacing, reset.paragraphSpacing)
+        assertEquals(defaults.imageScale, reset.imageScale)
+
+        assertEquals(ReaderReadingMode.PAGINATED, reset.readingMode)
+        assertEquals(ReaderPageSpreadMode.TWO_PAGE, reset.pageSpreadMode)
+        assertEquals("sepia", reset.themeId)
+        assertEquals(ReaderTexture.PAPER.id, reset.textureId)
+        assertEquals(0.35f, reset.textureAlpha)
+        assertEquals(true, reset.darkMode)
+        assertEquals(0xFF101010, reset.backgroundColorArgb)
+        assertEquals(0xFFEAEAEA, reset.textColorArgb)
+    }
+
+    @Test
+    fun `page width format control is only shown for paginated mode`() {
+        assertEquals(
+            false,
+            ReaderSettings(readingMode = ReaderReadingMode.VERTICAL).shouldShowPageWidthFormatControl()
+        )
+        assertEquals(
+            true,
+            ReaderSettings(readingMode = ReaderReadingMode.PAGINATED).shouldShowPageWidthFormatControl()
+        )
     }
 }
