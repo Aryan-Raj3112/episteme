@@ -924,6 +924,7 @@ private fun desktopWebView2DocumentProbeScript(eventName: String): String {
               readerMarginY: cssVar('--reader-margin-y'),
               readerVerticalMarginY: cssVar('--reader-vertical-margin-y'),
               readerVerticalContentWidth: cssVar('--reader-vertical-content-width'),
+              readerVerticalPageWidth: cssVar('--reader-vertical-page-width'),
               readerFontSize: cssVar('--reader-font-size'),
               bodyZoom: cssValue(body, 'zoom').trim(),
               bodyChildren: body ? body.children.length : -1,
@@ -1016,34 +1017,66 @@ private val DesktopWebView2ReaderSurfaceCssTag = """
       body.reader-vertical {
         min-height: 100vh !important;
         min-height: 100dvh !important;
-        padding: 0 !important;
+        overflow-y: auto !important;
+        padding: var(--reader-vertical-margin-y) 0 !important;
+        scrollbar-gutter: stable !important;
       }
-      body.reader-vertical .chapter,
-      body.reader-vertical .chapter > :not(.reader-content),
-      body.reader-vertical .chapter-title,
-      body.reader-vertical .reader-content {
+      html.reader-vertical-root,
+      body.reader-vertical {
+        scrollbar-width: thin !important;
+      }
+      html.reader-vertical-root::-webkit-scrollbar,
+      body.reader-vertical::-webkit-scrollbar {
+        width: 12px !important;
+        height: 12px !important;
+        display: block !important;
+      }
+      body.reader-vertical > .chapter,
+      body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+      body.reader-vertical > .chapter > :not(.reader-content),
+      body.reader-vertical > .chapter > .chapter-title,
+      body.reader-vertical > .chapter > .reader-content {
         box-sizing: border-box !important;
         min-width: 0 !important;
       }
-      body.reader-vertical .chapter {
+      body.reader-vertical > .chapter {
         width: 100% !important;
         max-width: none !important;
         margin: 0 !important;
       }
-      body.reader-vertical .chapter > :not(.reader-content),
-      body.reader-vertical .chapter-title,
-      body.reader-vertical .reader-content {
-        width: min(var(--reader-vertical-content-width), max(0px, calc(100% - (var(--reader-margin-x) * 2)))) !important;
+      body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+      body.reader-vertical > .chapter > :not(.reader-content),
+      body.reader-vertical > .chapter > .chapter-title,
+      body.reader-vertical > .chapter > .reader-content {
+        width: var(--reader-vertical-page-width) !important;
         max-width: none !important;
         margin-left: auto !important;
         margin-right: auto !important;
       }
-      body.reader-vertical .chapter > :not(.reader-content) {
+      body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+      body.reader-vertical > .chapter > :not(.reader-content) {
         position: static !important;
         left: auto !important;
         right: auto !important;
         top: auto !important;
         bottom: auto !important;
+        transform: none !important;
+        float: none !important;
+        clear: none !important;
+      }
+      body.reader-vertical .reader-content :where(h1, h2, h3, h4, h5, h6, hgroup, center, [class*="title" i], [id*="title" i], [class*="heading" i], [id*="heading" i], [class*="dedication" i], [id*="dedication" i]) {
+        box-sizing: border-box !important;
+        width: auto !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        text-indent: 0 !important;
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
         transform: none !important;
         float: none !important;
         clear: none !important;

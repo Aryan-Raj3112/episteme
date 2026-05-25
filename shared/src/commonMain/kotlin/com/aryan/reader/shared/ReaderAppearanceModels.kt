@@ -197,6 +197,38 @@ fun ReaderSettings.resetReaderFormatSettings(): ReaderSettings {
     )
 }
 
+fun ReaderSettings.withHorizontalReaderMargin(horizontalMarginPx: Int): ReaderSettings {
+    val nextHorizontal = horizontalMarginPx.coerceIn(
+        ReaderAppearanceDefaults.minMarginPx,
+        ReaderAppearanceDefaults.maxMarginPx
+    )
+    val currentVertical = resolvedVerticalMargin.coerceIn(
+        ReaderAppearanceDefaults.minMarginPx,
+        ReaderAppearanceDefaults.maxMarginPx
+    )
+    return copy(
+        margin = max(nextHorizontal, currentVertical),
+        horizontalMargin = nextHorizontal,
+        verticalMargin = currentVertical
+    )
+}
+
+fun ReaderSettings.withVerticalReaderMargin(verticalMarginPx: Int): ReaderSettings {
+    val currentHorizontal = resolvedHorizontalMargin.coerceIn(
+        ReaderAppearanceDefaults.minMarginPx,
+        ReaderAppearanceDefaults.maxMarginPx
+    )
+    val nextVertical = verticalMarginPx.coerceIn(
+        ReaderAppearanceDefaults.minMarginPx,
+        ReaderAppearanceDefaults.maxMarginPx
+    )
+    return copy(
+        margin = max(currentHorizontal, nextVertical),
+        horizontalMargin = currentHorizontal,
+        verticalMargin = nextVertical
+    )
+}
+
 fun ReaderSettings.shouldShowPageWidthFormatControl(): Boolean {
     return readingMode == ReaderReadingMode.PAGINATED
 }

@@ -97,6 +97,21 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `vertical page navigation uses scroll page locator for webview slider sync`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(
+            book = longBook(),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+
+        val moved = engine.goToPage(session, 1)
+
+        assertEquals(1, moved.reader.currentPageIndex)
+        assertEquals("desktop-scroll-page:1", moved.navigationLocator?.cfi)
+        assertEquals(1, moved.navigationLocator?.pageIndex)
+    }
+
+    @Test
     fun `createSession restores precise locator ahead of fallback page index`() {
         val engine = ReaderEngine()
         val book = longBook()

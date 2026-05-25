@@ -152,10 +152,17 @@ class ReaderEngine(
     fun goToPage(state: ReaderSessionState, pageIndex: Int): ReaderSessionState {
         val target = ReaderSpreadLayout.normalizePageIndex(pageIndex, state.reader.pages.size, state.reader.settings)
         val page = state.reader.pages.getOrNull(target)
+        val locator = page?.let {
+            if (state.reader.settings.readingMode == ReaderReadingMode.VERTICAL) {
+                it.toVerticalScrollPageLocator(state.reader.book)
+            } else {
+                it.toLocator(state.reader.book)
+            }
+        }
         return state.copy(
             reader = state.reader.copy(currentPageIndex = target),
             activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == target },
-            navigationLocator = page?.toLocator(state.reader.book),
+            navigationLocator = locator,
             navigationRequestId = state.navigationRequestId + 1
         )
     }
@@ -999,6 +1006,10 @@ private fun ReaderPage.toLocator(book: SharedEpubBook): ReaderLocator {
         textQuote = text.preview(),
         cfi = blockPosition?.androidStyleCfi() ?: toDesktopCfi()
     )
+}
+
+private fun ReaderPage.toVerticalScrollPageLocator(book: SharedEpubBook): ReaderLocator {
+    return toLocator(book).copy(cfi = "desktop-scroll-page:$pageIndex")
 }
 
 private fun ReaderPage.toDesktopCfi(): String {

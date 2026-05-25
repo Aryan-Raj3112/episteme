@@ -147,6 +147,8 @@ import com.aryan.reader.shared.resetReaderFormatSettings
 import com.aryan.reader.shared.sanitizeCustomReaderThemes
 import com.aryan.reader.shared.shouldShowPageWidthFormatControl
 import com.aryan.reader.shared.toReaderSettings
+import com.aryan.reader.shared.withHorizontalReaderMargin
+import com.aryan.reader.shared.withVerticalReaderMargin
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderBookmark
@@ -1674,11 +1676,9 @@ fun SharedReaderFormatControls(
                     label = readerString("label_horizontal_margin", "Horizontal margin"),
                     value = settings.resolvedHorizontalMargin.toFloat(),
                     onValueChange = { value ->
-                        val nextHorizontal = value.roundToInt()
-                        val nextMargin = maxOf(nextHorizontal, settings.resolvedVerticalMargin)
                         onReaderAction(
                             ReaderAction.SettingsChanged(
-                                settings.copy(horizontalMargin = nextHorizontal, margin = nextMargin)
+                                settings.withHorizontalReaderMargin(value.roundToInt())
                             )
                         )
                     },
@@ -1691,11 +1691,9 @@ fun SharedReaderFormatControls(
                     label = readerString("label_vertical_margin", "Vertical margin"),
                     value = settings.resolvedVerticalMargin.toFloat(),
                     onValueChange = { value ->
-                        val nextVertical = value.roundToInt()
-                        val nextMargin = maxOf(settings.resolvedHorizontalMargin, nextVertical)
                         onReaderAction(
                             ReaderAction.SettingsChanged(
-                                settings.copy(verticalMargin = nextVertical, margin = nextMargin)
+                                settings.withVerticalReaderMargin(value.roundToInt())
                             )
                         )
                     },

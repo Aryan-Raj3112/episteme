@@ -193,6 +193,23 @@ class ReaderAppearanceModelsTest {
     }
 
     @Test
+    fun `axis margin updates keep the opposite axis fixed`() {
+        val defaultSettings = ReaderSettings()
+
+        val horizontalOnly = defaultSettings.withHorizontalReaderMargin(96)
+        assertEquals(96, horizontalOnly.resolvedHorizontalMargin)
+        assertEquals(defaultSettings.resolvedVerticalMargin, horizontalOnly.resolvedVerticalMargin)
+        assertEquals(96, horizontalOnly.margin)
+        assertEquals(defaultSettings.resolvedVerticalMargin, horizontalOnly.verticalMargin)
+
+        val verticalOnly = horizontalOnly.withVerticalReaderMargin(24)
+        assertEquals(96, verticalOnly.resolvedHorizontalMargin)
+        assertEquals(24, verticalOnly.resolvedVerticalMargin)
+        assertEquals(96, verticalOnly.margin)
+        assertEquals(96, verticalOnly.horizontalMargin)
+    }
+
+    @Test
     fun `page width format control is only shown for paginated mode`() {
         assertEquals(
             false,

@@ -152,6 +152,7 @@ object ReaderHtmlDocumentBuilder {
               root.style.setProperty('--reader-margin-x', ${"${settings.resolvedHorizontalMargin}px".toJsStringLiteral()});
               root.style.setProperty('--reader-margin-y', ${"${settings.resolvedVerticalMargin}px".toJsStringLiteral()});
               root.style.setProperty('--reader-vertical-margin-y', ${"${settings.readerVerticalMarginY()}px".toJsStringLiteral()});
+              root.style.setProperty('--reader-vertical-page-width', 'max(0px, calc(100% - (var(--reader-margin-x) * 2)))');
               root.style.setProperty('--reader-paragraph-spacing', ${settings.paragraphSpacing.toString().toJsStringLiteral()});
               root.style.setProperty('--reader-image-scale', ${settings.readerImageScaleCss().toJsStringLiteral()});
               root.style.setProperty('--reader-align', ${settings.readerTextAlignCss().toJsStringLiteral()});
@@ -307,6 +308,7 @@ object ReaderHtmlDocumentBuilder {
                   --reader-margin-y: ${settings.resolvedVerticalMargin}px;
                   --reader-vertical-margin-y: ${verticalMarginY}px;
                   --reader-vertical-content-width: 92ch;
+                  --reader-vertical-page-width: max(0px, calc(100% - (var(--reader-margin-x) * 2)));
                   --reader-paragraph-spacing: ${settings.paragraphSpacing};
                   --reader-image-scale: ${settings.readerImageScaleCss()};
                   --reader-align: $align;
@@ -328,18 +330,13 @@ object ReaderHtmlDocumentBuilder {
                 html.reader-vertical-root {
                   width: 100%;
                   min-width: 0;
-                  scrollbar-width: none;
+                  overflow-y: scroll;
+                  scrollbar-width: thin;
                 }
                 html::-webkit-scrollbar,
                 body.reader-vertical::-webkit-scrollbar {
                   width: 12px;
                   height: 12px;
-                }
-                html.reader-vertical-root::-webkit-scrollbar,
-                body.reader-vertical::-webkit-scrollbar {
-                  width: 0;
-                  height: 0;
-                  display: none;
                 }
                 html::-webkit-scrollbar-track,
                 body.reader-vertical::-webkit-scrollbar-track {
@@ -369,8 +366,9 @@ object ReaderHtmlDocumentBuilder {
                   min-height: 100dvh;
                   min-width: 0;
                   overflow-x: hidden;
-                  padding: 0;
-                  scrollbar-gutter: auto;
+                  overflow-y: auto;
+                  padding: var(--reader-vertical-margin-y) 0;
+                  scrollbar-gutter: stable;
                 }
                 body.reader-paginated {
                   height: 100vh;
@@ -383,32 +381,52 @@ object ReaderHtmlDocumentBuilder {
                   position: relative;
                   z-index: 1;
                 }
-                body.reader-vertical .chapter,
-                body.reader-vertical .chapter > :not(.reader-content),
-                body.reader-vertical .chapter-title,
-                body.reader-vertical .reader-content {
+                body.reader-vertical > .chapter,
+                body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+                body.reader-vertical > .chapter > :not(.reader-content),
+                body.reader-vertical > .chapter > .chapter-title,
+                body.reader-vertical > .chapter > .reader-content {
                   box-sizing: border-box !important;
                   min-width: 0 !important;
                 }
-                body.reader-vertical .chapter {
+                body.reader-vertical > .chapter {
                   width: 100% !important;
                   max-width: none !important;
                   margin: 0 !important;
                 }
-                body.reader-vertical .chapter > :not(.reader-content),
-                body.reader-vertical .chapter-title,
-                body.reader-vertical .reader-content {
-                  width: min(var(--reader-vertical-content-width), max(0px, calc(100% - (var(--reader-margin-x) * 2)))) !important;
+                body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+                body.reader-vertical > .chapter > :not(.reader-content),
+                body.reader-vertical > .chapter > .chapter-title,
+                body.reader-vertical > .chapter > .reader-content {
+                  width: var(--reader-vertical-page-width) !important;
                   max-width: none !important;
                   margin-left: auto !important;
                   margin-right: auto !important;
                 }
-                body.reader-vertical .chapter > :not(.reader-content) {
+                body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
+                body.reader-vertical > .chapter > :not(.reader-content) {
                   position: static !important;
                   left: auto !important;
                   right: auto !important;
                   top: auto !important;
                   bottom: auto !important;
+                  transform: none !important;
+                  float: none !important;
+                  clear: none !important;
+                }
+                body.reader-vertical .reader-content :where(h1, h2, h3, h4, h5, h6, hgroup, center, [class*="title" i], [id*="title" i], [class*="heading" i], [id*="heading" i], [class*="dedication" i], [id*="dedication" i]) {
+                  box-sizing: border-box !important;
+                  width: auto !important;
+                  max-width: 100% !important;
+                  min-width: 0 !important;
+                  margin-left: 0 !important;
+                  margin-right: 0 !important;
+                  padding-left: 0 !important;
+                  padding-right: 0 !important;
+                  text-indent: 0 !important;
+                  position: static !important;
+                  left: auto !important;
+                  right: auto !important;
                   transform: none !important;
                   float: none !important;
                   clear: none !important;
@@ -935,6 +953,7 @@ object ReaderHtmlDocumentBuilder {
                   }
                   function scrollToLocator(locator) {
                     locator = locator || {};
+                    if (scrollToVerticalPage(locator)) return;
                     var chapterIndex = locator.chapterIndex;
                     if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
                       chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
@@ -995,7 +1014,10 @@ object ReaderHtmlDocumentBuilder {
                   function scrollToActiveLocator() {
                     scrollToLocator({
                       chapterIndex: document.body.getAttribute('data-reader-active-chapter-index'),
-                      startOffset: numberAttribute(document.body, 'data-reader-active-start-offset', null)
+                      pageIndex: numberAttribute(document.body, 'data-reader-active-page-index', null),
+                      startOffset: numberAttribute(document.body, 'data-reader-active-start-offset', null),
+                      endOffset: numberAttribute(document.body, 'data-reader-active-end-offset', null),
+                      cfi: document.body.getAttribute('data-reader-active-cfi')
                     });
                   }
                   window.readerScrollToLocator = scrollToLocator;
@@ -1135,6 +1157,44 @@ object ReaderHtmlDocumentBuilder {
                     }
                     return best;
                   }
+                  function isVerticalReaderDocument() {
+                    return !!(document.body && document.body.classList.contains('reader-vertical'));
+                  }
+                  function verticalScrollMetrics() {
+                    var scrollY = Math.round(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0);
+                    var scrollHeight = Math.round(Math.max(
+                      document.body ? document.body.scrollHeight : 0,
+                      document.documentElement ? document.documentElement.scrollHeight : 0
+                    ));
+                    var clientHeight = Math.round(document.documentElement.clientHeight || window.innerHeight || 0);
+                    var maxScroll = Math.max(0, scrollHeight - clientHeight);
+                    return {
+                      scrollY: Math.max(0, Math.min(scrollY, maxScroll)),
+                      scrollHeight: scrollHeight,
+                      clientHeight: clientHeight,
+                      maxScroll: maxScroll
+                    };
+                  }
+                  function pageForVerticalScroll() {
+                    if (!isVerticalReaderDocument() || !readerPageAnchors.length) return null;
+                    var metrics = verticalScrollMetrics();
+                    if (readerPageAnchors.length === 1 || metrics.maxScroll <= 0) return readerPageAnchors[0];
+                    var ratio = Math.max(0, Math.min(1, metrics.scrollY / metrics.maxScroll));
+                    var index = Math.round((readerPageAnchors.length - 1) * ratio);
+                    return readerPageAnchors[Math.max(0, Math.min(readerPageAnchors.length - 1, index))];
+                  }
+                  function scrollToVerticalPage(locator) {
+                    if (!isVerticalReaderDocument() || !locator) return false;
+                    var cfi = String(locator.cfi || '');
+                    if (cfi.indexOf('desktop-scroll-page:') !== 0) return false;
+                    var pageIndex = parseInt(locator.pageIndex, 10);
+                    if (!Number.isFinite(pageIndex) || !readerPageAnchors.length) return false;
+                    var metrics = verticalScrollMetrics();
+                    var maxPageIndex = Math.max(1, readerPageAnchors.length - 1);
+                    var ratio = Math.max(0, Math.min(1, pageIndex / maxPageIndex));
+                    window.scrollTo({ top: Math.round(metrics.maxScroll * ratio), left: 0, behavior: 'auto' });
+                    return true;
+                  }
                   function readerHostIsVisible(host) {
                     if (!host) return false;
                     var rect = host.getBoundingClientRect();
@@ -1151,9 +1211,13 @@ object ReaderHtmlDocumentBuilder {
                       (pageStart === null || preferredOffset >= pageStart) &&
                       (pageEnd === null || preferredOffset <= pageEnd);
                     var offset = usePreferredOffset ? preferredOffset : visible.offset;
-                    var page = pageForLocator(chapterIndex, offset) || readerPageAnchors[0];
+                    var page = pageForVerticalScroll() || pageForLocator(chapterIndex, offset) || readerPageAnchors[0];
                     if (!page) return null;
                     var positionCfi = readerCfiPointForOffset(content, offset, false) || ('desktop:' + chapterIndex + ':' + offset + ':' + offset);
+                    if (isVerticalReaderDocument()) {
+                      var metrics = verticalScrollMetrics();
+                      positionCfi = 'desktop-scroll:' + metrics.scrollY + ':' + metrics.maxScroll + ':' + positionCfi;
+                    }
                     return {
                       pageIndex: page.pageIndex,
                       chapterIndex: chapterIndex,

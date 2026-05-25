@@ -254,7 +254,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `vertical document hides native webview scrollbar like android`() {
+    fun `vertical document keeps native webview scrollbar at edge`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
@@ -263,10 +263,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("--reader-scrollbar-track: color-mix(in srgb, var(--reader-bg)"))
         assertTrue(html.contains("--reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg)"))
         assertTrue(html.contains("""<html class="reader-vertical-root">"""))
-        assertTrue(Regex("html\\.reader-vertical-root \\{\\s*width: 100%;\\s*min-width: 0;\\s*scrollbar-width: none;").containsMatchIn(html))
+        assertTrue(Regex("html\\.reader-vertical-root \\{\\s*width: 100%;\\s*min-width: 0;\\s*overflow-y: scroll;\\s*scrollbar-width: thin;").containsMatchIn(html))
         assertTrue(html.contains("html.reader-vertical-root::-webkit-scrollbar"))
-        assertTrue(html.contains("display: none;"))
-        assertTrue(html.contains("scrollbar-gutter: auto;"))
+        assertFalse(html.contains("html.reader-vertical-root::-webkit-scrollbar,\n                body.reader-vertical::-webkit-scrollbar {\n                  width: 0;"))
+        assertTrue(html.contains("scrollbar-gutter: stable;"))
     }
 
     @Test
@@ -276,30 +276,32 @@ class ReaderHtmlDocumentBuilderTest {
             settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL, pageWidth = 520)
         )
         val verticalExpansionCss = Regex(
-            "body\\.reader-vertical \\.chapter,\\s*" +
-                "body\\.reader-vertical \\.chapter > :not\\(\\.reader-content\\),\\s*" +
-                "body\\.reader-vertical \\.chapter-title,\\s*" +
-                "body\\.reader-vertical \\.reader-content \\{\\s*" +
+            "body\\.reader-vertical > \\.chapter,\\s*" +
+                "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(script\\):not\\(style\\),\\s*" +
+                "body\\.reader-vertical > \\.chapter > :not\\(\\.reader-content\\),\\s*" +
+                "body\\.reader-vertical > \\.chapter > \\.chapter-title,\\s*" +
+                "body\\.reader-vertical > \\.chapter > \\.reader-content \\{\\s*" +
                 "box-sizing: border-box !important;\\s*" +
                 "min-width: 0 !important;"
         )
         val verticalMarginCss = Regex(
-            "body\\.reader-vertical \\.chapter \\{\\s*" +
+            "body\\.reader-vertical > \\.chapter \\{\\s*" +
                 "width: 100% !important;\\s*" +
                 "max-width: none !important;\\s*" +
                 "margin: 0 !important;"
         )
         val verticalContentCss = Regex(
-            "body\\.reader-vertical \\.chapter > :not\\(\\.reader-content\\),\\s*" +
-                "body\\.reader-vertical \\.chapter-title,\\s*" +
-                "body\\.reader-vertical \\.reader-content \\{\\s*" +
-                "width: min\\(var\\(--reader-vertical-content-width\\), max\\(0px, calc\\(100% - \\(var\\(--reader-margin-x\\) \\* 2\\)\\)\\)\\) !important;\\s*" +
+            "body\\.reader-vertical > :not\\(\\.chapter\\):not\\(#reader-selection-menu\\):not\\(\\.reader-selection-handle\\):not\\(script\\):not\\(style\\),\\s*" +
+                "body\\.reader-vertical > \\.chapter > :not\\(\\.reader-content\\),\\s*" +
+                "body\\.reader-vertical > \\.chapter > \\.chapter-title,\\s*" +
+                "body\\.reader-vertical > \\.chapter > \\.reader-content \\{\\s*" +
+                "width: var\\(--reader-vertical-page-width\\) !important;\\s*" +
                 "max-width: none !important;\\s*" +
                 "margin-left: auto !important;\\s*" +
                 "margin-right: auto !important;"
         )
         val verticalChapterSiblingResetCss = Regex(
-            "body\\.reader-vertical \\.chapter > :not\\(\\.reader-content\\) \\{\\s*" +
+            "body\\.reader-vertical > \\.chapter > :not\\(\\.reader-content\\) \\{\\s*" +
                 "position: static !important;\\s*" +
                 "left: auto !important;\\s*" +
                 "right: auto !important;"
@@ -329,6 +331,9 @@ class ReaderHtmlDocumentBuilderTest {
                 "body\\.reader-vertical \\.reader-content section,\\s*" +
                 "body\\.reader-vertical \\.reader-content article,"
         )
+        val verticalTitleClampCss = Regex(
+            "body\\.reader-vertical \\.reader-content :where\\(h1, h2, h3, h4, h5, h6, hgroup, center,"
+        )
         val verticalMarginResetCss = Regex(
             "body\\.reader-vertical \\.reader-content > p,\\s*" +
                 "body\\.reader-vertical \\.reader-content > div,\\s*" +
@@ -346,11 +351,15 @@ class ReaderHtmlDocumentBuilderTest {
                 "min-height: 100dvh;\\s*" +
                 "min-width: 0;\\s*" +
                 "overflow-x: hidden;\\s*" +
-                "padding: 0;"
+                "overflow-y: auto;\\s*" +
+                "padding: var\\(--reader-vertical-margin-y\\) 0;"
         )
 
         assertTrue(html.contains("--reader-vertical-margin-y: 16px;"))
         assertTrue(html.contains("--reader-vertical-content-width: 92ch;"))
+        assertTrue(html.contains("--reader-vertical-page-width: max(0px, calc(100% - (var(--reader-margin-x) * 2)));"))
+        assertFalse(html.contains("body.reader-vertical .chapter,"))
+        assertFalse(html.contains("body.reader-vertical .chapter > :not(.reader-content)"))
         assertTrue(verticalBodyCss.containsMatchIn(html))
         assertTrue(verticalExpansionCss.containsMatchIn(html))
         assertTrue(verticalMarginCss.containsMatchIn(html))
@@ -363,6 +372,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(verticalContentClampCss.containsMatchIn(html))
         assertTrue(verticalPositionResetCss.containsMatchIn(html))
         assertTrue(verticalNestedWrapperResetCss.containsMatchIn(html))
+        assertTrue(verticalTitleClampCss.containsMatchIn(html))
         assertTrue(verticalMarginResetCss.containsMatchIn(html))
         assertTrue(paginatedWidthCss.containsMatchIn(html))
     }
@@ -381,6 +391,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var readerPageAnchors = ["))
         assertTrue(html.contains("window.readerSetPageAnchors = function (anchors)"))
         assertTrue(html.contains("readerPageAnchors = anchors;"))
+        assertTrue(html.contains("function pageForVerticalScroll()"))
+        assertTrue(html.contains("desktop-scroll-page:"))
+        assertTrue(html.contains("pageIndex: numberAttribute(document.body, 'data-reader-active-page-index', null)"))
+        assertTrue(html.contains("cfi: document.body.getAttribute('data-reader-active-cfi')"))
     }
 
     @Test
@@ -405,6 +419,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(script.contains("root.style.setProperty('--reader-page-width', \"940px\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-margin-x', \"72px\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-vertical-margin-y', \"30px\");"))
+        assertTrue(script.contains("root.style.setProperty('--reader-vertical-page-width', 'max(0px, calc(100% - (var(--reader-margin-x) * 2)))');"))
         assertTrue(script.contains("root.style.setProperty('--reader-image-scale', \"135%\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-align', \"justify\");"))
         assertTrue(script.contains("root.style.setProperty('--reader-family', \"Georgia, 'Times New Roman', serif\");"))
