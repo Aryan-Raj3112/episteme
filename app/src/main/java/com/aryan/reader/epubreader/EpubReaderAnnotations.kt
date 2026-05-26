@@ -61,6 +61,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -593,6 +594,7 @@ fun HighlightColorRow(
                 modifier = Modifier
                     .padding(horizontal = 4.dp)
                     .size(28.dp)
+                    .testTag("HighlightColor_${colorEnum.id}")
                     .clip(CircleShape) // 1. Clip shape for ripple
                     .background(colorEnum.color) // 2. Apply background
                     .clickable {

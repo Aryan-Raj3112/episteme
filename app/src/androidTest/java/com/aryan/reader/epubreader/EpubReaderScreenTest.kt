@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.core.content.FileProvider
@@ -22,12 +23,14 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.aryan.reader.FileType
 import com.aryan.reader.FileHasher
 import com.aryan.reader.MainActivity
 import com.aryan.reader.R
 import com.aryan.reader.RenderMode
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.RecentFileEntity
+import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.ReaderLocator
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
@@ -111,6 +114,27 @@ class EpubReaderScreenTest {
     }
 
     @Test
+    fun fixtureEpub_restoresSeededReadingPositionWithoutResettingToStart() {
+        launchFixtureReader { fixtureUri ->
+            seedFixtureRecentFile(
+                uriString = fixtureUri.toString(),
+                chapterIndex = 1,
+                blockIndex = 1,
+                charOffset = 0,
+                progress = 45f
+            )
+        }
+        waitForReader()
+
+        waitForRecentFile(timeoutMillis = 30_000) { recentFile ->
+            recentFile?.lastChapterIndex == 1 &&
+                recentFile.locatorBlockIndex == 1 &&
+                recentFile.locatorCharOffset == 0 &&
+                (recentFile.progressPercentage ?: 0f) >= 45f
+        }
+    }
+
+    @Test
     fun fixtureEpub_drawerShowsFixtureChapters() {
         launchFixtureReader()
         waitForReader()
@@ -149,6 +173,70 @@ class EpubReaderScreenTest {
 
         waitForTag("SearchResultItem_1", timeoutMillis = 20_000)
         composeTestRule.onNodeWithTag("SearchResultItem_1").assertIsDisplayed()
+    }
+
+    @Test
+    fun fixtureEpub_searchNavigationPositionSurvivesReadingModeSwitches() {
+        launchFixtureReader()
+        waitForReader()
+
+        navigateToFixtureSearchResult("SEARCH_TARGET_DELTA", expectedChapterIndex = 1)
+        clickContentDescription(text(R.string.tooltip_close_search))
+
+        waitForRecentFile(timeoutMillis = 30_000) { recentFile ->
+            recentFile?.lastChapterIndex == 1 &&
+                recentFile.locatorBlockIndex != null &&
+                recentFile.locatorCharOffset != null &&
+                recentFile.progressPercentage != null
+        }
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_change_reading_mode))
+        clickText(text(R.string.menu_reading_mode_paginated))
+        waitForRenderMode(RenderMode.PAGINATED)
+
+        waitForRecentFile(timeoutMillis = 20_000) { recentFile ->
+            recentFile?.lastChapterIndex == 1 &&
+                (recentFile.progressPercentage ?: 0f) > 0f
+        }
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_change_reading_mode))
+        clickText(text(R.string.menu_reading_mode_vertical))
+        waitForRenderMode(RenderMode.VERTICAL_SCROLL)
+
+        waitForRecentFile(timeoutMillis = 20_000) { recentFile ->
+            recentFile?.lastChapterIndex == 1 &&
+                (recentFile.progressPercentage ?: 0f) > 0f
+        }
+    }
+
+    @Test
+    fun fixtureEpub_addsCurrentPageBookmarkPersistsAndDeletes() {
+        launchFixtureReader()
+        waitForReader()
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_bookmark_this_page))
+
+        waitForFixtureBookmarks(timeoutMillis = 20_000) { bookmarksJson ->
+            parseBookmarksJson(bookmarksJson).isNotEmpty()
+        }
+
+        clickReaderControl(text(R.string.content_desc_chapters_menu))
+        clickText(text(R.string.tab_bookmarks))
+        waitForTextContaining("Chapter One")
+        assertThat(hasContentDescription(text(R.string.content_desc_more_options_bookmark))).isTrue()
+
+        clickContentDescription(text(R.string.content_desc_more_options_bookmark))
+        clickText(text(R.string.action_delete))
+        waitForText(text(R.string.dialog_delete_bookmark))
+        clickText(text(R.string.action_delete))
+
+        waitForText(text(R.string.no_bookmarks_yet))
+        waitForFixtureBookmarks(timeoutMillis = 10_000) { bookmarksJson ->
+            parseBookmarksJson(bookmarksJson).isEmpty()
+        }
     }
 
     @Test
@@ -193,6 +281,48 @@ class EpubReaderScreenTest {
         clickText(text(R.string.filter_with_notes))
         waitForText("ANNOTATION_TARGET_GOLF")
         waitForText("Fixture note survives startup")
+    }
+
+    @Test
+    fun fixtureEpub_seededAnnotationSupportsColorNoteAndDeletePersistence() {
+        seedFixtureHighlight()
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_chapters_menu))
+        clickText(text(R.string.tab_annotations))
+
+        waitForText("ANNOTATION_TARGET_GOLF")
+        clickContentDescription(text(R.string.content_desc_options))
+        composeTestRule.onNodeWithTag("HighlightColor_blue").performClick()
+
+        waitForFixtureHighlights(timeoutMillis = 10_000) { highlightsJson ->
+            parseHighlightsJson(highlightsJson).singleOrNull()?.color == HighlightColor.BLUE
+        }
+
+        clickContentDescription(text(R.string.content_desc_options))
+        clickText(text(R.string.menu_edit_note))
+        waitForText(text(R.string.action_save_note))
+        composeTestRule.onNode(hasSetTextAction())
+            .performTextClearance()
+        composeTestRule.onNode(hasSetTextAction())
+            .performTextInput("Updated fixture note")
+        clickText(text(R.string.action_save_note))
+
+        waitForText("Updated fixture note")
+        waitForFixtureHighlights(timeoutMillis = 10_000) { highlightsJson ->
+            parseHighlightsJson(highlightsJson).singleOrNull()?.note == "Updated fixture note"
+        }
+
+        clickContentDescription(text(R.string.content_desc_options))
+        clickText(text(R.string.action_delete))
+        waitForText(text(R.string.dialog_delete_highlight))
+        clickText(text(R.string.action_delete))
+
+        waitForText(text(R.string.no_highlights_yet))
+        waitForFixtureHighlights(timeoutMillis = 10_000) { highlightsJson ->
+            parseHighlightsJson(highlightsJson).isEmpty()
+        }
     }
 
     @Test
@@ -385,8 +515,9 @@ class EpubReaderScreenTest {
         waitForText(text(R.string.tts_replacements_enable))
     }
 
-    private fun launchFixtureReader() {
+    private fun launchFixtureReader(beforeLaunch: (Uri) -> Unit = {}) {
         val fixtureUri = copyAndroidTestAssetToCache(fixtureAssetName)
+        beforeLaunch(fixtureUri)
         scenario = ActivityScenario.launch<MainActivity>(createEpubViewIntent(fixtureUri))
     }
 
@@ -462,6 +593,59 @@ class EpubReaderScreenTest {
             .commit()
     }
 
+    private fun seedFixtureRecentFile(
+        uriString: String,
+        chapterIndex: Int,
+        blockIndex: Int,
+        charOffset: Int,
+        progress: Float
+    ) {
+        val now = System.currentTimeMillis()
+        runBlocking {
+            AppDatabase.getDatabase(targetContext)
+                .recentFileDao()
+                .insertOrUpdateFile(
+                    RecentFileEntity(
+                        bookId = fixtureBookId,
+                        uriString = uriString,
+                        type = FileType.EPUB,
+                        displayName = fixtureBookTitle,
+                        timestamp = now,
+                        coverImagePath = null,
+                        title = fixtureBookTitle,
+                        author = "Fixture Author",
+                        lastChapterIndex = chapterIndex,
+                        lastPage = null,
+                        lastPositionCfi = "android-locator:$chapterIndex:$blockIndex:$charOffset",
+                        progressPercentage = progress,
+                        isRecent = true,
+                        isAvailable = true,
+                        lastModifiedTimestamp = now,
+                        isDeleted = false,
+                        locatorBlockIndex = blockIndex,
+                        locatorCharOffset = charOffset,
+                        bookmarks = null,
+                        sourceFolderUri = null,
+                        isReflowPreferred = false,
+                        customName = null,
+                        highlights = null,
+                        fileSize = 0L,
+                        fileContentModifiedTimestamp = 0L,
+                        seriesName = null,
+                        seriesIndex = null,
+                        description = null,
+                        folderTextMetadataParsed = false,
+                        folderCoverMetadataParsed = false,
+                        originalTitle = fixtureBookTitle,
+                        originalAuthor = "Fixture Author",
+                        originalSeriesName = null,
+                        originalSeriesIndex = null,
+                        originalDescription = null
+                    )
+                )
+        }
+    }
+
     private fun createEpubViewIntent(uri: Uri): Intent {
         return Intent(targetContext, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -485,6 +669,15 @@ class EpubReaderScreenTest {
             "${targetContext.packageName}.provider",
             file
         )
+    }
+
+    private fun navigateToFixtureSearchResult(query: String, expectedChapterIndex: Int) {
+        clickReaderControl(text(R.string.tooltip_search))
+        waitForTag("SearchTextField")
+
+        composeTestRule.onNodeWithTag("SearchTextField").performTextInput(query)
+        waitForTag("SearchResultItem_$expectedChapterIndex", timeoutMillis = 20_000)
+        composeTestRule.onNodeWithTag("SearchResultItem_$expectedChapterIndex").performClick()
     }
 
     private fun waitForReader() {
@@ -599,5 +792,27 @@ class EpubReaderScreenTest {
         composeTestRule.waitUntil(timeoutMillis = timeoutMillis) {
             predicate(readFixtureRecentFile())
         }
+    }
+
+    private fun waitForFixtureBookmarks(
+        timeoutMillis: Long = 10_000,
+        predicate: (String?) -> Boolean
+    ) {
+        composeTestRule.waitUntil(timeoutMillis = timeoutMillis) {
+            predicate(readFixtureRecentFile()?.bookmarks)
+        }
+    }
+
+    private fun waitForFixtureHighlights(
+        timeoutMillis: Long = 10_000,
+        predicate: (String?) -> Boolean
+    ) {
+        composeTestRule.waitUntil(timeoutMillis = timeoutMillis) {
+            predicate(readFixtureRecentFile()?.highlights)
+        }
+    }
+
+    private fun parseBookmarksJson(rawJson: String?): Set<Bookmark> {
+        return EpubAnnotationSerializer.parseBookmarksJson(rawJson)
     }
 }

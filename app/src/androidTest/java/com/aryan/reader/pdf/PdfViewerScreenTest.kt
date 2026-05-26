@@ -214,6 +214,17 @@ class PdfViewerScreenTest {
     }
 
     @Test
+    fun displayModeSelectionPersistsReaderPreference() {
+        waitForDocumentLoad()
+
+        selectReadingMode(text(R.string.menu_reading_mode_paginated))
+        waitForDisplayModePreference(DisplayMode.PAGINATION)
+
+        selectReadingMode(text(R.string.menu_reading_mode_vertical))
+        waitForDisplayModePreference(DisplayMode.VERTICAL_SCROLL)
+    }
+
+    @Test
     fun search_uiOpensAndAcceptsQuery() {
         waitForDocumentLoad()
 
@@ -235,6 +246,13 @@ class PdfViewerScreenTest {
         composeTestRule.onNodeWithContentDescription(text(R.string.tooltip_close_search)).performClick()
 
         assertNoNodeWithTag("SearchTextField")
+    }
+
+    private fun waitForDisplayModePreference(expected: DisplayMode) {
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(DISPLAY_MODE_KEY, DisplayMode.VERTICAL_SCROLL.name) == expected.name
+        }
     }
 
 }

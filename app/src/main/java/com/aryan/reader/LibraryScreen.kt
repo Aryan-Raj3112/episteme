@@ -120,6 +120,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -666,7 +667,8 @@ fun LibraryScreenContent(
                                 modifier = Modifier
                                     .weight(1f)
                                     .padding(vertical = 4.dp)
-                                    .focusRequester(searchFocusRequester),
+                                    .focusRequester(searchFocusRequester)
+                                    .testTag("LibrarySearchTextField"),
                                 singleLine = true,
                                 colors = TextFieldDefaults.colors(
                                     focusedContainerColor = Color.Transparent,
@@ -693,7 +695,10 @@ fun LibraryScreenContent(
                                     Icon(Icons.Default.FilterList, contentDescription = stringResource(R.string.content_desc_filter))
                                 }
                                 Box {
-                                    TextButton(onClick = { showSortMenu = true }) {
+                                    TextButton(
+                                        onClick = { showSortMenu = true },
+                                        modifier = Modifier.testTag("LibrarySortButton")
+                                    ) {
                                         Icon(
                                             painter = painterResource(id = R.drawable.sort),
                                             contentDescription = stringResource(R.string.content_desc_sort),
@@ -822,7 +827,9 @@ fun LibraryScreenContent(
                             text = { Text(stringResource(R.string.fab_new_shelf)) },
                             icon = { Icon(Icons.Default.Add, contentDescription = stringResource(R.string.fab_new_shelf)) },
                             onClick = onNewShelfClick,
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .testTag("LibraryNewShelfFab")
                         )
                     }
                 }
@@ -1140,7 +1147,8 @@ private fun ShelfDetailScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(vertical = 4.dp)
-                                .focusRequester(searchFocusRequester),
+                                .focusRequester(searchFocusRequester)
+                                .testTag("ShelfSearchTextField"),
                             singleLine = true,
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent,
@@ -1193,7 +1201,10 @@ private fun ShelfDetailScreen(
                     },
                     actions = {
                         Box {
-                            TextButton(onClick = { showSortMenu = true }) {
+                            TextButton(
+                                onClick = { showSortMenu = true },
+                                modifier = Modifier.testTag("ShelfSortButton")
+                            ) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.sort),
                                     contentDescription = stringResource(R.string.content_desc_sort),
@@ -1375,7 +1386,10 @@ private fun AddBooksModeScreen(
                     },
                     actions = {
                         Box {
-                            TextButton(onClick = { showSortMenu = true }) {
+                            TextButton(
+                                onClick = { showSortMenu = true },
+                                modifier = Modifier.testTag("AddBooksSortButton")
+                            ) {
                                 Icon(
                                     painter = painterResource(id = R.drawable.sort),
                                     contentDescription = stringResource(R.string.content_desc_sort),
@@ -1581,6 +1595,7 @@ private fun ShelfListItem(
         ),
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("ShelfItem_${shelf.id}")
             .then(
                 if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
                 else Modifier
@@ -1659,6 +1674,7 @@ private fun LibraryListItem(
         ),
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("LibraryBookItem_${item.bookId}")
             .graphicsLayer { alpha = if (item.isAvailable) 1.0f else 0.8f }
             .then(
                 if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
