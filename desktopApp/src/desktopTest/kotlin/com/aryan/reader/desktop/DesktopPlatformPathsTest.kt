@@ -10,7 +10,6 @@ class DesktopPlatformPathsTest {
 
         assertEquals(DesktopOperatingSystem.LINUX, platform.os)
         assertEquals(DesktopArchitecture.X64, platform.architecture)
-        assertEquals("kcef-bundle-linux-x64", platform.kcefBundleDirectoryName)
         assertEquals("linux-x64-v8", platform.pdfiumDirectoryName)
         assertEquals("lib", platform.pdfiumLibraryDirectoryName)
         assertEquals("libpdfium.so", platform.pdfiumLibraryFileName)
@@ -22,7 +21,6 @@ class DesktopPlatformPathsTest {
 
         assertEquals(DesktopOperatingSystem.WINDOWS, platform.os)
         assertEquals(DesktopArchitecture.X64, platform.architecture)
-        assertEquals("kcef-bundle", platform.kcefBundleDirectoryName)
         assertEquals("win-x64-v8", platform.pdfiumDirectoryName)
         assertEquals("bin", platform.pdfiumLibraryDirectoryName)
         assertEquals("pdfium.dll", platform.pdfiumLibraryFileName)

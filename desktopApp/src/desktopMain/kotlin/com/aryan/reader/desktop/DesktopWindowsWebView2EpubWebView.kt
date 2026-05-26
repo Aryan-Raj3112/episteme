@@ -52,7 +52,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 @Composable
-internal fun DesktopWindowsWebView2EpubWebView(
+internal fun DesktopNativeSwtEpubWebView(
     html: String,
     appearanceScript: String,
     highlightPaletteScript: String,
@@ -70,6 +70,15 @@ internal fun DesktopWindowsWebView2EpubWebView(
     backgroundColor: Color,
     modifier: Modifier = Modifier
 ) {
+    val backend = remember { desktopEpubWebViewBackend() }
+    if (backend == DesktopEpubWebViewBackend.UNSUPPORTED) {
+        DesktopNativeWebViewError(
+            backend = backend,
+            message = desktopNativeWebViewUnavailableMessage(backend),
+            modifier = modifier.fillMaxSize()
+        )
+        return
+    }
     val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
     val bridgeHandlers = rememberDesktopEpubBridgeHandlers(
         onHighlightCreated = onHighlightCreated,
@@ -84,7 +93,7 @@ internal fun DesktopWindowsWebView2EpubWebView(
         bridgeHandlers.associateBy { it.methodName }
     }
     val hostBackground = remember(backgroundColor) { backgroundColor.toAwtColor() }
-    val panel = remember { DesktopWindowsWebView2Panel(hostBackground) }
+    val panel = remember { DesktopWindowsWebView2Panel(hostBackground, backend) }
     val composeDensity = LocalDensity.current
     var loaded by remember { mutableStateOf(false) }
     var loadProgress by remember { mutableFloatStateOf(-1f) }
@@ -254,7 +263,8 @@ internal fun DesktopWindowsWebView2EpubWebView(
         }
 
         if (errorMessage != null) {
-            DesktopWindowsWebView2Error(
+            DesktopNativeWebViewError(
+                backend = backend,
                 message = errorMessage.orEmpty(),
                 modifier = Modifier.fillMaxSize()
             )
@@ -272,7 +282,8 @@ internal fun DesktopWindowsWebView2EpubWebView(
 }
 
 @Composable
-private fun DesktopWindowsWebView2Error(
+private fun DesktopNativeWebViewError(
+    backend: DesktopEpubWebViewBackend,
     message: String,
     modifier: Modifier = Modifier
 ) {
@@ -282,8 +293,9 @@ private fun DesktopWindowsWebView2Error(
     ) {
         Text(
             text = readerString(
-                "desktop_webview2_start_error",
-                "Microsoft Edge WebView2 could not start: %1\$s",
+                "desktop_native_webview_start_error",
+                "%1\$s could not start: %2\$s",
+                backend.displayName,
                 message
             ),
             color = MaterialTheme.colorScheme.error,
@@ -292,7 +304,10 @@ private fun DesktopWindowsWebView2Error(
     }
 }
 
-private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : Canvas() {
+private class DesktopWindowsWebView2Panel(
+    initialBackground: java.awt.Color,
+    private val backend: DesktopEpubWebViewBackend
+) : Canvas() {
     val instanceId: Int = nextDesktopWebView2InstanceId()
 
     @Volatile
@@ -410,6 +425,7 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
                 "bounds=${bounds.formatAwtBounds()} controller=${controller != null}"
         )
         updateModeSwitchPanelState("load_requested")
+        ensureController(reason = "load_requested")
         controller?.loadHtml(html)
     }
 
@@ -461,35 +477,9 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
                 "size=${width}x${height} bounds=${bounds.formatAwtBounds()} screen=${safeScreenLocationLog()} " +
                 "hasHtml=${requestedHtml != null}"
         )
-        if (controller == null) {
-            controller = DesktopWindowsWebView2Controller(
-                instanceId = instanceId,
-                canvas = this,
-                isNetworkAccessEnabled = { networkAccessEnabled },
-                dispatchBridgeMessage = { method, params ->
-                    EventQueue.invokeLater {
-                        bridgeHandlersByMethod[method]?.onMessage(params)
-                    }
-                },
-                dispatchLinkClick = { link ->
-                    EventQueue.invokeLater {
-                        onLinkIntercepted(link)
-                    }
-                },
-                updateLoadState = { isLoaded, progress ->
-                    EventQueue.invokeLater {
-                        onLoadStateChanged(isLoaded, progress)
-                    }
-                },
-                reportError = { error ->
-                    EventQueue.invokeLater {
-                        onError(error.desktopWebView2Message())
-                    }
-                }
-            )
-            requestedHtml?.let { html -> controller?.loadHtml(html) }
-            controller?.resize(width, height, reason = "add_notify")
-        }
+        ensureController(reason = "add_notify")
+        requestedHtml?.let { html -> controller?.loadHtml(html) }
+        controller?.resize(width, height, reason = "add_notify")
     }
 
     override fun removeNotify() {
@@ -617,10 +607,57 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
             "showing=$isShowing size=${width}x${height} bounds=${bounds.formatAwtBounds()} " +
             "parent=$parentName parentState=$parentDetails controller=${controller != null} hasHtml=${requestedHtml != null}"
     }
+
+    private fun ensureController(reason: String) {
+        if (controller != null) return
+        if (!isDisplayable) {
+            logDesktopWebView2("panel_controller_skip panel=$instanceId reason=$reason displayable=false")
+            return
+        }
+        logDesktopWebView2(
+            "panel_controller_create panel=$instanceId reason=$reason backend=${backend.logName} hasHtml=${requestedHtml != null}"
+        )
+        var createdController: DesktopWindowsWebView2Controller? = null
+        val newController = DesktopWindowsWebView2Controller(
+            instanceId = instanceId,
+            backend = backend,
+            canvas = this,
+            isNetworkAccessEnabled = { networkAccessEnabled },
+            dispatchBridgeMessage = { method, params ->
+                EventQueue.invokeLater {
+                    bridgeHandlersByMethod[method]?.onMessage(params)
+                }
+            },
+            dispatchLinkClick = { link ->
+                EventQueue.invokeLater {
+                    onLinkIntercepted(link)
+                }
+            },
+            updateLoadState = { isLoaded, progress ->
+                EventQueue.invokeLater {
+                    onLoadStateChanged(isLoaded, progress)
+                }
+            },
+            reportError = { error ->
+                val message = error.desktopNativeWebViewMessage(backend)
+                EventQueue.invokeLater {
+                    createdController?.let { failedController ->
+                        if (controller === failedController) {
+                            controller = null
+                        }
+                    }
+                    onError(message)
+                }
+            }
+        )
+        createdController = newController
+        controller = newController
+    }
 }
 
 private class DesktopWindowsWebView2Controller(
     private val instanceId: Int,
+    private val backend: DesktopEpubWebViewBackend,
     private val canvas: Canvas,
     private val isNetworkAccessEnabled: () -> Boolean,
     private val dispatchBridgeMessage: (String, String) -> Unit,
@@ -639,9 +676,9 @@ private class DesktopWindowsWebView2Controller(
     private var lastBrowserBoundsLog: String = ""
 
     init {
-        logDesktopWebView2("controller_init panel=$instanceId canvas=${canvas.width}x${canvas.height}")
+        logDesktopWebView2("controller_init panel=$instanceId backend=${backend.logName} canvas=${canvas.width}x${canvas.height}")
         logWebViewLayoutDiag(
-            "controller_init panel=$instanceId canvas=${canvas.width}x${canvas.height} " +
+            "controller_init panel=$instanceId backend=${backend.logName} canvas=${canvas.width}x${canvas.height} " +
                 "canvasBounds=${canvas.bounds.formatAwtBounds()} screen=${canvas.safeScreenLocationLog()}"
         )
         DesktopSwtWebView2EventLoop.asyncExec(reportError) { display ->
@@ -736,16 +773,18 @@ private class DesktopWindowsWebView2Controller(
                 "swt_shell_created panel=$instanceId canvas=${canvas.width}x${canvas.height} " +
                     "canvasBounds=${canvas.bounds.formatAwtBounds()} shellBounds=${shell?.bounds?.formatSwtBounds().orEmpty()}"
             )
-            val webView = Browser(shell, SWT.EDGE)
+            val webView = Browser(shell, backend.swtBrowserStyle())
             browser = webView
             val browserType = webView.browserType.orEmpty()
-            logDesktopWebView2("controller_browser_created panel=$instanceId browserType=\"$browserType\"")
+            logDesktopWebView2(
+                "controller_browser_created panel=$instanceId backend=${backend.logName} browserType=\"$browserType\""
+            )
             logWebViewLayoutDiag(
-                "swt_browser_created panel=$instanceId browserType=\"$browserType\" " +
+                "swt_browser_created panel=$instanceId backend=${backend.logName} browserType=\"$browserType\" " +
                     "browserBounds=${webView.bounds.formatSwtBounds()} shellBounds=${shell?.bounds?.formatSwtBounds().orEmpty()}"
             )
-            check(browserType.equals(DesktopWebView2SwtBrowserType, ignoreCase = true)) {
-                "Microsoft Edge WebView2 runtime is not available; SWT opened '$browserType' instead."
+            check(backend.acceptsBrowserType(browserType)) {
+                "${backend.displayName} is not available; SWT opened '${browserType.ifBlank { "unknown" }}' instead."
             }
             run {
                 bridgeFunction = object : BrowserFunction(webView, DesktopWebView2NativeBridgeName) {
@@ -850,7 +889,7 @@ private class DesktopWindowsWebView2Controller(
             )
         }.onFailure { error ->
             logDesktopWebView2(
-                "controller_create_failed panel=$instanceId error=\"${error.desktopWebView2Message().logPreview(300)}\""
+                "controller_create_failed panel=$instanceId error=\"${error.desktopNativeWebViewMessage(backend).logPreview(300)}\""
             )
             reportError(error)
             dispose()
@@ -907,15 +946,19 @@ private object DesktopSwtWebView2EventLoop {
                 runCatching {
                     logDesktopWebView2("swt_event_loop_start")
                     runCatching { Display.setAppName(EpistemeDesktopWindowTitle) }
-                    if (System.getProperty(DesktopWebView2EdgeDataDirProperty).isNullOrBlank()) {
+                    if (desktopEpubWebViewUsesWebView2() &&
+                        System.getProperty(DesktopWebView2EdgeDataDirProperty).isNullOrBlank()
+                    ) {
                         System.setProperty(
                             DesktopWebView2EdgeDataDirProperty,
                             File(desktopUserCacheRoot(), "webview2").absolutePath
                         )
                     }
-                    logDesktopWebView2(
-                        "swt_event_loop_user_data_dir path=\"${System.getProperty(DesktopWebView2EdgeDataDirProperty).orEmpty().logPreview(200)}\""
-                    )
+                    if (desktopEpubWebViewUsesWebView2()) {
+                        logDesktopWebView2(
+                            "swt_event_loop_user_data_dir path=\"${System.getProperty(DesktopWebView2EdgeDataDirProperty).orEmpty().logPreview(200)}\""
+                        )
+                    }
                     val swtDisplay = Display()
                     display = swtDisplay
                     ready.countDown()
@@ -931,7 +974,7 @@ private object DesktopSwtWebView2EventLoop {
                     logDesktopWebView2("swt_event_loop_failed error=\"${error.message.orEmpty().logPreview(300)}\"")
                 }
             },
-            "Episteme SWT WebView2"
+            "Episteme SWT Browser"
         ).apply {
             isDaemon = true
             start()
@@ -1133,8 +1176,27 @@ private fun String.withDesktopWebView2Bootstrap(networkAccessEnabled: Boolean): 
     return "$injection\n$this"
 }
 
-private fun Throwable.desktopWebView2Message(): String {
-    return message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
+internal fun desktopNativeWebViewUnavailableMessage(
+    backend: DesktopEpubWebViewBackend,
+    detail: String? = null
+): String {
+    val base = when (backend) {
+        DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2 ->
+            "Microsoft Edge WebView2 runtime is unavailable. Install or repair the WebView2 Runtime."
+        DesktopEpubWebViewBackend.WEBKIT ->
+            "WebKitGTK is unavailable. Install WebKitGTK from your Linux distribution packages."
+        DesktopEpubWebViewBackend.UNSUPPORTED ->
+            "Native webview is unavailable on this desktop platform."
+    }
+    val trimmedDetail = detail?.trim().orEmpty()
+    return if (trimmedDetail.isBlank()) base else "$base $trimmedDetail"
+}
+
+private fun Throwable.desktopNativeWebViewMessage(backend: DesktopEpubWebViewBackend): String {
+    return desktopNativeWebViewUnavailableMessage(
+        backend = backend,
+        detail = message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
+    )
 }
 
 private fun desktopWebView2DocumentProbeScript(eventName: String): String {
@@ -1393,8 +1455,24 @@ private val DesktopWebView2InteropHostCleanupDelaysMillis = longArrayOf(80L, 220
 private const val DesktopWebView2NativeBridgeName = "epistemeCallNative"
 private const val DesktopWebView2DiagnosticMethodName = "readerWebView2Diagnostic"
 private const val DesktopSwingInteropHostClassName = "SwingInteropViewGroup"
-private const val DesktopWebView2SwtBrowserType = "edge"
 private const val DesktopWebView2EdgeDataDirProperty = "org.eclipse.swt.browser.EdgeDataDir"
+
+private fun DesktopEpubWebViewBackend.swtBrowserStyle(): Int {
+    return when (this) {
+        DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2 -> SWT.EDGE
+        DesktopEpubWebViewBackend.WEBKIT -> SWT.WEBKIT
+        DesktopEpubWebViewBackend.UNSUPPORTED -> SWT.NONE
+    }
+}
+
+private fun DesktopEpubWebViewBackend.acceptsBrowserType(browserType: String): Boolean {
+    return when (this) {
+        DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2 -> browserType.equals("edge", ignoreCase = true)
+        DesktopEpubWebViewBackend.WEBKIT ->
+            browserType.contains("webkit", ignoreCase = true) || browserType.equals("safari", ignoreCase = true)
+        DesktopEpubWebViewBackend.UNSUPPORTED -> false
+    }
+}
 
 private val DesktopWebView2BridgeRuntimeScript = """
     (function () {

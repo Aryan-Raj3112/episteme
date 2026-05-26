@@ -299,9 +299,7 @@ private fun String.readerHrefFromIntercept(): String? {
     val trimmed = trim()
     if (trimmed.isBlank()) return null
     if (trimmed.equals("about:blank", ignoreCase = true)) return null
-    if (trimmed.startsWith("file:///kcefbrowser/", ignoreCase = true)) return null
-    if (trimmed.startsWith("file:/kcefbrowser/", ignoreCase = true)) return null
-    if (trimmed.startsWith("file://", ignoreCase = true)) return null
+    if (trimmed.startsWith("file:/", ignoreCase = true)) return null
     if (trimmed.startsWith("about:blank#", ignoreCase = true)) return "#${trimmed.substringAfter('#')}"
     if (trimmed.startsWith("data:", ignoreCase = true)) return null
     if (trimmed.startsWith("blob:", ignoreCase = true)) return null

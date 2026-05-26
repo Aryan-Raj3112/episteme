@@ -728,7 +728,7 @@ internal fun DesktopReaderScreen(
                         ) {
                             logDesktopWebView2(
                                 "reader_screen_web_document canRender=$canRenderWebDocument " +
-                                    "backend=${if (desktopEpubWebViewUsesWebView2()) "webview2" else "kcef"} " +
+                                    "backend=${desktopEpubWebViewBackend().logName} " +
                                     "runtimeInitialized=${webViewRuntimeState.initialized} restart=${webViewRuntimeState.restartRequired} " +
                                     "error=${webViewRuntimeState.errorMessage != null} network=$webViewNetworkAccessEnabled " +
                                     "htmlChars=${renderPlan.html.length} htmlHash=${renderPlan.html.hashCode()}"

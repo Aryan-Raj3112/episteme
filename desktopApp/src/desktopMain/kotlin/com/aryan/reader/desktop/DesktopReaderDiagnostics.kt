@@ -13,7 +13,7 @@ private const val EpubSelectionDebugLogTag = "EPUB_SELECTION_DEBUG"
 private const val EpubHighlightFlowLogTag = "EpistemeEpubHighlightFlow"
 private const val DesktopHighlightMapLogTag = "EpistemeDesktopHighlightMap"
 private const val DesktopReaderCloseLogTag = "EpistemeDesktopReaderClose"
-private const val DesktopWebView2LogTag = "EpistemeWebView2"
+private const val DesktopNativeWebViewLogTag = "EpistemeNativeWebView"
 private const val WebViewLayoutLogTag = "EpistemeWebViewLayout"
 private const val ReaderModeSwitchLogTag = "EpistemeReaderModeSwitch"
 
@@ -65,7 +65,7 @@ internal fun logDesktopReaderClose(message: String) {
 }
 
 internal fun logDesktopWebView2(message: String) {
-    logDesktopDiagnostic(DesktopWebView2LogTag) { message }
+    logDesktopDiagnostic(DesktopNativeWebViewLogTag) { message }
 }
 
 internal fun logWebViewLayoutDiag(message: String) {

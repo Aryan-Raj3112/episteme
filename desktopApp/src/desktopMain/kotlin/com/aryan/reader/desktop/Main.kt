@@ -113,7 +113,6 @@ import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.SharedTextInputDialog
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.withTtsReplacements
-import dev.datlag.kcef.KCEF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -126,7 +125,6 @@ import java.io.File
 import java.net.URI
 import java.util.Base64
 import java.util.UUID
-import kotlin.math.max
 
 private const val DesktopReaderCloseDisposeSyncDelayMillis = 350L
 
@@ -224,8 +222,9 @@ internal fun EpistemeDesktopApp(
     val desktopCloudTtsUsesCredits = desktopCreditCloudTtsControlsAvailable && !desktopByokCloudTtsAvailable
     val initialLibrarySnapshot = remember { libraryDatabase.load().withDesktopDefaults() }
     val scope = rememberCoroutineScope()
-    var webViewRuntimeState by remember { mutableStateOf(DesktopWebViewRuntimeState()) }
-    var webViewRuntimeRequested by remember { mutableStateOf(false) }
+    val webViewRuntimeState = remember {
+        DesktopWebViewRuntimeState(initialized = desktopEpubWebViewUsesNativeSwtBrowser())
+    }
     var readerCustomTextureIds by remember { mutableStateOf(DesktopReaderTextures.importedTextureIds()) }
     val appWindowFullscreen = appWindowPlacement == WindowPlacement.Fullscreen
 
@@ -237,14 +236,6 @@ internal fun EpistemeDesktopApp(
         window = window,
         enabled = readerFullscreen && !appWindowFullscreen
     )
-
-    DisposableEffect(Unit) {
-        onDispose {
-            if (desktopEpubWebViewUsesBundledRuntime()) {
-                KCEF.disposeBlocking()
-            }
-        }
-    }
 
     var shelfRecords by remember { mutableStateOf(initialLibrarySnapshot.shelfRecords) }
     var shelfRefs by remember { mutableStateOf(initialLibrarySnapshot.shelfRefs) }
@@ -331,62 +322,6 @@ internal fun EpistemeDesktopApp(
     var reflowingPdfBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val desktopEpubPaginationCache = remember { SharedEpubPaginationCache() }
     var epubPaginationCacheGeneration by remember { mutableStateOf(0) }
-    LaunchedEffect(webViewRuntimeRequested) {
-        if (!shouldStartDesktopWebViewRuntime(webViewRuntimeRequested, webViewRuntimeState)) {
-            return@LaunchedEffect
-        }
-
-        val webViewBundleDir = withContext(Dispatchers.IO) { bundledDesktopWebViewDir() }
-        val webViewBundlePresent = withContext(Dispatchers.IO) {
-            isBundledDesktopWebViewPresent(webViewBundleDir)
-        }
-        if (!webViewBundlePresent) {
-            webViewRuntimeState = webViewRuntimeState.copy(
-                errorMessage = "Bundled embedded webview is missing from ${webViewBundleDir.absolutePath}."
-            )
-            return@LaunchedEffect
-        }
-
-        runCatching {
-            withContext(Dispatchers.IO) {
-                KCEF.init(
-                    builder = {
-                        installDir(webViewBundleDir)
-                        progress {
-                            onDownloading {
-                                webViewRuntimeState = webViewRuntimeState.copy(downloadProgress = max(it, 0f))
-                            }
-                            onInitialized {
-                                webViewRuntimeState = webViewRuntimeState.copy(initialized = true, errorMessage = null)
-                            }
-                        }
-                        settings {
-                            cachePath = File(desktopUserCacheRoot(), "kcef").absolutePath
-                        }
-                    },
-                    onError = { error ->
-                        webViewRuntimeState = webViewRuntimeState.copy(errorMessage = error?.message ?: error.toString())
-                    },
-                    onRestartRequired = {
-                        webViewRuntimeState = webViewRuntimeState.copy(restartRequired = true)
-                    }
-                )
-            }
-        }.onFailure { error ->
-            webViewRuntimeState = webViewRuntimeState.copy(errorMessage = error.message ?: error.toString())
-        }
-    }
-    LaunchedEffect(readerWindows) {
-        if (desktopEpubWebViewUsesBundledRuntime() && readerWindows.any { window ->
-                val content = window.content
-                content is DesktopReaderWindowContent.Text &&
-                    content.session.reader.book.chapters.isNotEmpty() &&
-                    content.session.reader.settings.readingMode == ReaderReadingMode.VERTICAL
-            }
-        ) {
-            webViewRuntimeRequested = true
-        }
-    }
     var nextReaderOpenRequestId by remember { mutableStateOf(0L) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
     var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
@@ -3002,10 +2937,6 @@ internal fun EpistemeDesktopApp(
         returnTabOverride: SharedAppTab? = null
     ) {
         val desktopReaderSurface = SharedFileCapabilities.surfaceFor(book.type, ReaderPlatform.DESKTOP)
-        if (shouldRequestDesktopWebViewRuntime(desktopReaderSurface)) {
-            webViewRuntimeRequested = true
-        }
-
         if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER) {
             val path = book.path
             if (path.isNullOrBlank()) {
@@ -4039,7 +3970,7 @@ internal fun EpistemeDesktopApp(
                                             shouldResetDesktopTextReaderWindowSurface(
                                                 previousMode = previousMode,
                                                 currentMode = currentMode,
-                                                usesWebView2 = desktopEpubWebViewUsesWebView2()
+                                                usesNativeWebView = desktopEpubWebViewUsesNativeSwtBrowser()
                                             )
                                         ) {
                                             if (!readerWindow.fullscreen) {

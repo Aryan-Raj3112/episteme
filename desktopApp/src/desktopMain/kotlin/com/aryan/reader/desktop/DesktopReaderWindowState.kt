@@ -34,9 +34,9 @@ internal fun DesktopWindowStateSnapshot.toPersistableReaderWindowSnapshot(): Des
 internal fun shouldResetDesktopTextReaderWindowSurface(
     previousMode: ReaderReadingMode,
     currentMode: ReaderReadingMode,
-    usesWebView2: Boolean
+    usesNativeWebView: Boolean
 ): Boolean {
-    return usesWebView2 &&
+    return usesNativeWebView &&
         previousMode == ReaderReadingMode.VERTICAL &&
         currentMode == ReaderReadingMode.PAGINATED
 }

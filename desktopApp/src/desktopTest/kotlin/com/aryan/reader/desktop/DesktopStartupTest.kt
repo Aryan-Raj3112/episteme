@@ -1,6 +1,5 @@
 package com.aryan.reader.desktop
 
-import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.SharedReaderScreenState
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,67 +26,64 @@ class DesktopStartupTest {
     }
 
     @Test
-    fun `bundled webview starts only for epub backed reader surfaces on non windows`() {
+    fun `desktop epub webview uses native browser backends without bundled runtime`() {
         val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
         val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+        val macos = DesktopPlatform(DesktopOperatingSystem.MACOS, DesktopArchitecture.ARM64)
+        val other = DesktopPlatform(DesktopOperatingSystem.OTHER, DesktopArchitecture.X64)
 
-        assertTrue(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.EPUB_READER, linux))
-        assertTrue(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.TEXT_READER, linux))
-        assertFalse(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.PDF_VIEWER, linux))
-        assertFalse(shouldRequestDesktopWebViewRuntime(null, linux))
+        assertEquals(DesktopEpubWebViewBackend.WEBKIT, desktopEpubWebViewBackend(linux))
+        assertEquals(DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2, desktopEpubWebViewBackend(windows))
+        assertEquals(DesktopEpubWebViewBackend.WEBKIT, desktopEpubWebViewBackend(macos))
+        assertEquals(DesktopEpubWebViewBackend.UNSUPPORTED, desktopEpubWebViewBackend(other))
 
-        assertFalse(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.EPUB_READER, windows))
-        assertFalse(shouldRequestDesktopWebViewRuntime(ReaderFeatureSurface.TEXT_READER, windows))
+        assertTrue(desktopEpubWebViewUsesNativeSwtBrowser(linux))
+        assertTrue(desktopEpubWebViewUsesNativeSwtBrowser(windows))
+        assertTrue(desktopEpubWebViewUsesNativeSwtBrowser(macos))
+        assertFalse(desktopEpubWebViewUsesNativeSwtBrowser(other))
     }
 
     @Test
-    fun `embedded webview startup skips terminal runtime states`() {
-        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
-        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
-
-        assertFalse(shouldStartDesktopWebViewRuntime(requested = true, state = DesktopWebViewRuntimeState(), platform = windows))
-        assertFalse(shouldStartDesktopWebViewRuntime(requested = false, state = DesktopWebViewRuntimeState(), platform = linux))
-        assertTrue(shouldStartDesktopWebViewRuntime(requested = true, state = DesktopWebViewRuntimeState(), platform = linux))
-        assertFalse(
-            shouldStartDesktopWebViewRuntime(
-                requested = true,
-                state = DesktopWebViewRuntimeState(initialized = true),
-                platform = linux
-            )
-        )
-        assertFalse(
-            shouldStartDesktopWebViewRuntime(
-                requested = true,
-                state = DesktopWebViewRuntimeState(restartRequired = true),
-                platform = linux
-            )
-        )
-        assertFalse(
-            shouldStartDesktopWebViewRuntime(
-                requested = true,
-                state = DesktopWebViewRuntimeState(errorMessage = "missing bundle"),
-                platform = linux
-            )
-        )
-    }
-
-    @Test
-    fun `windows webview2 can render without bundled runtime state`() {
+    fun `native webviews can render without bundled runtime state`() {
         val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
         val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+        val macos = DesktopPlatform(DesktopOperatingSystem.MACOS, DesktopArchitecture.ARM64)
+        val other = DesktopPlatform(DesktopOperatingSystem.OTHER, DesktopArchitecture.X64)
 
         assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(), windows))
-        assertFalse(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(), linux))
+        assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(), linux))
+        assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(), macos))
         assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(initialized = true), linux))
+        assertFalse(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(initialized = true), other))
     }
 
     @Test
-    fun `compose interop blending stays off by default for windows webview2`() {
+    fun `native webview unavailable messages point to the platform runtime`() {
+        val windowsMessage = desktopNativeWebViewUnavailableMessage(
+            backend = DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2,
+            detail = "missing runtime"
+        )
+        val linuxMessage = desktopNativeWebViewUnavailableMessage(
+            backend = DesktopEpubWebViewBackend.WEBKIT,
+            detail = "missing library"
+        )
+
+        assertTrue(windowsMessage.contains("WebView2 Runtime"))
+        assertTrue(windowsMessage.contains("missing runtime"))
+        assertTrue(linuxMessage.contains("WebKitGTK"))
+        assertTrue(linuxMessage.contains("Linux distribution packages"))
+        assertTrue(linuxMessage.contains("missing library"))
+    }
+
+    @Test
+    fun `compose interop blending stays off by default for native swt webviews`() {
         val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
         val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+        val other = DesktopPlatform(DesktopOperatingSystem.OTHER, DesktopArchitecture.X64)
 
         assertNull(composeInteropBlendingDefault(windows))
-        assertEquals(ComposeInteropBlendingEnabled, composeInteropBlendingDefault(linux))
+        assertNull(composeInteropBlendingDefault(linux))
+        assertEquals(ComposeInteropBlendingEnabled, composeInteropBlendingDefault(other))
     }
 
     @Test

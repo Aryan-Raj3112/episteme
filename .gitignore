@@ -21,8 +21,6 @@ google-services.json
 .gradle/
 third_party/pdfium/
 *.tgz
-kcef-bundle/
-kcef-bundle-linux-x64/
 cache/
 worker/
 output/

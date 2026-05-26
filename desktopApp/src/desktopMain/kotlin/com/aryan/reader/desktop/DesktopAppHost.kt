@@ -38,7 +38,6 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.aryan.reader.shared.AppContrastOption
 import com.aryan.reader.shared.AppThemeMode
-import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.readerString
 import kotlinx.coroutines.Dispatchers
@@ -195,7 +194,7 @@ private const val DesktopWindowStatePersistDebounceMillis = 450L
 internal fun composeInteropBlendingDefault(
     platform: DesktopPlatform = currentDesktopPlatform()
 ): String? {
-    return if (desktopEpubWebViewUsesWebView2(platform)) {
+    return if (desktopEpubWebViewUsesNativeSwtBrowser(platform)) {
         null
     } else {
         ComposeInteropBlendingEnabled
@@ -205,10 +204,8 @@ internal fun composeInteropBlendingDefault(
 internal fun configureComposeSwingInterop(
     platform: DesktopPlatform = currentDesktopPlatform()
 ) {
-    // Must run before Compose creates the desktop window. Vertical EPUB embeds native webview
-    // surfaces, and current Compose interop can leave a stale black rectangle after that reader
-    // surface is removed unless interop blending is enabled. WebView2 uses a heavyweight SWT/AWT
-    // child on Windows, where the blending path can prevent the native browser from painting.
+    // Must run before Compose creates the desktop window. Vertical EPUB embeds native SWT/AWT
+    // browser surfaces; the blending path can prevent those native children from painting.
     if (System.getProperty(ComposeInteropBlendingProperty).isNullOrBlank()) {
         composeInteropBlendingDefault(platform)?.let { defaultValue ->
             System.setProperty(ComposeInteropBlendingProperty, defaultValue)
@@ -549,43 +546,43 @@ internal data class DesktopWebViewRuntimeState(
     val errorMessage: String? = null
 )
 
+internal enum class DesktopEpubWebViewBackend(
+    val logName: String,
+    val displayName: String
+) {
+    WINDOWS_WEBVIEW2("webview2", "Microsoft Edge WebView2"),
+    WEBKIT("webkit", "WebKit"),
+    UNSUPPORTED("unsupported", "native webview")
+}
+
+internal fun desktopEpubWebViewBackend(
+    platform: DesktopPlatform = currentDesktopPlatform()
+): DesktopEpubWebViewBackend {
+    return when (platform.os) {
+        DesktopOperatingSystem.WINDOWS -> DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2
+        DesktopOperatingSystem.LINUX,
+        DesktopOperatingSystem.MACOS -> DesktopEpubWebViewBackend.WEBKIT
+        DesktopOperatingSystem.OTHER -> DesktopEpubWebViewBackend.UNSUPPORTED
+    }
+}
+
+internal fun desktopEpubWebViewUsesNativeSwtBrowser(
+    platform: DesktopPlatform = currentDesktopPlatform()
+): Boolean {
+    return desktopEpubWebViewBackend(platform) != DesktopEpubWebViewBackend.UNSUPPORTED
+}
+
 internal fun desktopEpubWebViewUsesWebView2(
     platform: DesktopPlatform = currentDesktopPlatform()
 ): Boolean {
-    return platform.os == DesktopOperatingSystem.WINDOWS
-}
-
-internal fun desktopEpubWebViewUsesBundledRuntime(
-    platform: DesktopPlatform = currentDesktopPlatform()
-): Boolean {
-    return !desktopEpubWebViewUsesWebView2(platform)
+    return desktopEpubWebViewBackend(platform) == DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2
 }
 
 internal fun desktopEpubWebViewCanRender(
     state: DesktopWebViewRuntimeState,
     platform: DesktopPlatform = currentDesktopPlatform()
 ): Boolean {
-    return desktopEpubWebViewUsesWebView2(platform) || state.initialized
-}
-
-internal fun shouldRequestDesktopWebViewRuntime(
-    readerSurface: ReaderFeatureSurface?,
-    platform: DesktopPlatform = currentDesktopPlatform()
-): Boolean {
-    return desktopEpubWebViewUsesBundledRuntime(platform) &&
-        (readerSurface == ReaderFeatureSurface.EPUB_READER || readerSurface == ReaderFeatureSurface.TEXT_READER)
-}
-
-internal fun shouldStartDesktopWebViewRuntime(
-    requested: Boolean,
-    state: DesktopWebViewRuntimeState,
-    platform: DesktopPlatform = currentDesktopPlatform()
-): Boolean {
-    return desktopEpubWebViewUsesBundledRuntime(platform) &&
-        requested &&
-        !state.initialized &&
-        !state.restartRequired &&
-        state.errorMessage == null
+    return desktopEpubWebViewUsesNativeSwtBrowser(platform)
 }
 
 @Composable
@@ -593,7 +590,10 @@ internal fun DesktopWebViewRuntimeIndicator(
     state: DesktopWebViewRuntimeState,
     modifier: Modifier = Modifier
 ) {
+    val platform = currentDesktopPlatform()
     val message = when {
+        !desktopEpubWebViewUsesNativeSwtBrowser(platform) ->
+            readerString("desktop_webview_unsupported", "Embedded webview is unavailable on this desktop platform.")
         state.errorMessage != null -> readerString("desktop_webview_start_error", "Embedded webview could not start: %1\$s", state.errorMessage)
         state.restartRequired -> readerString("desktop_webview_restart_required", "Embedded webview installed. Restart Episteme to finish setup.")
         state.downloadProgress >= 0f -> readerString("desktop_webview_preparing_progress", "Preparing bundled embedded webview %1\$d%%", state.downloadProgress.toInt())
@@ -609,7 +609,9 @@ internal fun DesktopWebViewRuntimeIndicator(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (state.errorMessage == null && !state.restartRequired) {
-                CircularProgressIndicator()
+                if (desktopEpubWebViewUsesNativeSwtBrowser(platform)) {
+                    CircularProgressIndicator()
+                }
             }
             Text(
                 text = message,

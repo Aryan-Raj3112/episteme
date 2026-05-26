@@ -5,7 +5,6 @@ import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedLegalLinks
 import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.shared.sharedLegalLinksForProfile
-import java.io.File
 
 internal const val DesktopFlavorProperty = "episteme.desktop.flavor"
 internal const val DesktopVersionProperty = "episteme.desktop.version"
@@ -76,46 +75,5 @@ internal fun ReaderAiByokSettings.withDesktopFeaturePolicy(
         sanitized()
     } else {
         ReaderAiByokSettings(hideReaderAiFeatures = true)
-    }
-}
-
-internal fun bundledDesktopWebViewDir(): File {
-    val platform = currentDesktopPlatform()
-    val resourceDir = System.getProperty(ComposeApplicationResourcesDirProperty)
-        ?.takeIf { it.isNotBlank() }
-        ?.let(::File)
-    return listOfNotNull(
-        resourceDir?.resolve("kcef-bundle"),
-        File(System.getProperty("user.dir"), "kcef-bundle"),
-        File(System.getProperty("user.dir"), "desktopApp/${platform.kcefBundleDirectoryName}"),
-        File(System.getProperty("user.dir"), "desktopApp/kcef-bundle"),
-        File("desktopApp/${platform.kcefBundleDirectoryName}"),
-        File("desktopApp/kcef-bundle"),
-        File(platform.kcefBundleDirectoryName),
-        File("kcef-bundle")
-    ).firstOrNull(::isBundledDesktopWebViewPresent)
-        ?: resourceDir?.resolve("kcef-bundle")
-        ?: File(platform.kcefBundleDirectoryName)
-}
-
-internal fun isBundledDesktopWebViewPresent(
-    dir: File,
-    platform: DesktopPlatform = currentDesktopPlatform()
-): Boolean {
-    return desktopEpubWebViewUsesBundledRuntime(platform) &&
-        dir.isDirectory &&
-        bundledDesktopWebViewRequiredPaths(platform).all { requiredPath ->
-            dir.resolve(requiredPath).exists()
-        }
-}
-
-internal fun bundledDesktopWebViewRequiredPaths(
-    platform: DesktopPlatform = currentDesktopPlatform()
-): List<String> {
-    return when (platform.os) {
-        DesktopOperatingSystem.WINDOWS -> emptyList()
-        DesktopOperatingSystem.LINUX -> listOf("libcef.so", "chrome-sandbox", "icudtl.dat", "locales")
-        DesktopOperatingSystem.MACOS -> listOf("jcef Helper.app", "Chromium Embedded Framework.framework")
-        DesktopOperatingSystem.OTHER -> emptyList()
     }
 }

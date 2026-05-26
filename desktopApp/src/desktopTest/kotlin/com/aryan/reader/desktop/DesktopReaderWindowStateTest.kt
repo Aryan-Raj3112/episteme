@@ -101,30 +101,30 @@ class DesktopReaderWindowStateTest {
     }
 
     @Test
-    fun `webview2 text reader resets surface when switching from vertical to paginated`() {
+    fun `native webview text reader resets surface when switching from vertical to paginated`() {
         assertTrue(
             shouldResetDesktopTextReaderWindowSurface(
                 previousMode = ReaderReadingMode.VERTICAL,
                 currentMode = ReaderReadingMode.PAGINATED,
-                usesWebView2 = true
+                usesNativeWebView = true
             )
         )
     }
 
     @Test
-    fun `text reader surface reset is limited to webview2 vertical to paginated switches`() {
+    fun `text reader surface reset is limited to native webview vertical to paginated switches`() {
         assertFalse(
             shouldResetDesktopTextReaderWindowSurface(
                 previousMode = ReaderReadingMode.PAGINATED,
                 currentMode = ReaderReadingMode.VERTICAL,
-                usesWebView2 = true
+                usesNativeWebView = true
             )
         )
         assertFalse(
             shouldResetDesktopTextReaderWindowSurface(
                 previousMode = ReaderReadingMode.VERTICAL,
                 currentMode = ReaderReadingMode.PAGINATED,
-                usesWebView2 = false
+                usesNativeWebView = false
             )
         )
     }

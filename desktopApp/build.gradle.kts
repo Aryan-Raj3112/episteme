@@ -1,6 +1,5 @@
 import org.gradle.api.GradleException
 import org.gradle.api.DefaultTask
-import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Input
@@ -23,33 +22,6 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
-}
-
-@DisableCachingByDefault(because = "Verification task has no outputs.")
-abstract class CheckBundledWebViewRuntimeTask : DefaultTask() {
-    @get:Input
-    abstract val bundleRootPath: Property<String>
-
-    @get:Input
-    abstract val osName: Property<String>
-
-    @get:Input
-    abstract val osArch: Property<String>
-
-    @get:Input
-    abstract val requiredPaths: ListProperty<String>
-
-    @TaskAction
-    fun checkRuntime() {
-        val bundleRoot = File(bundleRootPath.get())
-        val missingFiles = requiredPaths.get().filterNot { bundleRoot.resolve(it).exists() }
-        if (missingFiles.isNotEmpty()) {
-            throw GradleException(
-                "Missing bundled KCEF runtime at ${bundleRoot.absolutePath}. " +
-                    "Expected ${missingFiles.joinToString()} for ${osName.get()} ${osArch.get()} desktop packages."
-            )
-        }
-    }
 }
 
 @DisableCachingByDefault(because = "Verification task has no outputs.")
@@ -210,31 +182,27 @@ fun desktopArchId(osArch: String = System.getProperty("os.arch")): String {
     }
 }
 
-fun desktopKcefBundleDirectoryName(
+fun desktopSwtArtifactId(
     osName: String = System.getProperty("os.name"),
     osArch: String = System.getProperty("os.arch")
-): String {
+): String? {
     return when (desktopOsId(osName)) {
-        "windows" -> "kcef-bundle"
-        "linux" -> "kcef-bundle-linux-${desktopArchId(osArch)}"
-        "macos" -> "kcef-bundle-macos-${desktopArchId(osArch)}"
-        else -> "kcef-bundle-${desktopArchId(osArch)}"
-    }
-}
+        "windows" -> when (desktopArchId(osArch)) {
+            "arm64" -> "org.eclipse.swt.win32.win32.aarch64"
+            else -> "org.eclipse.swt.win32.win32.x86_64"
+        }
 
-fun bundledWebViewRequiredPaths(osName: String, osArch: String): List<String> {
-    return when (desktopOsId(osName)) {
-        "windows" -> emptyList()
-        "linux" -> listOf("libcef.so", "chrome-sandbox", "icudtl.dat", "locales")
-        "macos" -> listOf("jcef Helper.app", "Chromium Embedded Framework.framework")
-        else -> emptyList()
-    }
-}
+        "linux" -> when (desktopArchId(osArch)) {
+            "arm64" -> "org.eclipse.swt.gtk.linux.aarch64"
+            else -> "org.eclipse.swt.gtk.linux.x86_64"
+        }
 
-fun desktopSwtWindowsArtifactId(osArch: String = System.getProperty("os.arch")): String {
-    return when (desktopArchId(osArch)) {
-        "arm64" -> "org.eclipse.swt.win32.win32.aarch64"
-        else -> "org.eclipse.swt.win32.win32.x86_64"
+        "macos" -> when (desktopArchId(osArch)) {
+            "arm64" -> "org.eclipse.swt.cocoa.macosx.aarch64"
+            else -> "org.eclipse.swt.cocoa.macosx.x86_64"
+        }
+
+        else -> null
     }
 }
 
@@ -471,16 +439,14 @@ val desktopPackageDescription = if (isOssOfflineDesktop) {
 val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan")
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
-val desktopUsesWindowsWebView2 = desktopOsId(desktopOsName) == "windows"
-val desktopRequiresBundledWebViewRuntime = !desktopUsesWindowsWebView2
 val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
 val desktopReleaseProguardEnabled = providers.gradleProperty("desktopReleaseProguard")
     .map { it.equals("true", ignoreCase = true) }
     .orElse(false)
     .get()
-val desktopKmpWebViewDependency = "io.github.kevinnzou:compose-webview-multiplatform:2.0.3"
 val desktopSwtVersion = "3.133.0"
-val desktopSwtWindowsDependency = "org.eclipse.platform:${desktopSwtWindowsArtifactId(desktopOsArch)}:$desktopSwtVersion"
+val desktopSwtDependency = desktopSwtArtifactId(desktopOsName, desktopOsArch)
+    ?.let { artifactId -> "org.eclipse.platform:$artifactId:$desktopSwtVersion" }
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
 val generatedDesktopStringResourcesDir = layout.buildDirectory.dir("generated/desktopStringResources")
 val rootLocalProperties = Properties()
@@ -503,54 +469,10 @@ val desktopCloudConfig = mapOf(
     "GOOGLE_OAUTH_CLIENT_ID" to desktopConfigValue("DESKTOP_GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID", "DEFAULT_WEB_CLIENT_ID"),
     "GOOGLE_OAUTH_CLIENT_SECRET" to desktopConfigValue("DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_WEB_CLIENT_SECRET", "DEFAULT_WEB_CLIENT_SECRET")
 )
-val bundledWebViewDir = layout.projectDirectory.dir(desktopKcefBundleDirectoryName(desktopOsName, desktopOsArch))
 val bundledPdfiumDir = layout.projectDirectory.dir(
     "../third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}"
 )
 val bundledPdfiumLibraryPath = desktopPdfiumLibraryPath(desktopOsName, desktopOsArch)
-val bundledWebViewKeptLocales = setOf(
-    "ar.pak",
-    "de.pak",
-    "en-GB.pak",
-    "en-US.pak",
-    "es-419.pak",
-    "es.pak",
-    "fr.pak",
-    "hi.pak",
-    "pt-BR.pak",
-    "ru.pak",
-    "tr.pak",
-    "vi.pak"
-)
-val bundledWebViewTrimmedRuntimeFiles = listOf(
-    "ct.sym",
-    "jawt.lib",
-    "jvm.lib",
-    "jaccessinspector.exe",
-    "jaccesswalker.exe",
-    "jabswitch.exe",
-    "javac.exe",
-    "javadoc.exe",
-    "jcmd.exe",
-    "jdb.exe",
-    "jfr.exe",
-    "jhsdb.exe",
-    "jinfo.exe",
-    "jmap.exe",
-    "jps.exe",
-    "jrunscript.exe",
-    "jstack.exe",
-    "jstat.exe",
-    "jwebserver.exe",
-    "keytool.exe",
-    "kinit.exe",
-    "klist.exe",
-    "ktab.exe",
-    "rmiregistry.exe",
-    "serialver.exe",
-    "server/classes.jsa",
-    "server/classes_nocoops.jsa"
-)
 val desktopWindowsIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme.ico")
 val desktopLinuxIconFile = layout.projectDirectory.file("src/desktopMain/resources/episteme_icon.png")
 val desktopWindowsUpgradeUuid = if (isOssOfflineDesktop) {
@@ -577,14 +499,6 @@ val desktopPackagingJavaHome = findDesktopPackagingJavaHome(
     osName = desktopOsName
 )?.absolutePath
 
-val checkBundledWebViewRuntime by tasks.registering(CheckBundledWebViewRuntimeTask::class) {
-    val requiredPaths = bundledWebViewRequiredPaths(desktopOsName, desktopOsArch)
-    bundleRootPath.set(bundledWebViewDir.asFile.absolutePath)
-    osName.set(desktopOsName)
-    osArch.set(desktopOsArch)
-    this.requiredPaths.set(requiredPaths)
-}
-
 val checkBundledPdfiumRuntime by tasks.registering(CheckBundledPdfiumRuntimeTask::class) {
     bundleRootPath.set(bundledPdfiumDir.asFile.absolutePath)
     libraryPath.set(bundledPdfiumLibraryPath)
@@ -592,21 +506,6 @@ val checkBundledPdfiumRuntime by tasks.registering(CheckBundledPdfiumRuntimeTask
 
 val prepareBundledDesktopResources by tasks.registering(Sync::class) {
     dependsOn(checkBundledPdfiumRuntime)
-    if (desktopRequiresBundledWebViewRuntime) {
-        dependsOn(checkBundledWebViewRuntime)
-        from(bundledWebViewDir) {
-            exclude(bundledWebViewTrimmedRuntimeFiles)
-            val localeExcludes = bundledWebViewDir.asFile
-                .resolve("locales")
-                .listFiles { file -> file.isFile && file.extension.equals("pak", ignoreCase = true) }
-                .orEmpty()
-                .map { it.name }
-                .filterNot { it in bundledWebViewKeptLocales }
-                .map { "locales/$it" }
-            exclude(localeExcludes)
-            into("common/kcef-bundle")
-        }
-    }
     from(bundledPdfiumDir) {
         into("common/third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}")
     }
@@ -648,13 +547,9 @@ kotlin {
                 implementation(project(":shared"))
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
-                compileOnly(desktopKmpWebViewDependency)
-                if (desktopRequiresBundledWebViewRuntime) {
-                    runtimeOnly(desktopKmpWebViewDependency)
-                }
-                compileOnly(desktopSwtWindowsDependency)
-                if (desktopUsesWindowsWebView2) {
-                    runtimeOnly(desktopSwtWindowsDependency)
+                desktopSwtDependency?.let { dependency ->
+                    compileOnly(dependency)
+                    runtimeOnly(dependency)
                 }
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.1")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

@@ -1,11 +1,6 @@
 package com.aryan.reader.desktop
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -16,20 +11,7 @@ import androidx.compose.ui.graphics.Color
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
-import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
-import com.multiplatform.webview.jsbridge.IJsMessageHandler
-import com.multiplatform.webview.jsbridge.JsMessage
-import com.multiplatform.webview.jsbridge.rememberWebViewJsBridge
-import com.multiplatform.webview.request.RequestInterceptor
-import com.multiplatform.webview.request.WebRequest
-import com.multiplatform.webview.request.WebRequestInterceptResult
-import com.multiplatform.webview.web.LoadingState
-import com.multiplatform.webview.web.WebContent
-import com.multiplatform.webview.web.WebView
-import com.multiplatform.webview.web.WebViewNavigator
-import com.multiplatform.webview.web.WebViewState
-import com.multiplatform.webview.web.rememberWebViewNavigator
 import kotlinx.coroutines.launch
 
 @Composable
@@ -51,249 +33,31 @@ internal fun DesktopEpubWebView(
     backgroundColor: Color,
     modifier: Modifier = Modifier
 ) {
-    if (desktopEpubWebViewUsesWebView2()) {
-        LaunchedEffect(html, networkAccessEnabled, highlights.size, navigationTarget.readingMode) {
-            logDesktopWebView2(
-                "backend_selected backend=webview2 htmlChars=${html.length} htmlHash=${html.hashCode()} " +
-                    "network=$networkAccessEnabled highlights=${highlights.size} navMode=${navigationTarget.readingMode}"
-            )
-        }
-        DesktopWindowsWebView2EpubWebView(
-            html = html,
-            appearanceScript = appearanceScript,
-            highlightPaletteScript = highlightPaletteScript,
-            navigationTarget = navigationTarget,
-            highlights = highlights,
-            onHighlightCreated = onHighlightCreated,
-            onHighlightSelected = onHighlightSelected,
-            isFullscreen = isFullscreen,
-            onKeyboardNavigation = onKeyboardNavigation,
-            onSelectionAction = onSelectionAction,
-            onLinkClicked = onLinkClicked,
-            onVisiblePageChanged = onVisiblePageChanged,
-            onPointerActivity = onPointerActivity,
-            networkAccessEnabled = networkAccessEnabled,
-            backgroundColor = backgroundColor,
-            modifier = modifier
-        )
-    } else {
-        LaunchedEffect(html, networkAccessEnabled, highlights.size, navigationTarget.readingMode) {
-            logDesktopWebView2(
-                "backend_selected backend=kcef htmlChars=${html.length} htmlHash=${html.hashCode()} " +
-                    "network=$networkAccessEnabled highlights=${highlights.size} navMode=${navigationTarget.readingMode}"
-            )
-        }
-        DesktopKcefEpubWebView(
-            html = html,
-            appearanceScript = appearanceScript,
-            highlightPaletteScript = highlightPaletteScript,
-            navigationTarget = navigationTarget,
-            highlights = highlights,
-            onHighlightCreated = onHighlightCreated,
-            onHighlightSelected = onHighlightSelected,
-            isFullscreen = isFullscreen,
-            onKeyboardNavigation = onKeyboardNavigation,
-            onSelectionAction = onSelectionAction,
-            onLinkClicked = onLinkClicked,
-            onVisiblePageChanged = onVisiblePageChanged,
-            onPointerActivity = onPointerActivity,
-            networkAccessEnabled = networkAccessEnabled,
-            modifier = modifier
+    val backend = desktopEpubWebViewBackend()
+    LaunchedEffect(html, networkAccessEnabled, highlights.size, navigationTarget.readingMode, backend) {
+        logDesktopWebView2(
+            "backend_selected backend=${backend.logName} htmlChars=${html.length} htmlHash=${html.hashCode()} " +
+                "network=$networkAccessEnabled highlights=${highlights.size} navMode=${navigationTarget.readingMode}"
         )
     }
-}
-
-@Composable
-private fun DesktopKcefEpubWebView(
-    html: String,
-    appearanceScript: String,
-    highlightPaletteScript: String,
-    navigationTarget: ReaderContentNavigationTarget,
-    highlights: List<UserHighlight>,
-    onHighlightCreated: (UserHighlight) -> Unit,
-    onHighlightSelected: (String) -> Unit,
-    isFullscreen: Boolean,
-    onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
-    onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
-    onLinkClicked: (DesktopEpubLinkClick) -> Unit,
-    onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
-    onPointerActivity: () -> Unit = {},
-    networkAccessEnabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val latestOnLinkClicked by rememberUpdatedState(onLinkClicked)
-    val scope = rememberCoroutineScope()
-    val bridgeHandlers = rememberDesktopEpubBridgeHandlers(
+    DesktopNativeSwtEpubWebView(
+        html = html,
+        appearanceScript = appearanceScript,
+        highlightPaletteScript = highlightPaletteScript,
+        navigationTarget = navigationTarget,
+        highlights = highlights,
         onHighlightCreated = onHighlightCreated,
         onHighlightSelected = onHighlightSelected,
+        isFullscreen = isFullscreen,
         onKeyboardNavigation = onKeyboardNavigation,
         onSelectionAction = onSelectionAction,
         onLinkClicked = onLinkClicked,
         onVisiblePageChanged = onVisiblePageChanged,
-        onPointerActivity = onPointerActivity
+        onPointerActivity = onPointerActivity,
+        networkAccessEnabled = networkAccessEnabled,
+        backgroundColor = backgroundColor,
+        modifier = modifier
     )
-    val linkRequestInterceptor = remember(scope, networkAccessEnabled) {
-        object : RequestInterceptor {
-            override fun onInterceptUrlRequest(
-                request: WebRequest,
-                navigator: WebViewNavigator
-            ): WebRequestInterceptResult {
-                if (!networkAccessEnabled && request.url.isRemoteNetworkUrl()) {
-                    logEpubLink("request_blocked_offline url=\"${request.url.logPreview()}\"")
-                    return WebRequestInterceptResult.Reject
-                }
-                if (!request.isForMainFrame) return WebRequestInterceptResult.Allow
-                val link = request.url.readerLinkClickFromIntercept() ?: return WebRequestInterceptResult.Allow
-                logEpubLink(
-                    "request_intercept method=${request.method} redirect=${request.isRedirect} " +
-                        "url=\"${request.url.logPreview()}\" href=\"${link.href.logPreview()}\""
-                )
-                scope.launch {
-                    latestOnLinkClicked(link.copy(source = "request"))
-                }
-                return WebRequestInterceptResult.Reject
-            }
-        }
-    }
-    val navigator = rememberWebViewNavigator(requestInterceptor = linkRequestInterceptor)
-    val bridge = rememberWebViewJsBridge()
-
-    DisposableEffect(bridge, bridgeHandlers) {
-        val handlers = bridgeHandlers.map { handler ->
-            desktopEpubBridgeHandler(handler.methodName) { message ->
-                handler.onMessage(message.params)
-            }
-        }
-        handlers.forEach { bridge.register(it) }
-        onDispose {
-            handlers.forEach { bridge.unregister(it) }
-        }
-    }
-
-    val state = remember {
-        WebViewState(
-            WebContent.Data(
-                data = html,
-                baseUrl = null,
-                encoding = "utf-8",
-                mimeType = "text/html",
-                historyUrl = null
-            )
-        )
-    }
-
-    LaunchedEffect(html) {
-        navigator.loadHtml(
-            html = html,
-            baseUrl = null,
-            mimeType = "text/html",
-            encoding = "utf-8",
-            historyUrl = null
-        )
-    }
-
-    Box(modifier = modifier.fillMaxSize()) {
-        WebView(
-            state = state,
-            modifier = Modifier.matchParentSize(),
-            captureBackPresses = false,
-            navigator = navigator,
-            webViewJsBridge = bridge
-        )
-
-        LaunchedEffect(state.loadingState) {
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            navigator.evaluateJavaScript(DesktopEpubKeyNavigationScript)
-        }
-
-        LaunchedEffect(isFullscreen, state.loadingState) {
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            navigator.evaluateJavaScript("window.readerDesktopFullscreen = ${if (isFullscreen) "true" else "false"};")
-        }
-
-        LaunchedEffect(html, state.loadingState) {
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            navigator.evaluateJavaScript("window.readerPaginationLayoutLog && window.readerPaginationLayoutLog('desktop_finished');")
-        }
-
-        LaunchedEffect(appearanceScript, state.loadingState) {
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            navigator.evaluateJavaScript(appearanceScript)
-        }
-
-        LaunchedEffect(highlightPaletteScript, state.loadingState) {
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            navigator.evaluateJavaScript(highlightPaletteScript)
-        }
-
-        LaunchedEffect(
-            navigationTarget.requestId,
-            navigationTarget.readingMode,
-            state.loadingState
-        ) {
-            if (navigationTarget.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            val locator = navigationTarget.locator ?: return@LaunchedEffect
-            navigator.evaluateJavaScript("window.readerScrollToLocator && window.readerScrollToLocator(${locator.toReaderLocatorJson()});")
-        }
-
-        LaunchedEffect(
-            navigationTarget.ttsRequestId,
-            navigationTarget.ttsLocator,
-            navigationTarget.readingMode,
-            state.loadingState
-        ) {
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            val locator = navigationTarget.ttsLocator
-            val command = if (locator == null) {
-                logDesktopTts(
-                    "epub_highlight_command clear mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId}"
-                )
-                "window.readerSetTtsLocator && window.readerSetTtsLocator(null, false);"
-            } else {
-                val follow = navigationTarget.readingMode == ReaderReadingMode.VERTICAL
-                logDesktopTts(
-                    "epub_highlight_command set mode=${navigationTarget.readingMode} request=${navigationTarget.ttsRequestId} " +
-                        "follow=$follow chapter=${locator.chapterIndex} page=${locator.pageIndex} " +
-                        "offsets=${locator.startOffset}..${locator.endOffset} cfi=\"${locator.cfi.orEmpty().logPreview()}\" " +
-                        "text=\"${locator.textQuote.orEmpty().logPreview()}\""
-                )
-                "window.readerSetTtsLocator && window.readerSetTtsLocator(${locator.toReaderLocatorJson()}, $follow);"
-            }
-            navigator.evaluateJavaScript(command)
-        }
-
-        LaunchedEffect(highlights, state.loadingState) {
-            if (!state.loadingState.isFinished()) return@LaunchedEffect
-            val highlightsJson = EpubAnnotationSerializer.highlightsToJson(highlights)
-            navigator.evaluateJavaScript("window.readerApplyHighlights && window.readerApplyHighlights($highlightsJson);")
-        }
-
-        val loadingState = state.loadingState
-        if (loadingState is LoadingState.Loading) {
-            LinearProgressIndicator(
-                progress = { loadingState.progress },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-    }
-}
-
-private fun desktopEpubBridgeHandler(
-    methodName: String,
-    onMessage: (JsMessage) -> Unit
-): IJsMessageHandler {
-    return object : IJsMessageHandler {
-        override fun methodName(): String = methodName
-
-        override fun handle(
-            message: JsMessage,
-            navigator: WebViewNavigator?,
-            callback: (String) -> Unit
-        ) {
-            onMessage(message)
-        }
-    }
 }
 
 internal data class DesktopEpubBridgeHandler(
@@ -410,8 +174,6 @@ internal fun rememberDesktopEpubBridgeHandlers(
         )
     }
 }
-
-private fun LoadingState.isFinished(): Boolean = this is LoadingState.Finished
 
 internal val DesktopEpubKeyNavigationScript = """
     (function () {
