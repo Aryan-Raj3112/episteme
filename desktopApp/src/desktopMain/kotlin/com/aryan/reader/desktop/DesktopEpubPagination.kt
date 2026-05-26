@@ -41,6 +41,25 @@ internal fun desktopMeasuredPaginationReady(
         currentPages.samePageLayoutAs(measuredPages)
 }
 
+internal fun desktopPagesWithMeasuredChapter(
+    currentPages: List<ReaderPage>,
+    chapterIndex: Int,
+    measuredChapterPages: List<ReaderPage>
+): List<ReaderPage> {
+    if (currentPages.isEmpty() || measuredChapterPages.isEmpty()) return currentPages
+    val firstChapterPage = currentPages.indexOfFirst { it.chapterIndex == chapterIndex }
+    if (firstChapterPage < 0) return currentPages
+    val lastChapterPage = currentPages.indexOfLast { it.chapterIndex == chapterIndex }
+    val combined = currentPages.take(firstChapterPage) +
+        measuredChapterPages +
+        currentPages.drop(lastChapterPage + 1)
+    return combined.mapIndexed { index, page -> page.copy(pageIndex = index) }
+}
+
+internal fun List<ReaderPage>.firstPageIndexForChapter(chapterIndex: Int): Int? {
+    return indexOfFirst { it.chapterIndex == chapterIndex }.takeIf { it >= 0 }
+}
+
 internal fun SharedEpubBook.desktopPaginationContentSignature(): Int {
     return chapters.fold(31 * id.hashCode() + css.hashCode()) { acc, chapter ->
         31 * acc +

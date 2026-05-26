@@ -51,33 +51,36 @@ class SharedMeasuredEpubPaginator(
     suspend fun paginate(
         book: SharedEpubBook,
         settings: ReaderSettings,
-        viewport: ReaderViewportSpec
+        viewport: ReaderViewportSpec,
+        readCache: Boolean = true
     ): List<ReaderPage> {
         currentCoroutineContext().ensureActive()
-        pageCache?.load(
-            book = book,
-            settings = settings,
-            viewport = viewport,
-            density = density.density,
-            fontScale = density.fontScale
-        )?.let { cached ->
-            logEpubPagination {
-                "cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
-                    "viewport=${viewport.widthPx}x${viewport.heightPx} spread=${settings.pageSpreadMode}"
+        if (readCache) {
+            pageCache?.load(
+                book = book,
+                settings = settings,
+                viewport = viewport,
+                density = density.density,
+                fontScale = density.fontScale
+            )?.let { cached ->
+                logEpubPagination {
+                    "cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
+                        "viewport=${viewport.widthPx}x${viewport.heightPx} spread=${settings.pageSpreadMode}"
+                }
+                logEpubPageFit {
+                    "page_fit layer=cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
+                        "note=clear_book_cache_to_capture_layer_measured"
+                }
+                val cachedGeometryTerms = measuredPageGeometryTerms(settings, viewport, density.density)
+                logEpubCutoff {
+                    "cutoff_probe layer=cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
+                        "viewport=${viewport.widthPx}x${viewport.heightPx} " +
+                        "measuredContentPx=${cachedGeometryTerms.geometry.pageWidthPx}x${cachedGeometryTerms.geometry.pageHeightPx} " +
+                        "spread=${settings.pageSpreadMode} " +
+                        "note=layout_loaded_from_pagination_cache"
+                }
+                return cached
             }
-            logEpubPageFit {
-                "page_fit layer=cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
-                    "note=clear_book_cache_to_capture_layer_measured"
-            }
-            val cachedGeometryTerms = measuredPageGeometryTerms(settings, viewport, density.density)
-            logEpubCutoff {
-                "cutoff_probe layer=cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
-                    "viewport=${viewport.widthPx}x${viewport.heightPx} " +
-                    "measuredContentPx=${cachedGeometryTerms.geometry.pageWidthPx}x${cachedGeometryTerms.geometry.pageHeightPx} " +
-                    "spread=${settings.pageSpreadMode} " +
-                    "note=layout_loaded_from_pagination_cache"
-            }
-            return cached
         }
 
         currentCoroutineContext().ensureActive()
@@ -144,6 +147,43 @@ class SharedMeasuredEpubPaginator(
                 "viewport=${viewport.widthPx}x${viewport.heightPx} page=${geometry.pageWidthPx}x${geometry.pageHeightPx}"
         }
         return measuredPages
+    }
+
+    suspend fun paginateChapterWindow(
+        book: SharedEpubBook,
+        settings: ReaderSettings,
+        viewport: ReaderViewportSpec,
+        chapterIndex: Int,
+        firstPageIndex: Int
+    ): List<ReaderPage> {
+        currentCoroutineContext().ensureActive()
+        val chapter = book.chapters.getOrNull(chapterIndex) ?: return emptyList()
+        val geometryTerms = measuredPageGeometryTerms(settings, viewport, density.density)
+        val geometry = geometryTerms.geometry
+        val baseStyle = TextStyle(
+            fontSize = settings.fontSize.sp,
+            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+            fontFamily = fontFamily,
+            textAlign = settings.textAlign.toComposeTextAlign()
+        ).withAndroidPaginationTextMetrics()
+        logEpubPagination {
+            "chapter_window_start book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
+                "firstPage=${firstPageIndex + 1} viewport=${viewport.widthPx}x${viewport.heightPx} " +
+                "page=${geometry.pageWidthPx}x${geometry.pageHeightPx}"
+        }
+        val pages = paginateChapter(
+            chapter = chapter,
+            chapterIndex = chapterIndex,
+            firstPageIndex = firstPageIndex,
+            settings = settings,
+            geometry = geometry,
+            baseStyle = baseStyle
+        ).mapIndexed { index, page -> page.copy(pageIndex = firstPageIndex + index) }
+        logEpubPagination {
+            "chapter_window_complete book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
+                "pages=${pages.size} firstPage=${firstPageIndex + 1}"
+        }
+        return pages
     }
 
     private suspend fun paginateChapter(
