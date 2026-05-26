@@ -2321,11 +2321,10 @@ fun EpubReaderHost(
 
     val pageInfoBarHeight = PAGE_INFO_BAR_HEIGHT + pageInfoCornerBottomPadding
 
-    val isPageInfoVisible = when (pageInfoMode) {
-        PageInfoMode.DEFAULT -> !showBars
-        PageInfoMode.SYNC -> showBars
-        PageInfoMode.HIDDEN -> false
-    }
+    val isPageInfoVisible = shouldShowEpubPageInfoBar(
+        pageInfoMode = pageInfoMode,
+        showReaderChrome = showBars
+    )
 
     LaunchedEffect(bookmarks, paginator) {
         paginator ?: return@LaunchedEffect
@@ -3763,7 +3762,7 @@ fun EpubReaderHost(
             ) {
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
-                        val pageInfoReserve = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoBarHeight else 0.dp
+                        val pageInfoReserve = if (isPageInfoVisible) pageInfoBarHeight else 0.dp
                         val contentTopPadding = if (pageInfoPosition == PageInfoPosition.TOP) pageInfoReserve else 0.dp
                         val contentBottomPadding = if (pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoReserve else 0.dp
 
@@ -4764,7 +4763,7 @@ fun EpubReaderHost(
                     }
 
                     RenderMode.PAGINATED -> {
-                        val pageInfoReserve = if (pageInfoMode != PageInfoMode.HIDDEN) pageInfoBarHeight else 0.dp
+                        val pageInfoReserve = if (isPageInfoVisible) pageInfoBarHeight else 0.dp
                         val contentTopPadding = if (pageInfoPosition == PageInfoPosition.TOP) pageInfoReserve else 0.dp
                         val contentBottomPadding = if (pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoReserve else 0.dp
 
@@ -5159,14 +5158,23 @@ fun EpubReaderHost(
                         .padding(end = 16.dp)
                 )
 
+                val pageInfoChromeTopPadding =
+                    if (pageInfoPosition == PageInfoPosition.TOP && showBars) 55.dp else 0.dp
+                val pageInfoChromeBottomPadding =
+                    if (pageInfoPosition == PageInfoPosition.BOTTOM && showBars) {
+                        bottomPadding + 45.dp + if (isEpubJumpHistoryVisible) 40.dp else 0.dp
+                    } else {
+                        0.dp
+                    }
+
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
                     visible = currentRenderMode == RenderMode.VERTICAL_SCROLL && isPageInfoVisible,
                     enter = fadeIn(animationSpec = tween(200)),
                     exit = fadeOut(animationSpec = tween(200)),
-                    modifier = Modifier.align(
-                        if (pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter
-                    )
+                    modifier = Modifier
+                        .align(if (pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter)
+                        .padding(top = pageInfoChromeTopPadding, bottom = pageInfoChromeBottomPadding)
                 ) {
                     Box(
                         modifier = Modifier
@@ -5212,9 +5220,9 @@ fun EpubReaderHost(
                     visible = currentRenderMode == RenderMode.PAGINATED && paginator != null && isPageInfoVisible && paginatedPagerState.pageCount > 0,
                     enter = fadeIn(animationSpec = tween(200)),
                     exit = fadeOut(animationSpec = tween(200)),
-                    modifier = Modifier.align(
-                        if (pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter
-                    )
+                    modifier = Modifier
+                        .align(if (pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter)
+                        .padding(top = pageInfoChromeTopPadding, bottom = pageInfoChromeBottomPadding)
                 ) {
                     Box(
                         modifier = Modifier
