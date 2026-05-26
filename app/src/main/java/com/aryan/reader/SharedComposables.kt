@@ -166,6 +166,17 @@ internal val PRIVACY_POLICY_URL: String get() = legalLinksForAndroidFlavor().pri
 internal val TERMS_URL: String get() = legalLinksForAndroidFlavor().termsUrl
 internal val LICENSES_URL: String get() = legalLinksForAndroidFlavor().licensesUrl
 
+fun supportedFontMimeTypes(): Array<String> = arrayOf(
+    "font/ttf",
+    "font/otf",
+    "font/woff2",
+    "application/x-font-ttf",
+    "application/x-font-otf",
+    "application/font-woff2",
+    "application/vnd.ms-opentype",
+    "application/x-font-opentype"
+)
+
 class CustomTabUriHandler(private val context: Context) : UriHandler {
     override fun openUri(uri: String) {
         val customTabsIntent = CustomTabsIntent.Builder()

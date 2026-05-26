@@ -310,6 +310,9 @@
     <string name="dialog_delete_font">Delete Font?</string>
     <!-- Confirmation dialog. %1$s = display name of the font being deleted. -->
     <string name="dialog_delete_font_desc">Are you sure you want to delete \'%1$s\'? This will remove it from all your devices if sync is on.</string>
+    <string name="dialog_delete_fonts">Delete Fonts?</string>
+    <!-- Confirmation dialog. %1$d = number of selected fonts being deleted. -->
+    <string name="dialog_delete_fonts_desc">Are you sure you want to delete %1$d selected fonts? This will remove them from all your devices if sync is on.</string>
 
     <!-- Feedback -->
     <string name="get_in_touch">Get in Touch</string>

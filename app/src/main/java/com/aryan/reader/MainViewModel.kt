@@ -1622,17 +1622,27 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun importFont(uri: Uri) {
+        importFonts(listOf(uri))
+    }
+
+    fun importFonts(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
             _internalState.update { it.copy(isLoading = true) }
-            val result = fontsRepository.importFont(uri)
-            result.onSuccess { font ->
-                if (uiState.value.isSyncEnabled) {
-                    uploadNewFont(font)
+            try {
+                uris.forEach { uri ->
+                    val result = fontsRepository.importFont(uri)
+                    result.onSuccess { font ->
+                        if (uiState.value.isSyncEnabled) {
+                            uploadNewFont(font)
+                        }
+                    }.onFailure {
+                        showBanner(appContext.getString(R.string.error_import_font, it.message), isError = true)
+                    }
                 }
-            }.onFailure {
-                showBanner(appContext.getString(R.string.error_import_font, it.message), isError = true)
+            } finally {
+                _internalState.update { it.copy(isLoading = false) }
             }
-            _internalState.update { it.copy(isLoading = false) }
         }
     }
 
@@ -1658,9 +1668,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun deleteFont(fontId: String) {
+        deleteFonts(listOf(fontId))
+    }
+
+    fun deleteFonts(fontIds: Collection<String>) {
+        val uniqueFontIds = fontIds.filter { it.isNotBlank() }.toSet()
+        if (uniqueFontIds.isEmpty()) return
         viewModelScope.launch {
-            fontsRepository.deleteFont(fontId)
-            if (_internalState.value.appFontPreference.referencesCustomFont(fontId)) {
+            uniqueFontIds.forEach { fontId ->
+                fontsRepository.deleteFont(fontId)
+            }
+            if (uniqueFontIds.any { _internalState.value.appFontPreference.referencesCustomFont(it) }) {
                 setAppFontPreference(AppFontPreference.System)
             }
         }

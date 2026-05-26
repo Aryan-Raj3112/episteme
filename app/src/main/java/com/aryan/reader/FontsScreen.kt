@@ -3,8 +3,11 @@
 
 package com.aryan.reader
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,10 +30,12 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -46,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,37 +86,67 @@ fun FontsScreen(
 
     val showGoogleFontsOption = !(BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE)
 
-    // Dialog state
-    var showDeleteDialog by remember { mutableStateOf(false) }
-    var fontToDelete by remember { mutableStateOf<CustomFontEntity?>(null) }
+    var fontsPendingDelete by remember { mutableStateOf<List<CustomFontEntity>>(emptyList()) }
     var showGoogleFontsSheet by remember { mutableStateOf(false) }
     var selectedSection by remember { mutableStateOf(SharedFontSettingsSection.READER_FONTS) }
+    var selectedFontIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
-    val pickFontLauncher = rememberFilePickerLauncher { uris ->
-        uris.firstOrNull()?.let { viewModel.importFont(it) }
+    val pickFontLauncher = rememberFilePickerLauncher(viewModel::importFonts)
+    val fontMimeTypes = remember { supportedFontMimeTypes() }
+    val allFontIds = remember(fonts) { fonts.mapTo(mutableSetOf()) { it.id } }
+    val selectedFonts = remember(fonts, selectedFontIds) {
+        fonts.filter { it.id in selectedFontIds }
+    }
+    val isFontSelectionMode = selectedSection == SharedFontSettingsSection.READER_FONTS && selectedFonts.isNotEmpty()
+
+    LaunchedEffect(fonts) {
+        selectedFontIds = selectedFontIds.intersect(allFontIds)
     }
 
-    val fontMimeTypes = arrayOf(
-        "font/ttf", "font/otf", "font/woff2",
-        "application/x-font-ttf", "application/x-font-otf",
-        "application/font-woff2", "application/vnd.ms-opentype",
-        "application/x-font-opentype"
-    )
+    BackHandler(enabled = isFontSelectionMode) {
+        selectedFontIds = emptySet()
+    }
 
     Scaffold(
         modifier = Modifier.statusBarsPadding(),
         topBar = {
-            CustomTopAppBar(
-                title = { Text(stringResource(R.string.custom_fonts)) },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+            if (isFontSelectionMode) {
+                ContextualTopAppBar(
+                    selectedItemCount = selectedFonts.size,
+                    onNavIconClick = { selectedFontIds = emptySet() },
+                    onSelectAllClick = {
+                        selectedFontIds = if (selectedFontIds.containsAll(allFontIds)) {
+                            emptySet()
+                        } else {
+                            allFontIds
+                        }
+                    },
+                    onDeleteClick = {
+                        if (selectedFonts.isNotEmpty()) {
+                            fontsPendingDelete = selectedFonts
+                        }
                     }
-                }
-            )
+                )
+            } else {
+                CustomTopAppBar(
+                    title = { Text(stringResource(R.string.custom_fonts)) },
+                    navigationIcon = {
+                        IconButton(onClick = onBackClick) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        }
+                    },
+                    actions = {
+                        if (selectedSection == SharedFontSettingsSection.READER_FONTS && fonts.isNotEmpty()) {
+                            IconButton(onClick = { selectedFontIds = allFontIds }) {
+                                Icon(Icons.Default.SelectAll, contentDescription = stringResource(R.string.select_all))
+                            }
+                        }
+                    }
+                )
+            }
         },
         floatingActionButton = {
-            if (selectedSection == SharedFontSettingsSection.READER_FONTS && fonts.isNotEmpty()) {
+            if (selectedSection == SharedFontSettingsSection.READER_FONTS && fonts.isNotEmpty() && !isFontSelectionMode) {
                 Column(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -139,7 +175,10 @@ fun FontsScreen(
             Column(modifier = Modifier.fillMaxSize()) {
                 SharedFontSettingsTabs(
                     selectedSection = selectedSection,
-                    onSectionChange = { selectedSection = it },
+                    onSectionChange = {
+                        selectedFontIds = emptySet()
+                        selectedSection = it
+                    },
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)
                 )
 
@@ -166,9 +205,13 @@ fun FontsScreen(
                                 items(fonts, key = { it.id }) { font ->
                                     FontListItem(
                                         font = font,
+                                        isSelected = font.id in selectedFontIds,
+                                        isSelectionMode = isFontSelectionMode,
+                                        onSelectionToggle = {
+                                            selectedFontIds = selectedFontIds.toggle(font.id)
+                                        },
                                         onDelete = {
-                                            fontToDelete = font
-                                            showDeleteDialog = true
+                                            fontsPendingDelete = listOf(font)
                                         }
                                     )
                                 }
@@ -208,17 +251,17 @@ fun FontsScreen(
         }
     }
 
-    if (showDeleteDialog && fontToDelete != null) {
-        DeleteFontConfirmationDialog(
-            fontName = fontToDelete!!.displayName,
+    if (fontsPendingDelete.isNotEmpty()) {
+        DeleteFontsConfirmationDialog(
+            fonts = fontsPendingDelete,
             onConfirm = {
-                fontToDelete?.let { viewModel.deleteFont(it.id) }
-                showDeleteDialog = false
-                fontToDelete = null
+                val pendingIds = fontsPendingDelete.map { it.id }
+                viewModel.deleteFonts(pendingIds)
+                selectedFontIds = selectedFontIds - pendingIds.toSet()
+                fontsPendingDelete = emptyList()
             },
             onDismiss = {
-                showDeleteDialog = false
-                fontToDelete = null
+                fontsPendingDelete = emptyList()
             }
         )
     }
@@ -388,9 +431,13 @@ fun GoogleFontsBottomSheet(
 }
 
 // Existing unchanged components
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FontListItem(
     font: CustomFontEntity,
+    isSelected: Boolean,
+    isSelectionMode: Boolean,
+    onSelectionToggle: () -> Unit,
     onDelete: () -> Unit
 ) {
     val customTypeface = remember(font.path) {
@@ -402,8 +449,23 @@ fun FontListItem(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {
+                    if (isSelectionMode) {
+                        onSelectionToggle()
+                    }
+                },
+                onLongClick = onSelectionToggle
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -411,17 +473,27 @@ fun FontListItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (isSelectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onSelectionToggle() },
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                }
                 Text(
                     text = font.displayName,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
                 )
-                IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = stringResource(R.string.action_delete),
-                        tint = MaterialTheme.colorScheme.error
-                    )
+                if (!isSelectionMode) {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.action_delete),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
 
@@ -476,15 +548,32 @@ private fun List<CustomFontEntity>.toSharedCustomFontItems(): List<CustomFontIte
 }
 
 @Composable
-fun DeleteFontConfirmationDialog(
-    fontName: String,
+fun DeleteFontsConfirmationDialog(
+    fonts: List<CustomFontEntity>,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val isSingleFont = fonts.size == 1
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.dialog_delete_font)) },
-        text = { Text(stringResource(R.string.dialog_delete_font_desc, fontName)) },
+        title = {
+            Text(
+                if (isSingleFont) {
+                    stringResource(R.string.dialog_delete_font)
+                } else {
+                    stringResource(R.string.dialog_delete_fonts)
+                }
+            )
+        },
+        text = {
+            Text(
+                if (isSingleFont) {
+                    stringResource(R.string.dialog_delete_font_desc, fonts.first().displayName)
+                } else {
+                    stringResource(R.string.dialog_delete_fonts_desc, fonts.size)
+                }
+            )
+        },
         confirmButton = {
             TextButton(
                 onClick = onConfirm,
@@ -497,4 +586,8 @@ fun DeleteFontConfirmationDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
     )
+}
+
+private fun Set<String>.toggle(id: String): Set<String> {
+    return if (id in this) this - id else this + id
 }

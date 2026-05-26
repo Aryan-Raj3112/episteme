@@ -553,7 +553,7 @@ fun EpubReaderScreen(
     coverImagePath: String?,
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
-    onImportFont: (Uri) -> Unit,
+    onImportFonts: (List<Uri>) -> Unit,
     viewModel: MainViewModel
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -635,7 +635,7 @@ fun EpubReaderScreen(
         coverImagePath = coverImagePath,
         onRenderModeChange = onRenderModeChange,
         customFonts = customFonts,
-        onImportFont = onImportFont,
+        onImportFonts = onImportFonts,
         onToggleReflow = onOpenOriginal,
         onDeleteReflow = if (isReflowFile) {
             {
@@ -674,7 +674,7 @@ fun EpubReaderHost(
     coverImagePath: String?,
     onRenderModeChange: (RenderMode) -> Unit,
     customFonts: List<CustomFontEntity>,
-    onImportFont: (Uri) -> Unit,
+    onImportFonts: (List<Uri>) -> Unit,
     onToggleReflow: ((Int) -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
     stableBookId: String? = null,
@@ -6348,7 +6348,7 @@ fun EpubReaderHost(
                         currentCustomFontPath = path
                     },
                     customFonts = customFonts,
-                    onImportFont = onImportFont,
+                    onImportFonts = onImportFonts,
                     onDismiss = { showFontSelectionSheet = false }
                 )
                 Spacer(Modifier.height(16.dp))

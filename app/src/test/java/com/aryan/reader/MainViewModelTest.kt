@@ -243,6 +243,58 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `deleteFonts deletes unique selected fonts and resets matching app custom font preference`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        viewModel.setAppFontPreference(AppFontPreference.custom("font-b"))
+        viewModel.deleteFonts(listOf("font-a", "font-b", "font-a", ""))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { anyConstructed<FontsRepository>().deleteFont("font-a") }
+        coVerify(exactly = 1) { anyConstructed<FontsRepository>().deleteFont("font-b") }
+        coVerify(exactly = 0) { anyConstructed<FontsRepository>().deleteFont("") }
+        assertEquals(AppFontPreference.System, viewModel.uiState.value.appFontPreference)
+        verify { mockEditor.putString("app_font_kind", AppFontPreferenceKind.SYSTEM.name) }
+        verify { mockEditor.remove("app_font_custom_id") }
+    }
+
+    @Test
+    fun `importFonts imports every selected font`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        val firstUri = mockk<Uri>()
+        val secondUri = mockk<Uri>()
+        val firstFont = CustomFontEntity(
+            id = "font-1",
+            displayName = "First",
+            fileName = "font_1.ttf",
+            fileExtension = "ttf",
+            path = "/fonts/font_1.ttf",
+            timestamp = 1L
+        )
+        val secondFont = CustomFontEntity(
+            id = "font-2",
+            displayName = "Second",
+            fileName = "font_2.otf",
+            fileExtension = "otf",
+            path = "/fonts/font_2.otf",
+            timestamp = 2L
+        )
+        coEvery { anyConstructed<FontsRepository>().importFont(firstUri) } returns Result.success(firstFont)
+        coEvery { anyConstructed<FontsRepository>().importFont(secondUri) } returns Result.success(secondFont)
+
+        viewModel.importFonts(listOf(firstUri, secondUri))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { anyConstructed<FontsRepository>().importFont(firstUri) }
+        coVerify(exactly = 1) { anyConstructed<FontsRepository>().importFont(secondUri) }
+        assertFalse(viewModel.uiState.value.isLoading)
+    }
+
+    @Test
     fun `setTabsEnabled persists to shared preferences`() = runTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}

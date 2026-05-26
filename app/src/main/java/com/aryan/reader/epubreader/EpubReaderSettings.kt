@@ -106,6 +106,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
 import com.aryan.reader.R
 import com.aryan.reader.data.CustomFontEntity
+import com.aryan.reader.supportedFontMimeTypes
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -769,12 +770,12 @@ fun FontSelectionSheetContent(
     currentCustomFontPath: String?,
     onFontSelected: (ReaderFont, String?) -> Unit,
     customFonts: List<CustomFontEntity>,
-    onImportFont: (Uri) -> Unit,
+    onImportFonts: (List<Uri>) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { onImportFont(it) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onImportFonts(uris)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -817,7 +818,7 @@ fun FontSelectionSheetContent(
                     Column(modifier = Modifier.fillMaxSize()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                             Button(
-                                onClick = { launcher.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf")) },
+                                onClick = { launcher.launch(supportedFontMimeTypes()) },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null)

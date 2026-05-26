@@ -315,7 +315,7 @@ fun AppNavigation(
                             },
                             onRenderModeChange = viewModel::setRenderMode,
                             customFonts = customFonts,
-                            onImportFont = viewModel::importFont,
+                            onImportFonts = viewModel::importFonts,
                             viewModel = viewModel
                         )
 
