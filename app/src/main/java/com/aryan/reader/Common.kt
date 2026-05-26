@@ -2949,7 +2949,14 @@ private fun ThemeGridItem(
             Text(text = stringResource(R.string.label_aa_preview), color = textColor, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
         }
         Spacer(modifier = Modifier.height(8.dp))
-        Text(text = theme.name, style = MaterialTheme.typography.labelSmall, color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            text = theme.name,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.clickable { onThemeSelected(theme.id) }
+        )
 
         if (theme.isCustom && onEdit != null && onDelete != null) {
             Spacer(modifier = Modifier.height(6.dp))

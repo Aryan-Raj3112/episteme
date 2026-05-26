@@ -96,6 +96,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -604,6 +606,7 @@ fun ReaderTextFormatPanel(
                 )
 
                 // Font Button
+                val fontSelectorDescription = stringResource(R.string.content_desc_select_font_family)
                 Surface(
                     onClick = onFontOptionClick,
                     shape = RoundedCornerShape(12.dp),
@@ -611,6 +614,9 @@ fun ReaderTextFormatPanel(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)
+                        .semantics {
+                            contentDescription = fontSelectorDescription
+                        }
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

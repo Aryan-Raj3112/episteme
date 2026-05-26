@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -21,9 +22,15 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.aryan.reader.FileHasher
 import com.aryan.reader.MainActivity
 import com.aryan.reader.R
+import com.aryan.reader.RenderMode
+import com.aryan.reader.data.AppDatabase
+import com.aryan.reader.data.RecentFileEntity
+import com.aryan.reader.shared.ReaderLocator
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -38,17 +45,30 @@ class EpubReaderScreenTest {
     @get:Rule
     val composeTestRule = createEmptyComposeRule()
 
+    private val fixtureAssetName = "epub/reader_test_book.epub"
+    private val fixtureBookTitle = "Reader Android UI Test Book"
+    private val sanitizedFixtureBookTitle = "ReaderAndroidUITestBook"
     private val targetContext: Context = ApplicationProvider.getApplicationContext()
     private val instrumentationContext: Context = InstrumentationRegistry.getInstrumentation().context
     private var currentEpubFile: File? = null
     private var scenario: ActivityScenario<MainActivity>? = null
+    private lateinit var fixtureBookId: String
 
     @Before
     fun setup() {
         clearReaderPrefs()
-
-        val fixtureUri = copyAndroidTestAssetToCache("epub/reader_test_book.epub")
-        scenario = ActivityScenario.launch<MainActivity>(createEpubViewIntent(fixtureUri))
+        fixtureBookId = requireNotNull(
+            runBlocking {
+                FileHasher.calculateSha256 {
+                    instrumentationContext.assets.open(fixtureAssetName)
+                }
+            }
+        )
+        runBlocking {
+            AppDatabase.getDatabase(targetContext)
+                .recentFileDao()
+                .deleteFilePermanently(listOf(fixtureBookId))
+        }
     }
 
     @After
@@ -61,17 +81,38 @@ class EpubReaderScreenTest {
 
     @Test
     fun fixtureEpub_opensReaderAndShowsBookTitle() {
+        launchFixtureReader()
         waitForReader()
         showReaderChrome()
 
-        waitForText("Reader Android UI Test Book")
-        composeTestRule.onNodeWithText("Reader Android UI Test Book").assertIsDisplayed()
+        waitForText(fixtureBookTitle)
+        composeTestRule.onNodeWithText(fixtureBookTitle).assertIsDisplayed()
         assertThat(hasContentDescription(text(R.string.tooltip_search))).isTrue()
         assertThat(hasContentDescription(text(R.string.content_desc_chapters_menu))).isTrue()
     }
 
     @Test
+    fun fixtureEpub_recordsInitialReadingPosition() {
+        launchFixtureReader()
+        waitForReader()
+
+        waitForRecentFile(timeoutMillis = 30_000) { recentFile ->
+            recentFile?.lastChapterIndex != null &&
+                recentFile.locatorBlockIndex != null &&
+                recentFile.locatorCharOffset != null &&
+                recentFile.progressPercentage != null
+        }
+
+        val recentFile = readFixtureRecentFile()
+        assertThat(recentFile?.lastChapterIndex).isAtLeast(0)
+        assertThat(recentFile?.locatorBlockIndex).isAtLeast(0)
+        assertThat(recentFile?.locatorCharOffset).isAtLeast(0)
+        assertThat(recentFile?.progressPercentage).isAtLeast(0f)
+    }
+
+    @Test
     fun fixtureEpub_drawerShowsFixtureChapters() {
+        launchFixtureReader()
         waitForReader()
 
         clickReaderControl(text(R.string.content_desc_chapters_menu))
@@ -83,7 +124,21 @@ class EpubReaderScreenTest {
     }
 
     @Test
+    fun fixtureEpub_drawerShowsFixtureImageCatalog() {
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_chapters_menu))
+        clickText(text(R.string.tab_images))
+
+        waitForText("Fixture diagram")
+        waitForTextContaining("Chapter Three")
+        assertThat(hasContentDescription(text(R.string.content_desc_download_image))).isTrue()
+    }
+
+    @Test
     fun fixtureEpub_searchFindsUniqueFixtureMarker() {
+        launchFixtureReader()
         waitForReader()
 
         clickReaderControl(text(R.string.tooltip_search))
@@ -94,6 +149,245 @@ class EpubReaderScreenTest {
 
         waitForTag("SearchResultItem_1", timeoutMillis = 20_000)
         composeTestRule.onNodeWithTag("SearchResultItem_1").assertIsDisplayed()
+    }
+
+    @Test
+    fun fixtureEpub_drawerShowsSeededBookmarkAndSupportsRenameDelete() {
+        seedFixtureBookmark()
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_chapters_menu))
+        clickText(text(R.string.tab_bookmarks))
+
+        waitForText("BOOKMARK_TARGET_ECHO")
+        waitForText("Chapter Two")
+
+        clickContentDescription(text(R.string.content_desc_more_options_bookmark))
+        clickText(text(R.string.action_rename))
+        waitForText(text(R.string.dialog_rename_bookmark))
+        composeTestRule.onNode(hasSetTextAction()).performTextInput("Renamed fixture bookmark")
+        clickText(text(R.string.action_save))
+        waitForText("Renamed fixture bookmark")
+
+        clickContentDescription(text(R.string.content_desc_more_options_bookmark))
+        clickText(text(R.string.action_delete))
+        waitForText(text(R.string.dialog_delete_bookmark))
+        clickText(text(R.string.action_delete))
+        waitForText(text(R.string.no_bookmarks_yet))
+    }
+
+    @Test
+    fun fixtureEpub_drawerShowsSeededAnnotationWithNoteAndFilter() {
+        seedFixtureHighlight()
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_chapters_menu))
+        clickText(text(R.string.tab_annotations))
+
+        waitForText("ANNOTATION_TARGET_GOLF")
+        waitForText("Fixture note survives startup")
+        waitForTextContaining("Chapter Three")
+
+        clickText(text(R.string.filter_with_notes))
+        waitForText("ANNOTATION_TARGET_GOLF")
+        waitForText("Fixture note survives startup")
+    }
+
+    @Test
+    fun fixtureEpub_overflowSwitchesReadingModeAndTogglesPageOptions() {
+        launchFixtureReader()
+        waitForReader()
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_change_reading_mode))
+        clickText(text(R.string.menu_reading_mode_paginated))
+        waitForRenderMode(RenderMode.PAGINATED)
+        composeTestRule.waitForIdle()
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_tap_to_turn_pages))
+        assertReaderSettingEventually(
+            prefsName = "epub_reader_settings",
+            key = "tap_to_navigate_enabled",
+            expected = true
+        )
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_realistic_page_turns))
+        assertReaderSettingEventually(
+            prefsName = "reader_prefs",
+            key = "page_turn_animation_enabled",
+            expected = true
+        )
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_keep_screen_on))
+        assertReaderSettingEventually(
+            prefsName = "reader_prefs",
+            key = "keep_screen_on_enabled",
+            expected = true
+        )
+    }
+
+    @Test
+    fun fixtureEpub_visualOptionsSheetPersistsProgressPosition() {
+        launchFixtureReader()
+        waitForReader()
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_visual_options))
+
+        waitForText(text(R.string.visual_options_system_ui))
+        waitForText(text(R.string.visual_options_progress_bar))
+        waitForText(text(R.string.visual_options_progress_bar_position))
+        clickText(text(R.string.label_top))
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
+                .getInt("reader_page_info_position", 0) == 1
+        }
+    }
+
+    @Test
+    fun fixtureEpub_formatPanelShowsControlsAndPersistsLocalFontSize() {
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_text_formatting))
+        waitForText(text(R.string.section_font_alignment))
+        waitForText(text(R.string.section_layout_spacing))
+        waitForText(text(R.string.label_font_size))
+        waitForText(text(R.string.label_line_height))
+        waitForText(text(R.string.label_paragraph_gap))
+        waitForText(text(R.string.label_image_size))
+        waitForText(text(R.string.label_horizontal_margin))
+        waitForText(text(R.string.label_vertical_margin))
+
+        composeTestRule.onAllNodesWithContentDescription(text(R.string.content_desc_select_mode))[0]
+            .performClick()
+        clickText(text(R.string.format_local))
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
+                .getBoolean("format_is_local_$fixtureBookId", false)
+        }
+
+        composeTestRule.onAllNodesWithContentDescription(text(R.string.content_desc_increase))[0]
+            .performClick()
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
+                .getFloat("local_font_size_$fixtureBookId", 1.0f) > 1.0f
+        }
+    }
+
+    @Test
+    fun fixtureEpub_fontSelectionSheetPersistsFontFamily() {
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_text_formatting))
+        waitForText(text(R.string.section_font_alignment))
+        clickContentDescription(text(R.string.content_desc_select_font_family))
+
+        waitForText(text(R.string.select_font))
+        waitForText(text(R.string.tab_presets))
+        waitForText(text(R.string.tab_imported))
+        clickText("Lato")
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
+                .getString("reader_font_family", "original") == "lato"
+        }
+    }
+
+    @Test
+    fun fixtureEpub_themePanelShowsThemesAndPersistsSelection() {
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.tooltip_theme_desc))
+
+        waitForText(text(R.string.reading_themes))
+        waitForText(text(R.string.theme_solid_colors))
+        waitForText("Light")
+        waitForText("Dark")
+        clickText("Sepia")
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            targetContext.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
+                .getString(PREF_READER_THEME, "system") == "sepia"
+        }
+    }
+
+    @Test
+    fun fixtureEpub_drawerShowsEmptyBookmarkAndAnnotationStates() {
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_chapters_menu))
+        clickText(text(R.string.tab_bookmarks))
+        waitForText(text(R.string.no_bookmarks_yet))
+
+        clickText(text(R.string.tab_annotations))
+        waitForText(text(R.string.no_highlights_yet))
+    }
+
+    @Test
+    fun fixtureEpub_searchCanClearAndClose() {
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.tooltip_search))
+        waitForTag("SearchTextField")
+
+        composeTestRule.onNodeWithTag("SearchTextField")
+            .performTextInput("SEARCH_TARGET_DELTA")
+        waitForTextContaining("SEARCH_TARGET_DELTA")
+
+        clickContentDescription(text(R.string.tooltip_clear_search))
+        waitForNoContentDescription(text(R.string.tooltip_clear_search))
+
+        clickContentDescription(text(R.string.tooltip_close_search))
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            hasContentDescription(text(R.string.tooltip_search))
+        }
+    }
+
+    @Test
+    fun fixtureEpub_dictionarySettingsShowsLookupSections() {
+        launchFixtureReader()
+        waitForReader()
+
+        clickReaderControl(text(R.string.content_desc_dictionary_settings))
+
+        waitForText(text(R.string.dict_lookup_settings))
+        waitForText(text(R.string.tooltip_dictionary))
+        waitForText(text(R.string.dict_translate))
+        waitForText(text(R.string.tooltip_search))
+    }
+
+    @Test
+    fun fixtureEpub_ttsReplacementSheetShowsGlobalAndBookScopes() {
+        launchFixtureReader()
+        waitForReader()
+
+        openOverflowMenu()
+        clickText(text(R.string.menu_tts_settings))
+        clickText(text(R.string.menu_tts_word_replacements))
+
+        waitForText(text(R.string.menu_tts_word_replacements))
+        waitForText(fixtureBookTitle)
+        waitForText(text(R.string.tts_replacements_tab_global))
+        waitForText(text(R.string.tts_replacements_tab_this_book))
+        waitForText(text(R.string.tts_replacements_enable))
+    }
+
+    private fun launchFixtureReader() {
+        val fixtureUri = copyAndroidTestAssetToCache(fixtureAssetName)
+        scenario = ActivityScenario.launch<MainActivity>(createEpubViewIntent(fixtureUri))
     }
 
     private fun clearReaderPrefs() {
@@ -114,6 +408,59 @@ class EpubReaderScreenTest {
     }
 
     private fun text(resId: Int): String = targetContext.getString(resId)
+
+    private fun seedFixtureBookmark() {
+        val bookmark = org.json.JSONObject().apply {
+            put("cfi", "android-locator:1:1:0")
+            put("chapterTitle", "Chapter Two")
+            put("label", org.json.JSONObject.NULL)
+            put("snippet", "BOOKMARK_TARGET_ECHO")
+            put("pageInChapter", 1)
+            put("totalPagesInChapter", 3)
+            put("chapterIndex", 1)
+            put(
+                "locator",
+                org.json.JSONObject().apply {
+                    put("chapterIndex", 1)
+                    put("chapterId", "chapter-02")
+                    put("pageIndex", 0)
+                    put("blockIndex", 1)
+                    put("charOffset", 0)
+                    put("textQuote", "BOOKMARK_TARGET_ECHO")
+                    put("cfi", "android-locator:1:1:0")
+                }
+            )
+        }
+
+        targetContext.getSharedPreferences("epub_reader_bookmarks", Context.MODE_PRIVATE)
+            .edit()
+            .putStringSet("bookmarks_cfi_$sanitizedFixtureBookTitle", setOf(bookmark.toString()))
+            .commit()
+    }
+
+    private fun seedFixtureHighlight() {
+        val highlight = UserHighlight(
+            id = "fixture_annotation_golf",
+            cfi = "android-locator:2:1:0",
+            text = "ANNOTATION_TARGET_GOLF",
+            color = HighlightColor.GREEN,
+            chapterIndex = 2,
+            note = "Fixture note survives startup",
+            locator = ReaderLocator(
+                chapterIndex = 2,
+                chapterId = "chapter-03",
+                blockIndex = 1,
+                charOffset = 0,
+                textQuote = "ANNOTATION_TARGET_GOLF",
+                cfi = "android-locator:2:1:0"
+            )
+        )
+
+        targetContext.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putString("highlights_data_$sanitizedFixtureBookTitle", highlightsToJson(listOf(highlight)))
+            .commit()
+    }
 
     private fun createEpubViewIntent(uri: Uri): Intent {
         return Intent(targetContext, MainActivity::class.java).apply {
@@ -161,6 +508,24 @@ class EpubReaderScreenTest {
         composeTestRule.onAllNodesWithContentDescription(contentDescription)[0].performClick()
     }
 
+    private fun clickContentDescription(contentDescription: String) {
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            hasContentDescription(contentDescription)
+        }
+        composeTestRule.onAllNodesWithContentDescription(contentDescription)[0].performClick()
+    }
+
+    private fun clickText(value: String) {
+        composeTestRule.waitUntil(timeoutMillis = 10_000) {
+            composeTestRule.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(value)[0].performClick()
+    }
+
+    private fun openOverflowMenu() {
+        clickReaderControl(text(R.string.content_desc_more_options))
+    }
+
     private fun hasAnyReaderControl(): Boolean {
         return hasContentDescription(text(R.string.tooltip_search)) ||
             hasContentDescription(text(R.string.content_desc_chapters_menu)) ||
@@ -189,6 +554,50 @@ class EpubReaderScreenTest {
     private fun waitForTextContaining(value: String, timeoutMillis: Long = 10_000) {
         composeTestRule.waitUntil(timeoutMillis = timeoutMillis) {
             composeTestRule.onAllNodesWithText(value, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun waitForNoContentDescription(contentDescription: String, timeoutMillis: Long = 5_000) {
+        composeTestRule.waitUntil(timeoutMillis = timeoutMillis) {
+            composeTestRule
+                .onAllNodesWithContentDescription(contentDescription)
+                .fetchSemanticsNodes()
+                .isEmpty()
+        }
+    }
+
+    private fun waitForRenderMode(expected: RenderMode) {
+        composeTestRule.waitUntil(timeoutMillis = 20_000) {
+            targetContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+                .getString("render_mode", RenderMode.VERTICAL_SCROLL.name) == expected.name
+        }
+    }
+
+    private fun assertReaderSettingEventually(
+        prefsName: String,
+        key: String,
+        expected: Boolean
+    ) {
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            targetContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+                .getBoolean(key, !expected) == expected
+        }
+    }
+
+    private fun readFixtureRecentFile(): RecentFileEntity? {
+        return runBlocking {
+            AppDatabase.getDatabase(targetContext)
+                .recentFileDao()
+                .getFileByBookId(fixtureBookId)
+        }
+    }
+
+    private fun waitForRecentFile(
+        timeoutMillis: Long = 10_000,
+        predicate: (RecentFileEntity?) -> Boolean
+    ) {
+        composeTestRule.waitUntil(timeoutMillis = timeoutMillis) {
+            predicate(readFixtureRecentFile())
         }
     }
 }

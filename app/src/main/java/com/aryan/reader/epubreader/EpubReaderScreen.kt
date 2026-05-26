@@ -2256,6 +2256,7 @@ fun EpubReaderHost(
                 @Suppress("SENSELESS_COMPARISON")
                 if (pageToScrollTo != null) {
                     Timber.d("Scrolling to page: $pageToScrollTo")
+                    delay(16)
                     paginatedPagerState.scrollToPage(pageToScrollTo)
                 } else {
                     Timber.w("Could not determine a page to scroll to.")
