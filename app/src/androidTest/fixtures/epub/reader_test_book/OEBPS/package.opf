@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id" xml:lang="en">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="book-id">urn:uuid:reader-android-ui-test-epub</dc:identifier>
+    <dc:title>Reader Android UI Test Book</dc:title>
+    <dc:creator>Reader Test Fixtures</dc:creator>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="style" href="styles/reader-test.css" media-type="text/css"/>
+    <item id="chapter-1" href="chapters/chapter-01.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-2" href="chapters/chapter-02.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter-3" href="chapters/chapter-03.xhtml" media-type="application/xhtml+xml"/>
+    <item id="inline-svg" href="images/fixture-diagram.svg" media-type="image/svg+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="chapter-1"/>
+    <itemref idref="chapter-2"/>
+    <itemref idref="chapter-3"/>
+  </spine>
+</package>

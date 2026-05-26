@@ -1,0 +1,21 @@
+body {
+  font-family: serif;
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: 1.4em;
+}
+
+p {
+  margin: 0 0 1em 0;
+}
+
+.fixture-note {
+  border-left: 0.25em solid #4a90e2;
+  padding-left: 0.75em;
+}
+
+.target {
+  font-weight: bold;
+}

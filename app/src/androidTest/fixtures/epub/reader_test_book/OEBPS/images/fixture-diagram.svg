@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120" role="img" aria-labelledby="title desc">
+  <title id="title">Fixture diagram</title>
+  <desc id="desc">A simple local SVG used by EPUB UI tests.</desc>
+  <rect x="1" y="1" width="318" height="118" fill="#f6f8fb" stroke="#4a90e2" stroke-width="2"/>
+  <circle cx="70" cy="60" r="28" fill="#4a90e2"/>
+  <rect x="130" y="34" width="130" height="52" fill="#2f855a"/>
+  <text x="160" y="66" font-size="16" fill="#ffffff">EPUB FIXTURE</text>
+</svg>
