@@ -204,6 +204,17 @@ class PdfReaderSettingsAndSharedModelsTest {
             PdfToolbarSection.BOTTOM,
             defaultItems.single { it.tool == PdfReaderTool.SLIDER }.section
         )
+
+        val customPlacementItems = buildPdfToolbarItems(
+            hiddenTools = emptySet(),
+            toolOrder = defaultPdfToolOrder(),
+            bottomTools = setOf(PdfReaderTool.THEME.name)
+        )
+        assertEquals(
+            PdfToolbarSection.BOTTOM,
+            customPlacementItems.single { it.tool == PdfReaderTool.THEME }.section
+        )
+
         val expectedMoreTools = buildSet {
             addAll(
                 setOf(

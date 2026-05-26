@@ -163,6 +163,11 @@ class SharedLibraryProjectorTest {
         assertEquals(setOf("one"), opened.pinnedHomeBookIds)
         assertEquals(setOf("two"), opened.pinnedLibraryBookIds)
 
+        val reactivated = opened.reduce(AppAction.BookTabOpened("one"))
+
+        assertEquals(listOf("one", "two"), reactivated.openTabIds)
+        assertEquals("one", reactivated.activeTabBookId)
+
         val closedActive = opened.reduce(AppAction.BookTabClosed("two"))
 
         assertEquals(listOf("one"), closedActive.openTabIds)

@@ -115,12 +115,48 @@ private fun sanitizePdfToolNameSet(
     }.toSet()
 }
 
+internal fun sanitizePdfHiddenToolNames(toolNames: Collection<String>): Set<String> {
+    return sanitizePdfToolNameSet(toolNames.toSet())
+}
+
+internal fun sanitizePdfBottomToolNames(toolNames: Collection<String>): Set<String> {
+    return sanitizePdfToolNameSet(
+        toolNames = toolNames.toSet(),
+        includeTool = ::isPdfToolbarPlacementTool
+    )
+}
+
+internal fun restorePdfToolOrderNames(toolNames: Collection<String>): List<PdfReaderTool> {
+    val savedTools = toolNames
+        .mapNotNull { name -> PdfReaderTool.entries.firstOrNull { it.name == name } }
+        .filter(::isPdfReaderToolAvailable)
+    return (savedTools + defaultPdfToolOrder().filterNot { it in savedTools }).distinct()
+}
+
+internal fun isPdfToolbarPlacementTool(tool: PdfReaderTool): Boolean {
+    return when (tool) {
+        PdfReaderTool.DICTIONARY,
+        PdfReaderTool.THEME,
+        PdfReaderTool.BRIGHTNESS,
+        PdfReaderTool.LOCK_PANNING,
+        PdfReaderTool.SLIDER,
+        PdfReaderTool.TOC,
+        PdfReaderTool.SEARCH,
+        PdfReaderTool.HIGHLIGHT_ALL,
+        PdfReaderTool.AI_FEATURES,
+        PdfReaderTool.EDIT_MODE,
+        PdfReaderTool.TTS_CONTROLS,
+        PdfReaderTool.SCREEN_ORIENTATION -> true
+        else -> false
+    }
+}
+
 internal fun loadPdfHiddenTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    val savedHiddenTools = sanitizePdfToolNameSet(prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()).orEmpty())
+    val savedHiddenTools = sanitizePdfHiddenToolNames(prefs.getStringSet(PDF_HIDDEN_TOOLS_KEY, emptySet()).orEmpty())
     val defaultsVersion = prefs.getInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, 0)
     if (defaultsVersion < PDF_HIDDEN_TOOLS_DEFAULTS_VERSION) {
-        val migratedHiddenTools = sanitizePdfToolNameSet(savedHiddenTools + pdfHiddenToolsIntroducedAfter(defaultsVersion))
+        val migratedHiddenTools = sanitizePdfHiddenToolNames(savedHiddenTools + pdfHiddenToolsIntroducedAfter(defaultsVersion))
         prefs.edit {
             putStringSet(PDF_HIDDEN_TOOLS_KEY, migratedHiddenTools)
             putInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, PDF_HIDDEN_TOOLS_DEFAULTS_VERSION)
@@ -143,28 +179,27 @@ private fun pdfHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String> {
 internal fun savePdfHiddenTools(context: Context, hiddenTools: Set<String>) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
-        putStringSet(PDF_HIDDEN_TOOLS_KEY, sanitizePdfToolNameSet(hiddenTools))
+        putStringSet(PDF_HIDDEN_TOOLS_KEY, sanitizePdfHiddenToolNames(hiddenTools))
         putInt(PDF_HIDDEN_TOOLS_DEFAULTS_VERSION_KEY, PDF_HIDDEN_TOOLS_DEFAULTS_VERSION)
     }
 }
 
 internal fun loadPdfToolOrder(context: Context): List<PdfReaderTool> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    val savedTools = prefs.getString(PDF_TOOL_ORDER_KEY, null)
+    val savedToolNames = prefs.getString(PDF_TOOL_ORDER_KEY, null)
         ?.split(',')
         ?.filter { it.isNotBlank() }
-        ?.mapNotNull { name -> PdfReaderTool.entries.firstOrNull { it.name == name } }
-        ?.filter(::isPdfReaderToolAvailable)
         .orEmpty()
-    return (savedTools + defaultPdfToolOrder().filterNot { it in savedTools }).distinct()
+    return restorePdfToolOrderNames(savedToolNames)
 }
 
 internal fun savePdfToolOrder(context: Context, toolOrder: List<PdfReaderTool>) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val sanitizedOrder = restorePdfToolOrderNames(toolOrder.map { it.name })
     prefs.edit {
         putString(
             PDF_TOOL_ORDER_KEY,
-            toolOrder.filter(::isPdfReaderToolAvailable).joinToString(",") { it.name }
+            sanitizedOrder.joinToString(",") { it.name }
         )
     }
 }
@@ -172,22 +207,15 @@ internal fun savePdfToolOrder(context: Context, toolOrder: List<PdfReaderTool>) 
 internal fun loadPdfBottomTools(context: Context): Set<String> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     val defaultBottomTools = defaultPdfBottomTools()
-    return sanitizePdfToolNameSet(
-        toolNames = prefs.getStringSet(PDF_BOTTOM_TOOLS_KEY, defaultBottomTools) ?: defaultBottomTools,
-        includeTool = { it.category == "Bottom Bar" }
-    )
+    val savedBottomTools = prefs.getStringSet(PDF_BOTTOM_TOOLS_KEY, null) ?: return defaultBottomTools
+    val sanitizedBottomTools = sanitizePdfBottomToolNames(savedBottomTools)
+    return if (savedBottomTools.isNotEmpty() && sanitizedBottomTools.isEmpty()) defaultBottomTools else sanitizedBottomTools
 }
 
 internal fun savePdfBottomTools(context: Context, bottomTools: Set<String>) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
-        putStringSet(
-            PDF_BOTTOM_TOOLS_KEY,
-            sanitizePdfToolNameSet(
-                toolNames = bottomTools,
-                includeTool = { it.category == "Bottom Bar" }
-            )
-        )
+        putStringSet(PDF_BOTTOM_TOOLS_KEY, sanitizePdfBottomToolNames(bottomTools))
     }
 }
 

@@ -104,9 +104,11 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
             if (bookId.isBlank()) {
                 this
             } else {
+                val currentTabIds = openTabIds.distinct()
+                val nextTabIds = if (bookId in currentTabIds) currentTabIds else currentTabIds + bookId
                 copy(
                     isTabsEnabled = true,
-                    openTabIds = (openTabIds - bookId) + bookId,
+                    openTabIds = nextTabIds,
                     activeTabBookId = bookId
                 )
             }

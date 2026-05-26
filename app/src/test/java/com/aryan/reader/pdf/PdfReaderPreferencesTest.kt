@@ -50,15 +50,52 @@ class PdfReaderPreferencesTest {
         val context = contextWithPrefs(prefs)
 
         savePdfHiddenTools(context, setOf(PdfReaderTool.PRINT.name, PdfReaderTool.SHARE.name))
-        savePdfBottomTools(context, setOf(PdfReaderTool.SEARCH.name))
+        savePdfBottomTools(context, setOf(PdfReaderTool.SEARCH.name, PdfReaderTool.THEME.name))
         savePdfToolOrder(context, listOf(PdfReaderTool.TOC, PdfReaderTool.SEARCH))
 
         assertEquals(setOf(PdfReaderTool.PRINT.name, PdfReaderTool.SHARE.name), loadPdfHiddenTools(context))
         assertFalse(PdfReaderTool.SCREEN_ORIENTATION.name in loadPdfHiddenTools(context))
         assertFalse(PdfReaderTool.HIGHLIGHT_ALL.name in loadPdfHiddenTools(context))
         assertFalse(PdfReaderTool.BRIGHTNESS.name in loadPdfHiddenTools(context))
-        assertEquals(setOf(PdfReaderTool.SEARCH.name), loadPdfBottomTools(context))
+        assertEquals(setOf(PdfReaderTool.SEARCH.name, PdfReaderTool.THEME.name), loadPdfBottomTools(context))
         assertEquals(listOf(PdfReaderTool.TOC, PdfReaderTool.SEARCH), loadPdfToolOrder(context).take(2))
+    }
+
+    @Test
+    fun `toolbar restore helpers keep saveable tab switch state sanitized`() {
+        val restoredOrder = restorePdfToolOrderNames(
+            listOf(
+                PdfReaderTool.SEARCH.name,
+                "NO_SUCH_TOOL",
+                PdfReaderTool.TOC.name,
+                PdfReaderTool.SEARCH.name
+            )
+        )
+        val expectedTools = PdfReaderTool.entries.filter(::isPdfReaderToolAvailable)
+
+        assertEquals(listOf(PdfReaderTool.SEARCH, PdfReaderTool.TOC), restoredOrder.take(2))
+        assertEquals(expectedTools.size, restoredOrder.size)
+        assertEquals(expectedTools.toSet(), restoredOrder.toSet())
+        assertEquals(
+            setOf(PdfReaderTool.PRINT.name),
+            sanitizePdfHiddenToolNames(listOf(PdfReaderTool.PRINT.name, "NO_SUCH_TOOL"))
+        )
+        assertEquals(
+            setOf(PdfReaderTool.SEARCH.name, PdfReaderTool.THEME.name),
+            sanitizePdfBottomToolNames(listOf(PdfReaderTool.SEARCH.name, PdfReaderTool.THEME.name, PdfReaderTool.PRINT.name))
+        )
+        assertEquals(
+            defaultPdfBottomTools(),
+            loadPdfBottomTools(
+                contextWithPrefs(InMemorySharedPreferences(PDF_BOTTOM_TOOLS_KEY to setOf("NO_SUCH_TOOL")))
+            )
+        )
+        assertEquals(
+            emptySet<String>(),
+            loadPdfBottomTools(
+                contextWithPrefs(InMemorySharedPreferences(PDF_BOTTOM_TOOLS_KEY to emptySet<String>()))
+            )
+        )
     }
 
     @Test

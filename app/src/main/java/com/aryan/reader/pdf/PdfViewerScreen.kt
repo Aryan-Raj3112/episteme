@@ -387,23 +387,41 @@ fun PdfViewerScreen(
     var pendingActionAfterOcrSelection by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     var showCustomizeToolsSheet by remember { mutableStateOf(false) }
-    var hiddenTools by remember { mutableStateOf(loadPdfHiddenTools(context)) }
-    var toolOrder by remember { mutableStateOf(loadPdfToolOrder(context)) }
-    var bottomTools by remember { mutableStateOf(loadPdfBottomTools(context)) }
+    var hiddenToolNames by rememberSaveable {
+        mutableStateOf(loadPdfHiddenTools(context).toList())
+    }
+    var toolOrderNames by rememberSaveable {
+        mutableStateOf(loadPdfToolOrder(context).map { it.name })
+    }
+    var bottomToolNames by rememberSaveable {
+        mutableStateOf(loadPdfBottomTools(context).toList())
+    }
+    val hiddenTools = remember(hiddenToolNames) {
+        sanitizePdfHiddenToolNames(hiddenToolNames)
+    }
+    val toolOrder = remember(toolOrderNames) {
+        restorePdfToolOrderNames(toolOrderNames)
+    }
+    val bottomTools = remember(bottomToolNames) {
+        sanitizePdfBottomToolNames(bottomToolNames)
+    }
 
     val onUpdateHiddenTools = { newSet: Set<String> ->
-        hiddenTools = newSet
-        savePdfHiddenTools(context, newSet)
+        val sanitized = sanitizePdfHiddenToolNames(newSet)
+        hiddenToolNames = sanitized.toList()
+        savePdfHiddenTools(context, sanitized)
     }
 
     val onUpdateToolOrder = { newOrder: List<PdfReaderTool> ->
-        toolOrder = newOrder
-        savePdfToolOrder(context, newOrder)
+        val sanitized = restorePdfToolOrderNames(newOrder.map { it.name })
+        toolOrderNames = sanitized.map { it.name }
+        savePdfToolOrder(context, sanitized)
     }
 
     val onUpdateBottomTools = { newBottomTools: Set<String> ->
-        bottomTools = newBottomTools
-        savePdfBottomTools(context, newBottomTools)
+        val sanitized = sanitizePdfBottomToolNames(newBottomTools)
+        bottomToolNames = sanitized.toList()
+        savePdfBottomTools(context, sanitized)
     }
 
     val isOss = BuildConfig.FLAVOR == "oss"

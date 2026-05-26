@@ -116,25 +116,17 @@ fun sanitizePdfPlaceholders(list: List<PdfFlatToolItem>): List<PdfFlatToolItem> 
     return result
 }
 
-private val pdfReorderableToolbarTools = setOf(
-    PdfReaderTool.DICTIONARY, PdfReaderTool.THEME, PdfReaderTool.BRIGHTNESS, PdfReaderTool.LOCK_PANNING,
-    PdfReaderTool.SLIDER, PdfReaderTool.TOC, PdfReaderTool.SEARCH,
-    PdfReaderTool.HIGHLIGHT_ALL, PdfReaderTool.AI_FEATURES,
-    PdfReaderTool.EDIT_MODE, PdfReaderTool.TTS_CONTROLS,
-    PdfReaderTool.SCREEN_ORIENTATION
-)
-
 internal fun buildPdfToolbarItems(
     hiddenTools: Set<String>,
     toolOrder: List<PdfReaderTool>,
     bottomTools: Set<String>
 ): List<PdfFlatToolItem> {
     val availableToolOrder = toolOrder.filter(::isPdfReaderToolAvailable)
-    val toolbarTools = availableToolOrder.filter { it in pdfReorderableToolbarTools }
+    val toolbarTools = availableToolOrder.filter(::isPdfToolbarPlacementTool)
     val topTools = toolbarTools.filter { !bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
     val bottomToolsList = toolbarTools.filter { bottomTools.contains(it.name) && !hiddenTools.contains(it.name) }
     val hiddenToolsList = toolbarTools.filter { hiddenTools.contains(it.name) }
-    val moreTools = availableToolOrder.filter { it !in pdfReorderableToolbarTools }
+    val moreTools = availableToolOrder.filterNot(::isPdfToolbarPlacementTool)
 
     val list = mutableListOf<PdfFlatToolItem>()
 
@@ -209,7 +201,7 @@ fun PdfCustomizeToolsSheet(
 
     val commitDragDrop = {
         val newHidden = localHiddenTools.filter { toolName ->
-            toolOrder.find { it.name == toolName } !in pdfReorderableToolbarTools
+            toolOrder.find { it.name == toolName }?.let(::isPdfToolbarPlacementTool) != true
         }.toMutableSet()
 
         val newBottom = mutableSetOf<String>()
