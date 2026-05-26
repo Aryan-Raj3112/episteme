@@ -3,6 +3,7 @@ package com.aryan.reader.desktop
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPlacement
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.ui.SharedAppTab
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -97,6 +98,35 @@ class DesktopReaderWindowStateTest {
 
         assertEquals(WindowPlacement.Floating, snapshot.toReaderWindowPlacement())
         assertNull(snapshot.toPersistableReaderWindowSnapshot())
+    }
+
+    @Test
+    fun `webview2 text reader resets surface when switching from vertical to paginated`() {
+        assertTrue(
+            shouldResetDesktopTextReaderWindowSurface(
+                previousMode = ReaderReadingMode.VERTICAL,
+                currentMode = ReaderReadingMode.PAGINATED,
+                usesWebView2 = true
+            )
+        )
+    }
+
+    @Test
+    fun `text reader surface reset is limited to webview2 vertical to paginated switches`() {
+        assertFalse(
+            shouldResetDesktopTextReaderWindowSurface(
+                previousMode = ReaderReadingMode.PAGINATED,
+                currentMode = ReaderReadingMode.VERTICAL,
+                usesWebView2 = true
+            )
+        )
+        assertFalse(
+            shouldResetDesktopTextReaderWindowSurface(
+                previousMode = ReaderReadingMode.VERTICAL,
+                currentMode = ReaderReadingMode.PAGINATED,
+                usesWebView2 = false
+            )
+        )
     }
 
     private fun readerOpening(bookId: String, requestId: Long): DesktopReaderOpening {

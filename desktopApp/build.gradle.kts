@@ -474,6 +474,10 @@ val desktopOsArch = System.getProperty("os.arch")
 val desktopUsesWindowsWebView2 = desktopOsId(desktopOsName) == "windows"
 val desktopRequiresBundledWebViewRuntime = !desktopUsesWindowsWebView2
 val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
+val desktopReleaseProguardEnabled = providers.gradleProperty("desktopReleaseProguard")
+    .map { it.equals("true", ignoreCase = true) }
+    .orElse(false)
+    .get()
 val desktopKmpWebViewDependency = "io.github.kevinnzou:compose-webview-multiplatform:2.0.3"
 val desktopSwtVersion = "3.133.0"
 val desktopSwtWindowsDependency = "org.eclipse.platform:${desktopSwtWindowsArtifactId(desktopOsArch)}:$desktopSwtVersion"
@@ -644,7 +648,6 @@ kotlin {
                 implementation(project(":shared"))
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
-                implementation(compose.materialIconsExtended)
                 compileOnly(desktopKmpWebViewDependency)
                 if (desktopRequiresBundledWebViewRuntime) {
                     runtimeOnly(desktopKmpWebViewDependency)
@@ -682,6 +685,10 @@ compose.desktop {
         jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
 
         buildTypes.release.proguard {
+            // ProGuard still rewrites and shrinks release jars even when optimization and
+            // obfuscation are disabled. That has produced invalid stack-map frames in large
+            // Compose/PDF lambdas and stripped WebView bridge behavior in packaged MSIs.
+            isEnabled.set(desktopReleaseProguardEnabled)
             obfuscate.set(false)
             // Compose/Kotlin generated methods can produce very large stack-map frames.
             // ProGuard optimization has emitted invalid frames for SharedAppTheme in release builds.
@@ -748,9 +755,13 @@ tasks.withType<Jar>().configureEach {
     }
 }
 
-val stripReleaseProguardJarSignatures by tasks.registering(StripInvalidJarSignaturesTask::class) {
-    dependsOn("proguardReleaseJars")
-    jarDirectoryPath.set(layout.buildDirectory.dir("compose/tmp/main-release/proguard").map { it.asFile.absolutePath })
+val stripReleaseProguardJarSignatures = if (desktopReleaseProguardEnabled) {
+    tasks.registering(StripInvalidJarSignaturesTask::class) {
+        dependsOn("proguardReleaseJars")
+        jarDirectoryPath.set(layout.buildDirectory.dir("compose/tmp/main-release/proguard").map { it.asFile.absolutePath })
+    }
+} else {
+    null
 }
 
 tasks.matching {
@@ -764,7 +775,7 @@ tasks.matching {
         "runReleaseDistributable"
     )
 }.configureEach {
-    dependsOn(stripReleaseProguardJarSignatures)
+    stripReleaseProguardJarSignatures?.let { dependsOn(it) }
 }
 
 mapOf(

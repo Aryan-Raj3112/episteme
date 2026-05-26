@@ -192,6 +192,8 @@ internal fun String.readerPositionOrNull(): DesktopReaderPosition? {
             ?: return@runCatching null
         val locator = ReaderLocator(
             chapterIndex = obj["chapterIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+            chapterId = obj["chapterId"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
+            href = obj["href"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
             pageIndex = pageIndex,
             startOffset = obj["startOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
             endOffset = obj["endOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
@@ -311,9 +313,13 @@ internal fun ReaderLocator.toReaderLocatorJson(): String {
         append("{")
         val values = buildList {
             chapterIndex?.let { add("\"chapterIndex\":$it") }
+            chapterId?.let { add("\"chapterId\":${it.toJsonStringLiteral()}") }
+            href?.let { add("\"href\":${it.toJsonStringLiteral()}") }
             pageIndex?.let { add("\"pageIndex\":$it") }
             startOffset?.let { add("\"startOffset\":$it") }
             endOffset?.let { add("\"endOffset\":$it") }
+            blockIndex?.let { add("\"blockIndex\":$it") }
+            charOffset?.let { add("\"charOffset\":$it") }
             cfi?.let { add("\"cfi\":${it.toJsonStringLiteral()}") }
             textQuote?.let { add("\"textQuote\":${it.toJsonStringLiteral()}") }
         }

@@ -243,8 +243,6 @@ dependencies {
 
     ksp(libs.androidx.room.compiler)
 
-    implementation("androidx.compose.material:material-icons-extended:1.7.8")
-
     implementation("androidx.appcompat:appcompat:1.7.1")
 
     //noinspection GradleDependency (Updating these might cause the custom toolbox in pagination to break)

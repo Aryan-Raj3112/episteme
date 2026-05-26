@@ -394,6 +394,12 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("function pageForVerticalScroll()"))
         assertTrue(html.contains("desktop-scroll-page:"))
         assertTrue(html.contains("pageIndex: numberAttribute(document.body, 'data-reader-active-page-index', null)"))
+        assertTrue(html.contains("chapterId: host.getAttribute('data-reader-chapter-id')"))
+        assertTrue(html.contains("href: host.getAttribute('data-reader-chapter-href')"))
+        assertTrue(html.contains("blockIndex: blockPosition ? blockPosition.blockIndex : null"))
+        assertTrue(html.contains("charOffset: blockPosition ? blockPosition.charOffset : null"))
+        assertTrue(html.contains("blockIndex: numberAttribute(document.body, 'data-reader-active-block-index', null)"))
+        assertTrue(html.contains("charOffset: numberAttribute(document.body, 'data-reader-active-char-offset', null)"))
         assertTrue(html.contains("cfi: document.body.getAttribute('data-reader-active-cfi')"))
     }
 
@@ -546,6 +552,42 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("selection_begin mode="))
         assertTrue(html.contains("bridge_send_success attempt="))
         assertTrue(html.contains("<p><span>Alpha beta</span></p><p><span>Gamma delta</span></p>"))
+    }
+
+    @Test
+    fun `vertical document prefers semantic blocks when available for cross mode locators`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = SharedEpubBook(
+                id = "book",
+                fileName = "book.epub",
+                title = "Book",
+                chapters = listOf(
+                    SharedEpubChapter(
+                        id = "one",
+                        title = "One",
+                        plainText = "Semantic text",
+                        htmlContent = "<p>Raw text</p>",
+                        semanticBlocks = listOf(
+                            SemanticParagraph(
+                                text = "Semantic text",
+                                spans = emptyList(),
+                                style = CssStyle(),
+                                elementId = null,
+                                cfi = "/4/2/4",
+                                startCharOffsetInSource = 40,
+                                blockIndex = 12
+                            )
+                        )
+                    )
+                )
+            ),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+
+        assertTrue(html.contains("Semantic text"))
+        assertTrue(html.contains("""data-reader-cfi="/4/2/4""""))
+        assertTrue(html.contains("""data-reader-block-index="12""""))
+        assertFalse(html.contains("Raw text"))
     }
 
     @Test
@@ -722,7 +764,7 @@ class ReaderHtmlDocumentBuilderTest {
                     title = "One",
                     plainText = "Before image after image.",
                     semanticBlocks = listOf(
-                        SemanticParagraph("Before image", emptyList(), CssStyle(), null, null, startCharOffsetInSource = 0),
+                        SemanticParagraph("Before image", emptyList(), CssStyle(), null, null, startCharOffsetInSource = 0, blockIndex = 7),
                         SemanticImage("data:image/png;base64,abc", "Cover", null, null, CssStyle(), "cover-image", "/4/2"),
                         SemanticParagraph("after image", emptyList(), CssStyle(), null, null, startCharOffsetInSource = 13)
                     )
@@ -737,6 +779,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("""<img src="data:image/png;base64,abc" alt="Cover""""))
+        assertTrue(html.contains("""data-reader-block-index="7""""))
         assertTrue(html.contains("""data-reader-cfi="/4/2""""))
         assertTrue(html.contains("""data-reader-block-index="0""""))
     }

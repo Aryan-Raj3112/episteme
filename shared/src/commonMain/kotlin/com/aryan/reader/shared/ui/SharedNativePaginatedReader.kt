@@ -290,8 +290,6 @@ fun SharedNativePaginatedReader(
             .readerChromeTapTogglePointerInput {
                 if (activeSelection == null) {
                     onReaderTap()
-                } else {
-                    updateActiveSelection(null)
                 }
             }
             .onGloballyPositioned { readerCoordinates = it }
@@ -397,7 +395,15 @@ fun SharedNativePaginatedReader(
                         updateActiveSelection(null)
                     },
                     onHighlight = { color ->
-                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, color))
+                        val highlight = sharedNativeReaderHighlightForSelection(selection, color)
+                        logSharedReaderDiagnostic(DesktopHighlightMapLogTag) {
+                            "native_highlight_create_click id=\"${highlight.id.sharedNativeLogPreview(64)}\" " +
+                                "color=${color.id} chapter=${highlight.chapterIndex} page=${highlight.locator.pageIndex} " +
+                                "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                                "block=${highlight.locator.blockIndex} char=${highlight.locator.charOffset} " +
+                                "cfi=\"${highlight.cfi.sharedNativeLogPreview(160)}\" text=\"${highlight.text.sharedNativeLogPreview(120)}\""
+                        }
+                        onHighlightCreated(highlight)
                         updateActiveSelection(null)
                     },
                     onDismiss = { updateActiveSelection(null) },
@@ -444,10 +450,29 @@ private fun SharedNativePaginatedPage(
     val fallbackTextAlign = settings.textAlign.toComposeTextAlign()
     val visibleHighlights = renderPlan.highlights.visibleInPage(page)
     val blocks = page.semanticBlocks
+    val visibleHighlightSignature = remember(visibleHighlights) {
+        visibleHighlights.joinToString(separator = "|") { highlight -> highlight.id }
+    }
     var contentFit by remember(page.pageIndex, blocks) { mutableStateOf<SharedNativeContentFit?>(null) }
     val blockLayouts = remember(page.pageIndex, blocks) { mutableStateMapOf<Int, SharedNativeBlockFit>() }
     var layoutVersion by remember(page.pageIndex, blocks) { mutableStateOf(0) }
     var lastPageFitLogSignature by remember(page.pageIndex, blocks) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(
+        page.pageIndex,
+        page.chapterIndex,
+        page.startOffset,
+        page.endOffset,
+        renderPlan.highlights.size,
+        visibleHighlightSignature
+    ) {
+        logSharedReaderDiagnostic(DesktopHighlightMapLogTag) {
+            "native_page_scope page=${page.pageIndex + 1} chapter=${page.chapterIndex} " +
+                "range=${page.startOffset}..${page.endOffset} pageText=${page.text.length} blocks=${blocks.size} " +
+                "inputHighlights=${renderPlan.highlights.size} visibleHighlights=${visibleHighlights.size} " +
+                "visible=\"${visibleHighlights.take(16).joinToString(";") { highlight -> highlight.nativeHighlightLogKey() }}\""
+        }
+    }
 
     LaunchedEffect(
         contentFit,
@@ -545,6 +570,8 @@ private fun SharedNativePaginatedPage(
                     text = page.text.toReaderAnnotatedString(
                         searchQuery = renderPlan.searchQuery,
                         searchHighlight = searchHighlight,
+                        chapterIndex = page.chapterIndex,
+                        pageIndex = page.pageIndex,
                         absoluteStartOffset = page.startOffset,
                         highlights = visibleHighlights,
                         activeSelection = activeSelection,
@@ -1159,6 +1186,8 @@ private fun SemanticBlock.flattenNativeSemanticBlock(): List<SemanticBlock> {
 private fun String.toReaderAnnotatedString(
     searchQuery: String,
     searchHighlight: Color,
+    chapterIndex: Int,
+    pageIndex: Int,
     absoluteStartOffset: Int,
     highlights: List<UserHighlight>,
     activeSelection: SharedNativeReaderTextSelection?,
@@ -1170,6 +1199,8 @@ private fun String.toReaderAnnotatedString(
         highlights.forEach { highlight ->
             applyHighlightToTextRange(
                 highlight = highlight,
+                chapterIndex = chapterIndex,
+                pageIndex = pageIndex,
                 textStartOffset = absoluteStartOffset,
                 textLength = this@toReaderAnnotatedString.length
             )
@@ -1710,6 +1741,22 @@ private fun String.sharedNativeLogPreview(maxLength: Int = 96): String {
         .replace("\"", "\\\"")
 }
 
+private fun UserHighlight.nativeHighlightLogKey(): String {
+    val normalizedLocator = this.locator.withFallbacks(
+        chapterIndex = chapterIndex,
+        cfi = cfi,
+        textQuote = text
+    )
+    val page = normalizedLocator.pageIndex?.let { it + 1 }?.toString() ?: "null"
+    return "id=\"${id.sharedNativeLogPreview(48)}\"" +
+        ":chapter=${normalizedLocator.chapterIndex ?: "null"}" +
+        ":page=$page" +
+        ":offsets=${normalizedLocator.startOffset ?: "null"}..${normalizedLocator.endOffset ?: "null"}" +
+        ":block=${normalizedLocator.blockIndex ?: "null"}" +
+        ":char=${normalizedLocator.charOffset ?: "null"}" +
+        ":text=\"${(normalizedLocator.textQuote ?: text).sharedNativeLogPreview(64)}\""
+}
+
 @Composable
 private fun SharedSemanticTextView(
     block: SemanticTextBlock,
@@ -1746,6 +1793,7 @@ private fun SharedSemanticTextView(
             activeSelection = activeSelection,
             selectionHighlight = selectionHighlight,
             blockFontSizeSp = textStyle.fontSize.value,
+            chapterIndex = page.chapterIndex,
             pageIndex = page.pageIndex,
             blockCfi = block.cfi,
             blockIndex = block.blockIndex,
@@ -1827,6 +1875,7 @@ private fun SemanticTextBlock.toAnnotatedString(
     activeSelection: SharedNativeReaderTextSelection?,
     selectionHighlight: Color,
     blockFontSizeSp: Float,
+    chapterIndex: Int,
     pageIndex: Int,
     blockCfi: String?,
     blockIndex: Int,
@@ -1848,7 +1897,11 @@ private fun SemanticTextBlock.toAnnotatedString(
         highlights.forEach { highlight ->
             applyHighlightToTextRange(
                 highlight = highlight,
+                chapterIndex = chapterIndex,
+                pageIndex = pageIndex,
                 blockCfi = blockCfi,
+                blockIndex = blockIndex,
+                blockCharOffset = blockCharOffset,
                 textStartOffset = startCharOffsetInSource,
                 textLength = text.length,
                 text = text
@@ -1914,26 +1967,76 @@ private fun CssStyle.toRenderedSpanStyle(parentFontSizeSp: Float): SpanStyle {
 
 private fun List<UserHighlight>.visibleInPage(page: ReaderPage): List<UserHighlight> {
     return filter { highlight ->
-        val locator = highlight.locator
-        val chapterIndex = locator.chapterIndex ?: highlight.chapterIndex
-        val start = locator.startOffset
-        val end = locator.endOffset
-        val pageMatch = locator.pageIndex == page.pageIndex
-        val offsetMatch = start != null &&
-            end != null &&
-            start < page.endOffset &&
-            end > page.startOffset
-        chapterIndex == page.chapterIndex && (pageMatch || offsetMatch)
+        val locator = highlight.locator.withFallbacks(
+            chapterIndex = highlight.chapterIndex,
+            cfi = highlight.cfi,
+            textQuote = highlight.text
+        )
+        (locator.chapterIndex ?: highlight.chapterIndex) == page.chapterIndex
     }
 }
 
 private fun AnnotatedString.Builder.applyHighlightToTextRange(
     highlight: UserHighlight,
+    chapterIndex: Int? = null,
+    pageIndex: Int? = null,
     blockCfi: String? = null,
+    blockIndex: Int? = null,
+    blockCharOffset: Int? = null,
     textStartOffset: Int,
     textLength: Int,
     text: String? = null
 ) {
+    fun applyRange(range: SharedNativeReaderTextRange) {
+        addStyle(
+            style = SpanStyle(background = highlight.color.color.copy(alpha = 0.38f)),
+            start = range.start,
+            end = range.end
+        )
+        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, range.start, range.end)
+    }
+
+    fun logResult(reason: String, range: SharedNativeReaderTextRange?) {
+        logNativeHighlightMapResult(
+            reason = reason,
+            highlight = highlight,
+            chapterIndex = chapterIndex,
+            pageIndex = pageIndex,
+            blockIndex = blockIndex,
+            blockCharOffset = blockCharOffset,
+            blockCfi = blockCfi,
+            textStartOffset = textStartOffset,
+            textLength = textLength,
+            range = range,
+            text = text
+        )
+    }
+
+    val blockLocatorRange = sharedNativeBlockLocatorHighlightRangeInBlock(
+        highlight = highlight,
+        blockIndex = blockIndex,
+        blockCharOffset = blockCharOffset,
+        textLength = textLength,
+        text = text
+    )
+    if (blockLocatorRange != null) {
+        logResult("block_locator", blockLocatorRange)
+        applyRange(blockLocatorRange)
+        return
+    }
+
+    val locatorRange = sharedNativeLocatorHighlightRangeInBlock(
+        highlight = highlight,
+        textStartOffset = textStartOffset,
+        textLength = textLength,
+        text = text
+    )
+    if (locatorRange != null) {
+        logResult("locator_offsets", locatorRange)
+        applyRange(locatorRange)
+        return
+    }
+
     val cfiRange = sharedNativeHighlightRangeInBlock(
         highlight = highlight,
         blockCfi = blockCfi,
@@ -1941,27 +2044,269 @@ private fun AnnotatedString.Builder.applyHighlightToTextRange(
         text = text
     )
     if (cfiRange != null) {
-        addStyle(
-            style = SpanStyle(background = highlight.color.color.copy(alpha = 0.38f)),
-            start = cfiRange.start,
-            end = cfiRange.end
-        )
-        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, cfiRange.start, cfiRange.end)
+        logResult("cfi_or_text", cfiRange)
+        applyRange(cfiRange)
         return
     }
-    if (highlight.cfi.contains('|') || highlight.cfi.startsWith("/")) return
-    val start = highlight.locator.startOffset ?: return
-    val end = highlight.locator.endOffset ?: return
-    val localStart = (start - textStartOffset).coerceIn(0, textLength)
-    val localEnd = (end - textStartOffset).coerceIn(localStart, textLength)
-    if (localStart < localEnd) {
-        addStyle(
-            style = SpanStyle(background = highlight.color.color.copy(alpha = 0.38f)),
-            start = localStart,
-            end = localEnd
-        )
-        addStringAnnotation(ReaderNativeAnnotationHighlight, highlight.id, localStart, localEnd)
+    logResult("no_match", null)
+}
+
+private fun logNativeHighlightMapResult(
+    reason: String,
+    highlight: UserHighlight,
+    chapterIndex: Int?,
+    pageIndex: Int?,
+    blockIndex: Int?,
+    blockCharOffset: Int?,
+    blockCfi: String?,
+    textStartOffset: Int,
+    textLength: Int,
+    range: SharedNativeReaderTextRange?,
+    text: String?
+) {
+    val locator = highlight.locator.withFallbacks(
+        chapterIndex = highlight.chapterIndex,
+        cfi = highlight.cfi,
+        textQuote = highlight.text
+    )
+    logSharedReaderDiagnostic(DesktopHighlightMapLogTag) {
+        val renderPage = pageIndex?.let { it + 1 }?.toString() ?: "null"
+        val locatorPage = locator.pageIndex?.let { it + 1 }?.toString() ?: "null"
+        val textEndOffset = textStartOffset + textLength
+        val localRange = range?.let { "${it.start}..${it.end}" } ?: "none"
+        val absoluteRange = range
+            ?.let { "${textStartOffset + it.start}..${textStartOffset + it.end}" }
+            ?: "none"
+        val blockText = text
+        val matchedText = if (
+            range != null &&
+            blockText != null &&
+            range.start >= 0 &&
+            range.end <= blockText.length &&
+            range.start < range.end
+        ) {
+            blockText.substring(range.start, range.end).sharedNativeLogPreview(120)
+        } else {
+            ""
+        }
+        "native_highlight_match reason=$reason id=\"${highlight.id.sharedNativeLogPreview(64)}\" " +
+            "color=${highlight.color.name} renderChapter=${chapterIndex ?: "null"} renderPage=$renderPage " +
+            "block=${blockIndex ?: "null"} blockChar=${blockCharOffset ?: "null"} " +
+            "textRange=$textStartOffset..$textEndOffset textLen=$textLength local=$localRange absolute=$absoluteRange " +
+            "locatorChapter=${locator.chapterIndex ?: "null"} legacyChapter=${highlight.chapterIndex} " +
+            "locatorPage=$locatorPage locatorOffsets=${locator.startOffset ?: "null"}..${locator.endOffset ?: "null"} " +
+            "locatorBlock=${locator.blockIndex ?: "null"} locatorChar=${locator.charOffset ?: "null"} " +
+            "locatorCfi=\"${locator.cfi.orEmpty().sharedNativeLogPreview(120)}\" " +
+            "blockCfi=\"${blockCfi.orEmpty().sharedNativeLogPreview(120)}\" " +
+            "quote=\"${(locator.textQuote ?: highlight.text).sharedNativeLogPreview(120)}\" " +
+            "matched=\"${matchedText}\" blockText=\"${text.orEmpty().sharedNativeLogPreview(120)}\""
     }
+}
+
+private fun sharedNativeLocatorHighlightRangeInBlock(
+    highlight: UserHighlight,
+    textStartOffset: Int,
+    textLength: Int,
+    text: String?
+): SharedNativeReaderTextRange? {
+    val start = highlight.locator.startOffset ?: return null
+    val end = highlight.locator.endOffset ?: return null
+    val rangeStart = minOf(start, end)
+    val rangeEnd = maxOf(start, end)
+    val textEndOffset = textStartOffset + textLength
+    if (rangeEnd <= textStartOffset || rangeStart >= textEndOffset) return null
+    val localStart = (rangeStart - textStartOffset).coerceIn(0, textLength)
+    val localEnd = (rangeEnd - textStartOffset).coerceIn(localStart, textLength)
+    val locatorRange = if (localStart < localEnd) {
+        SharedNativeReaderTextRange(localStart, localEnd)
+    } else {
+        null
+    }
+    val quoteRange = text
+        ?.let { blockText ->
+            sharedNativeHighlightTextRangeInBlock(
+                blockText = blockText,
+                highlightText = highlight.text,
+                preferredStart = locatorRange?.start
+            )
+        }
+    if (
+        locatorRange != null &&
+        quoteRange != null &&
+        text != null &&
+        !locatorRange.matchesSharedNativeHighlightText(text, highlight.text)
+    ) {
+        return quoteRange
+    }
+    return locatorRange ?: quoteRange
+}
+
+private fun sharedNativeBlockLocatorHighlightRangeInBlock(
+    highlight: UserHighlight,
+    blockIndex: Int?,
+    blockCharOffset: Int?,
+    textLength: Int,
+    text: String?
+): SharedNativeReaderTextRange? {
+    val locatorBlockIndex = highlight.locator.blockIndex ?: return null
+    if (blockIndex == null || locatorBlockIndex != blockIndex) return null
+    val locatorCharOffset = highlight.locator.charOffset ?: return null
+    val textStartOffset = blockCharOffset ?: 0
+    val textEndOffset = textStartOffset + textLength
+    val containsOffset = if (textLength == 0) {
+        locatorCharOffset == textStartOffset
+    } else {
+        locatorCharOffset >= textStartOffset && locatorCharOffset < textEndOffset
+    }
+    if (!containsOffset) return null
+    val localStart = (locatorCharOffset - textStartOffset).coerceIn(0, textLength)
+    val quoteRange = text
+        ?.let { blockText ->
+            sharedNativeHighlightTextRangeInBlock(
+                blockText = blockText,
+                highlightText = highlight.locator.textQuote ?: highlight.text,
+                preferredStart = localStart
+            )
+        }
+    if (quoteRange != null) return quoteRange
+    val fallbackLength = (highlight.locator.textQuote ?: highlight.text)
+        .takeIf { it.isNotBlank() }
+        ?.length
+        ?: return null
+    val localEnd = (localStart + fallbackLength).coerceIn(localStart, textLength)
+    return if (localStart < localEnd) SharedNativeReaderTextRange(localStart, localEnd) else null
+}
+
+private fun SharedNativeReaderTextRange.matchesSharedNativeHighlightText(
+    blockText: String,
+    highlightText: String
+): Boolean {
+    if (start !in 0..end || end > blockText.length || highlightText.isBlank()) return true
+    val actual = blockText.substring(start, end).sharedNativeComparableText()
+    val expected = highlightText.sharedNativeComparableText()
+    if (actual.isBlank() || expected.isBlank()) return true
+    return actual == expected || expected.contains(actual) || actual.contains(expected)
+}
+
+private fun sharedNativeHighlightTextRangeInBlock(
+    blockText: String,
+    highlightText: String,
+    preferredStart: Int? = null
+): SharedNativeReaderTextRange? {
+    val quote = highlightText.trim().takeIf { it.isNotBlank() } ?: return null
+    if (blockText.isEmpty()) return null
+    if (quote.contains(blockText, ignoreCase = false) || quote.contains(blockText, ignoreCase = true)) {
+        return SharedNativeReaderTextRange(0, blockText.length)
+    }
+    val exact = blockText.nearestIndexOf(quote, preferredStart, ignoreCase = false)
+    if (exact >= 0) {
+        return SharedNativeReaderTextRange(exact, (exact + quote.length).coerceAtMost(blockText.length))
+    }
+    val relaxed = blockText.nearestIndexOf(quote, preferredStart, ignoreCase = true)
+    if (relaxed >= 0) {
+        return SharedNativeReaderTextRange(relaxed, (relaxed + quote.length).coerceAtMost(blockText.length))
+    }
+    return sharedNativeFuzzyTextRange(blockText, quote)
+}
+
+private fun String.nearestIndexOf(
+    needle: String,
+    preferredStart: Int?,
+    ignoreCase: Boolean
+): Int {
+    if (needle.isEmpty()) return -1
+    if (preferredStart == null) return indexOf(needle, ignoreCase = ignoreCase)
+    var best = -1
+    var bestDistance = Int.MAX_VALUE
+    var searchStart = 0
+    while (searchStart <= length) {
+        val index = indexOf(needle, startIndex = searchStart, ignoreCase = ignoreCase)
+        if (index < 0) break
+        val distance = kotlin.math.abs(index - preferredStart)
+        if (distance < bestDistance) {
+            best = index
+            bestDistance = distance
+        }
+        searchStart = index + 1
+    }
+    return best
+}
+
+private fun sharedNativeFuzzyTextRange(
+    source: String,
+    target: String,
+    ignoreCase: Boolean = true
+): SharedNativeReaderTextRange? {
+    if (target.isBlank()) return null
+    val targetWords = target.split("\\s+".toRegex()).filter { it.isNotEmpty() }
+    if (targetWords.isEmpty()) return null
+    var searchStart = 0
+    while (searchStart < source.length) {
+        val firstIndex = source.indexOf(targetWords[0], searchStart, ignoreCase = ignoreCase)
+        if (firstIndex < 0) return null
+        var currentIndex = firstIndex + targetWords[0].length
+        var allMatch = true
+        for (index in 1 until targetWords.size) {
+            while (currentIndex < source.length && source[currentIndex].isWhitespace()) {
+                currentIndex++
+            }
+            if (currentIndex >= source.length) {
+                allMatch = false
+                break
+            }
+            val word = targetWords[index]
+            if (source.regionMatches(currentIndex, word, 0, word.length, ignoreCase = ignoreCase)) {
+                currentIndex += word.length
+            } else {
+                allMatch = false
+                break
+            }
+        }
+        if (allMatch) return SharedNativeReaderTextRange(firstIndex, currentIndex)
+        searchStart = firstIndex + 1
+    }
+    return null
+}
+
+private fun String.sharedNativeComparableText(): String {
+    return replace(Regex("\\s+"), " ").trim()
+}
+
+internal fun sharedNativeHighlightRangeForBlock(
+    highlight: UserHighlight,
+    blockCfi: String?,
+    textStartOffset: Int,
+    textLength: Int,
+    text: String?,
+    blockIndex: Int? = null,
+    blockCharOffset: Int? = null
+): SharedNativeReaderTextRange? {
+    sharedNativeBlockLocatorHighlightRangeInBlock(
+        highlight = highlight,
+        blockIndex = blockIndex,
+        blockCharOffset = blockCharOffset,
+        textLength = textLength,
+        text = text
+    )?.let { return it }
+    sharedNativeLocatorHighlightRangeInBlock(
+        highlight = highlight,
+        textStartOffset = textStartOffset,
+        textLength = textLength,
+        text = text
+    )?.let { return it }
+    return sharedNativeHighlightRangeInBlock(
+        highlight = highlight,
+        blockCfi = blockCfi,
+        textLength = textLength,
+        text = text
+    )
+}
+
+internal fun sharedNativeVisibleHighlightsForPage(
+    highlights: List<UserHighlight>,
+    page: ReaderPage
+): List<UserHighlight> {
+    return highlights.visibleInPage(page)
 }
 
 private fun AnnotatedString.Builder.applySelectionToTextRange(
@@ -2437,19 +2782,28 @@ private fun sharedNativeHighlightRangeInBlock(
     }
     localStart = localStart.coerceIn(0, textLength)
     localEnd = localEnd.coerceIn(localStart, textLength)
-    if (localStart < localEnd) {
-        return SharedNativeReaderTextRange(localStart, localEnd)
+    val cfiRange = if (localStart < localEnd) {
+        SharedNativeReaderTextRange(localStart, localEnd)
+    } else {
+        null
     }
-
-    val quote = highlight.text.takeIf { it.isNotBlank() }
-    val blockText = text
-    if (quote != null && blockText != null) {
-        val exact = blockText.indexOf(quote, ignoreCase = false)
-        if (exact >= 0) return SharedNativeReaderTextRange(exact, (exact + quote.length).coerceAtMost(textLength))
-        val relaxed = blockText.indexOf(quote, ignoreCase = true)
-        if (relaxed >= 0) return SharedNativeReaderTextRange(relaxed, (relaxed + quote.length).coerceAtMost(textLength))
+    val quoteRange = text
+        ?.let { blockText ->
+            sharedNativeHighlightTextRangeInBlock(
+                blockText = blockText,
+                highlightText = highlight.text,
+                preferredStart = cfiRange?.start ?: localStart
+            )
+        }
+    if (
+        cfiRange != null &&
+        quoteRange != null &&
+        text != null &&
+        !cfiRange.matchesSharedNativeHighlightText(text, highlight.text)
+    ) {
+        return quoteRange
     }
-    return null
+    return cfiRange ?: quoteRange
 }
 
 private fun String.sharedNativeCfiPointOrNull(): SharedNativeCfiPoint? {
@@ -2503,7 +2857,7 @@ internal fun sharedNativeReaderHighlightForSelection(
         startOffset = selection.startOffset,
         endOffset = selection.endOffset,
         blockIndex = blockIndex,
-        charOffset = blockIndex?.let { selection.startBlockCharOffset },
+        charOffset = blockIndex?.let { selection.startOffset },
         textQuote = selection.text,
         cfi = selection.cfi
     )
@@ -2579,6 +2933,7 @@ private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
 
 private const val ReaderNativeAnnotationUrl = "URL"
 private const val ReaderNativeAnnotationHighlight = "HIGHLIGHT"
+private const val DesktopHighlightMapLogTag = "EpistemeDesktopHighlightMap"
 private const val EpubPageFitLogTag = "EpistemeEpubPageFit"
 private const val EpubCutoffLogTag = "EpistemeEpubCutoff"
 private const val EpubPageFitTailBlockCount = 4

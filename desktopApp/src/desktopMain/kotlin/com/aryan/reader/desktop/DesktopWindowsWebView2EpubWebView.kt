@@ -31,6 +31,7 @@ import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.ui.ReaderContentNavigationTarget
 import com.aryan.reader.shared.ui.readerString
+import kotlinx.coroutines.delay
 import org.eclipse.swt.SWT
 import org.eclipse.swt.awt.SWT_AWT
 import org.eclipse.swt.browser.Browser
@@ -47,8 +48,8 @@ import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.io.File
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import kotlin.math.roundToInt
 
 @Composable
 internal fun DesktopWindowsWebView2EpubWebView(
@@ -95,7 +96,7 @@ internal fun DesktopWindowsWebView2EpubWebView(
     DisposableEffect(panel) {
         onDispose {
             logDesktopWebView2("compose_dispose panel=${panel.instanceId}")
-            panel.disposeWebView()
+            panel.disposeWebView(waitForSwtDisposal = true)
         }
     }
 
@@ -167,7 +168,16 @@ internal fun DesktopWindowsWebView2EpubWebView(
         LaunchedEffect(isFullscreen, loaded) {
             if (!loaded) return@LaunchedEffect
             logDesktopWebView2("compose_script panel=${panel.instanceId} name=fullscreen value=$isFullscreen")
-            panel.executeJavaScript("window.readerDesktopFullscreen = ${if (isFullscreen) "true" else "false"};")
+            panel.executeJavaScript(
+                "window.readerDesktopFullscreen = ${if (isFullscreen) "true" else "false"};" +
+                    "window.dispatchEvent(new Event('resize'));"
+            )
+            panel.relayoutWebView("fullscreen_state_changed")
+            DesktopWebView2FullscreenRelayoutDelaysMillis.forEach { delayMillis ->
+                delay(delayMillis)
+                panel.relayoutWebView("fullscreen_state_changed_after_${delayMillis}ms")
+                panel.executeJavaScript("window.dispatchEvent(new Event('resize'));")
+            }
         }
 
         LaunchedEffect(html, loaded) {
@@ -303,8 +313,14 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
     private var controller: DesktopWindowsWebView2Controller? = null
     private var requestedHtml: String? = null
 
+    val hasController: Boolean get() = controller != null
+
+    @Volatile
+    private var disposeInProgress = false
+
     init {
         background = initialBackground
+        updateModeSwitchPanelState("init")
         addComponentListener(
             object : ComponentAdapter() {
                 override fun componentResized(event: ComponentEvent) {
@@ -313,10 +329,42 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
                         "awt_canvas_resized panel=$instanceId size=${width}x${height} " +
                             "bounds=${bounds.formatAwtBounds()} screen=${safeScreenLocationLog()}"
                     )
-                    controller?.resize(width, height)
+                    updateModeSwitchPanelState("component_resized")
+                    controller?.resize(width, height, reason = "component_resized")
+                }
+
+                override fun componentMoved(event: ComponentEvent) {
+                    logWebViewLayoutDiag(
+                        "awt_canvas_moved panel=$instanceId size=${width}x${height} " +
+                            "bounds=${bounds.formatAwtBounds()} screen=${safeScreenLocationLog()}"
+                    )
+                    updateModeSwitchPanelState("component_moved")
+                    controller?.resize(width, height, reason = "component_moved")
+                }
+
+                override fun componentShown(event: ComponentEvent) {
+                    logWebViewLayoutDiag(
+                        "awt_canvas_shown panel=$instanceId size=${width}x${height} " +
+                            "bounds=${bounds.formatAwtBounds()} screen=${safeScreenLocationLog()}"
+                    )
+                    updateModeSwitchPanelState("component_shown")
+                    controller?.resize(width, height, reason = "component_shown")
                 }
             }
         )
+    }
+
+    fun relayoutWebView(reason: String) {
+        EventQueue.invokeLater {
+            updateModeSwitchPanelState("relayout_$reason")
+            logWebViewLayoutDiag(
+                "awt_canvas_relayout panel=$instanceId reason=$reason size=${width}x${height} " +
+                    "bounds=${bounds.formatAwtBounds()} screen=${safeScreenLocationLog()} displayable=$isDisplayable"
+            )
+            revalidate()
+            repaint()
+            controller?.resize(width, height, reason = reason)
+        }
     }
 
     fun updateBackground(color: java.awt.Color) {
@@ -344,6 +392,7 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
             "panel_configure panel=$instanceId handlers=${bridgeHandlersByMethod.size} network=$networkAccessEnabled " +
                 "controller=${controller != null}"
         )
+        updateModeSwitchPanelState("configure")
     }
 
     fun loadHtml(html: String) {
@@ -360,6 +409,7 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
             "panel_load_requested panel=$instanceId canvas=${width}x${height} " +
                 "bounds=${bounds.formatAwtBounds()} controller=${controller != null}"
         )
+        updateModeSwitchPanelState("load_requested")
         controller?.loadHtml(html)
     }
 
@@ -370,14 +420,38 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
         controller?.executeJavaScript(script)
     }
 
-    fun disposeWebView() {
-        logDesktopWebView2("panel_dispose panel=$instanceId controller=${controller != null}")
-        controller?.dispose()
-        controller = null
+    fun disposeWebView(
+        waitForSwtDisposal: Boolean = false,
+        detachAwtCanvas: Boolean = true
+    ) {
+        if (disposeInProgress) {
+            logDesktopWebView2(
+                "panel_dispose_skip panel=$instanceId reason=in_progress controller=${controller != null}"
+            )
+            updateModeSwitchPanelState("dispose_skip_in_progress")
+            return
+        }
+        disposeInProgress = true
+        logDesktopWebView2(
+            "panel_dispose panel=$instanceId controller=${controller != null} " +
+                "waitForSwtDisposal=$waitForSwtDisposal detachAwtCanvas=$detachAwtCanvas"
+        )
+        try {
+            updateModeSwitchPanelState("dispose_begin")
+            if (detachAwtCanvas) {
+                retireAwtCanvasFromReaderSurface()
+            }
+            controller?.dispose(waitForCompletion = waitForSwtDisposal)
+            controller = null
+            updateModeSwitchPanelState("dispose_end")
+        } finally {
+            disposeInProgress = false
+        }
     }
 
     override fun addNotify() {
         super.addNotify()
+        updateModeSwitchPanelState("add_notify")
         logDesktopWebView2(
             "panel_add_notify panel=$instanceId displayable=$isDisplayable showing=$isShowing " +
                 "canvas=${width}x${height} controller=${controller != null} hasHtml=${requestedHtml != null}"
@@ -414,14 +488,134 @@ private class DesktopWindowsWebView2Panel(initialBackground: java.awt.Color) : C
                 }
             )
             requestedHtml?.let { html -> controller?.loadHtml(html) }
-            controller?.resize(width, height)
+            controller?.resize(width, height, reason = "add_notify")
         }
     }
 
     override fun removeNotify() {
         logDesktopWebView2("panel_remove_notify panel=$instanceId")
-        disposeWebView()
+        updateModeSwitchPanelState("remove_notify_begin")
+        disposeWebView(waitForSwtDisposal = true, detachAwtCanvas = true)
         super.removeNotify()
+        updateModeSwitchPanelState("remove_notify_end")
+    }
+
+    private fun retireAwtCanvasFromReaderSurface() {
+        runOnAwtEventThreadBlocking(
+            onError = { error ->
+                logDesktopWebView2(
+                    "panel_retire_failed panel=$instanceId error=\"${error.message.orEmpty().logPreview(300)}\""
+                )
+            }
+        ) {
+            logWebViewLayoutDiag(
+                "awt_canvas_retire panel=$instanceId size=${width}x${height} " +
+                    "bounds=${bounds.formatAwtBounds()} displayable=$isDisplayable visible=$isVisible"
+            )
+            updateModeSwitchPanelState("retire_begin")
+            val parentContainer = parent
+            val grandParent = parentContainer?.parent
+            logReaderModeSwitch(
+                "webview2_interop_retire_begin panel=$instanceId " +
+                    "parent=${parentContainer.formatAwtComponentState()} grandParent=${grandParent.formatAwtComponentState()}"
+            )
+            isVisible = false
+            setBounds(0, 0, 0, 0)
+            parentContainer?.isVisible = false
+            parentContainer?.setBounds(0, 0, 0, 0)
+            parentContainer?.revalidate()
+            parentContainer?.repaint()
+            grandParent?.revalidate()
+            grandParent?.repaint()
+            repaint()
+            scheduleRetiredInteropHostCleanup(parentContainer, grandParent, reason = "retire")
+            updateModeSwitchPanelState("retire_end")
+            logReaderModeSwitch(
+                "webview2_interop_retire_end panel=$instanceId " +
+                    "parent=${parentContainer.formatAwtComponentState()} grandParent=${grandParent.formatAwtComponentState()}"
+            )
+        }
+    }
+
+    private fun scheduleRetiredInteropHostCleanup(
+        parentContainer: java.awt.Container?,
+        grandParent: java.awt.Container?,
+        reason: String
+    ) {
+        if (parentContainer == null || grandParent == null) return
+        EventQueue.invokeLater {
+            cleanupRetiredInteropHost(parentContainer, grandParent, "${reason}_next_event")
+        }
+        EventQueue.invokeLater {
+            DesktopWebView2InteropHostCleanupDelaysMillis.forEach { delayMillis ->
+                javax.swing.Timer(delayMillis.toInt()) { _ ->
+                    cleanupRetiredInteropHost(parentContainer, grandParent, "${reason}_after_${delayMillis}ms")
+                }.apply {
+                    isRepeats = false
+                    start()
+                }
+            }
+        }
+    }
+
+    private fun cleanupRetiredInteropHost(
+        parentContainer: java.awt.Container,
+        grandParent: java.awt.Container,
+        reason: String
+    ) {
+        val isInteropHost = parentContainer.javaClass.simpleName == DesktopSwingInteropHostClassName
+        val ownsOnlyRetiredPanel = parentContainer.components.all { component ->
+            component === this || !component.isDisplayable || !component.isShowing
+        }
+        if (!isInteropHost || !ownsOnlyRetiredPanel || parentContainer.parent !== grandParent) {
+            logReaderModeSwitch(
+                "webview2_interop_host_cleanup_skip panel=$instanceId reason=$reason " +
+                    "isInteropHost=$isInteropHost ownsOnlyRetiredPanel=$ownsOnlyRetiredPanel " +
+                    "parent=${parentContainer.formatAwtComponentState()} " +
+                    "grandParent=${grandParent.formatAwtComponentState()} " +
+                    "parentParent=${parentContainer.parent?.javaClass?.simpleName ?: "none"} " +
+                    "children=${parentContainer.formatAwtChildrenState()}"
+            )
+            return
+        }
+        logReaderModeSwitch(
+            "webview2_interop_host_cleanup_begin panel=$instanceId reason=$reason " +
+                "parent=${parentContainer.formatAwtComponentState()} " +
+                "grandParent=${grandParent.formatAwtComponentState()} " +
+                "children=${parentContainer.formatAwtChildrenState()}"
+        )
+        if (parent === parentContainer) {
+            parentContainer.remove(this)
+        }
+        parentContainer.removeAll()
+        grandParent.remove(parentContainer)
+        parentContainer.invalidate()
+        grandParent.invalidate()
+        grandParent.validate()
+        grandParent.repaint()
+        updateModeSwitchPanelState("interop_host_cleanup_$reason")
+        logReaderModeSwitch(
+            "webview2_interop_host_cleanup_end panel=$instanceId reason=$reason " +
+                "parent=${parentContainer.formatAwtComponentState()} " +
+                "grandParent=${grandParent.formatAwtComponentState()} " +
+                "parentParent=${parentContainer.parent?.javaClass?.simpleName ?: "none"} " +
+                "grandParentChildren=${grandParent.componentCount}"
+        )
+    }
+
+    private fun updateModeSwitchPanelState(event: String) {
+        val snapshot = modeSwitchPanelSnapshot(event)
+        DesktopWebView2ModeSwitchPanelStates[instanceId] = snapshot
+        logReaderModeSwitch("webview2_panel $snapshot")
+    }
+
+    fun modeSwitchPanelSnapshot(event: String): String {
+        val parentContainer = parent
+        val parentName = parentContainer?.javaClass?.simpleName ?: "none"
+        val parentDetails = parentContainer.formatAwtComponentState()
+        return "panel=$instanceId event=$event visible=$isVisible displayable=$isDisplayable " +
+            "showing=$isShowing size=${width}x${height} bounds=${bounds.formatAwtBounds()} " +
+            "parent=$parentName parentState=$parentDetails controller=${controller != null} hasHtml=${requestedHtml != null}"
     }
 }
 
@@ -441,6 +635,9 @@ private class DesktopWindowsWebView2Controller(
     private var browser: Browser? = null
     private var bridgeFunction: BrowserFunction? = null
 
+    @Volatile
+    private var lastBrowserBoundsLog: String = ""
+
     init {
         logDesktopWebView2("controller_init panel=$instanceId canvas=${canvas.width}x${canvas.height}")
         logWebViewLayoutDiag(
@@ -458,7 +655,7 @@ private class DesktopWindowsWebView2Controller(
         )
         logWebViewLayoutDiag(
             "controller_load_enqueue panel=$instanceId htmlChars=${html.length} browser=${browser != null} " +
-                "canvas=${canvas.width}x${canvas.height} browserBounds=${browser?.bounds?.formatSwtBounds().orEmpty()}"
+                "canvas=${canvas.width}x${canvas.height} browserBounds=$lastBrowserBoundsLog"
         )
         DesktopSwtWebView2EventLoop.asyncExec(reportError) {
             if (disposed) return@asyncExec
@@ -493,25 +690,41 @@ private class DesktopWindowsWebView2Controller(
         }
     }
 
-    fun resize(width: Int, height: Int) {
+    fun resize(width: Int, height: Int, reason: String = "resize") {
         DesktopSwtWebView2EventLoop.asyncExec(reportError) {
             if (disposed) return@asyncExec
-            applyCanvasSizeToBrowser(width, height, reason = "resize")
+            applyCanvasSizeToBrowser(width, height, reason = reason)
         }
     }
 
-    fun dispose() {
+    fun dispose(waitForCompletion: Boolean = false) {
         if (disposed) return
         disposed = true
-        logDesktopWebView2("controller_dispose panel=$instanceId")
-        DesktopSwtWebView2EventLoop.asyncExec({}) {
-            bridgeFunction?.takeUnless { it.isDisposed }?.dispose()
-            bridgeFunction = null
-            browser?.takeUnless { it.isDisposed }?.dispose()
-            browser = null
-            shell?.takeUnless { it.isDisposed }?.dispose()
-            shell = null
+        logDesktopWebView2("controller_dispose panel=$instanceId waitForCompletion=$waitForCompletion")
+        logReaderModeSwitch("webview2_controller_dispose panel=$instanceId waitForCompletion=$waitForCompletion")
+        if (waitForCompletion) {
+            DesktopSwtWebView2EventLoop.syncExec({}) {
+                disposeSwtWidgets()
+            }
+        } else {
+            DesktopSwtWebView2EventLoop.asyncExec({}) {
+                disposeSwtWidgets()
+            }
         }
+    }
+
+    private fun disposeSwtWidgets() {
+        logReaderModeSwitch(
+            "webview2_swt_dispose_begin panel=$instanceId shell=${shell?.isDisposed == false} browser=${browser?.isDisposed == false}"
+        )
+        bridgeFunction?.takeUnless { it.isDisposed }?.dispose()
+        bridgeFunction = null
+        browser?.takeUnless { it.isDisposed }?.dispose()
+        browser = null
+        shell?.takeUnless { it.isDisposed }?.dispose()
+        shell = null
+        lastBrowserBoundsLog = ""
+        logReaderModeSwitch("webview2_swt_dispose_end panel=$instanceId")
     }
 
     private fun createBrowser(display: Display) {
@@ -658,19 +871,19 @@ private class DesktopWindowsWebView2Controller(
             )
             return
         }
-        val targetWidth = width.coerceAtLeast(1)
-        val targetHeight = (height * hostScale.scaleY).roundToInt().coerceAtLeast(1)
-        webShell.setBounds(0, 0, targetWidth, targetHeight)
-        webBrowser?.setBounds(0, 0, targetWidth, targetHeight)
+        val targetBounds = desktopWebView2TargetBoundsForCanvas(width, height) ?: return
+        webShell.setBounds(targetBounds.x, targetBounds.y, targetBounds.width, targetBounds.height)
+        webBrowser?.setBounds(targetBounds.x, targetBounds.y, targetBounds.width, targetBounds.height)
+        lastBrowserBoundsLog = webBrowser?.bounds?.formatSwtBounds().orEmpty()
         logDesktopWebView2(
             "controller_resize panel=$instanceId reason=$reason requested=${width}x${height} " +
-                "target=${targetWidth}x$targetHeight axisMode=logicalWidth_scaledHeight_zeroOrigin " +
+                "target=${targetBounds.width}x${targetBounds.height} axisMode=logicalCanvas_zeroOrigin " +
                 "shellBounds=${webShell.bounds.x},${webShell.bounds.y} ${webShell.bounds.width}x${webShell.bounds.height} " +
                 "browserBounds=${webBrowser?.bounds?.width ?: -1}x${webBrowser?.bounds?.height ?: -1}"
         )
         logWebViewLayoutDiag(
             "controller_resize panel=$instanceId reason=$reason requested=${width}x${height} " +
-                "target=${targetWidth}x$targetHeight axisMode=logicalWidth_scaledHeight_zeroOrigin " +
+                "target=${targetBounds.width}x${targetBounds.height} axisMode=logicalCanvas_zeroOrigin " +
                 "hostScale=${hostScale.scaleX.formatLogFloat()}x${hostScale.scaleY.formatLogFloat()} " +
                 "canvas=${canvas.width}x${canvas.height} canvasBounds=${canvas.bounds.formatAwtBounds()} " +
                 "shellBounds=${webShell.bounds.formatSwtBounds()} " +
@@ -747,25 +960,114 @@ private object DesktopSwtWebView2EventLoop {
             return
         }
         val swtDisplay = display
-        if (swtDisplay == null || swtDisplay.isDisposed) {
+        if (swtDisplay == null) {
             logDesktopWebView2("swt_async_display_unavailable")
             onError(IllegalStateException("SWT display is not available."))
             return
         }
-        swtDisplay.asyncExec {
-            runCatching {
-                if (!swtDisplay.isDisposed) {
-                    block(swtDisplay)
-                }
-            }.onFailure(onError)
+        runCatching {
+            swtDisplay.asyncExec {
+                runCatching {
+                    if (!swtDisplay.isDisposed) {
+                        block(swtDisplay)
+                    }
+                }.onFailure(onError)
+            }
+        }.onFailure { error ->
+            logDesktopWebView2("swt_async_enqueue_failed error=\"${error.message.orEmpty().logPreview(300)}\"")
+            onError(error)
+        }
+    }
+
+    fun syncExec(
+        onError: (Throwable) -> Unit,
+        block: (Display) -> Unit
+    ) {
+        val displayReady = runCatching {
+            ready.await(DesktopSwtReadyTimeoutSeconds, TimeUnit.SECONDS)
+        }.getOrElse { error ->
+            Thread.currentThread().interrupt()
+            onError(error)
+            return
+        }
+        if (!displayReady) {
+            logDesktopWebView2("swt_sync_timeout")
+            onError(IllegalStateException("SWT display did not become ready."))
+            return
+        }
+        startupError?.let { error ->
+            logDesktopWebView2("swt_sync_startup_error error=\"${error.message.orEmpty().logPreview(300)}\"")
+            onError(error)
+            return
+        }
+        val swtDisplay = display
+        if (swtDisplay == null) {
+            logDesktopWebView2("swt_sync_display_unavailable")
+            onError(IllegalStateException("SWT display is not available."))
+            return
+        }
+        runCatching {
+            swtDisplay.syncExec {
+                runCatching {
+                    if (!swtDisplay.isDisposed) {
+                        block(swtDisplay)
+                    }
+                }.onFailure(onError)
+            }
+        }.onFailure { error ->
+            logDesktopWebView2("swt_sync_enqueue_failed error=\"${error.message.orEmpty().logPreview(300)}\"")
+            onError(error)
         }
     }
 }
 
 private fun Color.toAwtColor(): java.awt.Color = java.awt.Color(toArgb(), true)
 
+private fun runOnAwtEventThreadBlocking(
+    onError: (Throwable) -> Unit = {},
+    block: () -> Unit
+) {
+    if (EventQueue.isDispatchThread()) {
+        runCatching(block).onFailure(onError)
+        return
+    }
+    runCatching {
+        EventQueue.invokeAndWait {
+            runCatching(block).onFailure(onError)
+        }
+    }.onFailure(onError)
+}
+
 private fun java.awt.Rectangle.formatAwtBounds(): String {
     return "${x},${y} ${width}x$height"
+}
+
+private fun java.awt.Component?.formatAwtComponentState(): String {
+    if (this == null) return "none"
+    return "${javaClass.simpleName}{visible=$isVisible displayable=$isDisplayable showing=$isShowing " +
+        "size=${width}x$height bounds=${bounds.formatAwtBounds()}}"
+}
+
+private fun java.awt.Container.formatAwtChildrenState(): String {
+    if (componentCount == 0) return "none"
+    return components.joinToString(prefix = "[", postfix = "]") { component ->
+        component.formatAwtComponentState()
+    }
+}
+
+private fun java.awt.Component.desktopWebView2Descendants(includeSelf: Boolean = false): List<java.awt.Component> {
+    val descendants = mutableListOf<java.awt.Component>()
+    if (includeSelf) descendants += this
+    fun collect(component: java.awt.Component) {
+        if (component is java.awt.Container) {
+            component.components.forEach { child ->
+                descendants += child
+                collect(child)
+            }
+        }
+    }
+    collect(this)
+    return descendants
 }
 
 private fun org.eclipse.swt.graphics.Rectangle.formatSwtBounds(): String {
@@ -783,6 +1085,23 @@ private data class DesktopWebView2HostScale(
     val scaleX: Float,
     val scaleY: Float
 )
+
+internal data class DesktopWebView2TargetBounds(
+    val x: Int,
+    val y: Int,
+    val width: Int,
+    val height: Int
+)
+
+internal fun desktopWebView2TargetBoundsForCanvas(width: Int, height: Int): DesktopWebView2TargetBounds? {
+    if (width <= 0 || height <= 0) return null
+    return DesktopWebView2TargetBounds(
+        x = 0,
+        y = 0,
+        width = width.coerceAtLeast(1),
+        height = height.coerceAtLeast(1)
+    )
+}
 
 private fun java.awt.Component.webView2HostScale(): DesktopWebView2HostScale {
     val transform = graphicsConfiguration?.defaultTransform
@@ -976,6 +1295,7 @@ private fun desktopWebView2DocumentProbeScript(eventName: String): String {
 }
 
 private var DesktopWebView2InstanceSeed = 0
+private val DesktopWebView2ModeSwitchPanelStates = ConcurrentHashMap<Int, String>()
 
 @Synchronized
 private fun nextDesktopWebView2InstanceId(): Int {
@@ -983,9 +1303,96 @@ private fun nextDesktopWebView2InstanceId(): Int {
     return DesktopWebView2InstanceSeed
 }
 
+internal fun logDesktopWebView2ModeSwitchSnapshot(reason: String) {
+    val states = DesktopWebView2ModeSwitchPanelStates
+        .toSortedMap()
+        .values
+        .joinToString(separator = " | ")
+        .ifBlank { "none" }
+    logReaderModeSwitch(
+        "webview2_snapshot reason=$reason knownPanelCount=${DesktopWebView2ModeSwitchPanelStates.size} panels=$states"
+    )
+}
+
+internal fun cleanupRetiredDesktopWebView2InteropHosts(window: java.awt.Window?, reason: String) {
+    EventQueue.invokeLater {
+        if (window == null) {
+            logReaderModeSwitch("webview2_interop_host_sweep_skip reason=$reason window=null")
+            return@invokeLater
+        }
+        val interopHosts = window
+            .desktopWebView2Descendants()
+            .filterIsInstance<java.awt.Container>()
+            .filter { component -> component.javaClass.simpleName == DesktopSwingInteropHostClassName }
+        if (interopHosts.isEmpty()) {
+            logReaderModeSwitch(
+                "webview2_interop_host_sweep reason=$reason window=${window.formatAwtComponentState()} hosts=none"
+            )
+            return@invokeLater
+        }
+        interopHosts.forEach { host ->
+            cleanupRetiredDesktopWebView2InteropHost(window, host, reason)
+        }
+    }
+}
+
+private fun cleanupRetiredDesktopWebView2InteropHost(
+    window: java.awt.Window,
+    host: java.awt.Container,
+    reason: String
+) {
+    val panels = host
+        .desktopWebView2Descendants(includeSelf = true)
+        .filterIsInstance<DesktopWindowsWebView2Panel>()
+    val hostRetired = !host.isShowing || !host.isVisible || host.width <= 0 || host.height <= 0
+    val panelsRetired = panels.isNotEmpty() && panels.all { panel ->
+        !panel.isDisplayable || !panel.isShowing || panel.width <= 0 || panel.height <= 0 || !panel.hasController
+    }
+    val parent = host.parent
+    val removable = parent != null && hostRetired && panelsRetired
+    val panelStates = panels.joinToString(prefix = "[", postfix = "]") { panel ->
+        "panel=${panel.instanceId}{visible=${panel.isVisible} displayable=${panel.isDisplayable} " +
+            "showing=${panel.isShowing} size=${panel.width}x${panel.height} controller=${panel.hasController}}"
+    }.ifBlank { "none" }
+    logReaderModeSwitch(
+        "webview2_interop_host_sweep_candidate reason=$reason removable=$removable " +
+            "hostRetired=$hostRetired panelsRetired=$panelsRetired " +
+            "window=${window.formatAwtComponentState()} host=${host.formatAwtComponentState()} " +
+            "parent=${parent.formatAwtComponentState()} panels=$panelStates children=${host.formatAwtChildrenState()}"
+    )
+    if (!removable) return
+    panels.forEach { panel ->
+        if (panel.parent === host) {
+            host.remove(panel)
+        }
+    }
+    host.removeAll()
+    parent?.remove(host)
+    host.invalidate()
+    parent?.invalidate()
+    parent?.validate()
+    parent?.repaint()
+    window.invalidate()
+    window.validate()
+    window.repaint()
+    panels.forEach { panel ->
+        DesktopWebView2ModeSwitchPanelStates[panel.instanceId] =
+            panel.modeSwitchPanelSnapshot("interop_host_sweep_removed_$reason")
+        logReaderModeSwitch("webview2_panel ${DesktopWebView2ModeSwitchPanelStates[panel.instanceId]}")
+    }
+    logReaderModeSwitch(
+        "webview2_interop_host_sweep_removed reason=$reason " +
+            "window=${window.formatAwtComponentState()} host=${host.formatAwtComponentState()} " +
+            "parent=${parent.formatAwtComponentState()} parentChildren=${parent?.componentCount ?: -1}"
+    )
+}
+
 private const val DesktopSwtReadyTimeoutSeconds = 10L
+private val DesktopWebView2FullscreenRelayoutDelaysMillis = longArrayOf(180L, 260L, 420L)
+private val DesktopWebView2InteropHostCleanupDelaysMillis = longArrayOf(80L, 220L)
 private const val DesktopWebView2NativeBridgeName = "epistemeCallNative"
 private const val DesktopWebView2DiagnosticMethodName = "readerWebView2Diagnostic"
+private const val DesktopSwingInteropHostClassName = "SwingInteropViewGroup"
 private const val DesktopWebView2SwtBrowserType = "edge"
 private const val DesktopWebView2EdgeDataDirProperty = "org.eclipse.swt.browser.EdgeDataDir"
 

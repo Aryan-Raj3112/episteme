@@ -483,13 +483,40 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun DesktopReaderWindowState.readerCloseContentLabel(): String {
+        return when (content) {
+            DesktopReaderWindowContent.Opening -> "opening"
+            is DesktopReaderWindowContent.PasswordRequired -> "password_required"
+            is DesktopReaderWindowContent.Pdf -> "pdf"
+            is DesktopReaderWindowContent.Text -> "text"
+        }
+    }
+
     fun DesktopReaderWindowState.closeReaderResources() {
+        logDesktopReaderClose(
+            "close_resources_begin windowId=${id.logPreview(80)} bookId=${bookId.logPreview(80)} " +
+                "content=${readerCloseContentLabel()} fullscreen=$fullscreen"
+        )
         cancelReaderWork()
-        when (val content = content) {
-            DesktopReaderWindowContent.Opening,
-            is DesktopReaderWindowContent.PasswordRequired -> Unit
-            is DesktopReaderWindowContent.Pdf -> content.document.close()
-            is DesktopReaderWindowContent.Text -> Unit
+        runCatching {
+            when (val content = content) {
+                DesktopReaderWindowContent.Opening,
+                is DesktopReaderWindowContent.PasswordRequired -> Unit
+                is DesktopReaderWindowContent.Pdf -> content.document.close()
+                is DesktopReaderWindowContent.Text -> Unit
+            }
+        }.onSuccess {
+            logDesktopReaderClose(
+                "close_resources_end windowId=${id.logPreview(80)} bookId=${bookId.logPreview(80)} " +
+                    "content=${readerCloseContentLabel()}"
+            )
+        }.onFailure { error ->
+            logDesktopReaderClose(
+                "close_resources_fail windowId=${id.logPreview(80)} bookId=${bookId.logPreview(80)} " +
+                    "content=${readerCloseContentLabel()} error=\"${error.message.orEmpty().logPreview(240)}\" " +
+                    "type=${error.javaClass.simpleName}"
+            )
+            throw error
         }
     }
 
@@ -1061,14 +1088,26 @@ internal fun EpistemeDesktopApp(
     }
 
     fun closeReaderWindow(windowId: String) {
-        val closing = readerWindows.firstOrNull { it.id == windowId } ?: return
+        logDesktopReaderClose("close_window_request windowId=${windowId.logPreview(80)} openWindows=${readerWindows.size}")
+        val closing = readerWindows.firstOrNull { it.id == windowId } ?: run {
+            logDesktopReaderClose("close_window_missing windowId=${windowId.logPreview(80)} openWindows=${readerWindows.size}")
+            return
+        }
         val closingBookIds = setOf(closing.bookId)
         val shouldStopTts = (closing.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
             it.isLoading || it.isPlaying || it.isPaused
         } == true
+        logDesktopReaderClose(
+            "close_window_begin windowId=${closing.id.logPreview(80)} bookId=${closing.bookId.logPreview(80)} " +
+                "content=${closing.readerCloseContentLabel()} fullscreen=${closing.fullscreen} shouldStopTts=$shouldStopTts"
+        )
         markReaderBooksClosing(closingBookIds)
         closing.cancelReaderWork()
         readerWindows = readerWindows.withoutDesktopReaderWindow(windowId)
+        logDesktopReaderClose(
+            "close_window_removed windowId=${closing.id.logPreview(80)} bookId=${closing.bookId.logPreview(80)} " +
+                "remainingWindows=${readerWindows.size}"
+        )
         updateState(state.reduce(AppAction.BookTabClosed(closing.bookId)))
         if (shouldStopTts) {
             scope.launch { desktopTtsAdapter.stop() }
@@ -3791,7 +3830,7 @@ internal fun EpistemeDesktopApp(
         }
 
         readerWindows.forEach { readerWindow ->
-            key(readerWindow.id) {
+            key(readerWindow.id, readerWindow.surfaceResetId) {
                 val restoredReaderWindowState = savedReaderWindowState
                 val windowState = rememberWindowState(
                     placement = restoredReaderWindowState?.toReaderWindowPlacement() ?: WindowPlacement.Floating,
@@ -3801,6 +3840,10 @@ internal fun EpistemeDesktopApp(
                 )
                 Window(
                     onCloseRequest = {
+                        logDesktopReaderClose(
+                            "window_on_close_request windowId=${readerWindow.id.logPreview(80)} " +
+                                "bookId=${readerWindow.bookId.logPreview(80)} fullscreen=${readerWindow.fullscreen}"
+                        )
                         if (!readerWindow.fullscreen) {
                             saveReaderWindowStateSnapshot(DesktopWindowStateSnapshot.fromWindowState(windowState))
                         }
@@ -3814,6 +3857,11 @@ internal fun EpistemeDesktopApp(
                     val latestReaderWindowForDispose by rememberUpdatedState(readerWindow)
                     DisposableEffect(readerWindow.id) {
                         onDispose {
+                            logDesktopReaderClose(
+                                "window_dispose_effect windowId=${latestReaderWindowForDispose.id.logPreview(80)} " +
+                                    "bookId=${latestReaderWindowForDispose.bookId.logPreview(80)} " +
+                                    "content=${latestReaderWindowForDispose.readerCloseContentLabel()}"
+                            )
                             latestReaderWindowForDispose.closeReaderResources()
                         }
                     }
@@ -3980,6 +4028,40 @@ internal fun EpistemeDesktopApp(
                                 }
 
                                 is DesktopReaderWindowContent.Text -> {
+                                    var previousTextReaderMode by remember(readerWindow.id) {
+                                        mutableStateOf(content.session.reader.settings.readingMode)
+                                    }
+                                    LaunchedEffect(content.session.reader.settings.readingMode) {
+                                        val previousMode = previousTextReaderMode
+                                        val currentMode = content.session.reader.settings.readingMode
+                                        previousTextReaderMode = currentMode
+                                        if (
+                                            shouldResetDesktopTextReaderWindowSurface(
+                                                previousMode = previousMode,
+                                                currentMode = currentMode,
+                                                usesWebView2 = desktopEpubWebViewUsesWebView2()
+                                            )
+                                        ) {
+                                            if (!readerWindow.fullscreen) {
+                                                saveReaderWindowStateSnapshot(
+                                                    DesktopWindowStateSnapshot.fromWindowState(windowState)
+                                                )
+                                            }
+                                            logReaderModeSwitch(
+                                                "window_surface_reset_request windowId=${readerWindow.id.logPreview()} " +
+                                                    "bookId=${readerWindow.bookId.logPreview()} previousMode=$previousMode currentMode=$currentMode " +
+                                                    "surfaceResetId=${readerWindow.surfaceResetId} fullscreen=${readerWindow.fullscreen} " +
+                                                    "windowState=${windowState.size.width.value.formatLogFloat()}x" +
+                                                    "${windowState.size.height.value.formatLogFloat()} placement=${windowState.placement}"
+                                            )
+                                            updateReaderWindow(readerWindow.id) { currentWindow ->
+                                                currentWindow.copy(
+                                                    surfaceResetId = currentWindow.surfaceResetId + 1,
+                                                    focusRequestId = currentWindow.focusRequestId + 1
+                                                )
+                                            }
+                                        }
+                                    }
                                     LaunchedEffect(
                                         readerWindow.id,
                                         content.session.reader.book.id,
@@ -4006,6 +4088,7 @@ internal fun EpistemeDesktopApp(
                                         onFullscreenChange = { enabled ->
                                             updateReaderWindow(readerWindow.id) { it.copy(fullscreen = enabled) }
                                         },
+                                        readerAwtWindow = readerAwtWindow,
                                         toolbarPreferences = state.readerToolbarPreferences,
                                         onToolbarPreferencesChange = { preferences ->
                                             updateState(state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)))

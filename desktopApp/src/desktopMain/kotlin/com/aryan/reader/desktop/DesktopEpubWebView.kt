@@ -333,6 +333,14 @@ internal fun rememberDesktopEpubBridgeHandlers(
                             "chapter=${highlight.chapterIndex} offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
                             "page=${highlight.locator.pageIndex} textChars=${highlight.text.length} cfi=\"${highlight.cfi.logPreview()}\""
                     )
+                    logDesktopHighlightMap(
+                        "bridge_highlight_created id=${highlight.id} color=${highlight.color.id} " +
+                            "chapter=${highlight.chapterIndex} locatorChapter=${highlight.locator.chapterIndex} " +
+                            "page=${highlight.locator.pageIndex} offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                            "block=${highlight.locator.blockIndex} char=${highlight.locator.charOffset} " +
+                            "chapterId=${highlight.locator.chapterId.orEmpty().logPreview()} href=${highlight.locator.href.orEmpty().logPreview()} " +
+                            "textChars=${highlight.text.length} cfi=\"${highlight.cfi.logPreview()}\""
+                    )
                     scope.launch { latestOnHighlightCreated(highlight) }
                 }
             },
@@ -343,6 +351,14 @@ internal fun rememberDesktopEpubBridgeHandlers(
             },
             DesktopEpubBridgeHandler("readerPositionChanged") { params ->
                 params.readerPositionOrNull()?.let { position ->
+                    logDesktopHighlightMap(
+                        "bridge_position_changed page=${position.pageIndex} chapter=${position.locator?.chapterIndex} " +
+                            "offsets=${position.locator?.startOffset}..${position.locator?.endOffset} " +
+                            "block=${position.locator?.blockIndex} char=${position.locator?.charOffset} " +
+                            "chapterId=${position.locator?.chapterId.orEmpty().logPreview()} href=${position.locator?.href.orEmpty().logPreview()} " +
+                            "text=\"${position.locator?.textQuote.orEmpty().logPreview(120)}\" " +
+                            "cfi=\"${position.locator?.cfi.orEmpty().logPreview(160)}\""
+                    )
                     scope.launch { latestOnVisiblePageChanged(position.pageIndex, position.locator) }
                 }
             },
@@ -368,6 +384,9 @@ internal fun rememberDesktopEpubBridgeHandlers(
             },
             DesktopEpubBridgeHandler("readerHighlightFlowLog") { params ->
                 logEpubHighlightFlow(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900))
+            },
+            DesktopEpubBridgeHandler("readerDesktopHighlightMapLog") { params ->
+                logDesktopHighlightMap(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900))
             },
             DesktopEpubBridgeHandler("readerPaginationLayoutLog") { params ->
                 logEpubPagination(params.readerPaginationLogMessageOrNull() ?: params.logPreview(900))

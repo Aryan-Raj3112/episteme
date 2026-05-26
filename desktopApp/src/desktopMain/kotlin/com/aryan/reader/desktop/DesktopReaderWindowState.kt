@@ -8,6 +8,7 @@ import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import kotlinx.coroutines.Job
 
@@ -30,12 +31,23 @@ internal fun DesktopWindowStateSnapshot.toPersistableReaderWindowSnapshot(): Des
     return sanitized()
 }
 
+internal fun shouldResetDesktopTextReaderWindowSurface(
+    previousMode: ReaderReadingMode,
+    currentMode: ReaderReadingMode,
+    usesWebView2: Boolean
+): Boolean {
+    return usesWebView2 &&
+        previousMode == ReaderReadingMode.VERTICAL &&
+        currentMode == ReaderReadingMode.PAGINATED
+}
+
 internal data class DesktopReaderWindowState(
     val id: String,
     val opening: DesktopReaderOpening,
     val content: DesktopReaderWindowContent = DesktopReaderWindowContent.Opening,
     val focusRequestId: Long = 0L,
-    val fullscreen: Boolean = false
+    val fullscreen: Boolean = false,
+    val surfaceResetId: Long = 0L
 ) {
     val bookId: String
         get() = opening.bookId

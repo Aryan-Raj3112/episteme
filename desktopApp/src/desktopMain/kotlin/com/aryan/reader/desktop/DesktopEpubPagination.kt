@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.reader.ReaderLayoutSignature
+import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubBook
 
@@ -27,6 +28,18 @@ internal data class DesktopEpubPaginationDensity(
     val density: Float,
     val fontScale: Float
 )
+
+internal fun desktopMeasuredPaginationReady(
+    request: DesktopEpubPaginationRequest?,
+    completedRequest: DesktopEpubPaginationRequest?,
+    currentPages: List<ReaderPage>,
+    measuredPages: List<ReaderPage>
+): Boolean {
+    return request != null &&
+        completedRequest == request &&
+        measuredPages.isNotEmpty() &&
+        currentPages.samePageLayoutAs(measuredPages)
+}
 
 internal fun SharedEpubBook.desktopPaginationContentSignature(): Int {
     return chapters.fold(31 * id.hashCode() + css.hashCode()) { acc, chapter ->
