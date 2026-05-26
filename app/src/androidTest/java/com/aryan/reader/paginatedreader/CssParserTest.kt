@@ -17,48 +17,65 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class CssParserTest {
 
+    private val dummyConstraints = androidx.compose.ui.unit.Constraints()
+    private val baseFontSize = 16f
+    private val density = 1f
+
+    private fun parseTextColor(value: String): Color? {
+        val result = CssParser.parse(
+            cssContent = "p { color: $value; }",
+            cssPath = null,
+            baseFontSizeSp = baseFontSize,
+            density = density,
+            constraints = dummyConstraints,
+            isDarkTheme = false
+        )
+        return result.rules.byTag["p"]
+            ?.firstOrNull()
+            ?.style
+            ?.spanStyle
+            ?.color
+            ?.takeIf { it.isSpecified }
+    }
+
     @Test
     fun parseColor_handlesNamedColorsCorrectly() {
-        assertThat(CssParser.parseColor("red")).isEqualTo(Color.Red)
-        assertThat(CssParser.parseColor("black")).isEqualTo(Color.Black)
-        assertThat(CssParser.parseColor("transparent")).isEqualTo(Color.Transparent)
+        assertThat(parseTextColor("red")).isEqualTo(Color.Red)
+        assertThat(parseTextColor("black")).isEqualTo(Color.Black)
+        assertThat(parseTextColor("transparent")).isEqualTo(Color.Transparent)
     }
 
     @Test
     fun parseColor_handles3DigitHexCodes() {
-        assertThat(CssParser.parseColor("#F0C")).isEqualTo(Color(0xFFFF00CC))
+        assertThat(parseTextColor("#F0C")).isEqualTo(Color(0xFFFF00CC))
     }
 
     @Test
     fun parseColor_handles6DigitHexCodes() {
-        assertThat(CssParser.parseColor("#FF00CC")).isEqualTo(Color(0xFFFF00CC))
+        assertThat(parseTextColor("#FF00CC")).isEqualTo(Color(0xFFFF00CC))
     }
 
     @Test
     fun parseColor_handles8DigitHexCodes() {
-        assertThat(CssParser.parseColor("#80FF00CC")).isEqualTo(Color(0x80FF00CC))
+        assertThat(parseTextColor("#80FF00CC")).isEqualTo(Color(0x80FF00CC))
     }
 
     @Test
     fun parseColor_handlesRgbFunction() {
-        assertThat(CssParser.parseColor("rgb(255, 0, 204)")).isEqualTo(Color(255, 0, 204))
+        assertThat(parseTextColor("rgb(255, 0, 204)")).isEqualTo(Color(255, 0, 204))
     }
 
     @Test
     fun parseColor_handlesRgbaFunction() {
-        assertThat(CssParser.parseColor("rgba(255, 0, 204, 0.5)")).isEqualTo(Color(255, 0, 204, 128))
+        assertThat(parseTextColor("rgba(255, 0, 204, 0.5)")).isEqualTo(Color(255, 0, 204, 128))
     }
 
     @Test
     fun parseColor_returnsNullForInvalidInput() {
-        assertThat(CssParser.parseColor("not a color")).isNull()
-        assertThat(CssParser.parseColor("#12345")).isNull()
-        assertThat(CssParser.parseColor("rgb(1,2)")).isNull()
+        assertThat(parseTextColor("not a color")).isNull()
+        assertThat(parseTextColor("#12345")).isNull()
+        assertThat(parseTextColor("rgb(1,2)")).isNull()
     }
-
-    private val dummyConstraints = androidx.compose.ui.unit.Constraints()
-    private val baseFontSize = 16f
-    private val density = 1f
 
     @Test
     fun parse_handlesSimpleRule() {
@@ -120,12 +137,12 @@ class CssParserTest {
         }
         p { color: black; }
         """.trimIndent()
-        val result = CssParser.parse(css, "/some/path/style.css", baseFontSize, density, dummyConstraints, isDarkTheme = false)
+        val result = CssParser.parse(css, "OEBPS/styles/style.css", baseFontSize, density, dummyConstraints, isDarkTheme = false)
         assertThat(result.rules.byTag).containsKey("p")
         assertThat(result.fontFaces).hasSize(1)
         val fontFace = result.fontFaces.first()
         assertThat(fontFace.fontFamily).isEqualTo("mycustomfont")
-        assertThat(fontFace.src).isEqualTo("/some/fonts/myfont.ttf")
+        assertThat(fontFace.src).isEqualTo("OEBPS/fonts/myfont.ttf")
         assertThat(fontFace.fontWeight).isEqualTo(FontWeight.Bold)
         assertThat(fontFace.fontStyle).isEqualTo(FontStyle.Normal)
     }
@@ -190,10 +207,11 @@ class CssParserTest {
         val css = "div { border: 2px solid red; }"
         val result = CssParser.parse(css, null, baseFontSize, density, dummyConstraints, isDarkTheme = false)
         val style = result.rules.byTag["div"]?.first()?.style?.blockStyle
-        assertThat(style?.border).isNotNull()
-        assertThat(style?.border?.width).isEqualTo(2.dp)
-        assertThat(style?.border?.style).isEqualTo("solid")
-        assertThat(style?.border?.color).isEqualTo(Color.Red)
+        val expectedBorder = BorderStyle(width = 2.dp, color = Color.Red, style = "solid")
+        assertThat(style?.borderTop).isEqualTo(expectedBorder)
+        assertThat(style?.borderRight).isEqualTo(expectedBorder)
+        assertThat(style?.borderBottom).isEqualTo(expectedBorder)
+        assertThat(style?.borderLeft).isEqualTo(expectedBorder)
     }
 
     @Test
@@ -262,9 +280,9 @@ class CssParserTest {
                  url("font.ttf") format("truetype");
         }
         """.trimIndent()
-        val result = CssParser.parse(css, "/css/style.css", baseFontSize, density, dummyConstraints, isDarkTheme = false)
+        val result = CssParser.parse(css, "OEBPS/css/style.css", baseFontSize, density, dummyConstraints, isDarkTheme = false)
         assertThat(result.fontFaces).hasSize(1)
-        assertThat(result.fontFaces.first().src).isEqualTo("/css/font.otf")
+        assertThat(result.fontFaces.first().src).isEqualTo("OEBPS/css/font.otf")
     }
 
     @Test

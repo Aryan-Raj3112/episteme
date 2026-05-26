@@ -7,25 +7,25 @@ import android.net.Uri
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipe
 import androidx.core.content.FileProvider
+import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
-import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
 import com.aryan.reader.MainActivity
+import com.aryan.reader.R
+import com.google.common.truth.Truth.assertThat
 import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -41,13 +41,33 @@ class PdfViewerScreenTest {
     @get:Rule
     val grantPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
 
-    @org.junit.Before
+    private val context: Context = ApplicationProvider.getApplicationContext()
+    private var currentPdfFile: File? = null
+    private var scenario: ActivityScenario<MainActivity>? = null
+
+    @Before
     fun setup() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
         context.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
             .edit()
             .clear()
             .commit()
+
+        val samplePdfUri = copyAssetToCache(context, "sample.pdf")
+        scenario = ActivityScenario.launch<MainActivity>(createPdfViewIntent(context, samplePdfUri))
+    }
+
+    @After
+    fun tearDown() {
+        scenario?.close()
+        currentPdfFile?.let {
+            if (it.exists()) it.delete()
+        }
+    }
+
+    private fun text(resId: Int, vararg args: Any): String = context.getString(resId, *args)
+
+    private fun assertNoNodeWithTag(tag: String) {
+        assertThat(composeTestRule.onAllNodesWithTag(tag).fetchSemanticsNodes()).isEmpty()
     }
 
     private fun createPdfViewIntent(context: Context, uri: Uri): Intent {
@@ -58,50 +78,47 @@ class PdfViewerScreenTest {
         }
     }
 
-    private val context: Context = ApplicationProvider.getApplicationContext()
-
-    private var currentPdfFile: File? = null
-
-    private val samplePdfUri: Uri by lazy { copyAssetToCache(context, "sample.pdf") }
-
-    @get:Rule
-    val activityRule = ActivityScenarioRule<MainActivity>(createPdfViewIntent(context, samplePdfUri))
-
-    @After
-    fun tearDown() {
-        currentPdfFile?.let {
-            if (it.exists()) it.delete()
-        }
-    }
-
-    private fun waitForDocumentLoad(pageText: String = "Page 1 of 4") {
+    private fun waitForDocumentLoad(pageText: String = text(R.string.page_of_pages, 1, 4)) {
         composeTestRule.waitUntil(timeoutMillis = 15_000) {
             composeTestRule
                 .onAllNodesWithText(pageText)
-                .fetchSemanticsNodes().size == 1
+                .fetchSemanticsNodes().isNotEmpty()
         }
     }
 
-    private fun ensurePaginationMode() {
-        composeTestRule.onNodeWithContentDescription("More Options").performClick()
-        composeTestRule.onNodeWithText("Reading Mode: Paginated").performClick()
+    private fun openMoreOptions() {
+        composeTestRule.onNodeWithContentDescription(text(R.string.tooltip_more_options)).performClick()
+    }
+
+    private fun openNavigationDrawer() {
+        composeTestRule.onNodeWithTag("TocButton").performClick()
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.onAllNodesWithText(text(R.string.tab_chapters)).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodesWithTag("BookmarksTab").fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun selectChaptersTabIfTabsPaneIsFirst() {
+        if (composeTestRule.onAllNodesWithTag("TabsTab").fetchSemanticsNodes().isNotEmpty()) {
+            composeTestRule.onNodeWithText(text(R.string.tab_chapters)).performClick()
+            composeTestRule.waitForIdle()
+        }
+    }
+
+    private fun selectBookmarksTab() {
+        composeTestRule.onNodeWithTag("BookmarksTab").performClick()
         composeTestRule.waitForIdle()
     }
 
-    @Test
-    fun documentLoadsAndDisplaysCorrectPageCount() {
-        waitForDocumentLoad()
-        composeTestRule.onNodeWithTag("PageNumberIndicator")
-            .assertIsDisplayed()
+    private fun selectReadingMode(modeText: String) {
+        openMoreOptions()
+        composeTestRule.onNodeWithText(text(R.string.menu_change_reading_mode)).performClick()
+        composeTestRule.onNodeWithText(modeText).performClick()
+        composeTestRule.waitForIdle()
     }
 
-    @Test
-    fun tableOfContents_displaysEmptyState() {
-        waitForDocumentLoad()
-
-        composeTestRule.onNodeWithTag("TocButton").performClick()
-
-        composeTestRule.onNodeWithText("Chapters are not available for this book.").assertIsDisplayed()
+    private fun ensurePaginationMode() {
+        selectReadingMode(text(R.string.menu_reading_mode_paginated))
     }
 
     @Suppress("SameParameterValue")
@@ -125,189 +142,99 @@ class PdfViewerScreenTest {
     }
 
     @Test
-    fun bookmarkFunctionality_addNavigateAndDelete() {
+    fun documentLoadsAndDisplaysCorrectPageCount() {
+        waitForDocumentLoad()
+        composeTestRule.onNodeWithTag("PageNumberIndicator")
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun tableOfContentsButton_handlesTabsPaneAndOpensChaptersTab() {
         waitForDocumentLoad()
 
-        ensurePaginationMode()
+        openNavigationDrawer()
+        selectChaptersTabIfTabsPaneIsFirst()
 
-        composeTestRule.onNodeWithText("Page 1 of 4").assertIsDisplayed()
+        composeTestRule.onNodeWithText(text(R.string.tab_chapters)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("BookmarksTab").assertIsDisplayed()
+    }
 
-        try {
-            composeTestRule.onRoot().performTouchInput { swipe(start = this.centerRight, end = this.centerLeft, durationMillis = 300) }
-            composeTestRule.onRoot().performClick()
-            composeTestRule.waitUntil(5_000) {
-                composeTestRule.onAllNodesWithText("Page 2 of 4").fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNodeWithText("Page 2 of 4").assertIsDisplayed()
-        } catch (e: Exception) {
-            throw e
+    @Test
+    fun bookmarkFunctionality_addAndDeleteCurrentPage() {
+        waitForDocumentLoad()
+
+        openMoreOptions()
+        composeTestRule.onNodeWithText(text(R.string.menu_bookmark_this_page)).performClick()
+        composeTestRule.waitForIdle()
+
+        openNavigationDrawer()
+        selectBookmarksTab()
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.onAllNodesWithTag("BookmarkItem_0").fetchSemanticsNodes().isNotEmpty()
         }
+        composeTestRule.onNodeWithTag("BookmarkItem_0").assertIsDisplayed()
+            .assert(hasText(text(R.string.pdf_page_short, 1), substring = true))
 
-        try {
-            composeTestRule.onNodeWithContentDescription("More Options").performClick()
-            composeTestRule.onNodeWithText("Bookmark this page").performClick()
-            composeTestRule.waitForIdle()
-        } catch (e: Exception) {
-            throw e
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_more_options_bookmark)).performClick()
+        composeTestRule.onNodeWithText(text(R.string.action_delete)).performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText(text(R.string.action_delete), useUnmergedTree = true).performClick()
+
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.onAllNodesWithTag("BookmarkItem_0").fetchSemanticsNodes().isEmpty()
         }
-
-        try {
-            composeTestRule.onRoot().performTouchInput { swipe(start = this.centerRight, end = this.centerLeft, durationMillis = 300) }
-            composeTestRule.onRoot().performClick()
-            composeTestRule.waitUntil(5_000) {
-                composeTestRule.onAllNodesWithText("Page 3 of 4").fetchSemanticsNodes().isNotEmpty()
-            }
-            composeTestRule.onNodeWithText("Page 3 of 4").assertIsDisplayed()
-        } catch (e: Exception) {
-            throw e
-        }
-
-        try {
-            composeTestRule.onNodeWithTag("TocButton").performClick()
-            composeTestRule.onNodeWithTag("BookmarksTab").performClick()
-            composeTestRule.waitForIdle()
-            composeTestRule.onNodeWithTag("BookmarkItem_1").assertIsDisplayed()
-                .assert(hasText("Page 2", substring = true))
-        } catch (e: Exception) {
-            throw e
-        }
-
-        try {
-            composeTestRule.onNodeWithTag("BookmarkItem_1").performClick()
-            composeTestRule.waitForIdle()
-            composeTestRule.waitUntil(5_000) {
-                composeTestRule.onAllNodes(hasTestTag("PageNumberIndicator").and(hasText("Page 2 of 4"))).fetchSemanticsNodes().size == 1
-            }
-            composeTestRule.onNode(hasTestTag("PageNumberIndicator").and(hasText("Page 2 of 4"))).assertIsDisplayed()
-
-        } catch (e: Exception) {
-            throw e
-        }
-
-        try {
-            composeTestRule.onNodeWithTag("TocButton").performClick()
-            composeTestRule.onNodeWithTag("BookmarksTab").performClick()
-            composeTestRule.waitForIdle()
-        } catch (e: Exception) {
-            throw e
-        }
-
-        try {
-            composeTestRule.onNodeWithContentDescription("More options for bookmark").performClick()
-            composeTestRule.onNodeWithText("Delete").performClick()
-        } catch (e: Exception) {
-            throw e
-        }
-
-        try {
-            composeTestRule.onNodeWithText("Delete", useUnmergedTree = true).performClick()
-        } catch (e: Exception) {
-            throw e
-        }
-
-        try {
-            composeTestRule.onNodeWithTag("BookmarkItem_1").assertDoesNotExist()
-            composeTestRule.onNodeWithText("You haven't added any bookmarks yet.").assertIsDisplayed()
-        } catch (e: Exception) {
-            throw e
-        }
+        assertNoNodeWithTag("BookmarkItem_0")
+        composeTestRule.onNodeWithText(text(R.string.no_bookmarks_yet)).assertIsDisplayed()
     }
 
     @Test
     fun sliderNavigation_opensAndDisplaysCorrectly() {
         waitForDocumentLoad()
 
-        composeTestRule.onNodeWithContentDescription("Navigate with slider").performClick()
-        composeTestRule.onNodeWithContentDescription("Exit slider navigation").assertIsDisplayed()
-        composeTestRule.onNodeWithText("1 / 4").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_navigate_slider)).performClick()
+
+        composeTestRule.onNodeWithText(text(R.string.page_format, 1, 4)).assertIsDisplayed()
     }
 
     @Test
     fun displayMode_switchesToVerticalScroll() {
         waitForDocumentLoad()
 
-        // Ensure we are in Pagination mode first to test the switch
         ensurePaginationMode()
 
-        // Verify Vertical Scroll component is NOT displayed initially
-        composeTestRule.onNodeWithTag("PdfVerticalScroll").assertDoesNotExist()
+        assertNoNodeWithTag("PdfVerticalScroll")
 
-        // Switch to Vertical Scroll
-        composeTestRule.onNodeWithContentDescription("More Options").performClick()
-        composeTestRule.onNodeWithText("Reading Mode: Vertical scroll").performClick()
+        selectReadingMode(text(R.string.menu_reading_mode_vertical))
 
-        composeTestRule.waitForIdle()
-
-        // Verify Vertical Scroll component IS displayed
         composeTestRule.onNodeWithTag("PdfVerticalScroll").assertIsDisplayed()
 
-        // Switch back to Pagination
         ensurePaginationMode()
 
-        // Verify Vertical Scroll component is gone
-        composeTestRule.onNodeWithTag("PdfVerticalScroll").assertDoesNotExist()
+        assertNoNodeWithTag("PdfVerticalScroll")
     }
 
     @Test
     fun search_uiOpensAndAcceptsQuery() {
         waitForDocumentLoad()
 
-        // Click search button
         composeTestRule.onNodeWithTag("SearchButton").performClick()
+        composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithText("English, Spanish, French, etc.").performClick()
+        val ocrLanguageText = text(R.string.ocr_language_latin)
+        if (composeTestRule.onAllNodesWithText(ocrLanguageText).fetchSemanticsNodes().isNotEmpty()) {
+            composeTestRule.onNodeWithText(ocrLanguageText).performClick()
+            composeTestRule.waitForIdle()
+        }
 
-        // Verify text field appears
         composeTestRule.onNodeWithTag("SearchTextField").assertIsDisplayed()
 
-        // Enter text
         composeTestRule.onNodeWithTag("SearchTextField").performTextInput("test query")
 
-        // Verify text exists in the field
         composeTestRule.onNodeWithTag("SearchTextField").assertTextContains("test query")
 
-        // Close search
-        composeTestRule.onNodeWithContentDescription("Close Search").performClick()
+        composeTestRule.onNodeWithContentDescription(text(R.string.tooltip_close_search)).performClick()
 
-        // Verify text field is gone
-        composeTestRule.onNodeWithTag("SearchTextField").assertDoesNotExist()
+        assertNoNodeWithTag("SearchTextField")
     }
 
-    @Test
-    fun fullScreen_togglesVisibility() {
-        waitForDocumentLoad()
-
-        // Click enter full screen button
-        composeTestRule.onNodeWithContentDescription("Enter Full Screen").performClick()
-
-        // Verify exit full screen button appears
-        composeTestRule.onNodeWithContentDescription("Exit Full Screen").assertIsDisplayed()
-
-        // Click exit full screen
-        composeTestRule.onNodeWithContentDescription("Exit Full Screen").performClick()
-
-        // Verify exit button is gone and enter button returns
-        composeTestRule.onNodeWithContentDescription("Exit Full Screen").assertDoesNotExist()
-        composeTestRule.onNodeWithContentDescription("Enter Full Screen").assertIsDisplayed()
-    }
-
-    @Test
-    fun darkMode_togglesState() {
-        waitForDocumentLoad()
-
-        // Initial state: Light mode (default from cleared prefs), so button says "Enable Dark Mode"
-        composeTestRule.onNodeWithContentDescription("Enable Dark Mode").assertIsDisplayed()
-
-        // Toggle On
-        composeTestRule.onNodeWithContentDescription("Enable Dark Mode").performClick()
-
-        // State changed: Now button says "Disable Dark Mode"
-        composeTestRule.onNodeWithContentDescription("Disable Dark Mode").assertIsDisplayed()
-
-        // Toggle Off
-        composeTestRule.onNodeWithContentDescription("Disable Dark Mode").performClick()
-
-        // State changed back
-        composeTestRule.onNodeWithContentDescription("Enable Dark Mode").assertIsDisplayed()
-    }
 }

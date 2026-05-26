@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -20,6 +21,8 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aryan.reader.MainActivity
+import com.aryan.reader.R
+import com.google.common.truth.Truth.assertThat
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -38,6 +41,12 @@ class PdfAnnotationTest {
     private var currentPdfFile: File? = null
     private var scenario: ActivityScenario<MainActivity>? = null
     private val samplePdfUri: Uri by lazy { copyAssetToCache(context, "sample.pdf") }
+    private fun text(resId: Int): String = context.getString(resId)
+    private fun dockTag(resId: Int): String = "DockItem_${text(resId)}"
+
+    private fun assertNoNodeWithTag(tag: String) {
+        assertThat(composeTestRule.onAllNodesWithTag(tag).fetchSemanticsNodes()).isEmpty()
+    }
 
     private fun createPdfViewIntent(context: Context, uri: Uri): Intent {
         return Intent(context, MainActivity::class.java).apply {
@@ -55,7 +64,7 @@ class PdfAnnotationTest {
         context.getSharedPreferences("epub_reader_settings", Context.MODE_PRIVATE)
             .edit().clear().commit()
 
-        scenario = ActivityScenario.launch(createPdfViewIntent(context, samplePdfUri))
+        scenario = ActivityScenario.launch<MainActivity>(createPdfViewIntent(context, samplePdfUri))
         waitForDocumentLoad()
     }
 
@@ -75,11 +84,11 @@ class PdfAnnotationTest {
     }
 
     private fun enterEditMode() {
-        composeTestRule.onNodeWithContentDescription("Toggle Drawing Mode")
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_toggle_editing_mode))
             .assertIsDisplayed()
             .performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithContentDescription("Close Edit Mode").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_close_edit_mode)).assertIsDisplayed()
     }
 
     private fun tapOutsidePopup() {
@@ -111,13 +120,13 @@ class PdfAnnotationTest {
         enterEditMode()
 
         // Verify Dock Items exist using new Tags
-        composeTestRule.onNodeWithTag("DockItem_Pen").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("DockItem_Highlighter").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("DockItem_Eraser").assertIsDisplayed()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_highlighter)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_eraser)).assertIsDisplayed()
 
-        composeTestRule.onNodeWithContentDescription("Close Edit Mode").performClick()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_close_edit_mode)).performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithContentDescription("Toggle Drawing Mode").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_toggle_editing_mode)).assertIsDisplayed()
     }
 
     // --- TOOL LOGIC TESTS ---
@@ -127,38 +136,38 @@ class PdfAnnotationTest {
         enterEditMode()
 
         // 1. Select Highlighter
-        composeTestRule.onNodeWithTag("DockItem_Highlighter").performClick()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_highlighter)).performClick()
         composeTestRule.waitForIdle()
 
         // 2. Verify selection state
-        composeTestRule.onNodeWithTag("DockItem_Highlighter").assertIsSelected()
-        composeTestRule.onNodeWithTag("DockItem_Pen").assertIsNotSelected()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_highlighter)).assertIsSelected()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).assertIsNotSelected()
 
         // 3. Exit Edit Mode
-        composeTestRule.onNodeWithContentDescription("Close Edit Mode").performClick()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_close_edit_mode)).performClick()
         composeTestRule.waitForIdle()
 
         // 4. Re-enter Edit Mode
         enterEditMode()
 
         // 5. Verify Highlighter is STILL selected (Persistence)
-        composeTestRule.onNodeWithTag("DockItem_Highlighter").assertIsSelected()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_highlighter)).assertIsSelected()
     }
 
     @Test
-    fun testEraserHasNoPopup() {
+    fun testEraserSettingsPopupOpensWhenAlreadySelected() {
         enterEditMode()
 
         // Select Eraser
-        composeTestRule.onNodeWithTag("DockItem_Eraser").performClick()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_eraser)).performClick()
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("DockItem_Eraser").assertIsSelected()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_eraser)).assertIsSelected()
 
-        // Click Eraser AGAIN (Should NOT open popup)
-        composeTestRule.onNodeWithTag("DockItem_Eraser").performClick()
+        // Click Eraser again to open its settings popup.
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_eraser)).performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("ToolSettingsPopup").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("ToolSettingsPopup").assertIsDisplayed()
     }
 
     // --- SETTINGS POPUP TESTS ---
@@ -169,7 +178,7 @@ class PdfAnnotationTest {
 
         // 1. Pen is default. Click Pen ONCE to open Settings.
         // (Clicking twice would toggle it off, which caused previous failures)
-        composeTestRule.onNodeWithTag("DockItem_Pen").performClick()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).performClick()
         composeTestRule.waitForIdle()
 
         // 2. Verify Popup Displayed
@@ -186,7 +195,7 @@ class PdfAnnotationTest {
 
         // 5. Dismiss Settings
         tapOutsidePopup()
-        composeTestRule.onNodeWithTag("ToolSettingsPopup").assertDoesNotExist()
+        assertNoNodeWithTag("ToolSettingsPopup")
     }
 
     @Test
@@ -194,7 +203,7 @@ class PdfAnnotationTest {
         enterEditMode()
 
         // Open Settings for Pen (Default selected, so one click opens settings)
-        composeTestRule.onNodeWithTag("DockItem_Pen").performClick()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).performClick()
         composeTestRule.waitForIdle()
 
         // Test Palette Click (Index 1)
@@ -208,7 +217,7 @@ class PdfAnnotationTest {
         tapOutsidePopup()
 
         // Quick verification that settings didn't crash app
-        composeTestRule.onNodeWithTag("DockItem_Pen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).assertIsDisplayed()
     }
 
     // --- UNDO/REDO TESTS ---
@@ -217,7 +226,7 @@ class PdfAnnotationTest {
     fun testDrawingEnablesUndo() {
         enterEditMode()
 
-        composeTestRule.onNodeWithContentDescription("Undo")
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_undo))
             .assertIsDisplayed()
             .assertIsNotEnabled()
 
@@ -227,7 +236,7 @@ class PdfAnnotationTest {
         }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithContentDescription("Undo").assertIsEnabled()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_undo)).assertIsEnabled()
     }
 
     @Test
@@ -240,8 +249,8 @@ class PdfAnnotationTest {
         }
         composeTestRule.waitForIdle()
 
-        val undoNode = composeTestRule.onNodeWithContentDescription("Undo")
-        val redoNode = composeTestRule.onNodeWithContentDescription("Redo")
+        val undoNode = composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_undo))
+        val redoNode = composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_redo))
 
         undoNode.assertIsEnabled()
         redoNode.assertIsNotEnabled()
@@ -268,7 +277,7 @@ class PdfAnnotationTest {
         enterEditMode()
 
         // 1. Drag Dock to make it floating (using Pen icon as handle)
-        composeTestRule.onNodeWithTag("DockItem_Pen").performTouchInput {
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).performTouchInput {
             down(center)
             advanceEventTime(600) // Long press
             // Drag UP significantly
@@ -278,20 +287,20 @@ class PdfAnnotationTest {
         composeTestRule.waitForIdle()
 
         // 2. Minimize (Eye icon)
-        composeTestRule.onNodeWithContentDescription("Toggle Visibility").performClick()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_toggle_visibility)).performClick()
         composeTestRule.waitForIdle()
 
         // 3. Verify Dock items are hidden
-        composeTestRule.onNodeWithTag("DockItem_Pen").assertDoesNotExist()
+        assertNoNodeWithTag(dockTag(R.string.content_desc_pen))
 
         // 4. Verify "Show Dock" floating button is visible
-        composeTestRule.onNodeWithContentDescription("Show Dock").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_show_dock)).assertIsDisplayed()
 
         // 5. Restore
-        composeTestRule.onNodeWithContentDescription("Show Dock").performClick()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_show_dock)).performClick()
         composeTestRule.waitForIdle()
 
         // 6. Verify Dock items return
-        composeTestRule.onNodeWithTag("DockItem_Pen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag(dockTag(R.string.content_desc_pen)).assertIsDisplayed()
     }
 }

@@ -1,13 +1,19 @@
 package com.aryan.reader.epubreader
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Rule
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChapterWebViewBridgeTest {
@@ -20,7 +26,8 @@ class ChapterWebViewBridgeTest {
         var receivedCfi = ""
         val bridge = CfiJsBridge(
             onCfiReady = { cfi -> receivedCfi = cfi },
-            onCfiForBookmarkReady = {}
+            onCfiForBookmarkReady = {},
+            onScrollFinishedCallback = {}
         )
 
         val cfi = "/4/2[chapter1]/6:10"
@@ -39,7 +46,8 @@ class ChapterWebViewBridgeTest {
         var receivedCfi = ""
         val bridge = CfiJsBridge(
             onCfiReady = { cfi -> receivedCfi = cfi },
-            onCfiForBookmarkReady = {}
+            onCfiForBookmarkReady = {},
+            onScrollFinishedCallback = {}
         )
 
         val invalidJson = "this is not json"
@@ -54,7 +62,8 @@ class ChapterWebViewBridgeTest {
         var receivedCfi: String? = null
         val bridge = CfiJsBridge(
             onCfiReady = { cfi -> receivedCfi = cfi },
-            onCfiForBookmarkReady = {}
+            onCfiForBookmarkReady = {},
+            onScrollFinishedCallback = {}
         )
 
         val jsonResponse = JSONObject().apply {
@@ -69,29 +78,51 @@ class ChapterWebViewBridgeTest {
     }
 
     @Test
-    fun ttsJsBridge_onStructuredTextExtracted_callsHandlerWithJson() = runTest {
+    fun ttsJsBridge_onStructuredTextExtracted_callsHandlerWithJson() {
+        val latch = CountDownLatch(1)
         var receivedJson: String? = null
-        val bridge = TtsJsBridge(
-            scope = this,
-            ttsStructuredTextHandler = { json -> receivedJson = json }
-        )
-        val jsonPayload = "[{\"text\":\"Hello world\",\"cfi\":\"/4/2\"}]"
-        bridge.onStructuredTextExtracted(jsonPayload)
-        advanceUntilIdle()
-        assertThat(receivedJson).isEqualTo(jsonPayload)
+        val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val bridge = TtsJsBridge(
+                scope = bridgeScope,
+                ttsStructuredTextHandler = { json ->
+                    receivedJson = json
+                    latch.countDown()
+                }
+            )
+            val jsonPayload = "[{\"text\":\"Hello world\",\"cfi\":\"/4/2\"}]"
+
+            bridge.onStructuredTextExtracted(jsonPayload)
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue()
+            assertThat(receivedJson).isEqualTo(jsonPayload)
+        } finally {
+            bridgeScope.cancel()
+        }
     }
 
     @Test
-    fun ttsJsBridge_onStructuredTextExtracted_withEmptyJson_callsHandlerWithEmptyArray() = runTest {
+    fun ttsJsBridge_onStructuredTextExtracted_withEmptyJson_callsHandlerWithEmptyArray() {
+        val latch = CountDownLatch(1)
         var receivedJson: String? = null
-        val bridge = TtsJsBridge(
-            scope = this,
-            ttsStructuredTextHandler = { json -> receivedJson = json }
-        )
-        val jsonPayload = ""
-        bridge.onStructuredTextExtracted(jsonPayload)
-        advanceUntilIdle()
-        assertThat(receivedJson).isEqualTo("[]")
+        val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val bridge = TtsJsBridge(
+                scope = bridgeScope,
+                ttsStructuredTextHandler = { json ->
+                    receivedJson = json
+                    latch.countDown()
+                }
+            )
+            val jsonPayload = ""
+
+            bridge.onStructuredTextExtracted(jsonPayload)
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue()
+            assertThat(receivedJson).isEqualTo("[]")
+        } finally {
+            bridgeScope.cancel()
+        }
     }
 
     @Test

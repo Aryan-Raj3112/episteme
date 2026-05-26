@@ -75,7 +75,7 @@ class PaginatedReaderDataTest {
             margin = BoxBorders(bottom = 10.dp, left = 10.dp),
             width = 200.dp,
             backgroundColor = Color.Black,
-            border = BorderStyle(width = 1.dp, color = Color.Red)
+            borderTop = BorderStyle(width = 1.dp, color = Color.Red)
         )
 
         val merged = baseStyle.merge(overrideStyle)
@@ -95,8 +95,8 @@ class PaginatedReaderDataTest {
         // Other properties
         assertThat(merged.width).isEqualTo(200.dp)
         assertThat(merged.backgroundColor).isEqualTo(Color.Black)
-        assertThat(merged.border).isNotNull()
-        assertThat(merged.border?.width).isEqualTo(1.dp)
+        assertThat(merged.borderTop).isNotNull()
+        assertThat(merged.borderTop?.width).isEqualTo(1.dp)
     }
 
     @Test
@@ -115,6 +115,9 @@ class PaginatedReaderDataTest {
         assertThat(merged.margin.top).isEqualTo(5.dp)
         assertThat(merged.width).isEqualTo(100.dp)
         assertThat(merged.backgroundColor).isEqualTo(Color.White)
-        assertThat(merged.border).isNull()
+        assertThat(merged.borderTop).isNull()
+        assertThat(merged.borderRight).isNull()
+        assertThat(merged.borderBottom).isNull()
+        assertThat(merged.borderLeft).isNull()
     }
 }

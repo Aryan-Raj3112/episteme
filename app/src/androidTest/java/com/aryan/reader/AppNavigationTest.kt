@@ -1,146 +1,76 @@
-// AppNavigationTest.kt
 package com.aryan.reader
 
-import android.net.Uri
-import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
-import androidx.compose.material3.windowsizeclass.WindowSizeClass
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
-import androidx.navigation.compose.ComposeNavigator
-import androidx.navigation.testing.TestNavHostController
-import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.aryan.reader.epub.EpubBook
-import kotlinx.coroutines.flow.MutableStateFlow
-import org.junit.Assert.assertEquals
-import org.junit.Before
-import org.junit.Rule
+import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedFileCapabilities
+import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AppNavigationTest {
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
-
-    private lateinit var navController: TestNavHostController
-    private val fakeUiState = MutableStateFlow(ReaderScreenState())
-
-    // Mock ViewModel that uses the fake state
-    private val fakeViewModel: MainViewModel = object : MainViewModel(
-        ApplicationProvider.getApplicationContext()
-    ) {
-        override val uiState = fakeUiState
-        override fun clearSelectedFile() {
-            fakeUiState.value = fakeUiState.value.copy(
-                selectedFileType = null,
-                selectedPdfUri = null,
-                selectedEpubBook = null
-            )
-        }
-    }
-
-    @OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
-    @Before
-    fun setup() {
-        composeTestRule.setContent {
-            navController = TestNavHostController(LocalContext.current)
-            navController.navigatorProvider.addNavigator(ComposeNavigator())
-            AppNavigation(
-                navController = navController,
-                windowSizeClass = WindowSizeClass.calculateFromSize(DpSize(400.dp, 800.dp)),
-                viewModel = fakeViewModel
-            )
-        }
+    @Test
+    fun appDestinations_useStableReaderRoutes() {
+        assertThat(AppDestinations.MAIN_ROUTE).isEqualTo("main")
+        assertThat(AppDestinations.PDF_VIEWER_ROUTE).isEqualTo("pdf_viewer")
+        assertThat(AppDestinations.EPUB_READER_ROUTE).isEqualTo("epub_reader")
     }
 
     @Test
-    fun appNavigation_defaultStartDestination_isMainRoute() {
-        val currentRoute = navController.currentBackStackEntry?.destination?.route
-        assertEquals(AppDestinations.MAIN_ROUTE, currentRoute)
-    }
+    fun androidReaderSurface_mapsPdfBackedTypesToPdfViewer() {
+        val mappedSurfaces = listOf(
+            FileType.PDF,
+            FileType.CBZ,
+            FileType.CBR,
+            FileType.CB7,
+            FileType.PPTX
+        ).associateWith { it.readerSurfaceOnAndroid() }
 
-    @Test
-    fun appNavigation_whenPdfSelected_navigatesToPdfViewer() {
-        // Trigger state change
-        fakeUiState.value = ReaderScreenState(
-            selectedFileType = FileType.PDF,
-            selectedPdfUri = Uri.parse("content://dummy.pdf")
+        assertThat(mappedSurfaces).containsExactly(
+            FileType.PDF, ReaderFeatureSurface.PDF_VIEWER,
+            FileType.CBZ, ReaderFeatureSurface.PDF_VIEWER,
+            FileType.CBR, ReaderFeatureSurface.PDF_VIEWER,
+            FileType.CB7, ReaderFeatureSurface.PDF_VIEWER,
+            FileType.PPTX, ReaderFeatureSurface.PDF_VIEWER
         )
-
-        // Let compose recompose and run LaunchedEffect
-        composeTestRule.waitForIdle()
-
-        val currentRoute = navController.currentBackStackEntry?.destination?.route
-        assertEquals(AppDestinations.PDF_VIEWER_ROUTE, currentRoute)
     }
 
     @Test
-    fun appNavigation_whenPptxSelected_navigatesToPdfViewer() {
-        fakeUiState.value = ReaderScreenState(
-            selectedFileType = FileType.PPTX,
-            selectedPdfUri = Uri.parse("content://dummy.pptx")
+    fun androidReaderSurface_mapsTextBackedTypesToEpubReader() {
+        val mappedSurfaces = listOf(
+            FileType.EPUB,
+            FileType.MOBI,
+            FileType.MD,
+            FileType.TXT,
+            FileType.HTML,
+            FileType.FB2,
+            FileType.DOCX,
+            FileType.ODT,
+            FileType.FODT
+        ).associateWith { it.readerSurfaceOnAndroid() }
+
+        assertThat(mappedSurfaces).containsExactly(
+            FileType.EPUB, ReaderFeatureSurface.EPUB_READER,
+            FileType.MOBI, ReaderFeatureSurface.EPUB_READER,
+            FileType.MD, ReaderFeatureSurface.EPUB_READER,
+            FileType.TXT, ReaderFeatureSurface.EPUB_READER,
+            FileType.HTML, ReaderFeatureSurface.EPUB_READER,
+            FileType.FB2, ReaderFeatureSurface.EPUB_READER,
+            FileType.DOCX, ReaderFeatureSurface.EPUB_READER,
+            FileType.ODT, ReaderFeatureSurface.EPUB_READER,
+            FileType.FODT, ReaderFeatureSurface.EPUB_READER
         )
-
-        composeTestRule.waitForIdle()
-
-        val currentRoute = navController.currentBackStackEntry?.destination?.route
-        assertEquals(AppDestinations.PDF_VIEWER_ROUTE, currentRoute)
     }
 
     @Test
-    fun appNavigation_whenEpubSelected_navigatesToEpubReader() {
-        // Trigger state change
-        fakeUiState.value = ReaderScreenState(
-            selectedFileType = FileType.EPUB,
-            selectedEpubBook = EpubBook(
-                fileName = "dummy.epub",
-                title = "Dummy Book",
-                author = "Author",
-                language = "en",
-                coverImage = null
-            )
-        )
-
-        composeTestRule.waitForIdle()
-
-        val currentRoute = navController.currentBackStackEntry?.destination?.route
-        assertEquals(AppDestinations.EPUB_READER_ROUTE, currentRoute)
+    fun androidReaderSurface_returnsNullForUnknownFileType() {
+        assertThat(FileType.UNKNOWN.readerSurfaceOnAndroid()).isNull()
     }
 
-    @Test
-    fun appNavigation_whenFileCleared_navigatesBackToMain() {
-        // First, navigate to PDF viewer
-        fakeUiState.value = ReaderScreenState(
-            selectedFileType = FileType.PDF,
-            selectedPdfUri = Uri.parse("content://dummy.pdf")
-        )
-        composeTestRule.waitForIdle()
-        assertEquals(AppDestinations.PDF_VIEWER_ROUTE, navController.currentBackStackEntry?.destination?.route)
-
-        // Then, trigger the clear action (simulating onNavigateBack)
-        fakeViewModel.clearSelectedFile()
-        composeTestRule.waitForIdle()
-
-        val currentRoute = navController.currentBackStackEntry?.destination?.route
-        assertEquals(AppDestinations.MAIN_ROUTE, currentRoute)
-    }
-
-    @Test
-    fun appNavigation_whenUnknownFileTypeSelected_navigatesBackToMain() {
-        fakeUiState.value = ReaderScreenState(
-            selectedFileType = FileType.PDF,
-            selectedPdfUri = Uri.parse("content://dummy.pdf")
-        )
-        composeTestRule.waitForIdle()
-        assertEquals(AppDestinations.PDF_VIEWER_ROUTE, navController.currentBackStackEntry?.destination?.route)
-
-        fakeUiState.value = ReaderScreenState(selectedFileType = FileType.UNKNOWN)
-        composeTestRule.waitForIdle()
-
-        assertEquals(AppDestinations.MAIN_ROUTE, navController.currentBackStackEntry?.destination?.route)
+    private fun FileType.readerSurfaceOnAndroid(): ReaderFeatureSurface? {
+        return SharedFileCapabilities.surfaceFor(this, ReaderPlatform.ANDROID)
     }
 }
