@@ -214,9 +214,11 @@ import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
+import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import com.aryan.reader.shared.reader.ReaderJumpHistory
@@ -800,7 +802,7 @@ fun EpubReaderHost(
     }
 
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
-    var isTtsCollapsed by remember { mutableStateOf(false) }
+    var ttsOverlaySize by remember { mutableStateOf(ReaderTtsOverlaySize.LARGE) }
 
     var isAutoScrollLocal by remember { mutableStateOf(loadAutoScrollLocalMode(context, bookId)) }
 
@@ -3477,6 +3479,12 @@ fun EpubReaderHost(
     ) {
         val isTtsSessionActive = (ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER"
 
+        LaunchedEffect(isTtsSessionActive) {
+            if (!isTtsSessionActive) {
+                ttsOverlaySize = ReaderTtsOverlaySize.LARGE
+            }
+        }
+
         val audioManager = remember(context) {
             context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         }
@@ -5684,7 +5692,7 @@ fun EpubReaderHost(
                 )
 
                 val ttsAlignmentBias by animateFloatAsState(
-                    targetValue = if (isTtsCollapsed) 1f else 0f,
+                    targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
                     label = "TtsAlignAnimation"
                 )
 
@@ -5701,8 +5709,8 @@ fun EpubReaderHost(
                         ttsController = ttsController,
                         ttsState = ttsState,
                         currentTtsMode = currentTtsMode,
-                        isCollapsed = isTtsCollapsed,
-                        onCollapseChange = { isTtsCollapsed = it },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = { ttsOverlaySize = it },
                         onLocateCurrentChunk = {
                             logTtsChapterDiag("Locate current chunk requested from TTS overlay")
                             queuePendingTtsLocate(TTS_LOCATE_REASON_OVERLAY)

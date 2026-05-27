@@ -91,6 +91,29 @@ class TtsChunkNavigationTest {
     }
 
     @Test
+    fun `reader tts overlay size cycles large to medium to small to large`() {
+        assertEquals(ReaderTtsOverlaySize.MEDIUM, nextReaderTtsOverlaySize(ReaderTtsOverlaySize.LARGE))
+        assertEquals(ReaderTtsOverlaySize.SMALL, nextReaderTtsOverlaySize(ReaderTtsOverlaySize.MEDIUM))
+        assertEquals(ReaderTtsOverlaySize.LARGE, nextReaderTtsOverlaySize(ReaderTtsOverlaySize.SMALL))
+    }
+
+    @Test
+    fun `reader tts overlay only aligns small state to the trailing edge`() {
+        assertEquals(0f, readerTtsOverlayAlignmentBias(ReaderTtsOverlaySize.LARGE), 0f)
+        assertEquals(0f, readerTtsOverlayAlignmentBias(ReaderTtsOverlaySize.MEDIUM), 0f)
+        assertEquals(1f, readerTtsOverlayAlignmentBias(ReaderTtsOverlaySize.SMALL), 0f)
+    }
+
+    @Test
+    fun `reader tts chunk label uses one based progress`() {
+        assertEquals("Chunk 1/4", formatReaderTtsChunkLabel(currentChunkIndex = 0, totalChunks = 4))
+        assertEquals("Chunk 4/4", formatReaderTtsChunkLabel(currentChunkIndex = 3, totalChunks = 4))
+        assertNull(formatReaderTtsChunkLabel(currentChunkIndex = -1, totalChunks = 4))
+        assertNull(formatReaderTtsChunkLabel(currentChunkIndex = 4, totalChunks = 4))
+        assertNull(formatReaderTtsChunkLabel(currentChunkIndex = 0, totalChunks = 0))
+    }
+
+    @Test
     fun `stream pcm duration uses cloud tts audio format`() {
         assertEquals(1_000L, resolveTtsStreamPcmDurationMs(totalBytes = 44L + 48_000L))
         assertNull(resolveTtsStreamPcmDurationMs(totalBytes = 44L))

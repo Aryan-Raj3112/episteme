@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
@@ -82,6 +83,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -150,7 +154,10 @@ import com.aryan.reader.loadNativeVoice
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.IPaginator
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
+import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
+import com.aryan.reader.tts.formatReaderTtsChunkLabel
+import com.aryan.reader.tts.nextReaderTtsOverlaySize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -2260,8 +2267,8 @@ fun TtsOverlayControls(
     ttsController: com.aryan.reader.tts.TtsController,
     ttsState: TtsState,
     currentTtsMode: com.aryan.reader.tts.TtsPlaybackManager.TtsMode,
-    isCollapsed: Boolean,
-    onCollapseChange: (Boolean) -> Unit,
+    overlaySize: ReaderTtsOverlaySize,
+    onOverlaySizeChange: (ReaderTtsOverlaySize) -> Unit,
     onLocateCurrentChunk: () -> Unit,
     onOpenTtsSettings: () -> Unit,
     onClose: () -> Unit,
@@ -2301,11 +2308,17 @@ fun TtsOverlayControls(
         }
     }
     val chunkLabel = remember(ttsState.currentChunkIndex, ttsState.totalChunks) {
-        if (ttsState.currentChunkIndex >= 0 && ttsState.totalChunks > 0) {
-            "Chunk ${ttsState.currentChunkIndex + 1}/${ttsState.totalChunks}"
-        } else {
-            null
-        }
+        formatReaderTtsChunkLabel(ttsState.currentChunkIndex, ttsState.totalChunks)
+    }
+    val miniBarTitle = ttsState.bookTitle
+        ?.takeIf { it.isNotBlank() }
+        ?: stringResource(R.string.action_read_aloud)
+    val miniBarSubtitle = remember(chapterLabel, chunkLabel, progressPercent, miniBarTitle) {
+        listOfNotNull(
+            chunkLabel,
+            progressPercent?.let { "$it%" },
+            chapterLabel?.takeIf { it != miniBarTitle }
+        ).joinToString(" - ")
     }
     val canSkipPreviousChunk = !ttsState.isLoading &&
         ttsState.currentChunkIndex > 0 &&
@@ -2330,24 +2343,30 @@ fun TtsOverlayControls(
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
-        modifier = modifier.widthIn(max = 400.dp).animateContentSize()
+        modifier = modifier
+            .widthIn(max = if (overlaySize == ReaderTtsOverlaySize.MEDIUM) 560.dp else 400.dp)
+            .animateContentSize()
     ) {
         AnimatedContent(
-            targetState = isCollapsed,
+            targetState = overlaySize,
             transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(200)) },
             label = "TtsOverlayUnified"
-        ) { collapsed ->
-            if (collapsed) {
+        ) { size ->
+            if (size == ReaderTtsOverlaySize.SMALL) {
                 Row(
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     IconButton(
-                        onClick = { onCollapseChange(false) },
+                        onClick = { onOverlaySizeChange(nextReaderTtsOverlaySize(size)) },
                         modifier = Modifier.size(36.dp)
                     ) {
-                        Icon(Icons.Default.ChevronLeft, "Expand", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(
+                            Icons.Default.KeyboardArrowLeft,
+                            stringResource(R.string.content_desc_expand),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
                         FilledIconButton(
@@ -2368,6 +2387,101 @@ fun TtsOverlayControls(
                             modifier = Modifier.size(36.dp),
                             color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
                             strokeWidth = 2.dp
+                        )
+                    }
+                }
+            } else if (size == ReaderTtsOverlaySize.MEDIUM) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp)
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(onClick = onLocateCurrentChunk)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = miniBarTitle,
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (miniBarSubtitle.isNotBlank()) {
+                            Text(
+                                text = miniBarSubtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(4.dp))
+
+                    IconButton(
+                        enabled = canSkipPreviousChunk,
+                        onClick = { ttsController.skipToPreviousChunk() },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipPrevious,
+                            contentDescription = stringResource(R.string.content_desc_tts_previous_chunk),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        FilledIconButton(
+                            onClick = { if (ttsState.isPlaying) ttsController.pause() else ttsController.resume() },
+                            modifier = Modifier.size(44.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                contentColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(
+                                painterResource(if (ttsState.isPlaying) R.drawable.pause else R.drawable.play),
+                                stringResource(R.string.content_desc_play_pause),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        if (ttsState.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(48.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                strokeWidth = 2.dp
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        enabled = canSkipNextChunk,
+                        onClick = { ttsController.skipToNextChunk() },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SkipNext,
+                            contentDescription = stringResource(R.string.content_desc_tts_next_chunk),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { onOverlaySizeChange(nextReaderTtsOverlaySize(size)) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowRight,
+                            contentDescription = stringResource(R.string.content_desc_collapse),
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -2437,8 +2551,16 @@ fun TtsOverlayControls(
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = { onCollapseChange(true) }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Default.ChevronRight, stringResource(R.string.content_desc_collapse), modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            IconButton(
+                                onClick = { onOverlaySizeChange(nextReaderTtsOverlaySize(size)) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    stringResource(R.string.content_desc_collapse),
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Default.Close, stringResource(R.string.content_desc_stop_tts), tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))

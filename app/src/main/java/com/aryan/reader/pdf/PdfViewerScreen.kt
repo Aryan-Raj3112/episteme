@@ -275,8 +275,10 @@ import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shouldRenderReaderSlider
 import com.aryan.reader.summarizationUrl
+import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
 import com.aryan.reader.tts.rememberTtsController
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
@@ -495,7 +497,7 @@ fun PdfViewerScreen(
     var isAutoScrollTempPaused by remember { mutableStateOf(false) }
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
-    var isTtsCollapsed by remember { mutableStateOf(false) }
+    var ttsOverlaySize by remember { mutableStateOf(ReaderTtsOverlaySize.LARGE) }
 
     var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
@@ -4110,6 +4112,12 @@ fun PdfViewerScreen(
     val isTtsSessionActive =
         ((ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER") || isAutoPagingForTts
 
+    LaunchedEffect(isTtsSessionActive) {
+        if (!isTtsSessionActive) {
+            ttsOverlaySize = ReaderTtsOverlaySize.LARGE
+        }
+    }
+
     val onInternalLinkNav: (Int) -> Unit = { targetPage ->
         coroutineScope.launch {
             if (targetPage in 0 until totalPages) {
@@ -7217,7 +7225,7 @@ fun PdfViewerScreen(
                 )
 
                 val ttsAlignmentBias by animateFloatAsState(
-                    targetValue = if (isTtsCollapsed) 1f else 0f,
+                    targetValue = readerTtsOverlayAlignmentBias(ttsOverlaySize),
                     label = "TtsAlignAnimation"
                 )
 
@@ -7234,8 +7242,8 @@ fun PdfViewerScreen(
                         ttsController = ttsController,
                         ttsState = ttsState,
                         currentTtsMode = currentTtsMode,
-                        isCollapsed = isTtsCollapsed,
-                        onCollapseChange = { isTtsCollapsed = it },
+                        overlaySize = ttsOverlaySize,
+                        onOverlaySizeChange = { ttsOverlaySize = it },
                         onLocateCurrentChunk = {
                             ttsDisplayPageIndex?.let { targetPage ->
                                 coroutineScope.launch {

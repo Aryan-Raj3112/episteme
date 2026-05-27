@@ -74,20 +74,16 @@ fun ReaderTtsMiniBar(
         ttsState.currentChunkIndex >= 0 &&
         ttsState.currentChunkIndex < ttsState.totalChunks - 1
     val chunkLabel = remember(ttsState.currentChunkIndex, ttsState.totalChunks) {
-        if (ttsState.currentChunkIndex >= 0 && ttsState.totalChunks > 0) {
-            "Chunk ${ttsState.currentChunkIndex + 1}/${ttsState.totalChunks}"
-        } else {
-            null
-        }
+        formatReaderTtsChunkLabel(ttsState.currentChunkIndex, ttsState.totalChunks)
     }
     val title = ttsState.bookTitle
         ?.takeIf { it.isNotBlank() }
         ?: stringResource(R.string.action_read_aloud)
     val subtitle = remember(title, ttsState.chapterTitle, chunkLabel) {
         listOfNotNull(
+            chunkLabel,
             ttsState.chapterTitle
-                ?.takeIf { it.isNotBlank() && it != title },
-            chunkLabel
+                ?.takeIf { it.isNotBlank() && it != title }
         ).joinToString(" - ")
     }
 
