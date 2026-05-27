@@ -98,6 +98,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -478,6 +479,297 @@ private fun highlightQueryInText(
     }
 }
 
+internal fun AnnotatedString.readerUrlAnnotationAtOffset(offset: Int): String? {
+    if (length == 0) return null
+
+    val safeOffset = offset.coerceIn(0, length)
+    getStringAnnotations("URL", safeOffset, safeOffset).firstOrNull()?.let { return it.item }
+
+    if (safeOffset < length) {
+        getStringAnnotations("URL", safeOffset, safeOffset + 1).firstOrNull()?.let { return it.item }
+    }
+
+    if (safeOffset > 0) {
+        getStringAnnotations("URL", safeOffset - 1, safeOffset).firstOrNull()?.let { return it.item }
+    }
+
+    return null
+}
+
+private const val READER_LINK_HIT_SLOP_PX = 2f
+
+internal fun AnnotatedString.readerUrlAnnotationAtPosition(
+    layout: TextLayoutResult,
+    position: Offset,
+    textStartOffset: Int = 0
+): String? {
+    if (length == 0 || layout.lineCount == 0) return null
+
+    val localTextLength = layout.layoutInput.text.length
+    if (localTextLength == 0) return null
+
+    val lineIndex = layout.getLineForVerticalPosition(position.y)
+    if (lineIndex !in 0 until layout.lineCount) return null
+
+    val lineTop = layout.getLineTop(lineIndex)
+    val lineBottom = layout.getLineBottom(lineIndex)
+    if (
+        position.y < lineTop - READER_LINK_HIT_SLOP_PX ||
+        position.y > lineBottom + READER_LINK_HIT_SLOP_PX
+    ) {
+        return null
+    }
+
+    val localLineStart = layout.getLineStart(lineIndex)
+    val localLineEnd = layout.getLineEnd(lineIndex, visibleEnd = true)
+    if (localLineStart >= localLineEnd) return null
+
+    val globalLineStart = (textStartOffset + localLineStart).coerceIn(0, length)
+    val globalLineEnd = (textStartOffset + localLineEnd).coerceIn(globalLineStart, length)
+    if (globalLineStart >= globalLineEnd) return null
+
+    return getStringAnnotations("URL", globalLineStart, globalLineEnd)
+        .firstOrNull { annotation ->
+            if (annotation.item.isBlank()) return@firstOrNull false
+
+            val localStart = (annotation.start - textStartOffset).coerceIn(0, localTextLength)
+            val localEnd = (annotation.end - textStartOffset).coerceIn(0, localTextLength)
+            val segmentStart = maxOf(localStart, localLineStart)
+            val segmentEnd = minOf(localEnd, localLineEnd)
+            layout.readerTextRangeContainsPosition(segmentStart, segmentEnd, position)
+        }
+        ?.item
+}
+
+private fun TextLayoutResult.readerTextRangeContainsPosition(
+    start: Int,
+    endExclusive: Int,
+    position: Offset
+): Boolean {
+    val textLength = layoutInput.text.length
+    val safeStart = start.coerceIn(0, textLength)
+    val safeEnd = endExclusive.coerceIn(safeStart, textLength)
+    if (safeStart >= safeEnd) return false
+
+    val lineIndex = getLineForVerticalPosition(position.y)
+    val startLine = getLineForOffset(safeStart)
+    val endLine = getLineForOffset((safeEnd - 1).coerceAtLeast(safeStart))
+    if (lineIndex !in startLine..endLine) return false
+
+    val lineStart = getLineStart(lineIndex)
+    val lineEnd = getLineEnd(lineIndex, visibleEnd = true)
+    val segmentStart = maxOf(safeStart, lineStart)
+    val segmentEnd = minOf(safeEnd, lineEnd)
+    if (segmentStart >= segmentEnd) return false
+
+    var left = Float.POSITIVE_INFINITY
+    var right = Float.NEGATIVE_INFINITY
+    for (offset in segmentStart until segmentEnd) {
+        val box = getBoundingBox(offset)
+        left = minOf(left, box.left, box.right)
+        right = maxOf(right, box.left, box.right)
+    }
+    if (left == Float.POSITIVE_INFINITY || right == Float.NEGATIVE_INFINITY) return false
+
+    return position.x >= left - READER_LINK_HIT_SLOP_PX &&
+        position.x <= right + READER_LINK_HIT_SLOP_PX
+}
+
+private data class ReaderPageLinkHit(
+    val href: String,
+    val blockIndex: Int,
+    val cfi: String?
+)
+
+private fun ReactiveBlockMap.readerLinkAtPagePosition(
+    pageCoordinates: LayoutCoordinates,
+    pageIndex: Int,
+    position: Offset
+): ReaderPageLinkHit? {
+    val windowPosition = pageCoordinates.localToWindow(position)
+    return entries.firstNotNullOfOrNull { (key, value) ->
+        if (!key.endsWith("_$pageIndex")) return@firstNotNullOfOrNull null
+
+        val (layout, coordinates, block) = value
+        if (!coordinates.isAttached) return@firstNotNullOfOrNull null
+
+        val localPosition = coordinates.windowToLocal(windowPosition)
+        if (
+            localPosition.x < 0f ||
+            localPosition.y < 0f ||
+            localPosition.x > layout.size.width.toFloat() ||
+            localPosition.y > layout.size.height.toFloat()
+        ) {
+            return@firstNotNullOfOrNull null
+        }
+
+        layout.layoutInput.text
+            .readerUrlAnnotationAtPosition(layout, localPosition)
+            ?.let { href ->
+                ReaderPageLinkHit(
+                    href = href,
+                    blockIndex = block.blockIndex,
+                    cfi = block.cfi
+                )
+            }
+    }
+}
+
+private suspend fun AwaitPointerEventScope.awaitReaderLinkTap(
+    source: String,
+    urlAtPosition: (Offset) -> String?,
+    touchSlop: Float,
+    onLinkClick: (String) -> Unit
+) {
+    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+    if (down.isConsumed) {
+        Timber.tag(TAG_PAGINATED_LINK_DIAG).v(
+            "tap_down_skip_consumed source=$source x=${down.position.x.roundToInt()} y=${down.position.y.roundToInt()}"
+        )
+        return
+    }
+    val url = urlAtPosition(down.position)
+    if (url == null) {
+        Timber.tag(TAG_PAGINATED_LINK_DIAG).v(
+            "tap_down_miss source=$source x=${down.position.x.roundToInt()} y=${down.position.y.roundToInt()}"
+        )
+        return
+    }
+    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+        "tap_down_hit source=$source x=${down.position.x.roundToInt()} y=${down.position.y.roundToInt()} " +
+            "href=${url.readerLinkDiagPreview()}"
+    )
+    down.consume()
+
+    var movedOutsideTapSlop = false
+    while (true) {
+        val event = awaitPointerEvent(PointerEventPass.Initial)
+        val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+        val dx = change.position.x - down.position.x
+        val dy = change.position.y - down.position.y
+        if (sqrt(dx * dx + dy * dy) > touchSlop) {
+            movedOutsideTapSlop = true
+        }
+
+        if (!change.pressed) {
+            if (!movedOutsideTapSlop) {
+                change.consume()
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "tap_up_open source=$source href=${url.readerLinkDiagPreview()}"
+                )
+                onLinkClick(url)
+            } else {
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "tap_cancel_slop source=$source href=${url.readerLinkDiagPreview()} " +
+                        "dx=${dx.roundToInt()} dy=${dy.roundToInt()} slop=${touchSlop.roundToInt()}"
+                )
+            }
+            break
+        }
+
+        if (!movedOutsideTapSlop) {
+            change.consume()
+        }
+    }
+}
+
+private fun AnnotatedString.withReaderLinkDisplayStyle(
+    isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color
+): AnnotatedString {
+    val urls = getStringAnnotations("URL", 0, length)
+    if (urls.isEmpty()) return this
+
+    val linkStyle = readerLinkSpanStyle(
+        isDarkTheme = isDarkTheme,
+        themeBackgroundColor = themeBackgroundColor,
+        themeTextColor = themeTextColor
+    )
+
+    return buildAnnotatedString {
+        append(this@withReaderLinkDisplayStyle)
+        urls.forEach { range ->
+            addStyle(linkStyle, range.start, range.end)
+        }
+    }
+}
+
+@Composable
+private fun LinkAwareText(
+    text: AnnotatedString,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color,
+    onLinkClick: (String) -> Unit,
+    onGeneralTap: (Offset) -> Unit
+) {
+    var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val viewConfiguration = LocalViewConfiguration.current
+    val displayText = remember(text, isDarkTheme, themeBackgroundColor, themeTextColor, style.color) {
+        text.withReaderLinkDisplayStyle(
+            isDarkTheme = isDarkTheme,
+            themeBackgroundColor = themeBackgroundColor,
+            themeTextColor = style.color.takeIf { it.isSpecified } ?: themeTextColor
+        )
+    }
+    LaunchedEffect(displayText) {
+        if (displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "compose_text source=LinkAwareText " + displayText.readerAnnotatedLinkDiagSummary()
+            )
+        }
+    }
+
+    Text(
+        text = displayText,
+        style = style,
+        modifier = modifier
+            .pointerInput(displayText, layoutResult, viewConfiguration.touchSlop) {
+                awaitEachGesture {
+                    awaitReaderLinkTap(
+                        source = "LinkAwareText",
+                        urlAtPosition = { offset ->
+                            layoutResult?.let { layout ->
+                                displayText.readerUrlAnnotationAtPosition(layout, offset)
+                            }
+                        },
+                        touchSlop = viewConfiguration.touchSlop,
+                        onLinkClick = onLinkClick
+                    )
+                }
+            }
+            .pointerInput(displayText) {
+                detectTapGestures(
+                    onTap = { offset ->
+                        val url = layoutResult?.let { layout ->
+                            displayText.readerUrlAnnotationAtPosition(layout, offset)
+                        }
+                        if (url != null) {
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "detect_tap_link source=LinkAwareText href=${url.readerLinkDiagPreview()}"
+                            )
+                            onLinkClick(url)
+                        } else {
+                            onGeneralTap(offset)
+                        }
+                    }
+                )
+        },
+        onTextLayout = {
+            layoutResult = it
+            if (displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "layout_text source=LinkAwareText size=${it.size.width}x${it.size.height} " +
+                        "lines=${it.lineCount} " + displayText.readerAnnotatedLinkDiagSummary()
+                )
+            }
+        }
+    )
+}
+
 private fun computeImageRenderSizePx(
     block: ImageBlock,
     density: Density,
@@ -587,7 +879,12 @@ private fun WrappingContentLayout(
     searchQuery: String,
     ttsHighlightInfo: TtsHighlightInfo?,
     searchHighlightColor: Color,
-    ttsHighlightColor: Color
+    ttsHighlightColor: Color,
+    isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color,
+    onLinkClick: (String) -> Unit,
+    onGeneralTap: (Offset) -> Unit
 ) {
     val textMeasurer = rememberTextMeasurer()
     val fullText = remember(block.paragraphsToWrap, searchQuery, ttsHighlightInfo) {
@@ -623,6 +920,13 @@ private fun WrappingContentLayout(
             }
         }
     }
+    val displayFullText = remember(fullText, isDarkTheme, themeBackgroundColor, themeTextColor, textStyle.color) {
+        fullText.withReaderLinkDisplayStyle(
+            isDarkTheme = isDarkTheme,
+            themeBackgroundColor = themeBackgroundColor,
+            themeTextColor = textStyle.color.takeIf { it.isSpecified } ?: themeTextColor
+        )
+    }
     val (paragraphStartOffsets, paragraphEndOffsetMap) = remember(block.paragraphsToWrap) {
         val starts = mutableSetOf<Int>()
         val endMap = mutableMapOf<Int, Int>()
@@ -638,8 +942,9 @@ private fun WrappingContentLayout(
         starts to endMap
     }
     val density = LocalDensity.current
+    val viewConfiguration = LocalViewConfiguration.current
     var textLayouts by remember {
-        mutableStateOf<List<Pair<TextLayoutResult, Offset>>>(emptyList())
+        mutableStateOf<List<Triple<TextLayoutResult, Offset, Int>>>(emptyList())
     }
     var totalHeight by remember { mutableIntStateOf(0) }
 
@@ -649,11 +954,70 @@ private fun WrappingContentLayout(
             contentDescription = block.floatedImage.altText,
             contentScale = imageContentScale(block.floatedImage.style)
         )
-    }, modifier = modifier.drawBehind {
-        textLayouts.forEach { (layout, offset) ->
-            drawText(layout, topLeft = offset)
+    }, modifier = modifier
+        .drawBehind {
+            textLayouts.forEach { (layout, offset, _) ->
+                drawText(layout, topLeft = offset)
+            }
         }
-    }) { measurables, constraints ->
+        .pointerInput(displayFullText, textLayouts, viewConfiguration.touchSlop) {
+            awaitEachGesture {
+                awaitReaderLinkTap(
+                    source = "WrappingContentLayout:block=${block.blockIndex}",
+                    urlAtPosition = { offset ->
+                        textLayouts.firstNotNullOfOrNull { (layout, topLeft, textStartOffset) ->
+                            val localOffset = Offset(offset.x - topLeft.x, offset.y - topLeft.y)
+                            if (
+                                localOffset.x >= 0f &&
+                                localOffset.y >= 0f &&
+                                localOffset.x <= layout.size.width.toFloat() &&
+                                localOffset.y <= layout.size.height.toFloat()
+                            ) {
+                                displayFullText.readerUrlAnnotationAtPosition(
+                                    layout = layout,
+                                    position = localOffset,
+                                    textStartOffset = textStartOffset
+                                )
+                            } else {
+                                null
+                            }
+                        }
+                    },
+                    touchSlop = viewConfiguration.touchSlop,
+                    onLinkClick = onLinkClick
+                )
+            }
+        }
+        .pointerInput(displayFullText, textLayouts) {
+            detectTapGestures(
+                onTap = { offset ->
+                    for ((layout, topLeft, textStartOffset) in textLayouts) {
+                        val localOffset = Offset(offset.x - topLeft.x, offset.y - topLeft.y)
+                        if (
+                            localOffset.x >= 0f &&
+                            localOffset.y >= 0f &&
+                            localOffset.x <= layout.size.width.toFloat() &&
+                            localOffset.y <= layout.size.height.toFloat()
+                        ) {
+                            val url = displayFullText.readerUrlAnnotationAtPosition(
+                                layout = layout,
+                                position = localOffset,
+                                textStartOffset = textStartOffset
+                            )
+                            if (url != null) {
+                                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                    "detect_tap_link source=WrappingContentLayout:block=${block.blockIndex} " +
+                                        "href=${url.readerLinkDiagPreview()}"
+                                )
+                                onLinkClick(url)
+                                return@detectTapGestures
+                            }
+                        }
+                    }
+                    onGeneralTap(offset)
+                }
+            )
+        }) { measurables, constraints ->
         val (imageRenderWidthPx, imageRenderHeightPx) = run {
             computeImageRenderSizePx(
                 block = block.floatedImage,
@@ -678,9 +1042,9 @@ private fun WrappingContentLayout(
 
         var currentY = 0f
         var textOffset = 0
-        val layouts = mutableListOf<Pair<TextLayoutResult, Offset>>()
+        val layouts = mutableListOf<Triple<TextLayoutResult, Offset, Int>>()
 
-        while (textOffset < fullText.length) {
+        while (textOffset < displayFullText.length) {
             val isBesideImage = currentY < effectiveImageHeight
             val floatLeft = block.floatedImage.style.float == "left"
 
@@ -693,7 +1057,7 @@ private fun WrappingContentLayout(
             if (currentMaxWidth <= 0) break
 
             val lineConstraints = constraints.copy(minWidth = 0, maxWidth = currentMaxWidth)
-            val remainingText = fullText.subSequence(textOffset, fullText.length)
+            val remainingText = displayFullText.subSequence(textOffset, displayFullText.length)
 
             val styleForMeasure =
                 remainingText.spanStyles.firstOrNull { it.item.fontFamily != null }?.item?.fontFamily?.let {
@@ -736,7 +1100,7 @@ private fun WrappingContentLayout(
             )
             val xOffset = if (isBesideImage && floatLeft) effectiveImageWidth.toFloat() else 0f
 
-            layouts.add(lineLayout to Offset(xOffset, currentY))
+            layouts.add(Triple(lineLayout, Offset(xOffset, currentY), textOffset))
 
             currentY += lineLayout.size.height
             val endOfLineVisibleCharIndex = textOffset + firstLineEndOffset - 1
@@ -754,12 +1118,18 @@ private fun WrappingContentLayout(
                 currentY += gap
             }
             textOffset += firstLineEndOffset
-            while (textOffset < fullText.length && fullText[textOffset].isWhitespace()) {
+            while (textOffset < displayFullText.length && displayFullText[textOffset].isWhitespace()) {
                 textOffset++
             }
         }
         textLayouts = layouts
         totalHeight = maxOf(currentY, effectiveImageHeight.toFloat()).roundToInt()
+        if (displayFullText.getStringAnnotations("URL", 0, displayFullText.length).isNotEmpty()) {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "layout_wrapping block=${block.blockIndex} layouts=${layouts.size} totalHeight=$totalHeight " +
+                    displayFullText.readerAnnotatedLinkDiagSummary()
+            )
+        }
         layout(constraints.maxWidth, totalHeight) {
             if (imagePlacable != null) {
                 val imageX = if (block.floatedImage.style.float == "left") 0
@@ -1309,6 +1679,10 @@ fun PaginatedReaderScreen(
             onInternalLinkNavigated = onInternalLinkNavigated,
             onLinkClick = { currentChapterPath, href, onNavComplete ->
                 coroutineScope.launch(Dispatchers.IO) {
+                    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                        "nav_request currentChapterPath=${currentChapterPath.readerLinkDiagPreview()} " +
+                            "href=${href.readerLinkDiagPreview()}"
+                    )
                     withContext(Dispatchers.Main) { isNavigatingByLink = true }
                     try {
                         var isFootnote = false
@@ -1316,6 +1690,12 @@ fun PaginatedReaderScreen(
 
                         val sourceChapter =
                             book.chaptersForPagination.find { it.absPath == currentChapterPath }
+                        if (sourceChapter == null) {
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).w(
+                                "nav_source_chapter_miss currentChapterPath=${currentChapterPath.readerLinkDiagPreview()} " +
+                                    "href=${href.readerLinkDiagPreview()}"
+                            )
+                        }
                         if (sourceChapter != null) {
                             val sourceHtml = sourceChapter.htmlContent.ifEmpty {
                                 try {
@@ -1403,8 +1783,15 @@ fun PaginatedReaderScreen(
                         }
 
                         if (!footnoteHtml.isNullOrBlank()) {
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "nav_footnote_open href=${href.readerLinkDiagPreview()} htmlChars=${footnoteHtml?.length ?: 0}"
+                            )
                             withContext(Dispatchers.Main) { onFootnoteRequested(footnoteHtml) }
                         } else {
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "nav_resolve_start currentChapterPath=${currentChapterPath.readerLinkDiagPreview()} " +
+                                    "href=${href.readerLinkDiagPreview()}"
+                            )
                             val targetPage = (paginator as? BookPaginator)?.findStablePageForHref(currentChapterPath, href)
                             withContext(Dispatchers.Main) {
                                 if (targetPage != null) {
@@ -1415,11 +1802,19 @@ fun PaginatedReaderScreen(
                                     Timber.tag(TAG_STABLE_PAGE_NAV).d(
                                         "link_resolved href=$href targetPage=$targetPage anchor=$targetAnchor epoch=$navigationEpoch"
                                     )
+                                    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                        "nav_resolve_success href=${href.readerLinkDiagPreview()} targetPage=$targetPage " +
+                                            "targetAnchor=$targetAnchor"
+                                    )
                                     paginator.onUserScrolledTo(targetPage)
                                     onNavComplete(targetPage)
                                 } else {
                                     Timber.tag(TAG_STABLE_PAGE_NAV).w(
                                         "link_failed href=$href currentChapterPath=$currentChapterPath"
+                                    )
+                                    Timber.tag(TAG_PAGINATED_LINK_DIAG).w(
+                                        "nav_resolve_failed currentChapterPath=${currentChapterPath.readerLinkDiagPreview()} " +
+                                            "href=${href.readerLinkDiagPreview()}"
                                     )
                                 }
                             }
@@ -1877,7 +2272,9 @@ private fun TextWithEmphasis(
     activeSelection: PaginatedSelection?,
     @Suppress("unused") onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
-    @Suppress("unused") isDarkTheme: Boolean,
+    isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color,
     onRegisterLayout: ((TextLayoutResult, LayoutCoordinates) -> Unit)? = null
 ) {
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
@@ -1886,6 +2283,13 @@ private fun TextWithEmphasis(
     val scope = rememberCoroutineScope()
     var pressedHighlightCfi by remember { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
+    val displayText = remember(text, isDarkTheme, themeBackgroundColor, themeTextColor, style.color) {
+        text.withReaderLinkDisplayStyle(
+            isDarkTheme = isDarkTheme,
+            themeBackgroundColor = themeBackgroundColor,
+            themeTextColor = style.color.takeIf { it.isSpecified } ?: themeTextColor
+        )
+    }
 
     data class EmphasisMarkInfo(val center: Offset, val radius: Float, val color: Color)
     data class UnderlineDrawInfo(val path: Path?, val effect: PathEffect?, val minX: Float, val maxX: Float, val y: Float, val decoStyle: String, val decoColor: Color)
@@ -2209,7 +2613,7 @@ private fun TextWithEmphasis(
         return null
     }
 
-    Text(text = text, style = style, modifier = modifier
+    Text(text = displayText, style = style, modifier = modifier
         .onGloballyPositioned {
             layoutCoordinates = it
             if (textLayoutResult != null && block.cfi != null) {
@@ -2217,7 +2621,21 @@ private fun TextWithEmphasis(
             }
         }
         .then(customDrawer)
-        .pointerInput(userHighlights, text) {
+        .pointerInput(displayText, textLayoutResult, viewConfiguration.touchSlop) {
+            awaitEachGesture {
+                awaitReaderLinkTap(
+                    source = "TextWithEmphasis:block=${block.blockIndex}",
+                    urlAtPosition = { offset ->
+                        textLayoutResult?.let { layout ->
+                            displayText.readerUrlAnnotationAtPosition(layout, offset)
+                        }
+                    },
+                    touchSlop = viewConfiguration.touchSlop,
+                    onLinkClick = onLinkClick
+                )
+            }
+        }
+        .pointerInput(userHighlights, displayText) {
             detectTapGestures(
                 onLongPress = { offset ->
                     textLayoutResult?.let { layout ->
@@ -2295,14 +2713,28 @@ private fun TextWithEmphasis(
                         }
 
                         val charOffset = layout.getOffsetForPosition(offset)
-                        val urlAnnotation = text.getStringAnnotations("URL", charOffset, charOffset).firstOrNull()
-                        if (urlAnnotation != null) onLinkClick(urlAnnotation.item)
-                        else onGeneralTap(offset)
+                        val url = displayText.readerUrlAnnotationAtPosition(layout, offset)
+                        if (url != null) {
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "detect_tap_link source=TextWithEmphasis:block=${block.blockIndex} " +
+                                    "page=$pageIndex charOffset=$charOffset href=${url.readerLinkDiagPreview()}"
+                            )
+                            onLinkClick(url)
+                        } else {
+                            onGeneralTap(offset)
+                        }
                     }
                 }
             )
         }, onTextLayout = {
         textLayoutResult = it
+        if (displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "layout_text source=TextWithEmphasis page=$pageIndex block=${block.blockIndex} " +
+                    "size=${it.size.width}x${it.size.height} lines=${it.lineCount} " +
+                    displayText.readerAnnotatedLinkDiagSummary()
+            )
+        }
         if (layoutCoordinates != null && block.cfi != null) {
             onRegisterLayout?.invoke(it, layoutCoordinates!!)
         }
@@ -2385,6 +2817,7 @@ internal fun PaginatedReaderContent(
 ) {
     val coroutineScope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val pageViewConfiguration = LocalViewConfiguration.current
     var showExternalLinkDialog by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val imageLoader = context.imageLoader
@@ -2531,6 +2964,7 @@ internal fun PaginatedReaderContent(
 
                         var pageContent by remember { mutableStateOf<Page?>(null) }
                         var currentChapterPath by remember { mutableStateOf<String?>(null) }
+                        var pageLayoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
                         val pageChapterIndex = onGetChapterIndex(pageIndex)
                         val pageUserHighlights = highlightsForPaginatedPage(
                             pageChapterIndex = pageChapterIndex,
@@ -2563,6 +2997,15 @@ internal fun PaginatedReaderContent(
                             Timber.tag("PageTurnDiag").d("Page $pageIndex: Content fetched in ${fetchDuration}ms")
 
                             onGetChapterPath(pageIndex)?.let { currentChapterPath = it }
+                        }
+
+                        LaunchedEffect(pageIndex, pageChapterIndex, currentChapterPath, themedPageContent) {
+                            val page = themedPageContent ?: return@LaunchedEffect
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "page_render page=$pageIndex chapter=$pageChapterIndex " +
+                                    "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
+                                    page.readerPageLinkDiagSummary()
+                            )
                         }
 
                         SideEffect {
@@ -2700,43 +3143,99 @@ internal fun PaginatedReaderContent(
                             pendingCrossPageSelection = null
                         }
 
-                        Box(modifier = Modifier.fillMaxSize().background(effectiveBg).then(pageTextureModifier).then(pageModifier)) {
+                        val onGeneralTapCallback: (Offset) -> Unit = { offset ->
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "page_general_tap source=content page=$pageIndex x=${offset.x.roundToInt()} y=${offset.y.roundToInt()}"
+                            )
+                            activeSelection = null
+                            onTap(offset)
+                        }
+                        val onLinkClickCallback: (String) -> Unit = { href ->
+                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                "link_click_callback page=$pageIndex currentPagerPage=${pagerState.currentPage} " +
+                                    "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
+                                    "href=${href.readerLinkDiagPreview()}"
+                            )
+                            if (href.startsWith("http://") || href.startsWith("https://")) {
+                                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                    "external_link_dialog href=${href.readerLinkDiagPreview()}"
+                                )
+                                showExternalLinkDialog = href
+                            } else {
+                                val path = currentChapterPath
+                                if (path == null) {
+                                    Timber.tag(TAG_PAGINATED_LINK_DIAG).w(
+                                        "internal_link_dropped reason=missing_current_chapter_path href=${href.readerLinkDiagPreview()}"
+                                    )
+                                } else {
+                                    onLinkClick(path, href) { targetPageIndex ->
+                                        onInternalLinkNavigated(targetPageIndex)
+                                        coroutineScope.launch {
+                                            Timber.tag(TAG_STABLE_PAGE_NAV).d(
+                                                "link_scroll targetPage=$targetPageIndex currentPage=${pagerState.currentPage}"
+                                            )
+                                            pagerState.scrollToPage(targetPageIndex)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        val linkLayoutTick = blockLayoutMap.tick
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(effectiveBg)
+                                .then(pageTextureModifier)
+                                .then(pageModifier)
+                                .onGloballyPositioned { pageLayoutCoordinates = it }
+                                .pointerInput(pageIndex, linkLayoutTick, pageLayoutCoordinates, pageViewConfiguration.touchSlop) {
+                                    awaitEachGesture {
+                                        awaitReaderLinkTap(
+                                            source = "PageLinkInterceptor:page=$pageIndex",
+                                            urlAtPosition = { offset ->
+                                                val hit = pageLayoutCoordinates
+                                                    ?.takeIf { it.isAttached }
+                                                    ?.let { coordinates ->
+                                                        blockLayoutMap.readerLinkAtPagePosition(
+                                                            pageCoordinates = coordinates,
+                                                            pageIndex = pageIndex,
+                                                            position = offset
+                                                        )
+                                                    }
+                                                if (hit != null) {
+                                                    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                                        "page_link_interceptor_hit page=$pageIndex block=${hit.blockIndex} " +
+                                                            "cfi=${hit.cfi.orEmpty().readerLinkDiagPreview()} " +
+                                                            "href=${hit.href.readerLinkDiagPreview()}"
+                                                    )
+                                                }
+                                                hit?.href
+                                            },
+                                            touchSlop = pageViewConfiguration.touchSlop,
+                                            onLinkClick = onLinkClickCallback
+                                        )
+                                    }
+                                }
+                        ) {
                             Box(modifier = Modifier.fillMaxSize()) {
                                 Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                                     detectTapGestures(
                                         onTap = { offset ->
-                                            Timber.d("Tap detected on empty page area.")
+                                            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                                                "page_general_tap source=background page=$pageIndex " +
+                                                    "x=${offset.x.roundToInt()} y=${offset.y.roundToInt()}"
+                                            )
                                             activeSelection = null
                                             onTap(offset)
                                         })
-                                }.padding(
+                                })
+                                Box(modifier = Modifier.fillMaxSize().padding(
                                     horizontal = horizontalPadding,
                                     vertical = verticalPadding
                                 ), contentAlignment = Alignment.TopStart) {
                                     if (themedPageContent != null) {
                                         val displayPage = themedPageContent
-                                        val onGeneralTapCallback: (Offset) -> Unit = { offset ->
-                                            activeSelection = null
-                                            onTap(offset)
-                                        }
-                                        val onLinkClickCallback: (String) -> Unit = { href ->
-                                            Timber.d("Link clicked: $href")
-                                            if (href.startsWith("http://") || href.startsWith("https://")) {
-                                                showExternalLinkDialog = href
-                                            } else {
-                                                currentChapterPath?.let { path ->
-                                                    onLinkClick(path, href) { targetPageIndex ->
-                                                        onInternalLinkNavigated(targetPageIndex)
-                                                        coroutineScope.launch {
-                                                            Timber.tag(TAG_STABLE_PAGE_NAV).d(
-                                                                "link_scroll targetPage=$targetPageIndex currentPage=${pagerState.currentPage}"
-                                                            )
-                                                            pagerState.scrollToPage(targetPageIndex)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
 
                                         Column(modifier = Modifier.fillMaxSize()) {
                                             val searchHighlightColor =
@@ -3037,6 +3536,8 @@ internal fun PaginatedReaderContent(
                                                                     activeSelection = null
                                                                 },
                                                                 isDarkTheme = isDarkTheme,
+                                                                themeBackgroundColor = effectiveBg,
+                                                                themeTextColor = effectiveText,
                                                                 onRegisterLayout = { layout, coords ->
                                                                     if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                         Triple(
@@ -3122,6 +3623,8 @@ internal fun PaginatedReaderContent(
                                                                     activeSelection = null
                                                                 },
                                                                 isDarkTheme = isDarkTheme,
+                                                                themeBackgroundColor = effectiveBg,
+                                                                themeTextColor = effectiveText,
                                                                 onRegisterLayout = { layout, coords ->
                                                                     if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                         Triple(
@@ -3206,6 +3709,8 @@ internal fun PaginatedReaderContent(
                                                                     activeSelection = null
                                                                 },
                                                                 isDarkTheme = isDarkTheme,
+                                                                themeBackgroundColor = effectiveBg,
+                                                                themeTextColor = effectiveText,
                                                                 onRegisterLayout = { layout, coords ->
                                                                     if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                         Triple(
@@ -3323,6 +3828,8 @@ internal fun PaginatedReaderContent(
                                                                         activeSelection = null
                                                                     },
                                                                     isDarkTheme = isDarkTheme,
+                                                                    themeBackgroundColor = effectiveBg,
+                                                                    themeTextColor = effectiveText,
                                                                     onRegisterLayout = { layout, coords ->
                                                                         if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                             Triple(
@@ -3343,7 +3850,12 @@ internal fun PaginatedReaderContent(
                                                                 searchQuery = searchQuery,
                                                                 ttsHighlightInfo = ttsHighlightInfo,
                                                                 searchHighlightColor = searchHighlightColor,
-                                                                ttsHighlightColor = ttsHighlightColor
+                                                                ttsHighlightColor = ttsHighlightColor,
+                                                                isDarkTheme = isDarkTheme,
+                                                                themeBackgroundColor = effectiveBg,
+                                                                themeTextColor = effectiveText,
+                                                                onLinkClick = onLinkClickCallback,
+                                                                onGeneralTap = onGeneralTapCallback
                                                             )
                                                         }
 
@@ -3395,6 +3907,8 @@ internal fun PaginatedReaderContent(
                                                                                     null
                                                                             },
                                                                             isDarkTheme = isDarkTheme,
+                                                                            themeBackgroundColor = effectiveBg,
+                                                                            themeTextColor = effectiveText,
                                                                             blockLayoutMap = blockLayoutMap,
                                                                             density = density,
                                                                             imageLoader = imageLoader,
@@ -3448,6 +3962,8 @@ internal fun PaginatedReaderContent(
                                                                                     null
                                                                             },
                                                                             isDarkTheme = isDarkTheme,
+                                                                            themeBackgroundColor = effectiveBg,
+                                                                            themeTextColor = effectiveText,
                                                                             blockLayoutMap = blockLayoutMap,
                                                                             density = density,
                                                                             imageLoader = imageLoader,
@@ -3783,20 +4299,30 @@ internal fun PaginatedReaderContent(
                                                                                 cell.content.forEach { blockInCell ->
                                                                                     when (blockInCell) {
                                                                                         is ParagraphBlock -> {
-                                                                                            Text(
+                                                                                            LinkAwareText(
                                                                                                 text = blockInCell.content,
                                                                                                 style = cellTextStyle,
-                                                                                                modifier = Modifier.fillMaxWidth()
+                                                                                                modifier = Modifier.fillMaxWidth(),
+                                                                                                isDarkTheme = isDarkTheme,
+                                                                                                themeBackgroundColor = effectiveBg,
+                                                                                                themeTextColor = effectiveText,
+                                                                                                onLinkClick = onLinkClickCallback,
+                                                                                                onGeneralTap = onGeneralTapCallback
                                                                                             )
                                                                                         }
 
                                                                                         is HeaderBlock -> {
-                                                                                            Text(
+                                                                                            LinkAwareText(
                                                                                                 text = blockInCell.content,
                                                                                                 style = cellTextStyle.copy(
                                                                                                     fontWeight = FontWeight.Bold
                                                                                                 ),
-                                                                                                modifier = Modifier.fillMaxWidth()
+                                                                                                modifier = Modifier.fillMaxWidth(),
+                                                                                                isDarkTheme = isDarkTheme,
+                                                                                                themeBackgroundColor = effectiveBg,
+                                                                                                themeTextColor = effectiveText,
+                                                                                                onLinkClick = onLinkClickCallback,
+                                                                                                onGeneralTap = onGeneralTapCallback
                                                                                             )
                                                                                         }
 
@@ -3814,12 +4340,17 @@ internal fun PaginatedReaderContent(
                                                                                                         )
                                                                                                     )
                                                                                                 }
-                                                                                                Text(
+                                                                                                LinkAwareText(
                                                                                                     text = blockInCell.content,
                                                                                                     style = cellTextStyle,
                                                                                                     modifier = Modifier.weight(
                                                                                                         1f
-                                                                                                    )
+                                                                                                    ),
+                                                                                                    isDarkTheme = isDarkTheme,
+                                                                                                    themeBackgroundColor = effectiveBg,
+                                                                                                    themeTextColor = effectiveText,
+                                                                                                    onLinkClick = onLinkClickCallback,
+                                                                                                    onGeneralTap = onGeneralTapCallback
                                                                                                 )
                                                                                             }
                                                                                         }
@@ -3858,10 +4389,15 @@ internal fun PaginatedReaderContent(
                                                                                         }
 
                                                                                         is TextContentBlock -> {
-                                                                                            Text(
+                                                                                            LinkAwareText(
                                                                                                 text = blockInCell.content,
                                                                                                 style = cellTextStyle,
-                                                                                                modifier = Modifier.fillMaxWidth()
+                                                                                                modifier = Modifier.fillMaxWidth(),
+                                                                                                isDarkTheme = isDarkTheme,
+                                                                                                themeBackgroundColor = effectiveBg,
+                                                                                                themeTextColor = effectiveText,
+                                                                                                onLinkClick = onLinkClickCallback,
+                                                                                                onGeneralTap = onGeneralTapCallback
                                                                                             )
                                                                                         }
 
@@ -4490,6 +5026,8 @@ private fun RenderFlexChildBlock(
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
     isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color,
     blockLayoutMap: MutableMap<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>>,
     density: Density,
     imageLoader: ImageLoader,
@@ -4549,6 +5087,8 @@ private fun RenderFlexChildBlock(
             onSelectionChange = onSelectionChange,
             onHighlightClick = onHighlightClick,
             isDarkTheme = isDarkTheme,
+            themeBackgroundColor = themeBackgroundColor,
+            themeTextColor = themeTextColor,
             onRegisterLayout = { layout, coords ->
                 block.cfi?.let { cfi ->
                     blockLayoutMap["${cfi}_$pageIndex"] = Triple(layout, coords, block)
@@ -4735,10 +5275,15 @@ private fun RenderFlexChildBlock(
                                     else textStyle
                                 cell.content.forEach { blockInCell ->
                                     if (blockInCell is TextContentBlock) {
-                                        Text(
+                                        LinkAwareText(
                                             text = blockInCell.content,
                                             style = cellTextStyle,
-                                            modifier = Modifier.fillMaxWidth()
+                                            modifier = Modifier.fillMaxWidth(),
+                                            isDarkTheme = isDarkTheme,
+                                            themeBackgroundColor = themeBackgroundColor,
+                                            themeTextColor = themeTextColor,
+                                            onLinkClick = onLinkClickCallback,
+                                            onGeneralTap = onGeneralTapCallback
                                         )
                                     } else if (blockInCell is ImageBlock) {
                                         AsyncImage(

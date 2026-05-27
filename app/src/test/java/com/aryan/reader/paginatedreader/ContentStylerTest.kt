@@ -153,6 +153,52 @@ class ContentStylerTest {
     }
 
     @Test
+    fun `link styling is applied after nested epub span styling`() {
+        val label = "Nested link"
+        val paragraph = SemanticParagraph(
+            text = label,
+            spans = listOf(
+                SemanticSpan(
+                    start = 0,
+                    end = label.length,
+                    style = CssStyle(),
+                    linkHref = "https://example.org",
+                    tag = "a"
+                ),
+                SemanticSpan(
+                    start = 0,
+                    end = label.length,
+                    style = CssStyle(
+                        spanStyle = SpanStyle(
+                            color = Color.Red,
+                            background = Color.Yellow,
+                            textDecoration = TextDecoration.None
+                        )
+                    ),
+                    tag = "span"
+                )
+            ),
+            style = CssStyle(),
+            elementId = null,
+            cfi = "/4/2",
+            blockIndex = 21
+        )
+
+        val styled = styler().style(listOf(paragraph)).single() as ParagraphBlock
+        val finalCoveringStyle = styled.content.spanStyles
+            .filter { it.start <= 0 && it.end >= label.length }
+            .last()
+            .item
+
+        assertEquals("https://example.org", styled.content.getStringAnnotations("URL", 0, label.length).single().item)
+        assertTrue(finalCoveringStyle.color.isSpecified)
+        assertTrue(finalCoveringStyle.color != Color.Red)
+        assertTrue(finalCoveringStyle.background.isSpecified)
+        assertTrue(finalCoveringStyle.background != Color.Yellow)
+        assertTrue(finalCoveringStyle.textDecoration?.contains(TextDecoration.Underline) == true)
+    }
+
+    @Test
     fun `runtime theme reapplies visible link style for cached paginated text`() {
         val linkText = "Cached link"
         val text = buildAnnotatedString {
@@ -180,6 +226,30 @@ class ContentStylerTest {
                 range.end == linkText.length &&
                 range.item.color.isSpecified &&
                 range.item.color != Color(0xFFE0E0E0) &&
+                range.item.background.isSpecified &&
+                range.item.textDecoration?.contains(TextDecoration.Underline) == true
+            })
+    }
+
+    @Test
+    fun `block anchor from html is styled and annotated as paginated link`() {
+        val semanticBlocks = htmlToSemanticBlocks(
+            html = """<html><body><a href="chapter2.xhtml#start"><p>Continue reading</p></a></body></html>""",
+            cssRules = OptimizedCssRules(),
+            textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
+            chapterAbsPath = "OEBPS/chapter1.xhtml",
+            extractionBasePath = "",
+            density = Density(1f),
+            fontFamilyMap = emptyMap(),
+            constraints = androidx.compose.ui.unit.Constraints(maxWidth = 400, maxHeight = 800)
+        )
+
+        val paragraph = styler().style(semanticBlocks).single() as ParagraphBlock
+
+        assertEquals("chapter2.xhtml#start", paragraph.content.getStringAnnotations("URL", 0, paragraph.content.length).single().item)
+        assertTrue(paragraph.content.spanStyles.any { range ->
+            range.start == 0 &&
+                range.end == paragraph.content.length &&
                 range.item.background.isSpecified &&
                 range.item.textDecoration?.contains(TextDecoration.Underline) == true
         })

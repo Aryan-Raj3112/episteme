@@ -437,13 +437,24 @@ class BookPaginator(
     }
 
     private suspend fun loadCachedPagesForChapter(chapter: EpubChapter, chapterIndex: Int): List<Page>? {
-        val cachedPages = bookCacheDao.getPageCache(bookId, currentConfigHash, chapterIndex) ?: return null
+        val cachedPages = bookCacheDao.getPageCache(bookId, currentConfigHash, chapterIndex) ?: run {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "page_cache_lookup result=miss chapter=$chapterIndex configHash=$currentConfigHash"
+            )
+            return null
+        }
         val expectedContentVersion = chapterContentVersion(chapter)
         val isCompatible = cachedPages.processingVersion == LATEST_PROCESSING_VERSION &&
             cachedPages.pageCacheVersion == LATEST_PAGE_CACHE_VERSION &&
             cachedPages.contentVersion == expectedContentVersion
 
         if (!isCompatible) {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "page_cache_lookup result=stale chapter=$chapterIndex " +
+                    "cachedProcessing=${cachedPages.processingVersion} expectedProcessing=$LATEST_PROCESSING_VERSION " +
+                    "cachedPageCache=${cachedPages.pageCacheVersion} expectedPageCache=$LATEST_PAGE_CACHE_VERSION " +
+                    "cachedContent=${cachedPages.contentVersion} expectedContent=$expectedContentVersion"
+            )
             Timber.d("Page cache stale for chapter $chapterIndex. Ignoring cached pages.")
             return null
         }
@@ -457,6 +468,10 @@ class BookPaginator(
                 applyPageRuntimeIndexes(chapterIndex, pages)
                 updatePageCountsOnMain(chapterIndex, pages.size)
                 pageCache.put(chapterIndex, pages)
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "page_cache_lookup result=hit chapter=$chapterIndex configHash=$currentConfigHash " +
+                        pages.readerPagesLinkDiagSummary()
+                )
                 Timber.i("Page cache HIT for chapter $chapterIndex. Loaded ${pages.size} measured pages.")
                 pages
             }
@@ -469,6 +484,10 @@ class BookPaginator(
     private fun savePageCacheAsync(chapter: EpubChapter, chapterIndex: Int, pages: List<Page>) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "page_cache_save chapter=$chapterIndex configHash=$currentConfigHash " +
+                        pages.readerPagesLinkDiagSummary()
+                )
                 val pageIndexEntries = buildPersistentPageIndexEntries(chapterIndex, pages)
                 val cacheEntry = PageCacheEntry(
                     bookId = bookId,
@@ -818,6 +837,10 @@ class BookPaginator(
             if (cachedChapter.contentBlocksProto.isNotEmpty()) {
                 try {
                     val semanticBlocks = proto.decodeFromByteArray<List<SemanticBlock>>(cachedChapter.contentBlocksProto)
+                    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                        "semantic_cache_hit chapter=$chapterIndex configHash=$currentConfigHash " +
+                            semanticBlocks.readerSemanticLinkDiagSummary()
+                    )
 
                     val isCacheEmpty = semanticBlocks.isEmpty()
                     val isLazyChapter = chapter.htmlContent.isEmpty()
@@ -833,7 +856,12 @@ class BookPaginator(
 
                     if (!shouldIgnoreCache) {
                         Timber.d("getBlocksForChapter: Cache HIT for chapter $chapterIndex in DATABASE.")
-                        return styler.style(semanticBlocks)
+                        val styledBlocks = styler.style(semanticBlocks)
+                        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                            "content_from_semantic_cache chapter=$chapterIndex configHash=$currentConfigHash " +
+                                styledBlocks.readerContentLinkDiagSummary()
+                        )
+                        return styledBlocks
                     }
                 } catch (e: Exception) {
                     Timber.e(e, "Failed to deserialize/style chapter $chapterIndex from DB. Reprocessing for this session.")
@@ -861,6 +889,10 @@ class BookPaginator(
         }
 
         val document = Jsoup.parse(htmlToParse, chapter.absPath)
+        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+            "html_parse_input chapter=$chapterIndex htmlChars=${htmlToParse.length} " +
+                document.readerHtmlLinkDiagSummary()
+        )
         val mathElements = document.select("math")
         val svgResults = mutableMapOf<String, String>()
 
@@ -899,6 +931,10 @@ class BookPaginator(
             mathSvgCache = svgResults,
             adaptThemeColors = false
         )
+        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+            "semantic_parse_result chapter=$chapterIndex " +
+                semanticBlocks.readerSemanticLinkDiagSummary()
+        )
 
         coroutineScope.launch(Dispatchers.IO) {
             try {
@@ -911,7 +947,12 @@ class BookPaginator(
             }
         }
 
-        return styler.style(semanticBlocks)
+        val styledBlocks = styler.style(semanticBlocks)
+        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+            "content_parse_result chapter=$chapterIndex " +
+                styledBlocks.readerContentLinkDiagSummary()
+        )
+        return styledBlocks
     }
 
     private fun startPaginationWorker(): Job = coroutineScope.launch(Dispatchers.IO) {
@@ -1141,6 +1182,9 @@ class BookPaginator(
     private suspend fun paginateChapter(chapterIndex: Int): List<Page>? {
         pageCache[chapterIndex]?.let {
             Timber.d("paginateChapter: L1 Cache HIT for chapter $chapterIndex in MEMORY, returning cached pages.")
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "page_memory_cache_hit chapter=$chapterIndex " + it.readerPagesLinkDiagSummary()
+            )
             return it
         }
 
@@ -1154,7 +1198,11 @@ class BookPaginator(
             return it
         }
 
-        val blocks = blockCache[chapterIndex] ?: run {
+        val blocks = blockCache[chapterIndex]?.also {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "content_l2_cache_hit chapter=$chapterIndex " + it.readerContentLinkDiagSummary()
+            )
+        } ?: run {
             Timber.d("paginateChapter: L2 Cache MISS for chapter $chapterIndex. Loading from DB.")
             val blocksFromDb = getBlocksForChapter(chapter, chapterIndex)
             blockCache.put(chapterIndex, blocksFromDb) // Store in L2 cache
@@ -1178,6 +1226,9 @@ class BookPaginator(
             density = density
         )
         Timber.d("paginateChapter: PaginatorLogic returned ${pages.size} pages for chapter $chapterIndex.")
+        Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+            "pagination_result chapter=$chapterIndex " + pages.readerPagesLinkDiagSummary()
+        )
 
         applyPageRuntimeIndexes(chapterIndex, pages)
         savePageCacheAsync(chapter, chapterIndex, pages)

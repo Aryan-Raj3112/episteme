@@ -273,7 +273,8 @@ private class SemanticHtmlParser(
 
     private fun parseNodeToSemanticBlocks(
         element: Element,
-        inheritedStyle: CssStyle
+        inheritedStyle: CssStyle,
+        inheritedLinkHref: String? = null
     ): List<SemanticBlock> {
         val elementOwnStyle = getElementStyle(element, inheritedStyle.customProperties)
         val finalBlockStyle = elementOwnStyle.blockStyle.copy(
@@ -298,7 +299,8 @@ private class SemanticHtmlParser(
 
         if (finalStyle.display == "none") return emptyList()
 
-        return elementToSemanticBlocks(element, finalStyle.withResolvedBlockResources())
+        val linkHref = element.linkHrefOrNull() ?: inheritedLinkHref
+        return elementToSemanticBlocks(element, finalStyle.withResolvedBlockResources(), linkHref)
     }
 
     private fun CssRule.matchesElement(element: Element, pseudoElement: String? = null): Boolean {
@@ -383,7 +385,8 @@ private class SemanticHtmlParser(
 
     private fun elementToSemanticBlocks(
         element: Element,
-        elementStyle: CssStyle
+        elementStyle: CssStyle,
+        inheritedLinkHref: String?
     ): List<SemanticBlock> {
         val elementId = element.id().ifBlank { null }
         val cfi = element.getCfiPath()
@@ -394,7 +397,7 @@ private class SemanticHtmlParser(
 
         if (elementStyle.blockStyle.display == "flex") {
             val children = element.children().flatMap { child ->
-                parseNodeToSemanticBlocks(child, elementStyle)
+                parseNodeToSemanticBlocks(child, elementStyle, inheritedLinkHref)
             }
             return listOf(SemanticFlexContainer(children, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
         }
@@ -421,14 +424,14 @@ private class SemanticHtmlParser(
                             margin = BoxBorders()
                         )
                     )
-                    val children = parseContainer(element, childStyle)
+                    val children = parseContainer(element, childStyle, inheritedLinkHref)
                     listOf(SemanticFlexContainer(children, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                 } else {
-                    parseContainer(element, elementStyle)
+                    parseContainer(element, elementStyle, inheritedLinkHref)
                 }
             }
             "svg" -> parseSvgElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
-            "table" -> parseTableElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
+            "table" -> parseTableElementToSemantic(element, elementStyle, inheritedLinkHref)?.let { listOf(it) } ?: emptyList()
             "math-placeholder" -> parseMathPlaceholderToSemantic(element, elementStyle)
             "img" -> parseImageElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
             "h1", "h2", "h3", "h4", "h5", "h6" -> {
@@ -465,13 +468,13 @@ private class SemanticHtmlParser(
                                 margin = BoxBorders()
                             )
                         )
-                        val children = parseContainer(element, childStyle)
+                        val children = parseContainer(element, childStyle, inheritedLinkHref)
                         listOf(SemanticFlexContainer(children, headerStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                     } else {
-                        parseContainer(element, headerStyle)
+                        parseContainer(element, headerStyle, inheritedLinkHref)
                     }
                 } else {
-                    val (text, spans) = buildSemanticTextAndSpans(element, elementStyle)
+                    val (text, spans) = buildSemanticTextAndSpans(element, elementStyle, inheritedLinkHref)
                     if (text.isNotBlank()) {
                         val level = tagName.substring(1).toIntOrNull() ?: 1
                         listOf(SemanticHeader(level, text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
@@ -479,13 +482,13 @@ private class SemanticHtmlParser(
                 }
             }
             "hr" -> listOf(SemanticSpacer(style = elementStyle, elementId = elementId, cfi = cfi, blockIndex = nextBlockIndex++))
-            "ul", "ol" -> parseListElementToSemantic(element, elementStyle)
+            "ul", "ol" -> parseListElementToSemantic(element, elementStyle, inheritedLinkHref)
             else -> {
                 val hasBlockDescendant = !element.isBlock && element.hasSemanticBlockDescendant()
                 if (element.isBlock || hasBlockDescendant) {
-                    parseContainer(element, elementStyle)
+                    parseContainer(element, elementStyle, inheritedLinkHref)
                 } else {
-                    val (text, spans) = buildSemanticTextAndSpans(element, elementStyle)
+                    val (text, spans) = buildSemanticTextAndSpans(element, elementStyle, inheritedLinkHref)
                     if (text.isNotBlank()) {
                         listOf(SemanticParagraph(text, spans, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                     } else emptyList()
@@ -501,36 +504,31 @@ private class SemanticHtmlParser(
         } else result
     }
 
-    private fun parseContainer(element: Element, style: CssStyle): List<SemanticBlock> {
+    private fun parseContainer(
+        element: Element,
+        style: CssStyle,
+        inheritedLinkHref: String? = null
+    ): List<SemanticBlock> {
         val children = mutableListOf<SemanticBlock>()
         val textNodesBuffer = mutableListOf<Node>()
+        val linkHref = element.linkHrefOrNull() ?: inheritedLinkHref
 
         fun flushTextBuffer() {
             if (textNodesBuffer.isEmpty()) return
-            val textChunks = buildSemanticTextAndSpanChunksFromNodes(textNodesBuffer, style)
+            val textChunks = buildSemanticTextAndSpanChunksFromNodes(
+                nodes = textNodesBuffer,
+                rootStyle = style,
+                inheritedLinkHref = linkHref
+            )
             val containerElementId = element.id().ifBlank { null }
             val containerCfi = element.getCfiPath()
             textChunks.forEachIndexed { chunkIndex, chunk ->
                 if (chunk.text.isBlank()) return@forEachIndexed
 
-                val finalSpans = chunk.spans.toMutableList()
-                if (element.tagName().lowercase() == "a") {
-                    val href = element.attr("href").ifBlank { null }
-                    if (href != null) {
-                        finalSpans.add(SemanticSpan(
-                            start = 0,
-                            end = chunk.text.length,
-                            style = style,
-                            linkHref = href,
-                            tag = "a",
-                            elementId = containerElementId.takeIf { chunkIndex == 0 }
-                        ))
-                    }
-                }
                 children.add(
                     SemanticParagraph(
                         text = chunk.text,
-                        spans = finalSpans,
+                        spans = chunk.spans,
                         style = style,
                         elementId = containerElementId.takeIf { chunkIndex == 0 },
                         cfi = containerCfi,
@@ -548,7 +546,7 @@ private class SemanticHtmlParser(
 
                 if (isEffectivelyBlock) {
                     flushTextBuffer()
-                    children.addAll(parseNodeToSemanticBlocks(node, style))
+                    children.addAll(parseNodeToSemanticBlocks(node, style, linkHref))
                 } else {
                     textNodesBuffer.add(node)
                 }
@@ -563,17 +561,19 @@ private class SemanticHtmlParser(
 
     private fun buildSemanticTextAndSpans(
         rootElement: Element,
-        rootStyle: CssStyle
+        rootStyle: CssStyle,
+        inheritedLinkHref: String? = null
     ): Pair<String, List<SemanticSpan>> {
-        return buildSemanticTextAndSpansFromNodes(rootElement.childNodes(), rootStyle, rootElement)
+        return buildSemanticTextAndSpansFromNodes(rootElement.childNodes(), rootStyle, rootElement, inheritedLinkHref)
     }
 
     private fun buildSemanticTextAndSpansFromNodes(
         nodes: List<Node>,
         rootStyle: CssStyle,
-        rootElement: Element? = null
+        rootElement: Element? = null,
+        inheritedLinkHref: String? = null
     ): Pair<String, List<SemanticSpan>> {
-        val chunks = buildSemanticTextAndSpanChunksFromNodes(nodes, rootStyle, rootElement)
+        val chunks = buildSemanticTextAndSpanChunksFromNodes(nodes, rootStyle, rootElement, inheritedLinkHref)
         val firstChunk = chunks.firstOrNull() ?: return "" to emptyList()
         return firstChunk.text to firstChunk.spans
     }
@@ -581,7 +581,8 @@ private class SemanticHtmlParser(
     private fun buildSemanticTextAndSpanChunksFromNodes(
         nodes: List<Node>,
         rootStyle: CssStyle,
-        rootElement: Element? = null
+        rootElement: Element? = null,
+        inheritedLinkHref: String? = null
     ): List<SemanticTextChunk> {
         val textBuilder = StringBuilder()
         val spans = mutableListOf<SemanticSpan>()
@@ -620,7 +621,7 @@ private class SemanticHtmlParser(
                 newLength--
             }
 
-            if (newLength == text.length) return text to sourceSpans
+            if (newLength == text.length) return text to sourceSpans.toList()
 
             val adjustedSpans = sourceSpans.mapNotNull { span ->
                 if (span.start >= newLength) {
@@ -645,6 +646,17 @@ private class SemanticHtmlParser(
                     linkHref = active.linkHref,
                     tag = active.tag,
                     elementId = active.elementId
+                )
+            }
+
+            if (!inheritedLinkHref.isNullOrBlank()) {
+                addSpan(
+                    start = 0,
+                    end = textBuilder.length,
+                    style = rootStyle,
+                    linkHref = inheritedLinkHref,
+                    tag = "a",
+                    elementId = rootElement?.id()?.ifBlank { null }
                 )
             }
 
@@ -759,7 +771,9 @@ private class SemanticHtmlParser(
                     val newStyle = inheritedStyle.merge(currentElementStyle)
                     if (newStyle.display == "none") return
                     val tag = node.tagName().lowercase()
-                    val href = if (tag == "a") node.attr("href").ifBlank { null } else null
+                    val href = node.linkHrefOrNull()
+                        ?: activeSpans.asReversed().firstOrNull { !it.linkHref.isNullOrBlank() }?.linkHref
+                        ?: inheritedLinkHref
                     val elementId = node.id().ifBlank { null }
                     val activeSpan = ActiveSemanticSpan(
                         startInChunk = textBuilder.length,
@@ -910,19 +924,27 @@ private class SemanticHtmlParser(
         return resourceResolver.resolvePath(chapterAbsPath, extractionBasePath, src)
     }
 
-    private fun parseListElementToSemantic(listElement: Element, listStyle: CssStyle): List<SemanticBlock> {
+    private fun parseListElementToSemantic(
+        listElement: Element,
+        listStyle: CssStyle,
+        inheritedLinkHref: String?
+    ): List<SemanticBlock> {
         val isOrdered = listElement.tagName().lowercase() == "ol"
         val items = listElement.children().mapNotNull { child ->
             if (child.tagName().lowercase() != "li") return@mapNotNull null
             val itemStyle = listStyle.merge(getElementStyle(child, listStyle.customProperties)).withResolvedBlockResources()
-            val (text, spans) = buildSemanticTextAndSpans(child, itemStyle)
+            val (text, spans) = buildSemanticTextAndSpans(child, itemStyle, inheritedLinkHref)
             val imageSrc = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it) }
             SemanticListItem(text, spans, itemStyle, child.id().ifBlank { null }, child.getCfiPath(), 0, imageSrc, blockIndex = nextBlockIndex++)
         }
         return listOf(SemanticList(items, isOrdered, listStyle, listElement.id().ifBlank { null }, listElement.getCfiPath(), blockIndex = nextBlockIndex++))
     }
 
-    private fun parseTableElementToSemantic(tableElement: Element, tableStyle: CssStyle): SemanticTable? {
+    private fun parseTableElementToSemantic(
+        tableElement: Element,
+        tableStyle: CssStyle,
+        inheritedLinkHref: String?
+    ): SemanticTable? {
         val rows = tableElement.getElementsByTag("tr").mapNotNull { rowElement ->
             val rowStyle = getElementStyle(rowElement, tableStyle.customProperties)
             if (rowStyle.display == "none") return@mapNotNull null
@@ -944,12 +966,23 @@ private class SemanticHtmlParser(
                     }
                 }
 
-                val cellContent = parseContainer(cellElement, cellCssStyle)
+                val cellContent = parseContainer(cellElement, cellCssStyle, inheritedLinkHref)
                 SemanticTableCell(cellContent, tagName == "th", cellElement.attr("colspan").toIntOrNull() ?: 1, cellCssStyle)
             }
             cells.ifEmpty { null }
         }
         if (rows.isEmpty()) return null
         return SemanticTable(rows, tableStyle, tableElement.id().ifBlank { null }, tableElement.getCfiPath(), blockIndex = nextBlockIndex++)
+    }
+
+    private fun Element.linkHrefOrNull(): String? {
+        val normalizedTagName = tagName().substringAfter(':')
+        if (!normalizedTagName.equals("a", ignoreCase = true)) return null
+
+        return attr("href")
+            .ifBlank { attr("xlink:href") }
+            .ifBlank { attr("l:href") }
+            .ifBlank { attr("epub:href") }
+            .ifBlank { null }
     }
 }

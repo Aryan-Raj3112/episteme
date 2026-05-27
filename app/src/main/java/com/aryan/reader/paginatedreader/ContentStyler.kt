@@ -411,7 +411,10 @@ class ContentStyler(
             withStyle(finalParagraphStyle) {
                 withStyle(initialSpanStyle) {
                     append(block.text)
+                    val linkSpans = mutableListOf<SemanticSpan>()
                     block.spans.sortedBy { it.start }.forEach { span ->
+                        val spanStart = span.start.coerceIn(0, block.text.length)
+                        val spanEnd = span.end.coerceIn(spanStart, block.text.length)
                         val themedSpanStyle = applyThemeToStyle(span.style)
                         val spanFontFamily = findFirstAvailableFontFamily(themedSpanStyle.fontFamilies, fontFamilyMap)
                         val effectiveSpanFontFamily = if (spanFontFamily == FontFamily.Monospace) {
@@ -434,6 +437,7 @@ class ContentStyler(
                         )
 
                         if (!span.linkHref.isNullOrBlank()) {
+                            linkSpans.add(span)
                             finalSpanStyle = finalSpanStyle.withReaderLinkStyle(
                                 isDarkTheme = isDarkTheme,
                                 themeBackgroundColor = themeBackgroundColor,
@@ -459,30 +463,57 @@ class ContentStyler(
                             val offsetStr = if (themedSpanStyle.textUnderlineOffset.isSpecified) themedSpanStyle.textUnderlineOffset.value.toString() else "0"
 
                             val annotationData = "$styleStr|$colorStr|$offsetStr"
-                            addStringAnnotation("CustomUnderline", annotationData, span.start, span.end)
+                            if (spanStart < spanEnd) {
+                                addStringAnnotation("CustomUnderline", annotationData, spanStart, spanEnd)
+                            }
                         }
 
-                        addStyle(initialSpanStyle.merge(finalSpanStyle), span.start, span.end)
+                        if (spanStart < spanEnd) {
+                            addStyle(initialSpanStyle.merge(finalSpanStyle), spanStart, spanEnd)
+                        }
 
                         val ws = themedSpanStyle.wordSpacing
-                        if (ws.isSpecified && ws.value != 0f) {
-                            val textToStyle = block.text.substring(span.start, span.end)
+                        if (ws.isSpecified && ws.value != 0f && spanStart < spanEnd) {
+                            val textToStyle = block.text.substring(spanStart, spanEnd)
                             for (i in textToStyle.indices) {
                                 if (textToStyle[i] == ' ') {
-                                    addStyle(SpanStyle(letterSpacing = ws), span.start + i, span.start + i + 1)
+                                    addStyle(SpanStyle(letterSpacing = ws), spanStart + i, spanStart + i + 1)
                                 }
                             }
                         }
 
-                        span.linkHref?.let { linkHref ->
-                            addStringAnnotation("URL", linkHref, span.start, span.end)
+                        span.linkHref?.takeIf { it.isNotBlank() }?.let { linkHref ->
+                            if (spanStart < spanEnd) {
+                                addStringAnnotation("URL", linkHref, spanStart, spanEnd)
+                            }
                         }
                         span.elementId?.let { elementId ->
-                            addStringAnnotation("ID", elementId, span.start, span.end)
+                            addStringAnnotation("ID", elementId, spanStart, spanEnd)
+                        }
+                    }
+
+                    val forcedLinkStyle = readerLinkSpanStyle(
+                        isDarkTheme = isDarkTheme,
+                        themeBackgroundColor = themeBackgroundColor,
+                        themeTextColor = themeTextColor
+                    )
+                    linkSpans.forEach { span ->
+                        val start = span.start.coerceIn(0, block.text.length)
+                        val end = span.end.coerceIn(start, block.text.length)
+                        if (start < end) {
+                            addStyle(forcedLinkStyle, start, end)
                         }
                     }
                 }
             }
+        }
+        if (block.spans.any { !it.linkHref.isNullOrBlank() }) {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "style_text_block type=${block::class.simpleName ?: "Text"} " +
+                    "block=${block.blockIndex} cfi=${block.cfi} " +
+                    "rawLinkSpans=${block.spans.count { !it.linkHref.isNullOrBlank() }} " +
+                    builtString.readerAnnotatedLinkDiagSummary()
+            )
         }
         return builtString.maybeAdjustLineHeightForEmphasis()
     }
