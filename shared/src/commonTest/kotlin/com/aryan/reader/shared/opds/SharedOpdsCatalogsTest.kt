@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.opds
 
+import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.FileType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -68,6 +70,13 @@ class SharedOpdsCatalogsTest {
             SharedOpdsSearch.expandSearchTemplate("https://example.org/search?q={searchTerms}", "ada lovelace")
         )
         assertEquals(
+            "https://example.org/search?q=ada%20lovelace&per-page=12&page=1",
+            SharedOpdsSearch.expandSearchTemplate(
+                "https://example.org/search?q={searchTerms}&per-page={count}&page={startPage}",
+                "ada lovelace"
+            )
+        )
+        assertEquals(
             "https://example.org/search?existing=1&query=ada%20lovelace",
             SharedOpdsSearch.expandSearchTemplate("https://example.org/search?existing=1", "ada lovelace")
         )
@@ -113,6 +122,43 @@ class SharedOpdsCatalogsTest {
                 contentDisposition = null,
                 urlPathSegment = null
             )
+        )
+    }
+
+    @Test
+    fun `local book matcher recognizes opds download temp names and acquisition filenames`() {
+        val entry = OpdsEntry(
+            id = "entry",
+            title = "A Catalog Book",
+            summary = null,
+            coverUrl = null,
+            acquisitions = listOf(
+                OpdsAcquisition("https://example.org/files/alternate-title.epub", "application/epub+zip")
+            ),
+            navigationUrl = null
+        )
+        val books = listOf(
+            BookItem(
+                id = "book",
+                path = "file:///library/opds_dl_A_Catalog_Book.epub",
+                type = FileType.EPUB,
+                displayName = "opds_dl_A_Catalog_Book.epub",
+                timestamp = 1L,
+                title = "Embedded Title"
+            )
+        )
+
+        assertEquals(books.single(), SharedOpdsLocalBookMatcher.findBook(entry, books))
+
+        val acquisitionNamedBook = books.single().copy(
+            path = "file:///library/alternate-title.epub",
+            displayName = "alternate-title.epub",
+            title = "Different Embedded Title"
+        )
+
+        assertEquals(
+            acquisitionNamedBook,
+            SharedOpdsLocalBookMatcher.findBook(entry, listOf(acquisitionNamedBook))
         )
     }
 }

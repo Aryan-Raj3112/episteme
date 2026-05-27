@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.opds
 
+import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.SharedFileCapabilities
 
 object SharedOpdsSearch {
@@ -18,7 +19,14 @@ object SharedOpdsSearch {
 
     fun expandSearchTemplate(template: String, query: String): String {
         val encoded = query.percentEncode()
-        val expandedSearchTerms = template.replace("{searchTerms}", encoded)
+        val expandedSearchTerms = template
+            .replace("{searchTerms}", encoded)
+            .replace("{count}", DefaultSearchCount)
+            .replace("{startPage}", DefaultSearchStartPage)
+            .replace("{startIndex}", DefaultSearchStartIndex)
+            .replace("{language}", DefaultSearchLanguage)
+            .replace("{inputEncoding}", DefaultSearchEncoding)
+            .replace("{outputEncoding}", DefaultSearchEncoding)
         if (expandedSearchTerms != template) return expandedSearchTerms
 
         val queryTemplate = Regex("""\{([?&])([^}]+)\}""").find(template)
@@ -56,6 +64,12 @@ object SharedOpdsSearch {
             contains("{query}") ||
             contains("{keyword}")
     }
+
+    private const val DefaultSearchCount = "12"
+    private const val DefaultSearchStartPage = "1"
+    private const val DefaultSearchStartIndex = "1"
+    private const val DefaultSearchLanguage = "*"
+    private const val DefaultSearchEncoding = "UTF-8"
 }
 
 object SharedOpdsDownloadNamer {
@@ -122,6 +136,101 @@ object SharedOpdsDownloadNamer {
             ?: return null
         if (SharedFileCapabilities.fileTypeForName(cleanName) == com.aryan.reader.shared.FileType.UNKNOWN) return null
         return ".$extension"
+    }
+}
+
+object SharedOpdsLocalBookMatcher {
+    fun findBook(entry: OpdsEntry, books: List<BookItem>): BookItem? {
+        return find(
+            entry = entry,
+            books = books,
+            title = { it.title },
+            displayName = { it.displayName },
+            path = { it.path }
+        )
+    }
+
+    fun <T> find(
+        entry: OpdsEntry,
+        books: List<T>,
+        title: (T) -> String?,
+        displayName: (T) -> String?,
+        path: (T) -> String?
+    ): T? {
+        val entryKeys = entry.matchKeys()
+        return books.firstOrNull { book ->
+            book.matchKeys(title, displayName, path).any { it in entryKeys }
+        }
+    }
+
+    private fun OpdsEntry.matchKeys(): Set<String> {
+        return buildSet {
+            addNormalized(title)
+            val safeTitle = SharedOpdsDownloadNamer.safeFileStem(title)
+            addNormalized(safeTitle)
+            addNormalized(safeTitle.take(50))
+            acquisitions.forEach { acquisition ->
+                addFileNameKeys(acquisition.url)
+            }
+        }
+    }
+
+    private fun <T> T.matchKeys(
+        title: (T) -> String?,
+        displayName: (T) -> String?,
+        path: (T) -> String?
+    ): Set<String> {
+        return buildSet {
+            addNormalized(title(this@matchKeys))
+            addFileNameKeys(displayName(this@matchKeys))
+            addFileNameKeys(path(this@matchKeys))
+        }
+    }
+
+    private fun MutableSet<String>.addFileNameKeys(value: String?) {
+        val decodedName = value
+            ?.substringBefore('?')
+            ?.substringBefore('#')
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.percentDecode()
+            ?.takeIf { it.isNotBlank() }
+            ?: return
+        addNormalized(decodedName)
+        addNormalized(decodedName.withoutKnownExtension())
+        addNormalized(decodedName.withoutKnownExtension().withoutOpdsDownloadPrefix())
+    }
+
+    private fun MutableSet<String>.addNormalized(value: String?) {
+        val normalized = value?.normalizedMatchKey() ?: return
+        if (normalized.isNotBlank()) add(normalized)
+    }
+
+    private fun String.withoutKnownExtension(): String {
+        val knownSuffix = SharedFileCapabilities.fileExtensionSuffixForName(this)
+        if (knownSuffix != null && endsWith(knownSuffix, ignoreCase = true)) {
+            return dropLast(knownSuffix.length)
+        }
+        val extension = substringAfterLast('.', missingDelimiterValue = "")
+        return if (extension.length in 1..8 && extension.all { it.isLetterOrDigit() }) {
+            substringBeforeLast('.')
+        } else {
+            this
+        }
+    }
+
+    private fun String.normalizedMatchKey(): String {
+        return percentDecode()
+            .withoutOpdsDownloadPrefix()
+            .replace(Regex("""[^\p{L}\p{N}]+"""), " ")
+            .trim()
+            .lowercase()
+            .replace(Regex("""\s+"""), " ")
+            .removePrefix("opds dl ")
+    }
+
+    private fun String.withoutOpdsDownloadPrefix(): String {
+        return replace(Regex("""^opds[_\-\s]+dl[_\-\s]+""", RegexOption.IGNORE_CASE), "")
     }
 }
 

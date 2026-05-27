@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.credentials.CredentialManager
+import androidx.lifecycle.ViewModel
 import androidx.work.WorkManager
 import com.aryan.reader.data.*
 import com.aryan.reader.paginatedreader.Locator
@@ -49,6 +50,14 @@ class MainViewModelTest {
     private val shelfRefsFlow = MutableStateFlow<List<BookShelfCrossRef>>(emptyList())
     private val tagsFlow = MutableStateFlow<List<TagEntity>>(emptyList())
     private val tagRefsFlow = MutableStateFlow<List<BookTagCrossRef>>(emptyList())
+
+    private class TestMainViewModel(application: Application) : MainViewModel(application) {
+        fun clearForTest() {
+            ViewModel::class.java
+                .getDeclaredMethod("clear\$lifecycle_viewmodel_release")
+                .invoke(this)
+        }
+    }
 
     @Before
     fun setup() {
@@ -126,6 +135,7 @@ class MainViewModelTest {
         every { anyConstructed<BillingClientWrapper>().launchPurchaseFlow(any(), any(), any()) } just Runs
         every { anyConstructed<AuthRepository>().getSignedInUser() } returns null
         every { anyConstructed<AuthRepository>().observeAuthState() } returns flowOf(null)
+        every { anyConstructed<FirestoreRepository>().removeListener(any()) } just Runs
         every { anyConstructed<RemoteConfigRepository>().init() } just Runs
         every { anyConstructed<TtsController>().ttsState } returns ttsStateFlow
         every { anyConstructed<TtsController>().connect() } just Runs
@@ -147,13 +157,20 @@ class MainViewModelTest {
         every { anyConstructed<FontsRepository>().getAllFonts() } returns customFontsFlow
         coEvery { anyConstructed<FontsRepository>().deleteFont(any()) } just Runs
 
-        viewModel = MainViewModel(mockApplication)
+        viewModel = TestMainViewModel(mockApplication)
     }
 
     @After
     fun tearDown() {
-        Dispatchers.resetMain()
-        unmockkAll()
+        try {
+            if (::viewModel.isInitialized) {
+                (viewModel as? TestMainViewModel)?.clearForTest()
+                testDispatcher.scheduler.runCurrent()
+            }
+        } finally {
+            Dispatchers.resetMain()
+            unmockkAll()
+        }
     }
 
     @Test

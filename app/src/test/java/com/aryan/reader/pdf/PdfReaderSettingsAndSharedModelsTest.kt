@@ -121,7 +121,7 @@ class PdfReaderSettingsAndSharedModelsTest {
     @Test
     fun `SharedPdfAnnotationDefaults supplies expected tool defaults and palettes`() {
         assertEquals(5, SharedPdfAnnotationDefaults.penPalette.size)
-        assertEquals(5, SharedPdfAnnotationDefaults.highlighterPalette.size)
+        assertEquals(SharedPdfHighlighterPalette.MaxColors, SharedPdfAnnotationDefaults.highlighterPalette.size)
 
         val pen = SharedPdfAnnotationDefaults.configFor(PdfInkTool.PEN)
         val eraser = SharedPdfAnnotationDefaults.configFor(PdfInkTool.ERASER)

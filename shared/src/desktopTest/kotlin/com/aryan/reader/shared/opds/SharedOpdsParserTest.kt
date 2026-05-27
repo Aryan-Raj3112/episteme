@@ -152,6 +152,89 @@ class SharedOpdsParserTest {
     }
 
     @Test
+    fun `parse cover links from opds cover relations and image typed links`() {
+        val xmlFeed = SharedOpdsParser().parse(
+            bodyString = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <feed xmlns="http://www.w3.org/2005/Atom">
+                  <title>XML Catalog</title>
+                  <entry>
+                    <id>xml-cover</id>
+                    <title>XML Cover Book</title>
+                    <link rel="http://opds-spec.org/cover" href="/api/v1/opds/42/cover" type="image/jpeg" />
+                    <link rel="http://opds-spec.org/acquisition/open-access" type="application/epub+zip" href="/api/v1/opds/42/download" />
+                  </entry>
+                </feed>
+            """.trimIndent(),
+            baseUrl = "https://grimmory.example/api/v1/opds/catalog"
+        )
+
+        assertEquals("https://grimmory.example/api/v1/opds/42/cover", xmlFeed.entries.single().coverUrl)
+
+        val jsonFeed = SharedOpdsParser().parse(
+            bodyString = """
+                {
+                  "publications": [
+                    {
+                      "metadata": {"identifier": "json-cover", "title": "JSON Cover Book"},
+                      "links": [
+                        {"rel": "cover", "href": "/api/v1/opds/77/cover", "type": "image/jpeg"},
+                        {"rel": "http://opds-spec.org/acquisition", "href": "/api/v1/opds/77/download", "type": "application/pdf"}
+                      ]
+                    }
+                  ]
+                }
+            """.trimIndent(),
+            baseUrl = "https://grimmory.example/api/v1/opds/catalog"
+        )
+
+        assertEquals("https://grimmory.example/api/v1/opds/77/cover", jsonFeed.entries.single().coverUrl)
+    }
+
+    @Test
+    fun `extract OpenSearch template prefers OPDS acquisition feeds over generic Atom feeds`() {
+        val template = SharedOpdsParser().extractOpenSearchTemplate(
+            bodyString = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+                  <Url type="application/atom+xml" template="https://example.org/feeds/atom/all?query={searchTerms}&amp;per-page={count}&amp;page={startPage}"/>
+                  <Url type="application/atom+xml;profile=opds-catalog;kind=acquisition" template="https://example.org/feeds/opds/all?query={searchTerms}&amp;per-page={count}&amp;page={startPage}"/>
+                </OpenSearchDescription>
+            """.trimIndent(),
+            openSearchUrl = "https://example.org/opensearch"
+        )
+
+        assertEquals(
+            "https://example.org/feeds/opds/all?query={searchTerms}&per-page={count}&page={startPage}",
+            template
+        )
+    }
+
+    @Test
+    fun `parse ebook enclosure links as acquisitions`() {
+        val feed = SharedOpdsParser().parse(
+            bodyString = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <feed xmlns="http://www.w3.org/2005/Atom">
+                  <title>Atom Search</title>
+                  <entry>
+                    <id>atom-book</id>
+                    <title>Atom Book</title>
+                    <link rel="enclosure" title="EPUB" type="application/epub+zip" href="downloads/book.epub" />
+                    <link rel="enclosure" title="MP3" type="audio/mpeg" href="downloads/audio.mp3" />
+                  </entry>
+                </feed>
+            """.trimIndent(),
+            baseUrl = "https://example.org/feeds/atom/all"
+        )
+
+        assertEquals(
+            OpdsAcquisition("https://example.org/feeds/atom/downloads/book.epub", "application/epub+zip"),
+            feed.entries.single().acquisitions.single()
+        )
+    }
+
+    @Test
     fun `parse OPDS 2 groups and fallback metadata produce navigation entries`() {
         val feed = SharedOpdsParser().parse(
             bodyString = """

@@ -66,6 +66,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
+import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
 import com.aryan.reader.shared.opds.SharedOpdsText
@@ -866,9 +867,7 @@ private fun SharedOpdsCatalogDialog(
 }
 
 private fun OpdsEntry.findLocalBook(localLibraryBooks: List<BookItem>): BookItem? {
-    return localLibraryBooks.firstOrNull {
-        it.title.equals(title, ignoreCase = true) || it.displayName.equals(title, ignoreCase = true)
-    }
+    return SharedOpdsLocalBookMatcher.findBook(this, localLibraryBooks)
 }
 
 @Composable

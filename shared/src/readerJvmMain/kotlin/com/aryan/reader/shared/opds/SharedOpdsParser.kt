@@ -36,18 +36,23 @@ class SharedOpdsParser {
         return document.allElements
             .asSequence()
             .filter { it.localTagName().equals("url", ignoreCase = true) }
-            .firstNotNullOfOrNull { urlElement ->
+            .mapNotNull { urlElement ->
                 val type = urlElement.attrAny("type").orEmpty()
                 val template = urlElement.attrAny("template")
                 if (
                     template != null &&
                     (type.contains("atom+xml", ignoreCase = true) || type.contains("opds+xml", ignoreCase = true))
                 ) {
-                    resolveUrl(openSearchUrl, template)
+                    OpenSearchTemplateCandidate(
+                        template = resolveUrl(openSearchUrl, template),
+                        priority = openSearchTemplatePriority(type)
+                    )
                 } else {
                     null
                 }
             }
+            .maxByOrNull { it.priority }
+            ?.template
     }
 
     private fun parseOpds2(jsonString: String, baseUrl: String): OpdsFeed {
@@ -129,14 +134,15 @@ class SharedOpdsParser {
         val (series, seriesIndex) = parseOpds2Series(metadata?.obj("belongsTo"))
 
         var coverUrl: String? = null
+        var coverPriority = Int.MIN_VALUE
         pub.array("images").forEach { image ->
             val href = image.string("href")
             if (!href.isNullOrBlank()) {
                 val resolvedHref = resolveUrl(baseUrl, href)
-                if (coverUrl == null) coverUrl = resolvedHref
-                if ("cover" in image.rels()) {
+                val priority = image.coverPriority()
+                if (coverUrl == null || priority > coverPriority) {
                     coverUrl = resolvedHref
-                    return@forEach
+                    coverPriority = priority
                 }
             }
         }
@@ -148,12 +154,20 @@ class SharedOpdsParser {
             val href = link.string("href")
             if (!href.isNullOrBlank()) {
                 val rels = link.rels()
-                if (rels.any { it == PSE_STREAM_REL }) {
+                val type = link.string("type").orEmpty()
+                if (rels.any { it.equals(PSE_STREAM_REL, ignoreCase = true) }) {
                     pseUrlTemplate = resolveUrl(baseUrl, href)
                     pseCount = link.obj("properties")?.int("numberOfItems")?.takeIf { it > 0 }
                 }
-                if (rels.any { it.contains("acquisition") }) {
-                    acquisitions.add(OpdsAcquisition(resolveUrl(baseUrl, href), link.string("type").orEmpty()))
+                val coverLinkPriority = coverPriority(rels, type)
+                if (coverLinkPriority != null && coverLinkPriority > coverPriority) {
+                    coverUrl = resolveUrl(baseUrl, href)
+                    coverPriority = coverLinkPriority
+                }
+                if (rels.any { it.contains("acquisition", ignoreCase = true) } ||
+                    (rels.any { it.equals("enclosure", ignoreCase = true) } && type.isDownloadableMediaType())
+                ) {
+                    acquisitions.add(OpdsAcquisition(resolveUrl(baseUrl, href), type))
                 }
             }
         }
@@ -231,6 +245,7 @@ class SharedOpdsParser {
         var title = ""
         var summary: String? = null
         var coverUrl: String? = null
+        var coverPriority = Int.MIN_VALUE
         var navigationUrl: String? = null
         var publisher: String? = null
         var published: String? = null
@@ -270,32 +285,39 @@ class SharedOpdsParser {
                 }
                 "link" -> {
                     val rel = child.attrAny("rel").orEmpty()
+                    val rels = rel.relTokens()
                     val href = child.attrAny("href").orEmpty()
                     val type = child.attrAny("type").orEmpty()
                     val linkTitle = child.attrAny("title")
 
-                    if (rel == PSE_STREAM_REL) {
+                    if (rels.any { it.equals(PSE_STREAM_REL, ignoreCase = true) }) {
                         pseUrlTemplate = resolveUrl(baseUrl, href)
                         pseCount = child.attrAny("pse:count", "count")?.toIntOrNull()
                     }
 
-                    if (rel == "http://calibre-ebook.com/opds/series" && series == null) {
+                    if (rels.any { it.equals("http://calibre-ebook.com/opds/series", ignoreCase = true) } && series == null) {
                         series = linkTitle
                     }
 
                     if (href.isNotEmpty()) {
                         val absoluteUrl = resolveUrl(baseUrl, href)
+                        val linkCoverPriority = coverPriority(rels, type)
                         when {
-                            rel.contains("http://opds-spec.org/image") -> {
-                                if (coverUrl == null || rel.contains("thumbnail")) coverUrl = absoluteUrl
+                            linkCoverPriority != null -> {
+                                if (linkCoverPriority > coverPriority) {
+                                    coverUrl = absoluteUrl
+                                    coverPriority = linkCoverPriority
+                                }
                             }
-                            rel.contains("http://opds-spec.org/acquisition") -> {
+                            rels.any { it.contains("acquisition", ignoreCase = true) } ||
+                                (rels.any { it.equals("enclosure", ignoreCase = true) } && type.isDownloadableMediaType()) -> {
                                 acquisitions.add(OpdsAcquisition(absoluteUrl, type))
                             }
-                            type.contains("profile=opds-catalog") || type.contains("application/atom+xml") -> {
+                            type.contains("profile=opds-catalog", ignoreCase = true) ||
+                                type.contains("application/atom+xml", ignoreCase = true) -> {
                                 if (navigationUrl == null) navigationUrl = absoluteUrl
                             }
-                            rel == "subsection" || rel == "collection" || rel == "start" -> {
+                            rels.any { it == "subsection" || it == "collection" || it == "start" } -> {
                                 if (navigationUrl == null) navigationUrl = absoluteUrl
                             }
                         }
@@ -408,10 +430,15 @@ class SharedOpdsParser {
         return runCatching { get(name)?.jsonPrimitive?.intOrNull }.getOrNull()
     }
 
+    private fun JsonObject.coverPriority(): Int {
+        return coverPriority(rels(), string("type").orEmpty()) ?: ImageTypeCoverPriority
+    }
+
     private fun JsonObject.rels(): List<String> {
         val rel = get("rel") ?: return emptyList()
-        rel.primitiveString()?.let { return listOf(it) }
+        rel.primitiveString()?.let { return it.relTokens() }
         return runCatching { rel.jsonArray.mapNotNull { it.primitiveString() } }.getOrDefault(emptyList())
+            .flatMap { it.relTokens() }
     }
 
     private fun JsonElement.primitiveString(): String? {
@@ -441,7 +468,82 @@ class SharedOpdsParser {
             ?.takeIf { it.isNotBlank() }
     }
 
+    private fun coverPriority(rel: String, type: String): Int? {
+        return coverPriority(rel.relTokens(), type)
+    }
+
+    private fun coverPriority(rels: List<String>, type: String): Int? {
+        val normalizedRels = rels.map { it.lowercase() }
+        return when {
+            normalizedRels.any { it == "thumbnail" || it.endsWith("/thumbnail") || it.endsWith("/image/thumbnail") } ->
+                ThumbnailCoverPriority
+            normalizedRels.any { it == "cover" || it.endsWith("/cover") || it.contains("/image") } ->
+                GenericCoverPriority
+            type.lowercase().substringBefore(';').trim().startsWith("image/") ->
+                ImageTypeCoverPriority
+            else -> null
+        }
+    }
+
+    private fun String.relTokens(): List<String> {
+        return trim()
+            .split(Regex("""\s+"""))
+            .filter { it.isNotBlank() }
+    }
+
+    private fun openSearchTemplatePriority(type: String): Int {
+        val normalizedType = type.lowercase()
+        return when {
+            normalizedType.contains("profile=opds-catalog") && normalizedType.contains("kind=acquisition") -> 4
+            normalizedType.contains("profile=opds-catalog") -> 3
+            normalizedType.contains("opds+xml") -> 2
+            normalizedType.contains("atom+xml") -> 1
+            else -> 0
+        }
+    }
+
+    private fun String.isDownloadableMediaType(): Boolean {
+        val normalizedType = lowercase().substringBefore(';').trim()
+        return normalizedType in DownloadableMediaTypes ||
+            DownloadableMediaTypeHints.any { normalizedType.contains(it) }
+    }
+
+    private data class OpenSearchTemplateCandidate(
+        val template: String,
+        val priority: Int
+    )
+
     private companion object {
         private const val PSE_STREAM_REL = "http://vaemendis.net/opds-pse/stream"
+        private const val ImageTypeCoverPriority = 1
+        private const val GenericCoverPriority = 2
+        private const val ThumbnailCoverPriority = 3
+        private val DownloadableMediaTypes = setOf(
+            "application/epub+zip",
+            "application/kepub+zip",
+            "application/pdf",
+            "application/x-mobipocket-ebook",
+            "application/vnd.amazon.ebook",
+            "application/vnd.comicbook+zip",
+            "application/vnd.comicbook-rar",
+            "application/x-cbz",
+            "application/x-cbr",
+            "application/x-fictionbook+xml",
+            "application/fb2+zip",
+            "application/xhtml+xml",
+            "text/html",
+            "text/plain",
+            "text/markdown",
+            "text/x-markdown"
+        )
+        private val DownloadableMediaTypeHints = listOf(
+            "epub",
+            "kepub",
+            "mobipocket",
+            "kindle",
+            "azw",
+            "fictionbook",
+            "comicbook"
+        )
     }
 }

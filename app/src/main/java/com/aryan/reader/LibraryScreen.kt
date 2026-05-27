@@ -105,6 +105,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -136,15 +137,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
+import coil.ImageLoader
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil.decode.SvgDecoder
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
 import com.aryan.reader.opds.OpdsAcquisition
 import com.aryan.reader.opds.OpdsCatalog
 import com.aryan.reader.opds.OpdsDownloadState
 import com.aryan.reader.opds.OpdsEntry
+import com.aryan.reader.opds.OpdsRepository
 import com.aryan.reader.opds.OpdsViewModel
+import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -2393,6 +2397,7 @@ fun OpdsTab(
     val uiState by opdsViewModel.uiState.collectAsStateWithLifecycle()
     val downloadingState = uiState.downloadingState
     val context = LocalContext.current
+    val coverImageLoader = rememberOpdsCoverImageLoader(uiState.currentCatalog)
     var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
     var showCatalogDialog by remember { mutableStateOf(false) }
     var editingCatalog by remember { mutableStateOf<OpdsCatalog?>(null) }
@@ -2617,6 +2622,7 @@ fun OpdsTab(
                                         entry = entry,
                                         localLibraryFiles = localLibraryFiles,
                                         downloadState = downloadingState[entry.id],
+                                        coverImageLoader = coverImageLoader,
                                         onDownloadClick = { acquisition ->
                                             opdsViewModel.downloadBook(
                                                 entry, acquisition, context
@@ -2665,6 +2671,7 @@ fun OpdsTab(
                 entry = selectedEntry!!,
                 localLibraryFiles = localLibraryFiles,
                 downloadState = downloadingState[selectedEntry!!.id],
+                coverImageLoader = coverImageLoader,
                 onDownloadFormat = { acquisition ->
                     opdsViewModel.downloadBook(selectedEntry!!, acquisition, context) { downloadedUri ->
                         onBookDownloaded(downloadedUri, selectedEntry!!.title)
@@ -2793,6 +2800,29 @@ fun OpdsTab(
 }
 
 @Composable
+private fun rememberOpdsCoverImageLoader(catalog: OpdsCatalog?): ImageLoader {
+    val context = LocalContext.current.applicationContext
+    val username = catalog?.username
+    val password = catalog?.password
+    val imageLoader = remember(context, username, password) {
+        ImageLoader.Builder(context)
+            .okHttpClient {
+                OpdsRepository.sharedHttpClient.newBuilder()
+                    .authenticator(OpdsRepository.OpdsAuthenticator(username, password))
+                    .build()
+            }
+            .components {
+                add(SvgDecoder.Factory())
+            }
+            .build()
+    }
+    DisposableEffect(imageLoader) {
+        onDispose { imageLoader.shutdown() }
+    }
+    return imageLoader
+}
+
+@Composable
 fun OpdsCatalogCard(catalog: OpdsCatalog, onClick: () -> Unit, onEdit: (() -> Unit)?, onDelete: (() -> Unit)?) {
     Surface(
         onClick = onClick,
@@ -2869,13 +2899,20 @@ fun OpdsBookCard(
     entry: OpdsEntry,
     localLibraryFiles: List<RecentFileItem>,
     downloadState: OpdsDownloadState?,
+    coverImageLoader: ImageLoader,
     onDownloadClick: (OpdsAcquisition) -> Unit,
     onReadClick: (RecentFileItem) -> Unit,
     onStreamClick: () -> Unit,
     onClick: () -> Unit
 ) {
     val libraryItem = remember(entry, localLibraryFiles) {
-        localLibraryFiles.find { it.title.equals(entry.title, ignoreCase = true) || it.displayName.equals(entry.title, ignoreCase = true) }
+        SharedOpdsLocalBookMatcher.find(
+            entry = entry,
+            books = localLibraryFiles,
+            title = { it.title },
+            displayName = { it.displayName },
+            path = { it.uriString }
+        )
     }
     val isDownloading = downloadState?.isDownloading == true
     val progress = downloadState?.progress
@@ -2894,6 +2931,7 @@ fun OpdsBookCard(
             AsyncImage(
                 model = entry.coverUrl,
                 contentDescription = null,
+                imageLoader = coverImageLoader,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(width = 70.dp, height = 100.dp)
@@ -3000,6 +3038,7 @@ fun OpdsBookDetailsSheet(
     entry: OpdsEntry,
     localLibraryFiles: List<RecentFileItem>,
     downloadState: OpdsDownloadState?,
+    coverImageLoader: ImageLoader,
     onDownloadFormat: (OpdsAcquisition) -> Unit,
     onReadClick: (RecentFileItem) -> Unit,
     onStreamClick: () -> Unit,
@@ -3008,7 +3047,13 @@ fun OpdsBookDetailsSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val libraryItem = remember(entry, localLibraryFiles) {
-        localLibraryFiles.find { it.title.equals(entry.title, ignoreCase = true) || it.displayName.equals(entry.title, ignoreCase = true) }
+        SharedOpdsLocalBookMatcher.find(
+            entry = entry,
+            books = localLibraryFiles,
+            title = { it.title },
+            displayName = { it.displayName },
+            path = { it.uriString }
+        )
     }
     val isDownloading = downloadState?.isDownloading == true
     val progress = downloadState?.progress
@@ -3028,6 +3073,7 @@ fun OpdsBookDetailsSheet(
                 AsyncImage(
                     model = entry.coverUrl,
                     contentDescription = null,
+                    imageLoader = coverImageLoader,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(width = 110.dp, height = 160.dp)
