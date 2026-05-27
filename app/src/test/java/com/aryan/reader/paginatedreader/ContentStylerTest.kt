@@ -47,6 +47,22 @@ class ContentStylerTest {
     }
 
     @Test
+    fun `paragraph styling downgrades css justify unless user explicitly forces alignment`() {
+        val block = styler(userTextAlign = null).style(
+            listOf(
+                paragraph(
+                    text = "Justified text",
+                    blockIndex = 20,
+                    style = CssStyle(paragraphStyle = androidx.compose.ui.text.ParagraphStyle(textAlign = TextAlign.Justify))
+                )
+            )
+        ).single() as ParagraphBlock
+
+        assertEquals(TextAlign.Justify, block.textAlign)
+        assertEquals(TextAlign.Left, block.content.paragraphStyles.first().item.textAlign)
+    }
+
+    @Test
     fun `floating image is grouped with following paragraphs until clear`() {
         val blocks = styler().style(
             listOf(

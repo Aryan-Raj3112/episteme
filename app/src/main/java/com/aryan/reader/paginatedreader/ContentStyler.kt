@@ -562,7 +562,10 @@ class ContentStyler(
         fontFamilyMap: Map<String, FontFamily>
     ): FontFamily? {
         if (fontFamilyNames.isEmpty()) return null
-        val specificFont = fontFamilyNames.firstNotNullOfOrNull { fontFamilyMap[it] }
+        val normalizedMap = fontFamilyMap.entries.associate { it.key.trim().lowercase() to it.value }
+        val specificFont = fontFamilyNames.firstNotNullOfOrNull { name ->
+            normalizedMap[name.trim().removeSurrounding("\"").removeSurrounding("'").lowercase()]
+        }
         if (specificFont != null) return specificFont
         return fontFamilyNames.firstNotNullOfOrNull { name -> FontFamilyMapper.nameToFontFamily(name) }
     }

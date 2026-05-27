@@ -39,7 +39,8 @@ import org.jsoup.select.Selector
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
 
-private val unsupportedPseudoElementRegex = Regex("::?(before|after|first-letter|first-line|marker|selection)", RegexOption.IGNORE_CASE)
+private val unsupportedPseudoElementRegex = Regex("::?(first-letter|first-line|marker|selection)", RegexOption.IGNORE_CASE)
+private val cssUrlRegex = Regex("""url\((['"]?)(.*?)\1\)""", RegexOption.IGNORE_CASE)
 private const val MAX_SEMANTIC_TEXT_BLOCK_CHARS = 32_000
 private const val TEXT_APPEND_SLICE_CHARS = 2_048
 private val semanticBlockDescendantTags = setOf(
@@ -181,7 +182,6 @@ private class SemanticHtmlParser(
     private val fontFamilyLoader: HtmlFontFamilyLoader,
     private val adaptThemeColors: Boolean
 ) {
-    private val styleCache = mutableMapOf<String, CssStyle>()
     private val semanticBlockDescendantCache = IdentityHashMap<Element, Boolean>()
     private var combinedRules: OptimizedCssRules = cssRules
     private val currentFontFamilyMap: MutableMap<String, FontFamily> = fontFamilyMap.toMutableMap()
@@ -275,10 +275,11 @@ private class SemanticHtmlParser(
         element: Element,
         inheritedStyle: CssStyle
     ): List<SemanticBlock> {
-        val elementOwnStyle = getElementStyle(element)
+        val elementOwnStyle = getElementStyle(element, inheritedStyle.customProperties)
         val finalBlockStyle = elementOwnStyle.blockStyle.copy(
             listStyleType = elementOwnStyle.blockStyle.listStyleType ?: inheritedStyle.blockStyle.listStyleType,
-            listStyleImage = elementOwnStyle.blockStyle.listStyleImage ?: inheritedStyle.blockStyle.listStyleImage
+            listStyleImage = elementOwnStyle.blockStyle.listStyleImage ?: inheritedStyle.blockStyle.listStyleImage,
+            visibility = elementOwnStyle.blockStyle.visibility ?: inheritedStyle.blockStyle.visibility
         )
 
         val finalStyle = elementOwnStyle.copy(
@@ -290,53 +291,40 @@ private class SemanticHtmlParser(
             textTransform = elementOwnStyle.textTransform ?: inheritedStyle.textTransform,
             hyphens = elementOwnStyle.hyphens ?: inheritedStyle.hyphens,
             fontVariantNumeric = elementOwnStyle.fontVariantNumeric ?: inheritedStyle.fontVariantNumeric,
-            textEmphasis = elementOwnStyle.textEmphasis ?: inheritedStyle.textEmphasis
+            textEmphasis = elementOwnStyle.textEmphasis ?: inheritedStyle.textEmphasis,
+            whiteSpace = elementOwnStyle.whiteSpace ?: inheritedStyle.whiteSpace,
+            customProperties = inheritedStyle.customProperties + elementOwnStyle.customProperties
         )
 
         if (finalStyle.display == "none") return emptyList()
 
-        return elementToSemanticBlocks(element, finalStyle)
+        return elementToSemanticBlocks(element, finalStyle.withResolvedBlockResources())
     }
 
-    private fun getElementDescriptor(element: Element): String {
-        return buildString {
-            append(element.tagName())
-            val id = element.id()
-            if (id.isNotEmpty()) append('#').append(id)
-            val classes = element.classNames()
-            if (classes.isNotEmpty()) append('.').append(classes.sorted().joinToString("."))
+    private fun CssRule.matchesElement(element: Element, pseudoElement: String? = null): Boolean {
+        if (this.pseudoElement != pseudoElement) return false
+        if (unsupportedPseudoElementRegex.containsMatchIn(selector.selector)) return false
+        return try {
+            element.`is`(selector.selector)
+        } catch (e: Selector.SelectorParseException) {
+            HtmlParserLog.w(e, "Jsoup failed to parse selector '${selector.selector}'.")
+            false
         }
     }
 
-    private fun getElementStyle(element: Element): CssStyle {
-        val cacheKey = getElementDescriptor(element)
+    private fun rulesForElement(element: Element, pseudoElement: String? = null): List<CssRule> {
+        val rules = combinedRules.toFlatList()
+        return rules
+            .asSequence()
+            .filter { it.matchesElement(element, pseudoElement) }
+            .sortedWith(compareBy<CssRule> { it.selector.specificity }.thenBy { it.sourceOrder })
+            .toList()
+    }
 
-        val baseStyle = styleCache.getOrPut(cacheKey) {
-            val potentialRules = mutableListOf<CssRule>()
-            combinedRules.byTag[element.tagName()]?.let { potentialRules.addAll(it) }
-            element.id().takeIf { it.isNotEmpty() }?.let { id ->
-                combinedRules.byId[id]?.let { potentialRules.addAll(it) }
-            }
-            element.classNames().forEach { className ->
-                combinedRules.byClass[className]?.let { potentialRules.addAll(it) }
-            }
-            potentialRules.addAll(combinedRules.otherComplex)
-
-            val matchingRules = potentialRules.filter { rule ->
-                if (unsupportedPseudoElementRegex.containsMatchIn(rule.selector.selector)) return@filter false
-                try {
-                    element.`is`(rule.selector.selector)
-                } catch (e: Selector.SelectorParseException) {
-                    HtmlParserLog.w(e, "Jsoup failed to parse selector '${rule.selector.selector}'.")
-                    false
-                }
-            }
-
-            matchingRules.sortedBy { it.selector.specificity }.fold(CssStyle()) { acc, rule ->
-                acc.merge(rule.style)
-            }
+    private fun getElementStyle(element: Element, inheritedCustomProperties: Map<String, String> = emptyMap()): CssStyle {
+        val baseStyle = rulesForElement(element).fold(CssStyle(customProperties = inheritedCustomProperties)) { acc, rule ->
+            acc.merge(rule.style)
         }
-
         var elementStyle = baseStyle
         val inlineStyleAttribute = element.attr("style")
         if (inlineStyleAttribute.isNotBlank()) {
@@ -347,7 +335,8 @@ private class SemanticHtmlParser(
                 constraints,
                 onlyImportant = false,
                 isDarkTheme = false,
-                adaptThemeColors = adaptThemeColors
+                adaptThemeColors = adaptThemeColors,
+                inheritedCustomProperties = elementStyle.customProperties
             )
             elementStyle = elementStyle.merge(inlineStyle)
         }
@@ -363,6 +352,33 @@ private class SemanticHtmlParser(
             }
         }
         return elementStyle
+    }
+
+    private fun getPseudoElementStyle(
+        element: Element,
+        pseudoElement: String,
+        inheritedStyle: CssStyle
+    ): CssStyle {
+        val pseudoStyle = rulesForElement(element, pseudoElement).fold(CssStyle()) { acc, rule ->
+            acc.merge(rule.style)
+        }
+        return inheritedStyle.merge(pseudoStyle)
+    }
+
+    private fun firstCssUrl(value: String): String? {
+        return cssUrlRegex.find(value)?.groupValues?.getOrNull(2)?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun CssStyle.withResolvedBlockResources(): CssStyle {
+        val resolvedBackgroundImage = blockStyle.backgroundImage?.let { raw ->
+            val url = firstCssUrl(raw) ?: raw.takeIf { !it.contains("(") } ?: return@let raw
+            resolveImagePath(url) ?: raw
+        }
+        return if (resolvedBackgroundImage == blockStyle.backgroundImage) {
+            this
+        } else {
+            copy(blockStyle = blockStyle.copy(backgroundImage = resolvedBackgroundImage))
+        }
     }
 
     private fun elementToSemanticBlocks(
@@ -549,21 +565,23 @@ private class SemanticHtmlParser(
         rootElement: Element,
         rootStyle: CssStyle
     ): Pair<String, List<SemanticSpan>> {
-        return buildSemanticTextAndSpansFromNodes(rootElement.childNodes(), rootStyle)
+        return buildSemanticTextAndSpansFromNodes(rootElement.childNodes(), rootStyle, rootElement)
     }
 
     private fun buildSemanticTextAndSpansFromNodes(
         nodes: List<Node>,
-        rootStyle: CssStyle
+        rootStyle: CssStyle,
+        rootElement: Element? = null
     ): Pair<String, List<SemanticSpan>> {
-        val chunks = buildSemanticTextAndSpanChunksFromNodes(nodes, rootStyle)
+        val chunks = buildSemanticTextAndSpanChunksFromNodes(nodes, rootStyle, rootElement)
         val firstChunk = chunks.firstOrNull() ?: return "" to emptyList()
         return firstChunk.text to firstChunk.spans
     }
 
     private fun buildSemanticTextAndSpanChunksFromNodes(
         nodes: List<Node>,
-        rootStyle: CssStyle
+        rootStyle: CssStyle,
+        rootElement: Element? = null
     ): List<SemanticTextChunk> {
         val textBuilder = StringBuilder()
         val spans = mutableListOf<SemanticSpan>()
@@ -669,16 +687,25 @@ private class SemanticHtmlParser(
             }
         }
 
-        fun appendTransformedText(rawText: String, textTransform: String?) {
+        fun normalizeTextForWhiteSpace(rawText: String, whiteSpace: String?): String {
+            return when (whiteSpace) {
+                "pre", "pre-wrap", "break-spaces" -> rawText
+                "pre-line" -> rawText.replace(Regex("[\\t\\x0B\\f\\r ]+"), " ")
+                else -> rawText.replace(Regex("\\s+"), " ")
+            }
+        }
+
+        fun appendTransformedText(rawText: String, style: CssStyle) {
+            val normalizedText = normalizeTextForWhiteSpace(rawText, style.whiteSpace)
             var start = 0
-            while (start < rawText.length) {
-                val end = (start + TEXT_APPEND_SLICE_CHARS).coerceAtMost(rawText.length)
+            while (start < normalizedText.length) {
+                val end = (start + TEXT_APPEND_SLICE_CHARS).coerceAtMost(normalizedText.length)
                 val normalizedSlice = buildString(end - start) {
                     for (i in start until end) {
-                        append(if (rawText[i] == '\n') ' ' else rawText[i])
+                        append(if (normalizedText[i] == '\n' && style.whiteSpace !in listOf("pre", "pre-wrap", "pre-line", "break-spaces")) ' ' else normalizedText[i])
                     }
                 }
-                val transformedSlice = when (textTransform) {
+                val transformedSlice = when (style.textTransform) {
                     "uppercase" -> normalizedSlice.uppercase()
                     "lowercase" -> normalizedSlice.lowercase()
                     "capitalize" -> normalizedSlice.capitalizeWords()
@@ -689,17 +716,48 @@ private class SemanticHtmlParser(
             }
         }
 
+        fun materializeCssContent(rawContent: String?, element: Element): String? {
+            if (rawContent.isNullOrBlank()) return null
+            val content = rawContent.trim()
+            if (content == "none" || content == "normal") return null
+            val tokens = Regex("""attr\(([^)]+)\)|"((?:\\.|[^"])*)"|'((?:\\.|[^'])*)'""")
+                .findAll(content)
+                .mapNotNull { match ->
+                    when {
+                        match.groupValues[1].isNotBlank() -> element.attr(match.groupValues[1].trim()).ifBlank { null }
+                        match.groupValues[2].isNotBlank() -> match.groupValues[2].replace("\\\"", "\"")
+                        match.groupValues[3].isNotBlank() -> match.groupValues[3].replace("\\'", "'")
+                        else -> null
+                    }
+                }
+                .toList()
+            return tokens.joinToString("").ifBlank {
+                content.removeSurrounding("\"").removeSurrounding("'").takeIf { it.isNotBlank() }
+            }
+        }
+
+        fun appendGeneratedContent(element: Element, inheritedStyle: CssStyle, pseudoElement: String) {
+            val generatedStyle = getPseudoElementStyle(element, pseudoElement, inheritedStyle)
+            if (generatedStyle.display == "none") return
+            val text = materializeCssContent(generatedStyle.content, element) ?: return
+            val start = textBuilder.length
+            appendTransformedText(text, generatedStyle)
+            val end = textBuilder.length
+            addSpan(start, end, generatedStyle, null, "::$pseudoElement", element.id().ifBlank { null })
+        }
+
         fun processNode(node: Node, inheritedStyle: CssStyle) {
             when (node) {
                 is TextNode -> {
-                    appendTransformedText(node.wholeText, inheritedStyle.textTransform)
+                    appendTransformedText(node.wholeText, inheritedStyle)
                 }
                 is Element -> {
                     if (node.tagName().lowercase() == "br") {
                         appendText("\n"); return
                     }
-                    val currentElementStyle = getElementStyle(node)
+                    val currentElementStyle = getElementStyle(node, inheritedStyle.customProperties)
                     val newStyle = inheritedStyle.merge(currentElementStyle)
+                    if (newStyle.display == "none") return
                     val tag = node.tagName().lowercase()
                     val href = if (tag == "a") node.attr("href").ifBlank { null } else null
                     val elementId = node.id().ifBlank { null }
@@ -711,7 +769,9 @@ private class SemanticHtmlParser(
                         elementId = elementId
                     )
                     activeSpans.add(activeSpan)
+                    appendGeneratedContent(node, newStyle, "before")
                     node.childNodes().forEach { processNode(it, newStyle) }
+                    appendGeneratedContent(node, newStyle, "after")
                     activeSpans.removeAt(activeSpans.lastIndex)
                     val endIndex = textBuilder.length
 
@@ -727,7 +787,9 @@ private class SemanticHtmlParser(
                 }
             }
         }
+        rootElement?.let { appendGeneratedContent(it, rootStyle, "before") }
         nodes.forEach { processNode(it, rootStyle) }
+        rootElement?.let { appendGeneratedContent(it, rootStyle, "after") }
         flushChunk(trimTrailing = true)
         return chunks
     }
@@ -852,7 +914,7 @@ private class SemanticHtmlParser(
         val isOrdered = listElement.tagName().lowercase() == "ol"
         val items = listElement.children().mapNotNull { child ->
             if (child.tagName().lowercase() != "li") return@mapNotNull null
-            val itemStyle = listStyle.merge(getElementStyle(child))
+            val itemStyle = listStyle.merge(getElementStyle(child, listStyle.customProperties)).withResolvedBlockResources()
             val (text, spans) = buildSemanticTextAndSpans(child, itemStyle)
             val imageSrc = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it) }
             SemanticListItem(text, spans, itemStyle, child.id().ifBlank { null }, child.getCfiPath(), 0, imageSrc, blockIndex = nextBlockIndex++)
@@ -862,14 +924,14 @@ private class SemanticHtmlParser(
 
     private fun parseTableElementToSemantic(tableElement: Element, tableStyle: CssStyle): SemanticTable? {
         val rows = tableElement.getElementsByTag("tr").mapNotNull { rowElement ->
-            val rowStyle = getElementStyle(rowElement)
+            val rowStyle = getElementStyle(rowElement, tableStyle.customProperties)
             if (rowStyle.display == "none") return@mapNotNull null
 
             val cells = rowElement.children().mapNotNull { cellElement ->
                 val tagName = cellElement.tagName().lowercase()
                 if (tagName !in listOf("td", "th")) return@mapNotNull null
 
-                var cellCssStyle = getElementStyle(cellElement)
+                var cellCssStyle = getElementStyle(cellElement, rowStyle.customProperties).withResolvedBlockResources()
                 if (cellCssStyle.display == "none") return@mapNotNull null
 
                 if (!cellCssStyle.blockStyle.backgroundColor.isSpecified) {

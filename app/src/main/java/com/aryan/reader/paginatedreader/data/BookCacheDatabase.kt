@@ -50,11 +50,14 @@ abstract class BookCacheDao {
 
     // --- Chapter Operations (Internal Raw Access) ---
 
-    @Query("SELECT * FROM processed_chapter_metadata WHERE book_id = :bookId AND chapter_index = :chapterIndex")
-    protected abstract suspend fun getChapterMetadata(bookId: String, chapterIndex: Int): ProcessedChapterMetadata?
+    @Query("SELECT * FROM processed_chapter_metadata WHERE book_id = :bookId AND chapter_index = :chapterIndex AND style_config_hash = :styleConfigHash")
+    protected abstract suspend fun getChapterMetadata(bookId: String, chapterIndex: Int, styleConfigHash: Int): ProcessedChapterMetadata?
 
-    @Query("SELECT chunk_data FROM processed_chapter_chunks WHERE book_id = :bookId AND chapter_index = :chapterIndex ORDER BY chunk_index ASC")
-    protected abstract suspend fun getChapterChunks(bookId: String, chapterIndex: Int): List<ByteArray>
+    @Query("SELECT * FROM processed_chapter_metadata WHERE book_id = :bookId AND chapter_index = :chapterIndex ORDER BY rowid DESC LIMIT 1")
+    protected abstract suspend fun getAnyChapterMetadata(bookId: String, chapterIndex: Int): ProcessedChapterMetadata?
+
+    @Query("SELECT chunk_data FROM processed_chapter_chunks WHERE book_id = :bookId AND chapter_index = :chapterIndex AND style_config_hash = :styleConfigHash ORDER BY chunk_index ASC")
+    protected abstract suspend fun getChapterChunks(bookId: String, chapterIndex: Int, styleConfigHash: Int): List<ByteArray>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     protected abstract suspend fun insertChapterMetadata(metadata: ProcessedChapterMetadata)
@@ -64,6 +67,9 @@ abstract class BookCacheDao {
 
     @Query("DELETE FROM processed_chapter_metadata WHERE book_id = :bookId")
     protected abstract suspend fun deleteChapterMetadataForBook(bookId: String)
+
+    @Query("DELETE FROM processed_chapter_chunks WHERE book_id = :bookId AND chapter_index = :chapterIndex AND style_config_hash = :styleConfigHash")
+    protected abstract suspend fun deleteChapterChunksForChapter(bookId: String, chapterIndex: Int, styleConfigHash: Int)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun insertAnchorIndices(anchors: List<AnchorIndexEntry>)
@@ -75,12 +81,16 @@ abstract class BookCacheDao {
     abstract suspend fun deleteAnchorsForBook(bookId: String)
 
     @Transaction
-    open suspend fun getProcessedChapter(bookId: String, chapterIndex: Int): ProcessedChapter? {
-        val metadata = getChapterMetadata(bookId, chapterIndex) ?: return null
-        val chunks = getChapterChunks(bookId, chapterIndex)
+    open suspend fun getProcessedChapter(bookId: String, chapterIndex: Int, styleConfigHash: Int? = null): ProcessedChapter? {
+        val metadata = if (styleConfigHash == null) {
+            getAnyChapterMetadata(bookId, chapterIndex)
+        } else {
+            getChapterMetadata(bookId, chapterIndex, styleConfigHash)
+        } ?: return null
+        val chunks = getChapterChunks(bookId, chapterIndex, metadata.styleConfigHash)
 
         if (chunks.isEmpty()) {
-            return ProcessedChapter(bookId, chapterIndex, ByteArray(0), metadata.estimatedPageCount)
+            return ProcessedChapter(bookId, chapterIndex, ByteArray(0), metadata.estimatedPageCount, metadata.styleConfigHash)
         }
 
         val totalSize = chunks.sumOf { it.size }
@@ -95,7 +105,8 @@ abstract class BookCacheDao {
             bookId = bookId,
             chapterIndex = chapterIndex,
             contentBlocksProto = mergedData,
-            estimatedPageCount = metadata.estimatedPageCount
+            estimatedPageCount = metadata.estimatedPageCount,
+            styleConfigHash = metadata.styleConfigHash
         )
     }
 
@@ -107,8 +118,10 @@ abstract class BookCacheDao {
             val metadata = ProcessedChapterMetadata(
                 bookId = chapter.bookId,
                 chapterIndex = chapter.chapterIndex,
-                estimatedPageCount = chapter.estimatedPageCount
+                estimatedPageCount = chapter.estimatedPageCount,
+                styleConfigHash = chapter.styleConfigHash
             )
+            deleteChapterChunksForChapter(chapter.bookId, chapter.chapterIndex, chapter.styleConfigHash)
             insertChapterMetadata(metadata)
 
             val fullData = chapter.contentBlocksProto
@@ -126,6 +139,7 @@ abstract class BookCacheDao {
                     ProcessedChapterChunk(
                         bookId = chapter.bookId,
                         chapterIndex = chapter.chapterIndex,
+                        styleConfigHash = chapter.styleConfigHash,
                         chunkIndex = chunkIndex,
                         chunkData = chunkBytes
                     )
@@ -309,7 +323,7 @@ abstract class BookCacheDao {
         PageCacheChunk::class,
         PageIndexEntry::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class BookCacheDatabase : RoomDatabase() {
@@ -326,7 +340,7 @@ abstract class BookCacheDatabase : RoomDatabase() {
                     BookCacheDatabase::class.java,
                     "book_cache_database"
                 )
-                    .addMigrations(MIGRATION_10_11)
+                    .addMigrations(MIGRATION_10_11, MIGRATION_11_12)
                     .fallbackToDestructiveMigration(true)
                     .build()
                 INSTANCE = instance
@@ -391,6 +405,66 @@ abstract class BookCacheDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_page_index_entries_book_id_config_hash_chapter_index` ON `page_index_entries` (`book_id`, `config_hash`, `chapter_index`)"
+                )
+            }
+        }
+
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `processed_chapter_chunks` RENAME TO `processed_chapter_chunks_old`"
+                )
+                db.execSQL(
+                    "ALTER TABLE `processed_chapter_metadata` RENAME TO `processed_chapter_metadata_old`"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `processed_chapter_metadata` (
+                        `book_id` TEXT NOT NULL,
+                        `chapter_index` INTEGER NOT NULL,
+                        `estimated_page_count` INTEGER NOT NULL,
+                        `style_config_hash` INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(`book_id`, `chapter_index`, `style_config_hash`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `processed_chapter_metadata` (`book_id`, `chapter_index`, `estimated_page_count`, `style_config_hash`)
+                    SELECT `book_id`, `chapter_index`, `estimated_page_count`, 0
+                    FROM `processed_chapter_metadata_old`
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `processed_chapter_chunks` (
+                        `book_id` TEXT NOT NULL,
+                        `chapter_index` INTEGER NOT NULL,
+                        `style_config_hash` INTEGER NOT NULL DEFAULT 0,
+                        `chunk_index` INTEGER NOT NULL,
+                        `chunk_data` BLOB NOT NULL,
+                        PRIMARY KEY(`book_id`, `chapter_index`, `style_config_hash`, `chunk_index`),
+                        FOREIGN KEY(`book_id`, `chapter_index`, `style_config_hash`)
+                            REFERENCES `processed_chapter_metadata`(`book_id`, `chapter_index`, `style_config_hash`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `processed_chapter_chunks` (`book_id`, `chapter_index`, `style_config_hash`, `chunk_index`, `chunk_data`)
+                    SELECT `book_id`, `chapter_index`, 0, `chunk_index`, `chunk_data`
+                    FROM `processed_chapter_chunks_old`
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_processed_chapter_chunks_book_id_chapter_index_style_config_hash` ON `processed_chapter_chunks` (`book_id`, `chapter_index`, `style_config_hash`)"
+                )
+                db.execSQL(
+                    "DROP TABLE `processed_chapter_chunks_old`"
+                )
+                db.execSQL(
+                    "DROP TABLE `processed_chapter_metadata_old`"
                 )
             }
         }

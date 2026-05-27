@@ -78,7 +78,8 @@ data class BookProcessingInput(
     @ProtoNumber(5) val density: Float,
     @ProtoNumber(6) val constraintsMaxWidth: Int,
     @ProtoNumber(7) val constraintsMaxHeight: Int,
-    @ProtoNumber(8) val fontFaces: List<FontFaceInfo> = emptyList()
+    @ProtoNumber(8) val fontFaces: List<FontFaceInfo> = emptyList(),
+    @ProtoNumber(9) val styleConfigHash: Int = 0
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -121,7 +122,7 @@ class BookProcessingWorker(
                 .build()
 
             WorkManager.getInstance(context).enqueueUniqueWork(
-                "process_$bookId",
+                "process_${bookId}_${processingInput.styleConfigHash}",
                 androidx.work.ExistingWorkPolicy.KEEP,
                 workRequest
             )
@@ -244,7 +245,7 @@ class BookProcessingWorker(
                 val deferreds = chunk.map { (index, chapter) ->
                     async {
                         Timber.d("Async task started for chapter index $index.")
-                        if (db.bookCacheDao().getProcessedChapter(bookId, index) == null) {
+                        if (db.bookCacheDao().getProcessedChapter(bookId, index, input.styleConfigHash) == null) {
                             Timber.d("[BG_PROC] Caching chapter $index: ${chapter.title}")
                             val htmlToParse = chapter.htmlContent.ifBlank {
                                 val backingFile = File(extractionBasePath, epubContentFilePath(chapter.htmlFilePath))
@@ -311,7 +312,8 @@ class BookProcessingWorker(
                                 bookId = bookId,
                                 chapterIndex = index,
                                 contentBlocksProto = protoBytes,
-                                estimatedPageCount = estimateSemanticPageCount(semanticBlocks)
+                                estimatedPageCount = estimateSemanticPageCount(semanticBlocks),
+                                styleConfigHash = input.styleConfigHash
                             )
                         } else {
                             Timber.d("Chapter $index was already in the database. Skipping.")

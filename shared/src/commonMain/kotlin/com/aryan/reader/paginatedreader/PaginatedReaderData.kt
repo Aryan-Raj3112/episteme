@@ -78,7 +78,20 @@ data class BlockStyle(
     @ProtoNumber(31) @Serializable(with = DpSerializer::class) val borderTopRightRadius: Dp = 0.dp,
     @ProtoNumber(32) @Serializable(with = DpSerializer::class) val borderBottomRightRadius: Dp = 0.dp,
     @ProtoNumber(33) @Serializable(with = DpSerializer::class) val borderBottomLeftRadius: Dp = 0.dp,
-    @ProtoNumber(34) @Serializable(with = DpSerializer::class) val borderSpacing: Dp = 0.dp
+    @ProtoNumber(34) @Serializable(with = DpSerializer::class) val borderSpacing: Dp = 0.dp,
+    @ProtoNumber(35) @Serializable(with = DpSerializer::class) val minWidth: Dp = Dp.Unspecified,
+    @ProtoNumber(36) @Serializable(with = DpSerializer::class) val minHeight: Dp = Dp.Unspecified,
+    @ProtoNumber(37) @Serializable(with = DpSerializer::class) val maxHeight: Dp = Dp.Unspecified,
+    @ProtoNumber(38) val overflow: String? = null,
+    @ProtoNumber(39) val breakBefore: String? = null,
+    @ProtoNumber(40) val breakAfter: String? = null,
+    @ProtoNumber(41) val breakInside: String? = null,
+    @ProtoNumber(42) val widows: Int = 2,
+    @ProtoNumber(43) val orphans: Int = 2,
+    @ProtoNumber(44) val visibility: String? = null,
+    @ProtoNumber(45) val objectFit: String? = null,
+    @ProtoNumber(46) val objectPosition: String? = null,
+    @ProtoNumber(47) val backgroundImage: String? = null
 ) {
     fun merge(other: BlockStyle): BlockStyle {
         return BlockStyle(
@@ -125,7 +138,20 @@ data class BlockStyle(
             horizontalAlign = other.horizontalAlign ?: this.horizontalAlign,
             filter = other.filter ?: this.filter,
             borderCollapse = other.borderCollapse ?: this.borderCollapse,
-            borderSpacing = if (other.borderSpacing != 0.dp) other.borderSpacing else this.borderSpacing
+            borderSpacing = if (other.borderSpacing != 0.dp) other.borderSpacing else this.borderSpacing,
+            minWidth = if (other.minWidth.isSpecified) other.minWidth else this.minWidth,
+            minHeight = if (other.minHeight.isSpecified) other.minHeight else this.minHeight,
+            maxHeight = if (other.maxHeight.isSpecified) other.maxHeight else this.maxHeight,
+            overflow = other.overflow ?: this.overflow,
+            breakBefore = other.breakBefore ?: this.breakBefore,
+            breakAfter = other.breakAfter ?: this.breakAfter,
+            breakInside = other.breakInside ?: this.breakInside,
+            widows = if (other.widows != 2) other.widows else this.widows,
+            orphans = if (other.orphans != 2) other.orphans else this.orphans,
+            visibility = other.visibility ?: this.visibility,
+            objectFit = other.objectFit ?: this.objectFit,
+            objectPosition = other.objectPosition ?: this.objectPosition,
+            backgroundImage = other.backgroundImage ?: this.backgroundImage
         )
     }
 }
@@ -307,7 +333,10 @@ data class CssStyle(
     @ProtoNumber(13) @Serializable(with = TextUnitSerializer::class) val wordSpacing: TextUnit = TextUnit.Unspecified,
     @ProtoNumber(14) val textDecorationStyle: String? = null,
     @ProtoNumber(15) @Serializable(with = ColorSerializer::class) val textDecorationColor: Color = Color.Unspecified,
-    @ProtoNumber(16) @Serializable(with = DpSerializer::class) val textUnderlineOffset: Dp = Dp.Unspecified
+    @ProtoNumber(16) @Serializable(with = DpSerializer::class) val textUnderlineOffset: Dp = Dp.Unspecified,
+    @ProtoNumber(17) val whiteSpace: String? = null,
+    @ProtoNumber(18) val verticalAlign: String? = null,
+    @ProtoNumber(19) val customProperties: Map<String, String> = emptyMap()
 ) {
     fun merge(other: CssStyle): CssStyle {
         return CssStyle(
@@ -326,7 +355,10 @@ data class CssStyle(
             wordSpacing = if (other.wordSpacing.isSpecified) other.wordSpacing else this.wordSpacing,
             textDecorationStyle = other.textDecorationStyle ?: this.textDecorationStyle,
             textDecorationColor = if (other.textDecorationColor.isSpecified) other.textDecorationColor else this.textDecorationColor,
-            textUnderlineOffset = if (other.textUnderlineOffset.isSpecified) other.textUnderlineOffset else this.textUnderlineOffset
+            textUnderlineOffset = if (other.textUnderlineOffset.isSpecified) other.textUnderlineOffset else this.textUnderlineOffset,
+            whiteSpace = other.whiteSpace ?: this.whiteSpace,
+            verticalAlign = other.verticalAlign ?: this.verticalAlign,
+            customProperties = this.customProperties + other.customProperties
         )
     }
 }
@@ -340,7 +372,9 @@ data class CssSelector(
 @Serializable
 data class CssRule(
     @ProtoNumber(1) val selector: CssSelector,
-    @ProtoNumber(2) val style: CssStyle
+    @ProtoNumber(2) val style: CssStyle,
+    @ProtoNumber(3) val pseudoElement: String? = null,
+    @ProtoNumber(4) val sourceOrder: Int = 0
 )
 
 @Serializable
@@ -371,7 +405,8 @@ data class OptimizedCssRules(
     @ProtoNumber(1) val byTag: Map<String, List<CssRule>> = emptyMap(),
     @ProtoNumber(2) val byClass: Map<String, List<CssRule>> = emptyMap(),
     @ProtoNumber(3) val byId: Map<String, List<CssRule>> = emptyMap(),
-    @ProtoNumber(4) val otherComplex: List<CssRule> = emptyList()
+    @ProtoNumber(4) val otherComplex: List<CssRule> = emptyList(),
+    @ProtoNumber(5) val allRules: List<CssRule> = emptyList()
 ) {
     fun merge(other: OptimizedCssRules): OptimizedCssRules {
         fun mergeMap(
@@ -397,12 +432,13 @@ data class OptimizedCssRules(
             byTag = mergeMap(this.byTag, other.byTag),
             byClass = mergeMap(this.byClass, other.byClass),
             byId = mergeMap(this.byId, other.byId),
-            otherComplex = this.otherComplex + other.otherComplex
+            otherComplex = this.otherComplex + other.otherComplex,
+            allRules = this.toFlatList() + other.toFlatList()
         )
     }
 
     fun toFlatList(): List<CssRule> {
-        return byTag.values.flatten() + byClass.values.flatten() + byId.values.flatten() + otherComplex
+        return allRules.ifEmpty { byTag.values.flatten() + byClass.values.flatten() + byId.values.flatten() + otherComplex }
     }
 }
 

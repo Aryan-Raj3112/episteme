@@ -236,7 +236,10 @@ class BookPaginator(
                     return@launch
                 }
 
-                // 1. Book processing check (Keep existing logic)
+                // 1. Generate config hash before touching semantic cache; processed chapters are style-sensitive.
+                currentConfigHash = generateConfigurationHash()
+
+                // 2. Book processing check (Keep existing logic)
                 val bookRecord = bookCacheDao.getProcessedBook(bookId)
                 if (bookRecord == null || bookRecord.processingVersion < LATEST_PROCESSING_VERSION) {
                     Timber.i("Book cache is new or stale. Creating initial record.")
@@ -244,10 +247,15 @@ class BookPaginator(
                     val initialBook = ProcessedBook(bookId, LATEST_PROCESSING_VERSION, 0) // Temp 0
                     bookCacheDao.insertProcessedBook(initialBook)
                     enqueueBookProcessingWork()
+                } else if (bookCacheDao.getProcessedChapter(
+                        bookId,
+                        initialChapterToPaginate.coerceIn(0, chapters.lastIndex),
+                        currentConfigHash
+                    ) == null
+                ) {
+                    Timber.i("Semantic chapter cache is missing for current style config. Enqueuing config-aware processing.")
+                    enqueueBookProcessingWork()
                 }
-
-                // 2. GENERATE CONFIG HASH
-                currentConfigHash = generateConfigurationHash()
 
                 // 3. TRY LOAD EXACT COUNTS FROM DB
                 val cachedConfig = bookCacheDao.getConfigurationCache(bookId, currentConfigHash)
@@ -326,6 +334,9 @@ class BookPaginator(
             append("-fs:${textStyle.fontSize.value}")
             append("-lh:${textStyle.lineHeight.value}")
             append("-ff:${textStyle.fontFamily}")
+            append("-style:${textStyle.hashCode()}")
+            append("-density:${density.density}")
+            append("-fontScale:${density.fontScale}")
             append("-ta:$userTextAlign")
             append("-pg:$paragraphGapMultiplier")
             append("-img:$imageSizeMultiplier")
@@ -773,7 +784,8 @@ class BookPaginator(
             density = density.density,
             constraintsMaxWidth = constraints.maxWidth,
             constraintsMaxHeight = constraints.maxHeight,
-            fontFaces = this.allFontFaces
+            fontFaces = this.allFontFaces,
+            styleConfigHash = currentConfigHash
         )
 
         BookProcessingWorker.enqueue(
@@ -802,7 +814,7 @@ class BookPaginator(
             adaptThemeColors = false
         )
 
-        bookCacheDao.getProcessedChapter(bookId, chapterIndex)?.let { cachedChapter ->
+        bookCacheDao.getProcessedChapter(bookId, chapterIndex, currentConfigHash)?.let { cachedChapter ->
             if (cachedChapter.contentBlocksProto.isNotEmpty()) {
                 try {
                     val semanticBlocks = proto.decodeFromByteArray<List<SemanticBlock>>(cachedChapter.contentBlocksProto)
@@ -891,7 +903,7 @@ class BookPaginator(
         coroutineScope.launch(Dispatchers.IO) {
             try {
                 val protoBytes = proto.encodeToByteArray(semanticBlocks)
-                val newCacheEntry = ProcessedChapter(bookId, chapterIndex, protoBytes, chapterPageCounts[chapterIndex] ?: 0)
+                val newCacheEntry = ProcessedChapter(bookId, chapterIndex, protoBytes, chapterPageCounts[chapterIndex] ?: 0, currentConfigHash)
                 bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
                 Timber.i("Successfully cached SEMANTIC content for chapter $chapterIndex.")
             } catch (e: Exception) {

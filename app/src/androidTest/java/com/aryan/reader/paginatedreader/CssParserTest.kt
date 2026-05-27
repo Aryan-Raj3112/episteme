@@ -57,7 +57,7 @@ class CssParserTest {
 
     @Test
     fun parseColor_handles8DigitHexCodes() {
-        assertThat(parseTextColor("#80FF00CC")).isEqualTo(Color(0x80FF00CC))
+        assertThat(parseTextColor("#80FF00CC")).isEqualTo(Color(128, 255, 0, 204))
     }
 
     @Test
@@ -286,6 +286,67 @@ class CssParserTest {
     }
 
     @Test
+    fun parse_handlesNestedMediaAndCalcVariables() {
+        val css = """
+            :root { --gap: 12px; }
+            @media screen and (min-width: 300px) {
+                p { margin-left: calc(var(--gap) + 8px); color: hsl(120 100% 25%); }
+            }
+        """.trimIndent()
+
+        val result = CssParser.parse(
+            css,
+            null,
+            baseFontSize,
+            density,
+            androidx.compose.ui.unit.Constraints(maxWidth = 500),
+            isDarkTheme = false
+        )
+
+        val style = result.rules.byTag["p"]!!.first().style
+        assertThat(style.blockStyle.margin.left).isEqualTo(20.dp)
+        assertThat(style.spanStyle.color).isEqualTo(Color(0, 128, 0))
+    }
+
+    @Test
+    fun parse_preservesBeforeAfterPseudoElementRules() {
+        val css = "p::before { content: 'Note: '; color: red; } p { color: blue; }"
+        val result = CssParser.parse(css, null, baseFontSize, density, dummyConstraints, isDarkTheme = false)
+
+        val pseudoRule = result.rules.otherComplex.single { it.pseudoElement == "before" }
+        assertThat(pseudoRule.selector.selector).isEqualTo("p")
+        assertThat(pseudoRule.style.content).isEqualTo("'Note: '")
+        assertThat(pseudoRule.style.spanStyle.color).isEqualTo(Color.Red)
+        assertThat(result.rules.byTag["p"]!!.single().style.spanStyle.color).isEqualTo(Color.Blue)
+    }
+
+    @Test
+    fun parse_handlesModernRgbSlashAlphaAndCssHexAlpha() {
+        assertThat(parseTextColor("rgb(255 0 204 / 50%)")).isEqualTo(Color(255, 0, 204, 128))
+        assertThat(parseTextColor("#ff00cc80")).isEqualTo(Color(255, 0, 204, 128))
+    }
+
+    @Test
+    fun parse_backgroundShorthandExtractsColorAndImage() {
+        val css = "section { background: #ffeecc url('../images/paper.png') repeat; }"
+        val result = CssParser.parse(css, null, baseFontSize, density, dummyConstraints, isDarkTheme = false)
+        val style = result.rules.byTag["section"]!!.first().style.blockStyle
+
+        assertThat(style.backgroundColor).isEqualTo(Color(255, 238, 204))
+        assertThat(style.backgroundImage).isEqualTo("../images/paper.png")
+    }
+
+    @Test
+    fun parse_listStyleShorthandExtractsMarkerTypeAndImage() {
+        val css = "ul { list-style: square url('../images/bullet.png') outside; }"
+        val result = CssParser.parse(css, null, baseFontSize, density, dummyConstraints, isDarkTheme = false)
+        val style = result.rules.byTag["ul"]!!.first().style.blockStyle
+
+        assertThat(style.listStyleType).isEqualTo("square")
+        assertThat(style.listStyleImage).isEqualTo("../images/bullet.png")
+    }
+
+    @Test
     fun parse_propertiesHandlesVariousUnitsAndValues() {
         val css = """
             p {
@@ -345,10 +406,10 @@ class CssParserTest {
     }
 
     @Test
-    fun parse_lineHeightClampsSmallEmValues() {
+    fun parse_lineHeightPreservesUnitlessMultiplier() {
         val css = "p { line-height: 1.1; }" // This is treated as 1.1em
         val result = CssParser.parse(css, null, baseFontSize, density, dummyConstraints, isDarkTheme = false)
         val style = result.rules.byTag["p"]?.first()?.style
-        assertThat(style?.paragraphStyle?.lineHeight).isEqualTo(2.0.em)
+        assertThat(style?.paragraphStyle?.lineHeight).isEqualTo(1.1.em)
     }
 }

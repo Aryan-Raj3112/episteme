@@ -532,6 +532,15 @@ private fun imageBlockContentAlignment(style: BlockStyle): Alignment {
     }
 }
 
+private fun imageContentScale(style: BlockStyle): ContentScale {
+    return when (style.objectFit) {
+        "cover" -> ContentScale.Crop
+        "fill" -> ContentScale.FillBounds
+        "contain", "scale-down" -> ContentScale.Fit
+        else -> ContentScale.Fit
+    }
+}
+
 private fun tableCellImageModifier(
     block: ImageBlock,
     density: Density,
@@ -638,7 +647,7 @@ private fun WrappingContentLayout(
         AsyncImage(
             model = Builder(LocalContext.current).data(File(block.floatedImage.path)).build(),
             contentDescription = block.floatedImage.altText,
-            contentScale = ContentScale.Fit
+            contentScale = imageContentScale(block.floatedImage.style)
         )
     }, modifier = modifier.drawBehind {
         textLayouts.forEach { (layout, offset) ->
@@ -2762,7 +2771,12 @@ internal fun PaginatedReaderContent(
                                                         Modifier.width(block.style.width)
                                                     } else {
                                                         Modifier.fillMaxWidth()
-                                                    }
+                                                    }.then(
+                                                        Modifier.widthIn(
+                                                            min = block.style.minWidth.takeIf { it.isSpecified && it > 0.dp } ?: Dp.Unspecified,
+                                                            max = block.style.maxWidth.takeIf { it.isSpecified && it > 0.dp } ?: Dp.Unspecified
+                                                        )
+                                                    )
 
                                                 val styleModifier =
                                                     alignModifier.then(if (block.style.horizontalAlign == "center") widthModifier else Modifier)
@@ -2770,6 +2784,7 @@ internal fun PaginatedReaderContent(
                                                             blockStyle = block.style,
                                                             density = density
                                                         )
+                                                        .then(if (block.style.visibility == "hidden") Modifier.graphicsLayer(alpha = 0f) else Modifier)
 
                                                 val diagnosticModifier =
                                                     Modifier.onGloballyPositioned { coordinates ->
@@ -2904,6 +2919,19 @@ internal fun PaginatedReaderContent(
                                                     ).then(
                                                         if (block.style.horizontalAlign != "center") widthModifier else Modifier.fillMaxWidth()
                                                     )
+
+                                                    block.style.backgroundImage
+                                                        ?.trim()
+                                                        ?.takeIf { it.isNotBlank() && !it.contains("gradient(", ignoreCase = true) }
+                                                        ?.let { backgroundImagePath ->
+                                                            val backgroundFile = remember(backgroundImagePath) { File(backgroundImagePath) }
+                                                            AsyncImage(
+                                                                model = if (backgroundFile.exists()) backgroundFile else backgroundImagePath,
+                                                                contentDescription = null,
+                                                                modifier = Modifier.matchParentSize(),
+                                                                contentScale = imageContentScale(block.style)
+                                                            )
+                                                        }
 
                                                     @Suppress("DEPRECATION") when (block) {
                                                         is ParagraphBlock -> {
@@ -3652,7 +3680,7 @@ internal fun PaginatedReaderContent(
                                                                     contentDescription = block.altText
                                                                         ?: "Image from EPUB",
                                                                     modifier = finalImageModifier,
-                                                                    contentScale = ContentScale.Fit,
+                                                                    contentScale = imageContentScale(style),
                                                                     colorFilter = colorFilter
                                                                 )
                                                             }
@@ -3820,7 +3848,7 @@ internal fun PaginatedReaderContent(
                                                                                                 )
                                                                                                     .build(),
                                                                                                 contentDescription = blockInCell.altText,
-                                                                                                contentScale = ContentScale.Fit,
+                                                                                                contentScale = imageContentScale(blockInCell.style),
                                                                                                 modifier = tableCellImageModifier(
                                                                                                     block = blockInCell,
                                                                                                     density = density,
@@ -4636,7 +4664,7 @@ private fun RenderFlexChildBlock(
                         .build(),
                     contentDescription = childBlock.altText,
                     modifier = imageModifier,
-                    contentScale = ContentScale.Fit,
+                    contentScale = imageContentScale(childBlock.style),
                     colorFilter = colorFilter,
                     imageLoader = imageLoader
                 )
@@ -4720,7 +4748,7 @@ private fun RenderFlexChildBlock(
                                                 )
                                             ).build(),
                                             contentDescription = blockInCell.altText,
-                                            contentScale = ContentScale.Fit,
+                                            contentScale = imageContentScale(blockInCell.style),
                                             modifier = tableCellImageModifier(
                                                 block = blockInCell,
                                                 density = density,

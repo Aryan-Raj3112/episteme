@@ -65,6 +65,42 @@ class BookCacheDaoTest {
     }
 
     @Test
+    fun `processed chapters are isolated by style config hash`() = runTest {
+        val firstPayload = ByteArray(950 * 1024) { 1 }
+        val secondPayload = byteArrayOf(2, 3, 4)
+
+        dao.insertProcessedChapters(
+            listOf(
+                ProcessedChapter(
+                    bookId = "book",
+                    chapterIndex = 0,
+                    contentBlocksProto = firstPayload,
+                    estimatedPageCount = 10,
+                    styleConfigHash = 111
+                )
+            )
+        )
+        dao.insertProcessedChapters(
+            listOf(
+                ProcessedChapter(
+                    bookId = "book",
+                    chapterIndex = 0,
+                    contentBlocksProto = secondPayload,
+                    estimatedPageCount = 2,
+                    styleConfigHash = 222
+                )
+            )
+        )
+
+        val firstCached = dao.getProcessedChapter("book", 0, 111)!!
+        val secondCached = dao.getProcessedChapter("book", 0, 222)!!
+        assertEquals(111, firstCached.styleConfigHash)
+        assertEquals(222, secondCached.styleConfigHash)
+        assertArrayEquals(firstPayload, firstCached.contentBlocksProto)
+        assertArrayEquals(secondPayload, secondCached.contentBlocksProto)
+    }
+
+    @Test
     fun `delete and clear operations remove book chapters anchors and configuration cache`() = runTest {
         dao.insertProcessedBook(ProcessedBook("book", LATEST_PROCESSING_VERSION, 10))
         dao.insertProcessedChapters(

@@ -25,8 +25,8 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-const val LATEST_PROCESSING_VERSION = 11
-const val LATEST_PAGE_CACHE_VERSION = 3
+const val LATEST_PROCESSING_VERSION = 12
+const val LATEST_PAGE_CACHE_VERSION = 4
 
 @Entity(tableName = "processed_books")
 data class ProcessedBook(
@@ -52,7 +52,8 @@ data class ProcessedChapter(
     val bookId: String,
     val chapterIndex: Int,
     val contentBlocksProto: ByteArray,
-    val estimatedPageCount: Int
+    val estimatedPageCount: Int,
+    val styleConfigHash: Int = 0
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -62,6 +63,7 @@ data class ProcessedChapter(
         if (chapterIndex != other.chapterIndex) return false
         if (!contentBlocksProto.contentEquals(other.contentBlocksProto)) return false
         if (estimatedPageCount != other.estimatedPageCount) return false
+        if (styleConfigHash != other.styleConfigHash) return false
         return true
     }
 
@@ -70,6 +72,7 @@ data class ProcessedChapter(
         result = 31 * result + chapterIndex
         result = 31 * result + contentBlocksProto.contentHashCode()
         result = 31 * result + estimatedPageCount
+        result = 31 * result + styleConfigHash
         return result
     }
 }
@@ -77,11 +80,12 @@ data class ProcessedChapter(
 /**
  * Database Entity: Stores metadata only (small size).
  */
-@Entity(tableName = "processed_chapter_metadata", primaryKeys = ["book_id", "chapter_index"])
+@Entity(tableName = "processed_chapter_metadata", primaryKeys = ["book_id", "chapter_index", "style_config_hash"])
 data class ProcessedChapterMetadata(
     @ColumnInfo(name = "book_id") val bookId: String,
     @ColumnInfo(name = "chapter_index") val chapterIndex: Int,
-    @ColumnInfo(name = "estimated_page_count") val estimatedPageCount: Int
+    @ColumnInfo(name = "estimated_page_count") val estimatedPageCount: Int,
+    @ColumnInfo(name = "style_config_hash") val styleConfigHash: Int = 0
 )
 
 /**
@@ -89,20 +93,21 @@ data class ProcessedChapterMetadata(
  */
 @Entity(
     tableName = "processed_chapter_chunks",
-    primaryKeys = ["book_id", "chapter_index", "chunk_index"],
+    primaryKeys = ["book_id", "chapter_index", "style_config_hash", "chunk_index"],
     foreignKeys = [
         ForeignKey(
             entity = ProcessedChapterMetadata::class,
-            parentColumns = ["book_id", "chapter_index"],
-            childColumns = ["book_id", "chapter_index"],
+            parentColumns = ["book_id", "chapter_index", "style_config_hash"],
+            childColumns = ["book_id", "chapter_index", "style_config_hash"],
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index(value = ["book_id", "chapter_index"])]
+    indices = [Index(value = ["book_id", "chapter_index", "style_config_hash"])]
 )
 data class ProcessedChapterChunk(
     @ColumnInfo(name = "book_id") val bookId: String,
     @ColumnInfo(name = "chapter_index") val chapterIndex: Int,
+    @ColumnInfo(name = "style_config_hash") val styleConfigHash: Int = 0,
     @ColumnInfo(name = "chunk_index") val chunkIndex: Int,
     @ColumnInfo(name = "chunk_data", typeAffinity = ColumnInfo.BLOB) val chunkData: ByteArray
 ) {
@@ -112,6 +117,7 @@ data class ProcessedChapterChunk(
         other as ProcessedChapterChunk
         if (bookId != other.bookId) return false
         if (chapterIndex != other.chapterIndex) return false
+        if (styleConfigHash != other.styleConfigHash) return false
         if (chunkIndex != other.chunkIndex) return false
         if (!chunkData.contentEquals(other.chunkData)) return false
         return true
@@ -120,6 +126,7 @@ data class ProcessedChapterChunk(
     override fun hashCode(): Int {
         var result = bookId.hashCode()
         result = 31 * result + chapterIndex
+        result = 31 * result + styleConfigHash
         result = 31 * result + chunkIndex
         result = 31 * result + chunkData.contentHashCode()
         return result

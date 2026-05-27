@@ -310,11 +310,19 @@ class SuspendingAndroidBlockMeasurementProvider(
 
             row.forEach { cell ->
                 val cellMaxWidth = ((constraints.maxWidth) * (cell.colspan.toFloat() / totalColspan)).roundToInt()
-                @Suppress("UnusedVariable", "Unused") val cellConstraints = constraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
+                val cellConstraints = constraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
 
                 var cellHeight = 0
                 cell.content.forEach { b ->
-                    cellHeight += measure(b)
+                    cellHeight += measureBlockHeight(
+                        block = b,
+                        textMeasurer = textMeasurer,
+                        constraints = cellConstraints,
+                        defaultStyle = textStyle,
+                        headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
+                        density = density,
+                        imageSizeMultiplier = imageSizeMultiplier
+                    )
                 }
                 val cellDecoration = with(density) {
                     cell.style.blockStyle.padding.top.toPx() + cell.style.blockStyle.padding.bottom.toPx() +
@@ -422,6 +430,15 @@ private fun <T : ContentBlock> setBlockExpectedHeight(block: T, height: Int): T 
     } as T
 }
 
+private fun BlockStyle.avoidsBreakInside(): Boolean =
+    pageBreakInsideAvoid || breakInside in setOf("avoid", "avoid-page", "avoid-column")
+
+private fun BlockStyle.forcesBreakBefore(): Boolean =
+    breakBefore in setOf("page", "always", "left", "right", "recto", "verso")
+
+private fun BlockStyle.forcesBreakAfter(): Boolean =
+    breakAfter in setOf("page", "always", "left", "right", "recto", "verso")
+
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 suspend fun paginate(
     blocks: List<ContentBlock>,
@@ -445,6 +462,16 @@ suspend fun paginate(
 
     while (remainingBlocks.isNotEmpty()) {
         val block = remainingBlocks.removeAt(0)
+
+        if (currentPageContent.isNotEmpty() && block.style.forcesBreakBefore()) {
+            zeroOutBottomMargin(currentPageContent)
+            pages.add(Page(content = currentPageContent.toList()))
+            pageIndex++
+            currentPageContent = mutableListOf()
+            remainingHeight = pageHeight
+            remainingBlocks.add(0, block)
+            continue
+        }
 
         val blockHeight = measurementProvider.measure(block)
         val blockHeightWithSafetyMargin = blockHeight + safetyMarginPerBlock
@@ -488,6 +515,14 @@ suspend fun paginate(
 
             currentPageContent.add(blockToAdd)
             remainingHeight -= spaceRequired
+
+            if (block.style.forcesBreakAfter() && remainingBlocks.isNotEmpty()) {
+                zeroOutBottomMargin(currentPageContent)
+                pages.add(Page(content = currentPageContent.toList()))
+                pageIndex++
+                currentPageContent = mutableListOf()
+                remainingHeight = pageHeight
+            }
         } else {
             var wasSplit = false
             val heightForSplitting = remainingHeight - spaceBetweenBlocks
@@ -495,7 +530,7 @@ suspend fun paginate(
             if (heightForSplitting > 50) {
                 when (block) {
                     is ParagraphBlock -> {
-                        if (!block.style.pageBreakInsideAvoid) {
+                        if (!block.style.avoidsBreakInside()) {
                             measurementProvider.split(block, heightForSplitting)
                                 ?.let { (part1, part2) ->
                                     if (part1.content.isNotEmpty()) {
@@ -534,7 +569,7 @@ suspend fun paginate(
                     }
 
                     is WrappingContentBlock -> {
-                        measurementProvider.split(block, heightForSplitting)
+                        if (!block.style.avoidsBreakInside()) measurementProvider.split(block, heightForSplitting)
                             ?.let { (part1, part2) ->
                                 if (part1.paragraphsToWrap.any { it.content.isNotBlank() }) {
                                     val collapsedMarginDp =
@@ -570,7 +605,7 @@ suspend fun paginate(
                     }
 
                     is TableBlock -> {
-                        measurementProvider.split(block, heightForSplitting)
+                        if (!block.style.avoidsBreakInside()) measurementProvider.split(block, heightForSplitting)
                             ?.let { (part1, part2) ->
                                 val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
                                 if (currentPageContent.isNotEmpty()) {
@@ -602,7 +637,7 @@ suspend fun paginate(
                     }
 
                     is FlexContainerBlock -> {
-                        measurementProvider.split(block, heightForSplitting)
+                        if (!block.style.avoidsBreakInside()) measurementProvider.split(block, heightForSplitting)
                             ?.let { (part1, part2) ->
                                 val collapsedMarginDp = with(density) { spaceBetweenBlocks.toDp() }
                                 if (currentPageContent.isNotEmpty()) {
@@ -936,10 +971,18 @@ private suspend fun measureBlockHeight(
         }
     }
     val specifiedHeightDp = block.style.height
-    val finalHeight = if (block.style.boxSizing == "border-box" && specifiedHeightDp != Dp.Unspecified) {
+    var finalHeight = if (block.style.boxSizing == "border-box" && specifiedHeightDp != Dp.Unspecified) {
         with(density) { specifiedHeightDp.toPx().roundToInt() }
     } else {
         (contentHeight + verticalPaddingPx + verticalBorderPx).roundToInt()
+    }
+    with(density) {
+        if (block.style.minHeight.isSpecified) {
+            finalHeight = finalHeight.coerceAtLeast(block.style.minHeight.toPx().roundToInt())
+        }
+        if (block.style.maxHeight.isSpecified && block.style.overflow in setOf("hidden", "clip", "scroll", "auto")) {
+            finalHeight = finalHeight.coerceAtMost(block.style.maxHeight.toPx().roundToInt())
+        }
     }
 
     if (DEBUG_PAGINATION_LOGS) {
@@ -1010,9 +1053,12 @@ private suspend fun splitParagraphBlock(
         return null
     }
 
-    if (lastVisibleLine == 0) {
+    val orphanLines = block.style.orphans.coerceAtLeast(1)
+    val widowLines = block.style.widows.coerceAtLeast(1)
+    val visibleLineCount = lastVisibleLine + 1
+    if (visibleLineCount < orphanLines) {
         if (DEBUG_PAGINATION_LOGS) {
-            Timber.d("Orphan control: Preventing split that would leave one line at the bottom of the page.")
+            Timber.d("Orphan control: Preventing split that would leave $visibleLineCount line(s) at the bottom of the page.")
         }
         return null
     }
@@ -1028,11 +1074,13 @@ private suspend fun splitParagraphBlock(
                 constraints = paragraphConstraints
             )
         }
-        if (part2Layout.lineCount == 1) {
+        if (part2Layout.lineCount < widowLines) {
             if (DEBUG_PAGINATION_LOGS) {
-                Timber.d("Widow control: Adjusting split to prevent a single line at the top of the next page.")
+                Timber.d("Widow control: Adjusting split to keep at least $widowLines line(s) at the top of the next page.")
             }
-            lastVisibleLine--
+            val linesToMove = widowLines - part2Layout.lineCount
+            lastVisibleLine -= linesToMove.coerceAtLeast(1)
+            if (lastVisibleLine + 1 < orphanLines) return null
             splitOffset = layoutResult.getLineEnd(lastVisibleLine, visibleEnd = true)
         }
     }
@@ -1174,6 +1222,7 @@ private fun computeBlockBoxMetrics(
     val isBorderBox = block.style.boxSizing == "border-box"
     val specifiedWidthDp = block.style.width
     val specifiedMaxWidthDp = block.style.maxWidth
+    val specifiedMinWidthDp = block.style.minWidth
 
     val blockOuterWidthPx = with(density) {
         var effectiveWidthPx = constraints.maxWidth.toFloat()
@@ -1185,6 +1234,9 @@ private fun computeBlockBoxMetrics(
             if (effectiveWidthPx > maxWidthPx) {
                 effectiveWidthPx = maxWidthPx
             }
+        }
+        if (specifiedMinWidthDp != Dp.Unspecified) {
+            effectiveWidthPx = effectiveWidthPx.coerceAtLeast(specifiedMinWidthDp.toPx())
         }
         effectiveWidthPx.coerceAtMost(constraints.maxWidth.toFloat())
     }

@@ -237,7 +237,7 @@ class LocatorConverterTest {
     ) : BookCacheDao() {
         val requestedBookIds = mutableListOf<String>()
 
-        override suspend fun getProcessedChapter(bookId: String, chapterIndex: Int): ProcessedChapter? {
+        override suspend fun getProcessedChapter(bookId: String, chapterIndex: Int, styleConfigHash: Int?): ProcessedChapter? {
             requestedBookIds += bookId
             return chapter
         }
@@ -260,11 +260,13 @@ class LocatorConverterTest {
         override suspend fun getPageIndexEntries(bookId: String, configHash: Int, chapterIndex: Int): List<PageIndexEntry> = emptyList()
         override suspend fun cleanupOldPageCaches(bookId: String) = Unit
 
-        protected override suspend fun getChapterMetadata(bookId: String, chapterIndex: Int): ProcessedChapterMetadata? = null
-        protected override suspend fun getChapterChunks(bookId: String, chapterIndex: Int): List<ByteArray> = emptyList()
+        protected override suspend fun getChapterMetadata(bookId: String, chapterIndex: Int, styleConfigHash: Int): ProcessedChapterMetadata? = null
+        protected override suspend fun getAnyChapterMetadata(bookId: String, chapterIndex: Int): ProcessedChapterMetadata? = null
+        protected override suspend fun getChapterChunks(bookId: String, chapterIndex: Int, styleConfigHash: Int): List<ByteArray> = emptyList()
         protected override suspend fun insertChapterMetadata(metadata: ProcessedChapterMetadata) = Unit
         protected override suspend fun insertChapterChunks(chunks: List<ProcessedChapterChunk>) = Unit
         protected override suspend fun deleteChapterMetadataForBook(bookId: String) = Unit
+        protected override suspend fun deleteChapterChunksForChapter(bookId: String, chapterIndex: Int, styleConfigHash: Int) = Unit
         protected override suspend fun deleteAllChapterMetadata() = Unit
         protected override suspend fun deletePageCacheMetadataForBook(bookId: String) = Unit
         protected override suspend fun deletePageCacheMetadataForChapter(bookId: String, configHash: Int, chapterIndex: Int) = Unit

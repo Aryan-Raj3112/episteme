@@ -130,6 +130,51 @@ class PaginatorTest {
     }
 
     @Test
+    fun paginate_honorsBreakBeforePage() = runTest {
+        val block1 = ParagraphBlock(content = AnnotatedString("Before"), blockIndex = 0)
+        val block2 = ParagraphBlock(
+            content = AnnotatedString("After"),
+            style = BlockStyle(breakBefore = "page"),
+            blockIndex = 1
+        )
+
+        val pages = paginate(
+            listOf(block1, block2),
+            pageHeight,
+            FakeSplittableMeasurementProvider(mapOf(block1 to 100, block2 to 100)),
+            testDensity
+        )
+
+        assertThat(pages).hasSize(2)
+        assertThat(pages[0].content.withoutMeasuredHeights()).containsExactly(block1)
+        assertThat(pages[1].content.withoutMeasuredHeights()).containsExactly(block2)
+    }
+
+    @Test
+    fun paginate_breakInsideAvoidPreventsParagraphSplit() = runTest {
+        val block1 = ParagraphBlock(
+            content = AnnotatedString("Keep together"),
+            style = BlockStyle(breakInside = "avoid"),
+            blockIndex = 0
+        )
+        val part1 = block1.copy(content = AnnotatedString("Keep"))
+        val part2 = block1.copy(content = AnnotatedString("together"))
+
+        val pages = paginate(
+            listOf(block1),
+            pageHeight = 400,
+            measurementProvider = FakeSplittableMeasurementProvider(
+                heights = mapOf(block1 to 800, part1 to 300, part2 to 500),
+                splittableParagraphs = mapOf(block1 to (part1 to part2))
+            ),
+            density = testDensity
+        )
+
+        assertThat(pages).hasSize(1)
+        assertThat(pages[0].content.withoutMeasuredHeights()).containsExactly(block1)
+    }
+
+    @Test
     fun paginate_correctlySplitsAParagraphBlock() = runTest {
         val block1 = ParagraphBlock(content = AnnotatedString("First block"), blockIndex = 0)
         val originalParagraph = ParagraphBlock(content = AnnotatedString("Long text to be split"), blockIndex = 1)
