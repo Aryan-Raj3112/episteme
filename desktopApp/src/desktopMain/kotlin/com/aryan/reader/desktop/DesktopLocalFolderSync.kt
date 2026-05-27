@@ -81,6 +81,7 @@ object DesktopLocalFolderSync {
         extractMetadata: Boolean = true
     ): DesktopLocalFolderSyncResult {
         val requestedFolders = foldersToSync(state, targetFolder, nowMillis)
+            .filter { it.localSyncEnabled }
         val mode = if (metadataOnly) "metadata" else "full"
         logDesktopFolderSync(
             "sync.start mode=$mode target=\"${targetFolder?.absolutePath?.folderSyncPreview() ?: "ALL"}\" " +
@@ -218,6 +219,11 @@ object DesktopLocalFolderSync {
     fun saveBookSidecars(book: BookItem) {
         saveBookMetadata(book)
         savePdfAnnotationSidecar(book)
+    }
+
+    fun deleteSyncDataFolder(root: File): Boolean {
+        val syncDir = File(root, LOCAL_FOLDER_SYNC_DATA_DIR)
+        return !syncDir.exists() || syncDir.isDirectory && syncDir.deleteRecursively()
     }
 
     fun saveBookMetadata(book: BookItem) {

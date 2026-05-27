@@ -72,45 +72,27 @@ class FolderSyncWorker(
         val targetFolderUri = inputData.getString(KEY_TARGET_FOLDER_URI)
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
 
-        val jsonString = prefs.getString("synced_folders_list_json", null)
-        val folders = mutableListOf<Pair<String, Set<FileType>>>()
-
-        if (jsonString != null) {
-            try {
-                val array = org.json.JSONArray(jsonString)
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    val uri = obj.getString("uri")
-                    val allowedFileTypes = mutableSetOf<FileType>()
-                    if (obj.has("allowedFileTypes")) {
-                        val typesArray = obj.getJSONArray("allowedFileTypes")
-                        for (j in 0 until typesArray.length()) {
-                            try { allowedFileTypes.add(FileType.valueOf(typesArray.getString(j))) } catch (_: Exception) {}
-                        }
-                    } else {
-                        allowedFileTypes.addAll(ANDROID_SYNCABLE_FILE_TYPES)
-                    }
-                    folders.add(Pair(uri, allowedFileTypes.filterTo(mutableSetOf()) { it in ANDROID_SYNCABLE_FILE_TYPES }))
-                }
-            } catch (e: Exception) { Timber.e(e) }
-        } else {
-            val single = prefs.getString("synced_folder_uri", null)
-            if (single != null) folders.add(Pair(single, ANDROID_SYNCABLE_FILE_TYPES))
-        }
+        val jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null)
+        val folders = SyncedFolderPrefs.decodeSyncedFolders(
+            jsonString = jsonString,
+            legacyUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null),
+            syncableTypes = ANDROID_SYNCABLE_FILE_TYPES
+        )
 
         if (folders.isEmpty()) {
             ReaderPerfLog.w("FolderSync worker aborted: no linked folders")
             return Result.success()
         }
 
+        val enabledFolders = folders.filter { it.localSyncEnabled }
         val foldersToProcess = if (targetFolderUri.isNullOrBlank()) {
-            folders
+            enabledFolders
         } else {
-            folders.filter { it.first == targetFolderUri }
+            enabledFolders.filter { it.uriString == targetFolderUri }
         }
 
         if (foldersToProcess.isEmpty()) {
-            ReaderPerfLog.w("FolderSync worker aborted: target folder not linked target=$targetFolderUri")
+            ReaderPerfLog.w("FolderSync worker aborted: target folder not linked or disabled target=$targetFolderUri")
             return Result.success()
         }
 
@@ -123,8 +105,8 @@ class FolderSyncWorker(
             syncMutex.withLock {
                 var allSuccess = true
 
-                for ((uriString, allowedTypes) in foldersToProcess) {
-                    val success = performSyncForFolder(uriString, allowedTypes, isMetadataOnly)
+                for (folderConfig in foldersToProcess) {
+                    val success = performSyncForFolder(folderConfig, isMetadataOnly)
                     if (!success) allSuccess = false
                 }
 
@@ -132,13 +114,14 @@ class FolderSyncWorker(
                     try {
                         val array = org.json.JSONArray(jsonString)
                         val now = System.currentTimeMillis()
+                        val processedUris = foldersToProcess.mapTo(mutableSetOf()) { it.uriString }
                         for (i in 0 until array.length()) {
                             val obj = array.getJSONObject(i)
-                            if (targetFolderUri.isNullOrBlank() || obj.optString("uri") == targetFolderUri) {
+                            if (obj.optString("uri") in processedUris) {
                                 obj.put("lastScanTime", now)
                             }
                         }
-                        prefs.edit { putString("synced_folders_list_json", array.toString()) }
+                        prefs.edit { putString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, array.toString()) }
                     } catch (_: Exception) {}
                 }
 
@@ -153,7 +136,9 @@ class FolderSyncWorker(
         }
     }
 
-    private suspend fun performSyncForFolder(folderUriString: String, allowedFileTypes: Set<FileType>, metadataOnly: Boolean): Boolean {
+    private suspend fun performSyncForFolder(folderConfig: SyncedFolder, metadataOnly: Boolean): Boolean {
+        val folderUriString = folderConfig.uriString
+        val allowedFileTypes = folderConfig.allowedFileTypes
         if (folderUriString.isBlank()) return true
         val folderUri = folderUriString.toUri()
         val folderStart = ReaderPerfLog.nowNanos()
@@ -235,9 +220,10 @@ class FolderSyncWorker(
             val nowMillis = System.currentTimeMillis()
             val folder = SyncedFolder(
                 uriString = folderUriString,
-                name = documentTree.name ?: "Local Folder",
+                name = documentTree.name ?: folderConfig.name,
                 lastScanTime = nowMillis,
-                allowedFileTypes = allowedFileTypes
+                allowedFileTypes = allowedFileTypes,
+                localSyncEnabled = true
             )
             val sharedState = SharedReaderScreenState(
                 rawLibraryBooks = existingFolderBooks.map { it.toFolderSyncSharedBookItem() },
@@ -720,18 +706,12 @@ class FolderSyncWorker(
 
     private fun isFolderStillLinked(folderUriString: String): Boolean {
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
-        val jsonString = prefs.getString("synced_folders_list_json", null)
-        if (jsonString != null) {
-            return try {
-                val array = org.json.JSONArray(jsonString)
-                (0 until array.length()).any { index ->
-                    array.getJSONObject(index).optString("uri") == folderUriString
-                }
-            } catch (_: Exception) {
-                false
-            }
-        }
-        return prefs.getString("synced_folder_uri", null) == folderUriString
+        return SyncedFolderPrefs.isLocalSyncEnabled(
+            jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null),
+            legacyUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null),
+            folderUriString = folderUriString,
+            syncableTypes = ANDROID_SYNCABLE_FILE_TYPES
+        )
     }
 
     private fun getFileType(name: String, mimeType: String?): FileType? {

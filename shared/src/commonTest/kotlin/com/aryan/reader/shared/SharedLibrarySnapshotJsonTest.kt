@@ -316,7 +316,8 @@ class SharedLibrarySnapshotJsonTest {
                   "uriString": "C:/Books",
                   "name": "Books",
                   "lastScanTime": 12,
-                  "allowedFileTypes": ["PDF", "UNKNOWN", "EPUB"]
+                  "allowedFileTypes": ["PDF", "UNKNOWN", "EPUB"],
+                  "localSyncEnabled": false
                 }
               ]
             }
@@ -325,6 +326,7 @@ class SharedLibrarySnapshotJsonTest {
         val folder = decoded.syncedFolders.single()
 
         assertEquals(setOf(FileType.PDF, FileType.EPUB), folder.allowedFileTypes)
+        assertFalse(folder.localSyncEnabled)
         assertFalse(FileType.UNKNOWN in folder.allowedFileTypes)
 
         val encoded = SharedLibrarySnapshotJson.encode(

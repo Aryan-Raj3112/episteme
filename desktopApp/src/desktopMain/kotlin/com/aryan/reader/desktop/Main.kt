@@ -1685,6 +1685,13 @@ internal fun EpistemeDesktopApp(
             logDesktopFolderSync("bookSidecars.skipNoFolder book=${book.id}")
             return
         }
+        if (!isDesktopFolderLocalSyncEnabled(book.sourceFolder)) {
+            logDesktopFolderSync(
+                "bookSidecars.skipDisabled book=${book.id} " +
+                    "sourceFolder=\"${book.sourceFolder.orEmpty().folderSyncPreview()}\""
+            )
+            return
+        }
         logDesktopFolderSync(
             "bookSidecars.request book=${book.id} sourceFolder=\"${book.sourceFolder.orEmpty().folderSyncPreview()}\""
         )
@@ -1694,10 +1701,11 @@ internal fun EpistemeDesktopApp(
     }
 
     fun scheduleFolderMetadataExtraction(sourceFolders: Set<String>) {
-        if (sourceFolders.isEmpty()) return
+        val enabledSourceFolders = sourceFolders.filterTo(mutableSetOf()) { isDesktopFolderLocalSyncEnabled(it) }
+        if (enabledSourceFolders.isEmpty()) return
         val snapshotBooks = state.rawLibraryBooks
         val originalBooksById = snapshotBooks
-            .filter { it.sourceFolder in sourceFolders }
+            .filter { it.sourceFolder in enabledSourceFolders }
             .associateBy { it.id }
         if (originalBooksById.isEmpty()) return
 
@@ -1705,18 +1713,18 @@ internal fun EpistemeDesktopApp(
             val metadataResult = withContext(Dispatchers.IO) {
                 DesktopFolderMetadataExtractor.enrichFolderBooks(
                     books = snapshotBooks,
-                    sourceFolders = sourceFolders
+                    sourceFolders = enabledSourceFolders
                 )
             }
             if (metadataResult.stats.updatedBooks <= 0) return@launch
 
             val enrichedBooksById = metadataResult.books
-                .filter { it.sourceFolder in sourceFolders }
+                .filter { it.sourceFolder in enabledSourceFolders }
                 .associateBy { it.id }
             val booksToSave = mutableListOf<BookItem>()
             val mergedBooks = state.rawLibraryBooks.map { current ->
                 val enriched = enrichedBooksById[current.id]
-                    ?.takeIf { current.sourceFolder in sourceFolders }
+                    ?.takeIf { current.sourceFolder in enabledSourceFolders }
                     ?: return@map current
                 val merged = current.withDesktopImportMetadata(
                     enriched = enriched,
@@ -1729,9 +1737,16 @@ internal fun EpistemeDesktopApp(
 
             updateState(state.copy(rawLibraryBooks = mergedBooks))
             withContext(Dispatchers.IO) {
-                booksToSave.forEach(DesktopLocalFolderSync::saveBookSidecars)
+                booksToSave.forEach { syncBook ->
+                    DesktopLocalFolderSync.saveBookSidecars(syncBook)
+                }
             }
         }
+    }
+
+    fun isDesktopFolderLocalSyncEnabled(sourceFolder: String?): Boolean {
+        if (sourceFolder.isNullOrBlank()) return false
+        return state.syncedFolders.firstOrNull { it.uriString == sourceFolder }?.localSyncEnabled ?: true
     }
 
     fun BookItem.matchesIncomingReaderPosition(
@@ -2460,6 +2475,11 @@ internal fun EpistemeDesktopApp(
             updateState(state.withBanner("No local folders are linked yet.", isError = true))
             return
         }
+        if (targetFolder == null && state.syncedFolders.none { it.localSyncEnabled }) {
+            logDesktopFolderSync("ui.sync.skipNoEnabledFolders mode=$mode")
+            updateState(state.withBanner("No local folders have sync enabled.", isError = true))
+            return
+        }
 
         val snapshotState = state
         val snapshotShelfRefs = shelfRefs
@@ -2574,7 +2594,7 @@ internal fun EpistemeDesktopApp(
 
     fun syncDesktopLibrary(showBanner: Boolean = true) {
         val hasCloud = state.isSyncEnabled
-        val hasFolders = state.syncedFolders.isNotEmpty()
+        val hasFolders = state.syncedFolders.any { it.localSyncEnabled }
         if (!hasCloud && !hasFolders) {
             updateState(state.withBanner("No sync methods are active.", isError = true))
             return
@@ -3358,7 +3378,7 @@ internal fun EpistemeDesktopApp(
     }
 
     LaunchedEffect(Unit) {
-        if (state.syncedFolders.isNotEmpty()) {
+        if (state.syncedFolders.any { it.localSyncEnabled }) {
             scanSyncedFolders(showBanner = false)
         }
     }

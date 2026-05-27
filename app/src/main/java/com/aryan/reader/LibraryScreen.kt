@@ -148,6 +148,7 @@ import com.aryan.reader.opds.OpdsDownloadState
 import com.aryan.reader.opds.OpdsEntry
 import com.aryan.reader.opds.OpdsRepository
 import com.aryan.reader.opds.OpdsViewModel
+import com.aryan.reader.shared.LOCAL_FOLDER_SYNC_DATA_DIR
 import com.aryan.reader.shared.opds.SharedOpdsLocalBookMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -330,6 +331,7 @@ fun LibraryScreen(
             onEditFolderFiltersClick = { folder, filters -> viewModel.updateFolderFilters(folder, filters) },
             syncedFolders = uiState.syncedFolders,
             onRemoveFolderClick = { folder -> viewModel.removeSyncedFolder(folder) },
+            onFolderLocalSyncChange = viewModel::setFolderLocalSyncEnabled,
             onDisconnectSyncFolderClick = viewModel::disconnectAllSyncedFolders,
             downloadingBookIds = uiState.downloadingBookIds,
             lastFolderScanTime = uiState.lastFolderScanTime,
@@ -595,6 +597,7 @@ fun LibraryScreenContent(
     isRefreshing: Boolean,
     syncedFolders: List<SyncedFolder>,
     onRemoveFolderClick: (SyncedFolder) -> Unit,
+    onFolderLocalSyncChange: (SyncedFolder, Boolean, Boolean) -> Unit,
     onOpdsBookDownloaded: (Uri, String) -> Unit,
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit,
     onDeleteCatalogStreams: (String) -> Unit,
@@ -899,6 +902,7 @@ fun LibraryScreenContent(
                         allRecentFiles = rawLibraryFiles,
                         onAddFolderClick = onSelectSyncFolderClick,
                         onRemoveFolderClick = onRemoveFolderClick,
+                        onFolderLocalSyncChange = onFolderLocalSyncChange,
                         onEditFolderFiltersClick = onEditFolderFiltersClick,
                         onScanNowClick = onScanNowClick,
                         onSyncMetadataClick = onSyncMetadataClick,
@@ -1949,12 +1953,15 @@ private fun FolderSyncScreen(
     allRecentFiles: List<RecentFileItem>,
     onAddFolderClick: () -> Unit,
     onRemoveFolderClick: (SyncedFolder) -> Unit,
+    onFolderLocalSyncChange: (SyncedFolder, Boolean, Boolean) -> Unit,
     onEditFolderFiltersClick: (SyncedFolder, Set<FileType>) -> Unit,
     onScanNowClick: () -> Unit,
     onSyncMetadataClick: () -> Unit,
     isLoading: Boolean
 ) {
     var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
+    var disablingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
+    val hasEnabledSyncFolders = syncedFolders.any { it.localSyncEnabled }
     val folderStatsByUri = remember(allRecentFiles) {
         allRecentFiles
             .asSequence()
@@ -1993,7 +2000,7 @@ private fun FolderSyncScreen(
                 ) {
                     FilledTonalButton(
                         onClick = onScanNowClick,
-                        enabled = !isLoading,
+                        enabled = !isLoading && hasEnabledSyncFolders,
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.small
                     ) {
@@ -2008,7 +2015,7 @@ private fun FolderSyncScreen(
 
                     androidx.compose.material3.OutlinedButton(
                         onClick = onSyncMetadataClick,
-                        enabled = !isLoading,
+                        enabled = !isLoading && hasEnabledSyncFolders,
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.small
                     ) {
@@ -2036,6 +2043,13 @@ private fun FolderSyncScreen(
                         folder = folder,
                         stats = folderStatsByUri[folder.uriString] ?: FolderFileStats.Empty,
                         onRemoveClick = onRemoveFolderClick,
+                        onLocalSyncToggleClick = { selectedFolder ->
+                            if (selectedFolder.localSyncEnabled) {
+                                disablingFolder = selectedFolder
+                            } else {
+                                onFolderLocalSyncChange(selectedFolder, true, false)
+                            }
+                        },
                         onEditFiltersClick = { editingFolder = folder }
                     )
                 }
@@ -2051,6 +2065,46 @@ private fun FolderSyncScreen(
                 editingFolder = null
             },
             onDismiss = { editingFolder = null }
+        )
+    }
+
+    disablingFolder?.let { folder ->
+        AlertDialog(
+            onDismissRequest = { disablingFolder = null },
+            title = { Text(stringResource(R.string.dialog_disable_folder_local_sync_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.dialog_disable_folder_local_sync_desc,
+                        LOCAL_FOLDER_SYNC_DATA_DIR
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onFolderLocalSyncChange(folder, false, true)
+                        disablingFolder = null
+                    }
+                ) {
+                    Text(stringResource(R.string.action_disable_remove_sync_data))
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { disablingFolder = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                    TextButton(
+                        onClick = {
+                            onFolderLocalSyncChange(folder, false, false)
+                            disablingFolder = null
+                        }
+                    ) {
+                        Text(stringResource(R.string.action_disable_keep_sync_data))
+                    }
+                }
+            }
         )
     }
 }
@@ -2070,6 +2124,7 @@ private fun FolderCard(
     folder: SyncedFolder,
     stats: FolderFileStats,
     onRemoveClick: (SyncedFolder) -> Unit,
+    onLocalSyncToggleClick: (SyncedFolder) -> Unit,
     onEditFiltersClick: (SyncedFolder) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -2095,13 +2150,22 @@ private fun FolderCard(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = folder.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = folder.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (!folder.localSyncEnabled) {
+                            Text(
+                                text = stringResource(R.string.folder_local_sync_disabled),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
 
                 Box {
@@ -2114,6 +2178,21 @@ private fun FolderCard(
                             onClick = {
                                 showMenu = false
                                 onEditFiltersClick(folder)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (folder.localSyncEnabled) {
+                                        stringResource(R.string.menu_disable_folder_local_sync)
+                                    } else {
+                                        stringResource(R.string.menu_enable_folder_local_sync)
+                                    }
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onLocalSyncToggleClick(folder)
                             }
                         )
                         DropdownMenuItem(

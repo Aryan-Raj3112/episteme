@@ -96,6 +96,39 @@ class DesktopLocalFolderSyncTest {
         }
     }
 
+    @Test
+    fun `disabled folder is not scanned or written`() {
+        val root = Files.createTempDirectory("reader-desktop-folder-sync").toFile()
+        try {
+            File(root, "Notes.txt").writeText("Notes")
+            val existingBook = BookItem(
+                id = "local_Existing.pdf",
+                path = File(root, "Existing.pdf").absolutePath,
+                type = FileType.PDF,
+                displayName = "Existing.pdf",
+                timestamp = 100L,
+                progressPercentage = 50f,
+                sourceFolder = root.absolutePath
+            )
+
+            val result = DesktopLocalFolderSync.sync(
+                state = SharedReaderScreenState(
+                    rawLibraryBooks = listOf(existingBook),
+                    syncedFolders = listOf(syncedFolder(root).copy(localSyncEnabled = false))
+                ),
+                shelfRefs = emptyList(),
+                nowMillis = 3_000L
+            )
+
+            assertEquals(listOf(existingBook), result.state.rawLibraryBooks)
+            assertTrue(result.processedFolderUris.isEmpty())
+            assertEquals(0, result.stats.newBooks)
+            assertTrue(!File(root, LOCAL_FOLDER_SYNC_DATA_DIR).exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun syncedFolder(root: File): SyncedFolder {
         return SyncedFolder(
             uriString = root.absolutePath,

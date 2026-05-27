@@ -27,6 +27,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.aryan.reader.FileType
 import com.aryan.reader.ReaderPerfLog
+import com.aryan.reader.SyncedFolderPrefs
 import com.aryan.reader.cloudSyncPreview
 import com.aryan.reader.cloudSyncTraceSummary
 import com.aryan.reader.logCloudSyncTrace
@@ -342,6 +343,11 @@ class RecentFilesRepository(private val context: Context) {
         val folderUriString = entity.sourceFolderUri
 
         if (folderUriString != null) {
+            if (!isLocalFolderSyncEnabled(folderUriString)) {
+                Timber.d("SyncDebug: Folder sync disabled for $folderUriString. Skipping metadata sidecar.")
+                return@withContext
+            }
+
             val hasProgress = (entity.progressPercentage != null && entity.progressPercentage > 0f)
             val hasBookmarks = !entity.bookmarks.isNullOrEmpty() && entity.bookmarks != "[]"
             val hasHighlights = !entity.highlights.isNullOrEmpty() && entity.highlights != "[]"
@@ -397,6 +403,10 @@ class RecentFilesRepository(private val context: Context) {
         }
         val folderUriString = entity.sourceFolderUri ?: run {
             Timber.tag("FolderAnnotationSync").w("sourceFolderUri is null for bookId: $bookId")
+            return@withContext
+        }
+        if (!isLocalFolderSyncEnabled(folderUriString)) {
+            Timber.tag("FolderAnnotationSync").d("Folder sync disabled for $folderUriString. Skipping annotation sidecar.")
             return@withContext
         }
 
@@ -623,6 +633,15 @@ class RecentFilesRepository(private val context: Context) {
     suspend fun detachAllFolderBooks() = withContext(Dispatchers.IO) {
         recentFileDao.detachAllFolderBooks()
         Timber.d("Detached all folder books. They are now standard local files.")
+    }
+
+    private fun isLocalFolderSyncEnabled(folderUriString: String): Boolean {
+        val prefs = context.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
+        return SyncedFolderPrefs.isLocalSyncEnabled(
+            jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null),
+            legacyUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null),
+            folderUriString = folderUriString
+        )
     }
 
     suspend fun updateBookmarks(bookId: String, bookmarksJson: String) = withContext(Dispatchers.IO) {

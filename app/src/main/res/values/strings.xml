@@ -176,6 +176,13 @@
     <string name="books_count">BOOKS</string>
     <string name="menu_edit_filters">Edit Filters</string>
     <string name="menu_remove_folder">Remove Folder</string>
+    <string name="menu_disable_folder_local_sync">Disable local sync</string>
+    <string name="menu_enable_folder_local_sync">Enable local sync</string>
+    <string name="folder_local_sync_disabled">Local sync disabled</string>
+    <string name="dialog_disable_folder_local_sync_title">Disable local folder sync?</string>
+    <string name="dialog_disable_folder_local_sync_desc">Episteme will stop scanning this folder and stop writing JSON sync files. Remove the %1$s folder from this folder too?</string>
+    <string name="action_disable_keep_sync_data">Keep sync data</string>
+    <string name="action_disable_remove_sync_data">Remove sync data</string>
     <string name="filter_file_types">Filter File Types</string>
     <string name="filter_file_types_desc">Select the file types you want to sync from this folder:</string>
     <string name="filter_library">Filter Library</string>
@@ -489,6 +496,11 @@
     <string name="banner_folder_sync_scanning">Scanning folder for new books…</string>
     <string name="banner_folder_sync_complete">Folder Sync: Scan complete.</string>
     <string name="error_sync_failed">Sync failed.</string>
+    <string name="error_no_enabled_folder_sync">No local folders have sync enabled.</string>
+    <string name="banner_folder_local_sync_disabled">Local folder sync disabled.</string>
+    <string name="banner_folder_local_sync_disabled_removed_data">Local folder sync disabled. Sync data folder removed.</string>
+    <string name="banner_folder_sync_data_remove_failed">Local folder sync disabled, but the sync data folder could not be removed.</string>
+    <string name="banner_folder_local_sync_enabled">Local folder sync enabled.</string>
     <string name="error_enable_sync_download">Enable sync to download files.</string>
     <!-- %1$s = the filename that failed to download. -->
     <string name="error_download_failed">Failed to download %1$s.</string>

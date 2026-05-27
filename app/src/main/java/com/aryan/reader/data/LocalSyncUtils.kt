@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import com.aryan.reader.ReaderPerfLog
 import com.aryan.reader.shared.LOCAL_FOLDER_SIDECAR_HASH_PREFIX
+import com.aryan.reader.shared.LOCAL_FOLDER_SYNC_DATA_DIR
 import com.aryan.reader.shared.localFolderSyncAnnotationFileName
 import com.aryan.reader.shared.localFolderSyncAnnotationTempFileName
 import com.aryan.reader.shared.localFolderSyncMetadataFileName
@@ -21,7 +22,7 @@ import timber.log.Timber
 object LocalSyncUtils {
     private const val TAG = "FolderSync"
     private const val ANNOTATION_SUFFIX = "_annotations"
-    private const val SYNC_SUBFOLDER_NAME = "EpistemeSyncData"
+    private const val SYNC_SUBFOLDER_NAME = LOCAL_FOLDER_SYNC_DATA_DIR
 
     private data class SyncFileEntry(
         val name: String,
@@ -635,6 +636,21 @@ object LocalSyncUtils {
             }
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to delete folder sidecars for $bookId")
+        }
+    }
+
+    suspend fun deleteSyncDataFolder(
+        context: Context,
+        sourceFolderUri: Uri
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val rootTree = DocumentFile.fromTreeUri(context, sourceFolderUri) ?: return@withContext false
+            val syncDir = rootTree.findFile(SYNC_SUBFOLDER_NAME) ?: return@withContext true
+            if (!syncDir.isDirectory) return@withContext false
+            syncDir.delete()
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to delete sync data folder")
+            false
         }
     }
 

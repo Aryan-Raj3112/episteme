@@ -62,6 +62,7 @@ import com.aryan.reader.data.FirestoreRepository
 import com.aryan.reader.data.FontMetadata
 import com.aryan.reader.data.FontsRepository
 import com.aryan.reader.data.GoogleDriveRepository
+import com.aryan.reader.data.LocalSyncUtils
 import com.aryan.reader.data.PurchaseEntity
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
@@ -1195,7 +1196,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
         }
 
-        if (_internalState.value.syncedFolders.isNotEmpty()) {
+        if (_internalState.value.syncedFolders.any { it.localSyncEnabled }) {
             triggerFolderSyncWorker(metadataOnly = false, showFeedback = false)
         }
 
@@ -2472,72 +2473,32 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun loadSyncedFoldersFromPrefs(): List<SyncedFolder> {
-        val jsonString = prefs.getString(KEY_SYNCED_FOLDERS_JSON, null)
-        val folders = mutableListOf<SyncedFolder>()
+        val jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null)
+        val oldUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null)
+        val folders = SyncedFolderPrefs.decodeSyncedFolders(
+            jsonString = jsonString,
+            legacyUri = oldUri,
+            legacyLastScanTime = prefs.getLong(SyncedFolderPrefs.KEY_LEGACY_LAST_FOLDER_SCAN_TIME, 0L),
+            legacyNameResolver = { uri -> getDisplayPathFromUri(appContext, uri) }
+        )
 
-        if (jsonString == null && prefs.contains(KEY_SYNCED_FOLDER_URI)) {
-            val oldUri = prefs.getString(KEY_SYNCED_FOLDER_URI, null)
-            val oldTime = prefs.getLong(KEY_LAST_FOLDER_SCAN_TIME, 0L)
-            if (oldUri != null) {
-                val name = getDisplayPathFromUri(appContext, oldUri)
-                val migrated = SyncedFolder(oldUri, name, oldTime, ANDROID_SYNCABLE_FILE_TYPES)
-                folders.add(migrated)
-                saveSyncedFoldersToPrefs(folders)
-
-                prefs.edit {
-                    remove(KEY_SYNCED_FOLDER_URI)
-                    remove(KEY_LAST_FOLDER_SCAN_TIME)
-                }
-            }
-        } else if (jsonString != null) {
-            try {
-                val jsonArray = JSONArray(jsonString)
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-
-                    val allowedFileTypes = mutableSetOf<FileType>()
-                    if (obj.has("allowedFileTypes")) {
-                        val typesArray = obj.getJSONArray("allowedFileTypes")
-                        for (j in 0 until typesArray.length()) {
-                            try {
-                                allowedFileTypes.add(FileType.valueOf(typesArray.getString(j)))
-                            } catch (_: Exception) {}
-                        }
-                    } else {
-                        allowedFileTypes.addAll(ANDROID_SYNCABLE_FILE_TYPES)
-                    }
-
-                    folders.add(
-                        SyncedFolder(
-                            uriString = obj.getString("uri"),
-                            name = obj.getString("name"),
-                            lastScanTime = obj.optLong("lastScanTime", 0L),
-                            allowedFileTypes = allowedFileTypes.filterTo(mutableSetOf()) { it in ANDROID_SYNCABLE_FILE_TYPES }
-                        )
-                    )
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to parse synced folders JSON")
+        if (jsonString == null && prefs.contains(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI) && oldUri != null) {
+            saveSyncedFoldersToPrefs(folders)
+            prefs.edit {
+                remove(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI)
+                remove(SyncedFolderPrefs.KEY_LEGACY_LAST_FOLDER_SCAN_TIME)
             }
         }
         return folders
     }
 
     private fun saveSyncedFoldersToPrefs(folders: List<SyncedFolder>) {
-        val jsonArray = JSONArray()
-        folders.forEach { folder ->
-            val obj = JSONObject()
-            obj.put("uri", folder.uriString)
-            obj.put("name", folder.name)
-            obj.put("lastScanTime", folder.lastScanTime)
-            val typesArray = JSONArray()
-            folder.allowedFileTypes
-                .filter { it in ANDROID_SYNCABLE_FILE_TYPES }
-                .forEach { typesArray.put(it.name) }
-            obj.put("allowedFileTypes", typesArray)
-            jsonArray.put(obj)
+        prefs.edit {
+            putString(
+                SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON,
+                SyncedFolderPrefs.encodeSyncedFolders(folders)
+            )
         }
-        prefs.edit { putString(KEY_SYNCED_FOLDERS_JSON, jsonArray.toString()) }
     }
 
     fun addSyncedFolder(folderUri: Uri) {
@@ -2561,7 +2522,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
 
                 val name = getDisplayPathFromUri(appContext, folderUri.toString())
-                val newFolder = SyncedFolder(folderUri.toString(), name, 0L, ANDROID_SYNCABLE_FILE_TYPES)
+                val newFolder = SyncedFolder(
+                    uriString = folderUri.toString(),
+                    name = name,
+                    lastScanTime = 0L,
+                    allowedFileTypes = ANDROID_SYNCABLE_FILE_TYPES,
+                    localSyncEnabled = true
+                )
                 val newStats = currentFolders + newFolder
 
                 saveSyncedFoldersToPrefs(newStats)
@@ -2620,6 +2587,50 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun setFolderLocalSyncEnabled(
+        folder: SyncedFolder,
+        enabled: Boolean,
+        removeSyncDataFolder: Boolean = false
+    ) {
+        viewModelScope.launch {
+            val currentFolders = _internalState.value.syncedFolders.toMutableList()
+            val index = currentFolders.indexOfFirst { it.uriString == folder.uriString }
+            if (index == -1) return@launch
+
+            val updatedFolder = currentFolders[index].copy(localSyncEnabled = enabled)
+            currentFolders[index] = updatedFolder
+            saveSyncedFoldersToPrefs(currentFolders)
+            _internalState.update { it.copy(syncedFolders = currentFolders) }
+
+            if (enabled) {
+                showBanner(appContext.getString(R.string.banner_folder_local_sync_enabled))
+                triggerFolderSyncWorker(
+                    metadataOnly = false,
+                    showFeedback = true,
+                    targetFolderUriString = updatedFolder.uriString
+                )
+            } else {
+                val workManager = WorkManager.getInstance(appContext)
+                workManager.cancelUniqueWork(FolderSyncWorker.WORK_NAME_ONETIME)
+                workManager.cancelUniqueWork(MetadataExtractionWorker.WORK_NAME)
+
+                if (removeSyncDataFolder) {
+                    val removed = withContext(Dispatchers.IO) {
+                        LocalSyncUtils.deleteSyncDataFolder(appContext, updatedFolder.uriString.toUri())
+                    }
+                    val message = if (removed) {
+                        appContext.getString(R.string.banner_folder_local_sync_disabled_removed_data)
+                    } else {
+                        appContext.getString(R.string.banner_folder_sync_data_remove_failed)
+                    }
+                    showBanner(message, isError = !removed)
+                } else {
+                    showBanner(appContext.getString(R.string.banner_folder_local_sync_disabled))
+                }
+            }
+        }
+    }
+
     fun syncFolderMetadata(showFeedback: Boolean = false) {
         triggerFolderSyncWorker(metadataOnly = true, showFeedback = showFeedback)
     }
@@ -2633,11 +2644,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         showFeedback: Boolean,
         targetFolderUriString: String? = null
     ) {
-        val folders = _internalState.value.syncedFolders
-        if (folders.isEmpty()) return
+        val allFolders = _internalState.value.syncedFolders
+        val folders = if (targetFolderUriString.isNullOrBlank()) {
+            allFolders.filter { it.localSyncEnabled }
+        } else {
+            allFolders.filter { it.uriString == targetFolderUriString && it.localSyncEnabled }
+        }
+        if (folders.isEmpty()) {
+            if (showFeedback) {
+                showBanner(appContext.getString(R.string.error_no_enabled_folder_sync), isError = true)
+            }
+            return
+        }
 
         val targetFolderName = targetFolderUriString
-            ?.let { target -> folders.firstOrNull { it.uriString == target }?.name ?: target }
+            ?.let { target -> allFolders.firstOrNull { it.uriString == target }?.name ?: target }
         ReaderPerfLog.d(
             "FolderSync request folders=${folders.size} target=${targetFolderName ?: "ALL"} " +
                 "metadataOnly=$metadataOnly feedback=$showFeedback"
@@ -2769,8 +2790,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             prefs.edit {
-                remove(KEY_SYNCED_FOLDERS_JSON)
-                remove(KEY_SYNCED_FOLDER_URI)
+                remove(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON)
+                remove(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI)
             }
             _internalState.update { it.copy(syncedFolders = emptyList()) }
         }
@@ -5102,7 +5123,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshLibrary() {
         val syncEnabled = _internalState.value.isSyncEnabled
-        val hasFolder = _internalState.value.syncedFolders.isNotEmpty()
+        val hasFolder = _internalState.value.syncedFolders.any { it.localSyncEnabled }
 
         if (!syncEnabled && !hasFolder) {
             Timber.d("Refresh skipped: No sync methods active.")
@@ -6383,7 +6404,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_OPEN_COUNT = "app_open_count"
         internal const val KEY_SYNCED_FOLDER_URI = "synced_folder_uri"
         internal const val KEY_LAST_FOLDER_SCAN_TIME = "last_folder_scan_time"
-        private const val KEY_SYNCED_FOLDERS_JSON = "synced_folders_list_json"
         private const val MAX_FOLDER_LIMIT = 10
         internal const val KEY_PINNED_HOME = "pinned_home_books"
         internal const val KEY_PINNED_LIBRARY = "pinned_library_books"

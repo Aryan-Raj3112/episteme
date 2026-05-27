@@ -50,11 +50,20 @@ class MetadataExtractionWorker(
         val sourceFolderUri = inputData.getString(KEY_SOURCE_FOLDER_URI)
         val prefs = appContext.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)
 
-        val hasLegacy = prefs.contains("synced_folder_uri")
-        val hasNew = prefs.contains("synced_folders_list_json")
+        val linkedFolders = SyncedFolderPrefs.decodeSyncedFolders(
+            jsonString = prefs.getString(SyncedFolderPrefs.KEY_SYNCED_FOLDERS_JSON, null),
+            legacyUri = prefs.getString(SyncedFolderPrefs.KEY_LEGACY_SYNCED_FOLDER_URI, null)
+        )
+        val enabledFolderUris = linkedFolders
+            .filter { it.localSyncEnabled }
+            .mapTo(mutableSetOf()) { it.uriString }
 
-        if (!hasLegacy && !hasNew) {
-            ReaderPerfLog.d("MetadataWorker skipped: no linked folders")
+        if (enabledFolderUris.isEmpty()) {
+            ReaderPerfLog.d("MetadataWorker skipped: no linked folders with sync enabled")
+            return@withContext Result.success()
+        }
+        if (!sourceFolderUri.isNullOrBlank() && sourceFolderUri !in enabledFolderUris) {
+            ReaderPerfLog.d("MetadataWorker skipped: folder sync disabled folder=$sourceFolderUri")
             return@withContext Result.success()
         }
 
@@ -62,7 +71,9 @@ class MetadataExtractionWorker(
             val filesToProcess = recentFilesRepository.getFolderBooksNeedingTextMetadata(
                 sourceFolderUri = sourceFolderUri,
                 limit = METADATA_WORKER_BOOK_BATCH_SIZE
-            )
+            ).filter { item ->
+                item.sourceFolderUri != null && item.sourceFolderUri in enabledFolderUris
+            }
 
             if (filesToProcess.isEmpty()) {
                 ReaderPerfLog.d("MetadataWorker skipped: no metadata pending folder=${sourceFolderUri ?: "ALL"}")

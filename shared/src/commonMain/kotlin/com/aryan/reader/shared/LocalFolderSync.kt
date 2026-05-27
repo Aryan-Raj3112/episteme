@@ -275,6 +275,15 @@ object LocalFolderSyncEngine {
         nowMillis: Long = currentTimestamp(),
         metadataOnly: Boolean = false
     ): LocalFolderSyncResult {
+        if (!folder.localSyncEnabled) {
+            return LocalFolderSyncResult(
+                state = state,
+                idMigrations = emptyMap(),
+                removedBookIds = emptySet(),
+                stats = LocalFolderSyncStats()
+            )
+        }
+
         val folderRoot = folder.uriString
         val allowedTypes = folder.allowedFileTypes
         val booksById = linkedMapOf<String, BookItem>()

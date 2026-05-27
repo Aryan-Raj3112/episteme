@@ -346,7 +346,8 @@ private fun JsonElement.asSyncedFolderOrNull(): SyncedFolder? {
             .mapNotNull { runCatching { FileType.valueOf(it) }.getOrNull() }
             .filter { it in SharedFileCapabilities.knownFileTypes }
             .toSet()
-            .ifEmpty { SharedFileCapabilities.knownFileTypes }
+            .ifEmpty { SharedFileCapabilities.knownFileTypes },
+        localSyncEnabled = obj.boolean("localSyncEnabled", true)
     )
 }
 
@@ -474,7 +475,8 @@ private fun SyncedFolder.toJsonObject(): JsonObject {
                 .filter { it in SharedFileCapabilities.knownFileTypes }
                 .map { it.name }
                 .sorted()
-                .asJsonArray()
+                .asJsonArray(),
+            "localSyncEnabled" to JsonPrimitive(localSyncEnabled)
         )
     )
 }

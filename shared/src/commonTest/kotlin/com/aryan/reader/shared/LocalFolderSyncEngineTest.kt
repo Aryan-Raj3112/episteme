@@ -271,6 +271,36 @@ class LocalFolderSyncEngineTest {
     }
 
     @Test
+    fun `disabled synced folder does not import files or metadata`() {
+        val existing = book(
+            id = "local_Book.pdf",
+            timestamp = 100L,
+            progress = 10f
+        )
+        val result = LocalFolderSyncEngine.syncFolder(
+            state = SharedReaderScreenState(
+                rawLibraryBooks = listOf(existing),
+                syncedFolders = listOf(syncedFolder().copy(localSyncEnabled = false))
+            ),
+            folder = syncedFolder().copy(localSyncEnabled = false),
+            files = listOf(scannedFile("New.pdf", "New.pdf")),
+            remoteMetadata = mapOf(
+                "local_Book.pdf" to metadata(
+                    id = "local_Book.pdf",
+                    progress = 80f,
+                    modified = 500L
+                )
+            ),
+            nowMillis = 1_000L
+        )
+
+        assertEquals(listOf(existing), result.state.rawLibraryBooks)
+        assertEquals(0, result.stats.newBooks)
+        assertEquals(0, result.stats.remoteMetadataUpdates)
+        assertTrue(result.removedBookIds.isEmpty())
+    }
+
+    @Test
     fun `metadata sidecar is skipped for clean unread folder books`() {
         assertNull(book(id = "local_Book.pdf", isRecent = false, progress = null).toSharedFolderBookMetadata())
         assertNotNull(book(id = "local_Book.pdf", isRecent = true).toSharedFolderBookMetadata())

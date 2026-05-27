@@ -437,7 +437,7 @@ fun HomeScreen(
                                     onRefresh = { viewModel.refreshLibrary() },
                                     isRefreshing = uiState.isRefreshing,
                                     isSyncEnabled = uiState.isSyncEnabled,
-                                    hasSyncedFolder = uiState.syncedFolders.isNotEmpty(),
+                                    hasSyncedFolder = uiState.syncedFolders.any { it.localSyncEnabled },
                                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName
                                 )
                             }
