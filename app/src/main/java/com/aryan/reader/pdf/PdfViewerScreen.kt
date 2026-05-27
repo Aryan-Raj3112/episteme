@@ -278,8 +278,10 @@ import com.aryan.reader.summarizationUrl
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
+import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
 import com.aryan.reader.tts.rememberTtsController
+import com.aryan.reader.tts.saveReaderTtsOverlaySize
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import io.legere.pdfiumandroid.suspend.PdfDocumentKt
@@ -497,7 +499,7 @@ fun PdfViewerScreen(
     var isAutoScrollTempPaused by remember { mutableStateOf(false) }
     val autoScrollResumeJob = remember { mutableStateOf<Job?>(null) }
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
-    var ttsOverlaySize by remember { mutableStateOf(ReaderTtsOverlaySize.LARGE) }
+    var ttsOverlaySize by remember(context) { mutableStateOf(loadReaderTtsOverlaySize(context)) }
 
     var isMusicianMode by remember { mutableStateOf(loadPdfMusicianMode(context)) }
     var autoScrollUseSlider by remember { mutableStateOf(loadPdfAutoScrollUseSlider(context)) }
@@ -4112,12 +4114,6 @@ fun PdfViewerScreen(
     val isTtsSessionActive =
         ((ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER") || isAutoPagingForTts
 
-    LaunchedEffect(isTtsSessionActive) {
-        if (!isTtsSessionActive) {
-            ttsOverlaySize = ReaderTtsOverlaySize.LARGE
-        }
-    }
-
     val onInternalLinkNav: (Int) -> Unit = { targetPage ->
         coroutineScope.launch {
             if (targetPage in 0 until totalPages) {
@@ -7243,7 +7239,10 @@ fun PdfViewerScreen(
                         ttsState = ttsState,
                         currentTtsMode = currentTtsMode,
                         overlaySize = ttsOverlaySize,
-                        onOverlaySizeChange = { ttsOverlaySize = it },
+                        onOverlaySizeChange = { newSize ->
+                            ttsOverlaySize = newSize
+                            saveReaderTtsOverlaySize(context, newSize)
+                        },
                         onLocateCurrentChunk = {
                             ttsDisplayPageIndex?.let { targetPage ->
                                 coroutineScope.launch {

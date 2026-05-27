@@ -218,7 +218,9 @@ import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.SpeakerSamplePlayer
 import com.aryan.reader.tts.TtsPlaybackManager
 import com.aryan.reader.tts.loadTtsMode
+import com.aryan.reader.tts.loadReaderTtsOverlaySize
 import com.aryan.reader.tts.readerTtsOverlayAlignmentBias
+import com.aryan.reader.tts.saveReaderTtsOverlaySize
 import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import com.aryan.reader.shared.reader.ReaderJumpHistory
@@ -802,7 +804,7 @@ fun EpubReaderHost(
     }
 
     var isAutoScrollCollapsed by remember { mutableStateOf(false) }
-    var ttsOverlaySize by remember { mutableStateOf(ReaderTtsOverlaySize.LARGE) }
+    var ttsOverlaySize by remember(context) { mutableStateOf(loadReaderTtsOverlaySize(context)) }
 
     var isAutoScrollLocal by remember { mutableStateOf(loadAutoScrollLocalMode(context, bookId)) }
 
@@ -3479,12 +3481,6 @@ fun EpubReaderHost(
     ) {
         val isTtsSessionActive = (ttsState.currentText != null || ttsState.isLoading) && ttsState.playbackSource == "READER"
 
-        LaunchedEffect(isTtsSessionActive) {
-            if (!isTtsSessionActive) {
-                ttsOverlaySize = ReaderTtsOverlaySize.LARGE
-            }
-        }
-
         val audioManager = remember(context) {
             context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         }
@@ -5710,7 +5706,10 @@ fun EpubReaderHost(
                         ttsState = ttsState,
                         currentTtsMode = currentTtsMode,
                         overlaySize = ttsOverlaySize,
-                        onOverlaySizeChange = { ttsOverlaySize = it },
+                        onOverlaySizeChange = { newSize ->
+                            ttsOverlaySize = newSize
+                            saveReaderTtsOverlaySize(context, newSize)
+                        },
                         onLocateCurrentChunk = {
                             logTtsChapterDiag("Locate current chunk requested from TTS overlay")
                             queuePendingTtsLocate(TTS_LOCATE_REASON_OVERLAY)

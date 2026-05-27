@@ -86,6 +86,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -157,7 +158,6 @@ import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.aryan.reader.tts.formatReaderTtsChunkLabel
-import com.aryan.reader.tts.nextReaderTtsOverlaySize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -2359,7 +2359,17 @@ fun TtsOverlayControls(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     IconButton(
-                        onClick = { onOverlaySizeChange(nextReaderTtsOverlaySize(size)) },
+                        onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.LARGE) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            stringResource(R.string.content_desc_expand),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(
+                        onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
@@ -2473,16 +2483,29 @@ fun TtsOverlayControls(
                         )
                     }
 
-                    IconButton(
-                        onClick = { onOverlaySizeChange(nextReaderTtsOverlaySize(size)) },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowRight,
-                            contentDescription = stringResource(R.string.content_desc_collapse),
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                        IconButton(
+                            onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.LARGE) },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = stringResource(R.string.content_desc_expand),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowRight,
+                                contentDescription = stringResource(R.string.content_desc_collapse),
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             } else {
@@ -2492,7 +2515,10 @@ fun TtsOverlayControls(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Surface(
                                 color = MaterialTheme.colorScheme.primaryContainer,
                                 shape = RoundedCornerShape(8.dp)
@@ -2542,6 +2568,8 @@ fun TtsOverlayControls(
                             }
                         }
 
+                        Spacer(Modifier.width(8.dp))
+
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             IconButton(onClick = onLocateCurrentChunk, modifier = Modifier.size(32.dp)) {
                                 Icon(
@@ -2552,11 +2580,22 @@ fun TtsOverlayControls(
                                 )
                             }
                             IconButton(
-                                onClick = { onOverlaySizeChange(nextReaderTtsOverlaySize(size)) },
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.MEDIUM) },
                                 modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
                                     Icons.Default.KeyboardArrowDown,
+                                    stringResource(R.string.content_desc_collapse),
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = { onOverlaySizeChange(ReaderTtsOverlaySize.SMALL) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.KeyboardArrowRight,
                                     stringResource(R.string.content_desc_collapse),
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant

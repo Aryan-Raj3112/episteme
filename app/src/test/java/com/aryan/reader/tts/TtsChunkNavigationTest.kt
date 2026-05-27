@@ -91,10 +91,26 @@ class TtsChunkNavigationTest {
     }
 
     @Test
-    fun `reader tts overlay size cycles large to medium to small to large`() {
-        assertEquals(ReaderTtsOverlaySize.MEDIUM, nextReaderTtsOverlaySize(ReaderTtsOverlaySize.LARGE))
-        assertEquals(ReaderTtsOverlaySize.SMALL, nextReaderTtsOverlaySize(ReaderTtsOverlaySize.MEDIUM))
-        assertEquals(ReaderTtsOverlaySize.LARGE, nextReaderTtsOverlaySize(ReaderTtsOverlaySize.SMALL))
+    fun `reader tts overlay size exposes the other two sizes as choices`() {
+        assertEquals(
+            listOf(ReaderTtsOverlaySize.MEDIUM, ReaderTtsOverlaySize.SMALL),
+            readerTtsOverlayAlternativeSizes(ReaderTtsOverlaySize.LARGE)
+        )
+        assertEquals(
+            listOf(ReaderTtsOverlaySize.LARGE, ReaderTtsOverlaySize.SMALL),
+            readerTtsOverlayAlternativeSizes(ReaderTtsOverlaySize.MEDIUM)
+        )
+        assertEquals(
+            listOf(ReaderTtsOverlaySize.LARGE, ReaderTtsOverlaySize.MEDIUM),
+            readerTtsOverlayAlternativeSizes(ReaderTtsOverlaySize.SMALL)
+        )
+    }
+
+    @Test
+    fun `reader tts overlay stored size defaults to large for missing or invalid values`() {
+        assertEquals(ReaderTtsOverlaySize.MEDIUM, resolveReaderTtsOverlaySize("MEDIUM"))
+        assertEquals(ReaderTtsOverlaySize.LARGE, resolveReaderTtsOverlaySize(null))
+        assertEquals(ReaderTtsOverlaySize.LARGE, resolveReaderTtsOverlaySize("FULL"))
     }
 
     @Test
