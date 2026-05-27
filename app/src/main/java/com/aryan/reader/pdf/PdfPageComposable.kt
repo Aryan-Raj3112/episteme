@@ -5713,10 +5713,11 @@ fun PdfRichTextLayer(
                 val selection = tfv.selection
 
                 @Suppress("ControlFlowWithEmptyBody") if (controller.activePageIndex == pageIndex) {
-                    val localStart = selection.start.coerceIn(0, textToRender.length)
-                    val localEnd = selection.end.coerceIn(0, textToRender.length)
-
-                    if (localStart != localEnd) {
+                    androidPdfRichTextSelectionBounds(
+                        selectionStart = selection.start,
+                        selectionEnd = selection.end,
+                        textLength = textToRender.length
+                    )?.let { (localStart, localEnd) ->
                         val selectionPath = measureResult.getPathForRange(localStart, localEnd)
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             drawPath(selectionPath, Color(0xFFB3D7FF).copy(alpha = 0.5f))
@@ -5724,6 +5725,7 @@ fun PdfRichTextLayer(
                     }
 
                     if (selection.collapsed && controller.isCursorVisible) {
+                        val localStart = selection.start.coerceIn(0, textToRender.length)
                         val alpha = if (isScrolling) {
                             1f
                         } else {

@@ -35,7 +35,7 @@ import java.io.File
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModelTest {
 
-    private val testDispatcher = StandardTestDispatcher()
+    private lateinit var testDispatcher: TestDispatcher
 
     private lateinit var viewModel: MainViewModel
     private lateinit var mockApplication: Application
@@ -61,6 +61,8 @@ class MainViewModelTest {
 
     @Before
     fun setup() {
+        testDispatcher = StandardTestDispatcher()
+
         recentFilesFlow.value = emptyList()
         shelvesFlow.value = emptyList()
         shelfRefsFlow.value = emptyList()
@@ -164,8 +166,9 @@ class MainViewModelTest {
     fun tearDown() {
         try {
             if (::viewModel.isInitialized) {
+                testDispatcher.scheduler.advanceUntilIdle()
                 (viewModel as? TestMainViewModel)?.clearForTest()
-                testDispatcher.scheduler.runCurrent()
+                testDispatcher.scheduler.advanceUntilIdle()
             }
         } finally {
             Dispatchers.resetMain()
@@ -174,7 +177,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `search query updates uiState when search is active`() = runTest {
+    fun `search query updates uiState when search is active`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -190,7 +193,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setSearchActive false clears the search query`() = runTest {
+    fun `setSearchActive false clears the search query`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -204,7 +207,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `search query change is ignored while search is inactive`() = runTest {
+    fun `search query change is ignored while search is inactive`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -216,7 +219,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `switching theme updates internal state and preferences`() = runTest {
+    fun `switching theme updates internal state and preferences`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -229,7 +232,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setAppFontPreference persists app font preference`() = runTest {
+    fun `setAppFontPreference persists app font preference`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -244,7 +247,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `deleteFont resets matching app custom font preference`() = runTest {
+    fun `deleteFont resets matching app custom font preference`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -260,7 +263,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `deleteFonts deletes unique selected fonts and resets matching app custom font preference`() = runTest {
+    fun `deleteFonts deletes unique selected fonts and resets matching app custom font preference`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -278,7 +281,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `importFonts imports every selected font`() = runTest {
+    fun `importFonts imports every selected font`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -312,7 +315,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setTabsEnabled persists to shared preferences`() = runTest {
+    fun `setTabsEnabled persists to shared preferences`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -325,7 +328,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setRenderMode persists mode without touching saved epub position`() = runTest {
+    fun `setRenderMode persists mode without touching saved epub position`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -341,7 +344,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `saveEpubReadingPosition forwards cfi locator and progress to repository`() = runTest {
+    fun `saveEpubReadingPosition forwards cfi locator and progress to repository`() = runTest(testDispatcher) {
         val uriString = "content://books/one"
         val uri = mockUri(uriString)
         val locator = Locator(chapterIndex = 5, blockIndex = 77, charOffset = 14)
@@ -370,7 +373,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setRecentFilesLimit persists and limits visible home recents`() = runTest {
+    fun `setRecentFilesLimit persists and limits visible home recents`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -387,7 +390,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `strict file filter pdf filename display and external file behavior persist preferences`() = runTest {
+    fun `strict file filter pdf filename display and external file behavior persist preferences`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -408,7 +411,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `screen capture protection persists and updates state`() = runTest {
+    fun `screen capture protection persists and updates state`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -427,7 +430,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setSortOrder persists preference and reorders visible home and library lists`() = runTest {
+    fun `setSortOrder persists preference and reorders visible home and library lists`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -449,7 +452,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setMainScreenPage clamps to bottom navigation bounds and persists`() = runTest {
+    fun `setMainScreenPage clamps to bottom navigation bounds and persists`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -462,7 +465,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setLibraryScreenPage clamps to available library tabs and persists`() = runTest {
+    fun `setLibraryScreenPage clamps to available library tabs and persists`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -476,7 +479,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `create shelf dialog state opens and dismisses`() = runTest {
+    fun `create shelf dialog state opens and dismisses`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -491,7 +494,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `selectAllRecentFiles toggles only visible recent home items`() = runTest {
+    fun `selectAllRecentFiles toggles only visible recent home items`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -514,7 +517,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `selectAllLibraryFiles toggles all filtered library items`() = runTest {
+    fun `selectAllLibraryFiles toggles all filtered library items`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -534,7 +537,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `selectAllLibraryFiles clears selection when all visible library items are already selected`() = runTest {
+    fun `selectAllLibraryFiles clears selection when all visible library items are already selected`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -552,7 +555,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `togglePinForContextualItems pins selected home items and clears selection`() = runTest {
+    fun `togglePinForContextualItems pins selected home items and clears selection`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -572,7 +575,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `togglePinForContextualItems unpins when every selected item is already pinned`() = runTest {
+    fun `togglePinForContextualItems unpins when every selected item is already pinned`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -594,7 +597,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `clearContextualAction clears selected books without disturbing pinned state`() = runTest {
+    fun `clearContextualAction clears selected books without disturbing pinned state`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -613,7 +616,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `togglePinForContextualItems pins selected library items separately from home pins`() = runTest {
+    fun `togglePinForContextualItems pins selected library items separately from home pins`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -633,7 +636,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `updateLibraryFilters updates state and persists every filter dimension`() = runTest {
+    fun `updateLibraryFilters updates state and persists every filter dimension`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -655,7 +658,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `updateLibraryFilters drops unknown file type before state and prefs`() = runTest {
+    fun `updateLibraryFilters drops unknown file type before state and prefs`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -676,16 +679,20 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `saved library file filters drop stale unknown values during restore`() = runTest {
+    fun `saved library file filters drop stale unknown values during restore`() = runTest(testDispatcher) {
         every { mockPrefs.getStringSet(KEY_FILTER_FILE_TYPES, any()) } returns mutableSetOf("PDF", "UNKNOWN")
 
-        val restored = MainViewModel(mockApplication)
-
-        assertEquals(setOf(FileType.PDF), restored.uiState.value.libraryFilters.fileTypes)
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            assertEquals(setOf(FileType.PDF), restored.uiState.value.libraryFilters.fileTypes)
+        } finally {
+            restored.clearForTest()
+            testDispatcher.scheduler.advanceUntilIdle()
+        }
     }
 
     @Test
-    fun `updateLibraryFilters clears active filters and persists empty dimensions`() = runTest {
+    fun `updateLibraryFilters clears active filters and persists empty dimensions`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -710,7 +717,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `tag selection ignores empty targets and closes after opening`() = runTest {
+    fun `tag selection ignores empty targets and closes after opening`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -728,7 +735,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `toggleTagForBooks assigns and removes tags for sanitized book ids`() = runTest {
+    fun `toggleTagForBooks assigns and removes tags for sanitized book ids`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -748,7 +755,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `rename and delete shelf dialogs store their target and dismiss cleanly`() = runTest {
+    fun `rename and delete shelf dialogs store their target and dismiss cleanly`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -770,7 +777,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `shelf selection only allows manual mutable shelves and toggles by click`() = runTest {
+    fun `shelf selection only allows manual mutable shelves and toggles by click`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -792,7 +799,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `onShelfClick navigates when shelf contextual mode is inactive`() = runTest {
+    fun `onShelfClick navigates when shelf contextual mode is inactive`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -809,7 +816,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `shelf navigation sets library landing state and can be cleared`() = runTest {
+    fun `shelf navigation sets library landing state and can be cleared`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -828,7 +835,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `clearShelfContextualAction clears selected shelves`() = runTest {
+    fun `clearShelfContextualAction clears selected shelves`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -845,7 +852,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `deleteSelectedShelves deletes only mutable selected shelves and clears selection`() = runTest {
+    fun `deleteSelectedShelves deletes only mutable selected shelves and clears selection`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -872,7 +879,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `add books mode resets selection and tracks source changes`() = runTest {
+    fun `add books mode resets selection and tracks source changes`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -906,7 +913,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `toggleBookSelectionForAdding toggles individual books`() = runTest {
+    fun `toggleBookSelectionForAdding toggles individual books`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -921,7 +928,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `addBooksToShelf saves selected books for mutable shelves and exits add mode`() = runTest {
+    fun `addBooksToShelf saves selected books for mutable shelves and exits add mode`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -945,7 +952,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `addBooksToShelf dismisses add mode when target shelf is not mutable`() = runTest {
+    fun `addBooksToShelf dismisses add mode when target shelf is not mutable`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -962,7 +969,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `removeContextualItemsFromShelf removes selected books from the current mutable shelf`() = runTest {
+    fun `removeContextualItemsFromShelf removes selected books from the current mutable shelf`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -984,7 +991,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `app appearance settings persist contrast brightness seed and custom themes`() = runTest {
+    fun `app appearance settings persist contrast brightness seed and custom themes`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -1020,7 +1027,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setAppSeedColor can clear a selected seed color`() = runTest {
+    fun `setAppSeedColor can clear a selected seed color`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -1037,7 +1044,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `addCustomAppTheme replaces existing theme with the same id`() = runTest {
+    fun `addCustomAppTheme replaces existing theme with the same id`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -1054,7 +1061,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `banner message logic works correctly`() = runTest {
+    fun `banner message logic works correctly`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -1073,7 +1080,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `persistent banner is not auto dismissed`() = runTest {
+    fun `persistent banner is not auto dismissed`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }

@@ -155,6 +155,13 @@ internal fun shouldStartTtsTransitionPrefetch(
     return currentGeneration != deferredGeneration
 }
 
+internal fun shouldStopTtsPrefetchAfterMissingChunk(
+    isLoaded: Boolean,
+    playlistIndex: Int?
+): Boolean {
+    return !isLoaded && playlistIndex == null
+}
+
 internal fun resolveTtsStreamPcmDurationMs(totalBytes: Long): Long? {
     if (totalBytes <= TTS_STREAM_WAV_HEADER_BYTES) return null
     return ((totalBytes - TTS_STREAM_WAV_HEADER_BYTES) / TTS_STREAM_PCM_BYTES_PER_MS)
@@ -1592,11 +1599,21 @@ class TtsPlaybackManager(
                         )
                         return@launch
                     }
-                    if (!loadedChunks.contains(targetIndex) && findPlaylistIndexForChunk(targetIndex) == null) {
-                        logChunkNavWarnMain(
-                            "prefetch-stop-after-missing-chunk",
-                            "Stopping TTS prefetch after missing chunk $targetIndex to keep playlist contiguous."
-                        )
+                    val shouldStopAfterMissingChunk = withContext(Dispatchers.Main) {
+                        val playlistIndex = findPlaylistIndexForChunk(targetIndex)
+                        shouldStopTtsPrefetchAfterMissingChunk(
+                            isLoaded = loadedChunks.contains(targetIndex),
+                            playlistIndex = playlistIndex
+                        ).also { shouldStop ->
+                            if (shouldStop) {
+                                logChunkNavWarnMain(
+                                    "prefetch-stop-after-missing-chunk",
+                                    "Stopping TTS prefetch after missing chunk $targetIndex to keep playlist contiguous."
+                                )
+                            }
+                        }
+                    }
+                    if (shouldStopAfterMissingChunk) {
                         return@launch
                     }
                 }

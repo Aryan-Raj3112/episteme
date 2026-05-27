@@ -68,6 +68,17 @@ private const val ZWSP = "\u200B"
 internal fun String.hasRenderableRichText(): Boolean =
     any { it != PAGE_BREAK_CHAR && !it.isWhitespace() }
 
+internal fun androidPdfRichTextSelectionBounds(
+    selectionStart: Int,
+    selectionEnd: Int,
+    textLength: Int
+): Pair<Int, Int>? {
+    val safeLength = textLength.coerceAtLeast(0)
+    val localStart = minOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
+    val localEnd = maxOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
+    return if (localStart < localEnd) localStart to localEnd else null
+}
+
 object PdfFontCache {
     private val cache = ConcurrentHashMap<String, FontFamily>()
     private var assetManager: android.content.res.AssetManager? = null

@@ -176,6 +176,7 @@ import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.hasReadableExtractedContent
+import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
@@ -1103,7 +1104,7 @@ fun EpubReaderHost(
     val ttsState by ttsController.ttsState.collectAsState()
 
     val totalBookLengthChars = remember(chapters) {
-        chapters.sumOf { it.plainTextContent.length.toLong() }
+        chapters.sumOf { it.plainTextCharacterCount().toLong() }
     }
 
     var topVisibleChunkIndex by remember { mutableIntStateOf(0) }
@@ -1150,7 +1151,7 @@ fun EpubReaderHost(
             if (totalBookLengthChars > 0) {
                 val completedCharsInPreviousChapters =
                     chapters.take(currentChapterIndex)
-                        .sumOf { it.plainTextContent.length.toLong() }
+                        .sumOf { it.plainTextCharacterCount().toLong() }
 
                 val progressWithinChapter =
                     if (currentScrollHeightValue > currentClientHeightValue) {
@@ -1163,7 +1164,7 @@ fun EpubReaderHost(
                     }
 
                 val currentChapterLengthChars =
-                    chapters.getOrNull(currentChapterIndex)?.plainTextContent?.length?.toLong() ?: 0L
+                    chapters.getOrNull(currentChapterIndex)?.plainTextCharacterCount()?.toLong() ?: 0L
                 val charsScrolledInCurrentChapter = (progressWithinChapter * currentChapterLengthChars).toLong()
                 val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
                 val calculatedProgress = ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
@@ -1451,13 +1452,13 @@ fun EpubReaderHost(
     suspend fun saveResolvedLocatorPosition(locator: Locator, cfiForWebView: String?) {
         lastKnownLocator = locator
 
-        val chapterLengthChars = chapters.getOrNull(locator.chapterIndex)?.plainTextContent?.length?.toLong() ?: 0L
+        val chapterLengthChars = chapters.getOrNull(locator.chapterIndex)?.plainTextCharacterCount()?.toLong() ?: 0L
         val exactOffset = locatorConverter.getTextOffset(epubBook, locator)?.coerceAtLeast(0) ?: 0
         val boundedOffset = exactOffset.coerceAtMost(chapterLengthChars.toInt()).toLong()
 
         val progress = if (totalBookLengthChars > 0) {
             val completedCharsInPreviousChapters =
-                chapters.take(locator.chapterIndex).sumOf { it.plainTextContent.length.toLong() }
+                chapters.take(locator.chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
             val totalCharsScrolled = completedCharsInPreviousChapters + boundedOffset
             val calculatedProgress =
                 ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
@@ -2303,7 +2304,7 @@ fun EpubReaderHost(
                 lastKnownLocator = locator
                 val bookPaginator = paginator as? BookPaginator
                 val progress = if (totalBookLengthChars > 0 && bookPaginator != null) {
-                    val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextContent.length.toLong() }
+                    val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
                     val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
                     val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
                     val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
@@ -2424,7 +2425,7 @@ fun EpubReaderHost(
                                 onNavigateBack()
                                 return@launch
                             } else if (totalBookLengthChars > 0 && bookPaginator != null) {
-                                val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextContent.length.toLong() }
+                                val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
                                 val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
                                 val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
                                 val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
@@ -4590,7 +4591,7 @@ fun EpubReaderHost(
                                                         val currentChapterLengthChars =
                                                             chapters.getOrNull(
                                                                 latestChapterIndex
-                                                            )?.plainTextContent?.length?.toLong()
+                                                            )?.plainTextCharacterCount()?.toLong()
                                                                 ?: 0L
 
                                                         // Handle Recap Request INTERCEPTION
@@ -4620,7 +4621,7 @@ fun EpubReaderHost(
                                                         val progress = if (totalBookLengthChars > 0) {
                                                             val completedCharsInPreviousChapters =
                                                                 chapters.take(latestChapterIndex)
-                                                                    .sumOf { it.plainTextContent.length.toLong() }
+                                                                    .sumOf { it.plainTextCharacterCount().toLong() }
 
                                                             val charsScrolledInCurrentChapter =
                                                                 (progressWithinChapter * currentChapterLengthChars).toLong()
@@ -5275,7 +5276,7 @@ fun EpubReaderHost(
                         if (paginatedPagerState.pageCount > 0) {
                             if (totalBookLengthChars > 0 && bookPaginator != null && chapterIndex != null) {
                                 val completedCharsInPreviousChapters = remember(chapters, chapterIndex) {
-                                    chapters.take(chapterIndex).sumOf { it.plainTextContent.length.toLong() }
+                                    chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
                                 }
                                 val chapterStartPage = bookPaginator.chapterStartPageIndices[chapterIndex]
                                 val currentPageInChapter = if (chapterStartPage != null) {

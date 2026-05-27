@@ -77,6 +77,14 @@ class TtsModePolicyTest {
     }
 
     @Test
+    fun `native tts voice list is resolved only when required`() {
+        assertEquals(false, shouldResolveNativeTtsVoice(preferredVoiceName = null, isOfflineBuild = false))
+        assertEquals(false, shouldResolveNativeTtsVoice(preferredVoiceName = "   ", isOfflineBuild = false))
+        assertEquals(true, shouldResolveNativeTtsVoice(preferredVoiceName = "voice-id", isOfflineBuild = false))
+        assertEquals(true, shouldResolveNativeTtsVoice(preferredVoiceName = null, isOfflineBuild = true))
+    }
+
+    @Test
     fun `offline native tts ignores saved network voice`() {
         val localVoice = voice("local", requiresNetwork = false)
         val networkVoice = voice("network", requiresNetwork = true)

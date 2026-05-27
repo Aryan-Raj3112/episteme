@@ -81,6 +81,13 @@ internal fun resolveNativeTtsVoiceForBuild(
     }
 }
 
+internal fun shouldResolveNativeTtsVoice(
+    preferredVoiceName: String?,
+    isOfflineBuild: Boolean
+): Boolean {
+    return isOfflineBuild || !preferredVoiceName.isNullOrBlank()
+}
+
 class BaseTtsSynthesizer(private val context: Context) {
 
     private var tts: TextToSpeech? = null
@@ -144,15 +151,6 @@ class BaseTtsSynthesizer(private val context: Context) {
                 if (status == TextToSpeech.SUCCESS) {
                     isInitialized = true
                     Timber.d("TextToSpeech engine initialized successfully.")
-                    try {
-                        val result = tts?.setLanguage(Locale.getDefault())
-                        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                            Timber.e("Default language not supported/missing data")
-                        }
-                    } catch (e: Exception) {
-                        Timber.e(e, "Error setting language")
-                    }
-
                     tts?.setOnUtteranceProgressListener(sharedListener)
                     if (continuation.isActive) continuation.resume(Unit)
                 } else {
@@ -183,6 +181,9 @@ class BaseTtsSynthesizer(private val context: Context) {
 
         try {
             val preferredVoiceName = loadNativeVoice(context)
+            if (!shouldResolveNativeTtsVoice(preferredVoiceName, BuildConfig.IS_OFFLINE)) {
+                return
+            }
             val defaultLocale = Locale.getDefault()
             val defaultVoice = tts?.defaultVoice
             val availableVoices = tts?.voices
@@ -195,7 +196,6 @@ class BaseTtsSynthesizer(private val context: Context) {
             )
 
             if (targetVoice == null) {
-                tts?.language = defaultLocale
                 Timber.w("BaseTts: No suitable local voice found for locale $defaultLocale.")
                 return
             }
@@ -208,15 +208,10 @@ class BaseTtsSynthesizer(private val context: Context) {
                 Timber.w("BaseTts: Saved voice '$preferredVoiceName' requires network or is unavailable in offline build. Using ${targetVoice.name}.")
             }
 
-            if (tts?.voice?.name != targetVoice.name) {
-                Timber.d("BaseTts: Setting native voice to ${targetVoice.name} (${targetVoice.locale})")
-                try {
-                    tts?.language = targetVoice.locale
-                } catch (e: Exception) {
-                    Timber.e(e, "BaseTts: Failed to set language for voice")
-                }
-                tts?.voice = targetVoice
-            }
+            Timber.d("BaseTts: Setting native voice to ${targetVoice.name} (${targetVoice.locale})")
+            tts?.voice = targetVoice
+        } catch (e: OutOfMemoryError) {
+            Timber.e(e, "BaseTts: Skipping optional voice selection due to low memory")
         } catch (e: Exception) {
             Timber.e(e, "BaseTts: Failed to apply preferred voice")
         }

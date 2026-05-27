@@ -56,6 +56,8 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_HTML_BUFFERED_LINE_CHARS = 128_000
         private const val MAX_HTML_HEAD_SCAN_CHARS = 256_000
         private const val MAX_HTML_INLINE_CSS_CHARS = 256_000
+        private const val MAX_SINGLE_FILE_METADATA_BYTES = 2L * 1024L * 1024L
+        private const val BOOK_METADATA_FILE = "book_metadata.json"
         private const val PAGE_BREAK_MARKER = "<page-break></page-break>"
     }
 
@@ -67,6 +69,62 @@ class SingleFileImporter(private val context: Context) {
         .addProtocols("img", "src", "http", "https", "data", "file", "content")
 
     private val htmlOutputSettings = Document.OutputSettings().prettyPrint(false)
+
+    private fun metadataFile(extractionDir: File): File = File(extractionDir, BOOK_METADATA_FILE)
+
+    private fun EpubBook.lightweightSingleFileCache(): EpubBook {
+        val cacheChapters = chapters.map { chapter ->
+            chapter.copy(
+                plainTextContent = "",
+                htmlContent = ""
+            )
+        }
+        return copy(
+            coverImage = null,
+            chapters = cacheChapters,
+            chaptersForPagination = cacheChapters
+        )
+    }
+
+    private fun readCachedSingleFileBook(metadataFile: File, extractionDir: File, tag: String): EpubBook? {
+        if (!metadataFile.exists()) return null
+        if (metadataFile.length() > MAX_SINGLE_FILE_METADATA_BYTES) {
+            Timber.w(
+                "Ignoring oversized $tag metadata cache (${metadataFile.length()} bytes). " +
+                    "The file will be reparsed with lightweight metadata."
+            )
+            runCatching { metadataFile.delete() }
+            return null
+        }
+
+        return try {
+            val decodedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+            val cacheChapters = decodedBook.chapters.map { it.copy(htmlContent = "") }
+            decodedBook.copy(
+                chapters = cacheChapters,
+                chaptersForPagination = cacheChapters,
+                extractionBasePath = extractionDir.absolutePath
+            ).takeIf { it.hasReadableExtractedContent() }
+        } catch (e: OutOfMemoryError) {
+            Timber.e(e, "Failed to load cached $tag metadata without exhausting memory")
+            runCatching { metadataFile.delete() }
+            null
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to load cached $tag, parsing again")
+            null
+        }
+    }
+
+    private fun writeSingleFileMetadata(metadataFile: File, book: EpubBook, tag: String) {
+        try {
+            metadataFile.writeText(jsonSerializer.encodeToString(book.lightweightSingleFileCache()))
+        } catch (e: OutOfMemoryError) {
+            Timber.e(e, "Failed to cache lightweight $tag metadata without exhausting memory")
+            runCatching { metadataFile.delete() }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to cache $tag metadata")
+        }
+    }
 
     suspend fun importSingleFile(
         inputStream: InputStream,
@@ -195,17 +253,11 @@ class SingleFileImporter(private val context: Context) {
         }
 
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
-        val metadataFile = File(extractionDir, "book_metadata.json")
+        val metadataFile = metadataFile(extractionDir)
 
-        if (metadataFile.exists()) {
-            try {
-                val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
-                    .copy(extractionBasePath = extractionDir.absolutePath)
-                Timber.tag("FileOpenPerf").d("[MD] Loaded from cache instantly | bookId=$bookId")
-                return@withContext cachedBook
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to load cached MD, parsing again")
-            }
+        readCachedSingleFileBook(metadataFile, extractionDir, "MD")?.let { cachedBook ->
+            Timber.tag("FileOpenPerf").d("[MD] Loaded from cache instantly | bookId=$bookId")
+            return@withContext cachedBook
         }
         ImportedFileCache.resetActiveBookDir(context, bookId)
 
@@ -299,11 +351,7 @@ class SingleFileImporter(private val context: Context) {
             css = emptyMap()
         )
 
-        try {
-            metadataFile.writeText(jsonSerializer.encodeToString(book))
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to cache MD metadata")
-        }
+        writeSingleFileMetadata(metadataFile, book, "MD")
 
         return@withContext book
     }
@@ -331,17 +379,11 @@ class SingleFileImporter(private val context: Context) {
         }
 
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
-        val metadataFile = File(extractionDir, "book_metadata.json")
+        val metadataFile = metadataFile(extractionDir)
 
-        if (metadataFile.exists()) {
-            try {
-                val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
-                    .copy(extractionBasePath = extractionDir.absolutePath)
-                Timber.tag("FileOpenPerf").d("[TXT] Loaded from cache instantly | bookId=$bookId")
-                return@withContext cachedBook
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to load cached TXT, parsing again")
-            }
+        readCachedSingleFileBook(metadataFile, extractionDir, "TXT")?.let { cachedBook ->
+            Timber.tag("FileOpenPerf").d("[TXT] Loaded from cache instantly | bookId=$bookId")
+            return@withContext cachedBook
         }
         ImportedFileCache.resetActiveBookDir(context, bookId)
 
@@ -462,11 +504,7 @@ class SingleFileImporter(private val context: Context) {
             css = emptyMap()
         )
 
-        try {
-            metadataFile.writeText(jsonSerializer.encodeToString(book))
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to cache TXT metadata")
-        }
+        writeSingleFileMetadata(metadataFile, book, "TXT")
 
         return@withContext book
     }
@@ -494,17 +532,11 @@ class SingleFileImporter(private val context: Context) {
         }
 
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
-        val metadataFile = File(extractionDir, "book_metadata.json")
+        val metadataFile = metadataFile(extractionDir)
 
-        if (metadataFile.exists()) {
-            try {
-                val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
-                    .copy(extractionBasePath = extractionDir.absolutePath)
-                Timber.tag("FileOpenPerf").d("[HTML] Loaded from cache instantly | bookId=$bookId")
-                return@withContext cachedBook
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to load cached HTML, parsing again")
-            }
+        readCachedSingleFileBook(metadataFile, extractionDir, "HTML")?.let { cachedBook ->
+            Timber.tag("FileOpenPerf").d("[HTML] Loaded from cache instantly | bookId=$bookId")
+            return@withContext cachedBook
         }
         ImportedFileCache.resetActiveBookDir(context, bookId)
 
@@ -699,11 +731,7 @@ class SingleFileImporter(private val context: Context) {
             css = emptyMap()
         )
 
-        try {
-            metadataFile.writeText(jsonSerializer.encodeToString(book))
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to cache HTML metadata")
-        }
+        writeSingleFileMetadata(metadataFile, book, "HTML")
 
         return@withContext book
     }
@@ -783,17 +811,11 @@ class SingleFileImporter(private val context: Context) {
         }
 
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
-        val metadataFile = File(extractionDir, "book_metadata.json")
+        val metadataFile = metadataFile(extractionDir)
 
-        if (metadataFile.exists()) {
-            try {
-                val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
-                    .copy(extractionBasePath = extractionDir.absolutePath)
-                Timber.tag("FileOpenPerf").d("[DOCX] Loaded from cache instantly | bookId=$bookId")
-                return@withContext cachedBook
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to load cached DOCX, parsing again")
-            }
+        readCachedSingleFileBook(metadataFile, extractionDir, "DOCX")?.let { cachedBook ->
+            Timber.tag("FileOpenPerf").d("[DOCX] Loaded from cache instantly | bookId=$bookId")
+            return@withContext cachedBook
         }
         ImportedFileCache.resetActiveBookDir(context, bookId)
 

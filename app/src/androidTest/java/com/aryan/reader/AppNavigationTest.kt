@@ -70,6 +70,45 @@ class AppNavigationTest {
         assertThat(FileType.UNKNOWN.readerSurfaceOnAndroid()).isNull()
     }
 
+    @Test
+    fun appNavBackInterceptor_onlyHandlesResumedNonReaderBackStackEntries() {
+        assertThat(
+            shouldInterceptAppNavBack(
+                currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
+                hasPreviousBackStackEntry = true,
+                isCurrentEntryResumed = true
+            )
+        ).isTrue()
+        assertThat(
+            shouldInterceptAppNavBack(
+                currentRoute = AppDestinations.MAIN_ROUTE,
+                hasPreviousBackStackEntry = true,
+                isCurrentEntryResumed = true
+            )
+        ).isFalse()
+        assertThat(
+            shouldInterceptAppNavBack(
+                currentRoute = AppDestinations.PDF_VIEWER_ROUTE,
+                hasPreviousBackStackEntry = true,
+                isCurrentEntryResumed = true
+            )
+        ).isFalse()
+        assertThat(
+            shouldInterceptAppNavBack(
+                currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
+                hasPreviousBackStackEntry = false,
+                isCurrentEntryResumed = true
+            )
+        ).isFalse()
+        assertThat(
+            shouldInterceptAppNavBack(
+                currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
+                hasPreviousBackStackEntry = true,
+                isCurrentEntryResumed = false
+            )
+        ).isFalse()
+    }
+
     private fun FileType.readerSurfaceOnAndroid(): ReaderFeatureSurface? {
         return SharedFileCapabilities.surfaceFor(this, ReaderPlatform.ANDROID)
     }

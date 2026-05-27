@@ -179,6 +179,13 @@ class SharedPdfRichTextTest {
     }
 
     @Test
+    fun `selection bounds normalize reversed and clamped rich text selections`() {
+        assertEquals(44 to 45, sharedPdfRichTextSelectionBounds(45, 44, textLength = 45))
+        assertEquals(0 to 5, sharedPdfRichTextSelectionBounds(-3, 99, textLength = 5))
+        assertEquals(null, sharedPdfRichTextSelectionBounds(3, 3, textLength = 5))
+    }
+
+    @Test
     fun `trailing page break creates editable blank page layout`() {
         val globalText = AnnotatedString("$SHARED_PDF_PAGE_BREAK_CHAR")
         val layouts = listOf(

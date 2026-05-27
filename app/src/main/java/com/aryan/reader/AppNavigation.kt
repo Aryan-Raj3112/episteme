@@ -21,6 +21,7 @@ package com.aryan.reader
 
 import android.os.Build
 import timber.log.Timber
+import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -78,6 +79,18 @@ object AppDestinations {
     const val FONTS_SCREEN_ROUTE = "fonts_screen_route"
     const val AI_SETTINGS_SCREEN_ROUTE = "ai_settings_screen_route"
     const val SETTINGS_SCREEN_ROUTE = "settings_screen_route"
+}
+
+fun shouldInterceptAppNavBack(
+    currentRoute: String?,
+    hasPreviousBackStackEntry: Boolean,
+    isCurrentEntryResumed: Boolean
+): Boolean {
+    if (!hasPreviousBackStackEntry || !isCurrentEntryResumed) return false
+    return currentRoute != null &&
+        currentRoute != AppDestinations.MAIN_ROUTE &&
+        currentRoute != AppDestinations.PDF_VIEWER_ROUTE &&
+        currentRoute != AppDestinations.EPUB_READER_ROUTE
 }
 
 private fun NavHostController.isReadyForBackStackChange(): Boolean {
@@ -166,6 +179,11 @@ fun AppNavigation(
     val miniBarBottomPadding = readerTtsMiniBarBottomPaddingDp(
         isOnMainRoute = currentRoute == AppDestinations.MAIN_ROUTE
     ).dp
+    val shouldInterceptBack = shouldInterceptAppNavBack(
+        currentRoute = currentRoute,
+        hasPreviousBackStackEntry = navController.previousBackStackEntry != null,
+        isCurrentEntryResumed = currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED
+    )
 
     LaunchedEffect(currentRoute, uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
         if (!uiState.isLoading) {
@@ -195,6 +213,10 @@ fun AppNavigation(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        BackHandler(enabled = shouldInterceptBack) {
+            navController.popBackStackIfReady()
+        }
+
         NavHost(navController = navController, startDestination = AppDestinations.MAIN_ROUTE) {
         composable(AppDestinations.MAIN_ROUTE) {
             Timber.d("Navigating to Main Screen (${AppDestinations.MAIN_ROUTE}).")

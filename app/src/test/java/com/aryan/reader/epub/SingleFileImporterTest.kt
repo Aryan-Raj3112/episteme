@@ -56,7 +56,11 @@ class SingleFileImporterTest {
         assertEquals("Part 1", book.chapters.single().title)
         assertTrue(book.chapters.single().plainTextContent.contains("First <line> continues"))
         assertTrue(File(book.extractionBasePath, "part_1.html").readText().contains("First &lt;line&gt;"))
-        assertTrue(File(book.extractionBasePath, "book_metadata.json").isFile)
+        val metadata = File(book.extractionBasePath, "book_metadata.json")
+        assertTrue(metadata.isFile)
+        val metadataText = metadata.readText()
+        assertFalse(metadataText.contains("First <line> continues"))
+        assertTrue(metadataText.contains("plainTextLength"))
     }
 
     @Test
@@ -79,8 +83,29 @@ class SingleFileImporterTest {
         )
 
         assertEquals(first.title, second.title)
-        assertEquals(first.chapters.single().plainTextContent, second.chapters.single().plainTextContent)
-        assertTrue(second.chapters.single().plainTextContent.contains("Cached content"))
+        assertEquals(first.chapters.single().plainTextLength, second.chapters.single().plainTextLength)
+        assertEquals("", second.chapters.single().plainTextContent)
+        assertTrue(File(second.extractionBasePath, second.chapters.single().htmlFilePath).readText().contains("Cached content"))
+    }
+
+    @Test
+    fun `plain text import ignores oversized legacy cached metadata before reading it`() = runTest {
+        val cache = temp.newFolder("txt-cache-oversized")
+        val context = contextWithCache(cache)
+        val bookId = "oversized-cache-book"
+        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        File(extractionDir, "book_metadata.json").writeText("x".repeat((2L * 1024L * 1024L + 1L).toInt()))
+        val importer = SingleFileImporter(context)
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream("Fresh content after oversized cache".toByteArray()),
+            type = FileType.TXT,
+            originalBookNameHint = "Fresh.txt",
+            bookId = bookId
+        )
+
+        assertEquals("Fresh", book.title)
+        assertTrue(book.chapters.single().plainTextContent.contains("Fresh content"))
     }
 
     @Test

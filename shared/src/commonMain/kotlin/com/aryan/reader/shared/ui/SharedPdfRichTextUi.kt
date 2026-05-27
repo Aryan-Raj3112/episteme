@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.pdf.SharedPdfRichTextController
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
+import com.aryan.reader.shared.pdf.sharedPdfRichTextSelectionBounds
 import com.aryan.reader.shared.pdf.withoutTrailingSharedPdfPageBreak
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -202,10 +203,12 @@ fun SharedPdfRichTextLayer(
 
         if (isTextEditingEnabled && controller.activePageIndex == pageIndex) {
             val selection = controller.editingValue.selection
-            val localStart = selection.start.coerceIn(0, textToRender.length)
-            val localEnd = selection.end.coerceIn(0, textToRender.length)
 
-            if (localStart != localEnd) {
+            sharedPdfRichTextSelectionBounds(
+                selectionStart = selection.start,
+                selectionEnd = selection.end,
+                textLength = textToRender.length
+            )?.let { (localStart, localEnd) ->
                 val selectionPath = measureResult.getPathForRange(localStart, localEnd)
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     drawPath(selectionPath, Color(0xFFB3D7FF).copy(alpha = 0.5f))
@@ -213,6 +216,7 @@ fun SharedPdfRichTextLayer(
             }
 
             if (selection.collapsed && controller.isCursorVisible) {
+                val localStart = selection.start.coerceIn(0, textToRender.length)
                 val alpha = if (isScrolling) {
                     1f
                 } else {

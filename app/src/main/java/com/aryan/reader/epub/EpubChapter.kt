@@ -33,5 +33,10 @@ data class EpubChapter @OptIn(ExperimentalSerializationApi::class) constructor(
     @ProtoNumber(5) val plainTextContent: String,
     @ProtoNumber(6) val htmlContent: String,
     @ProtoNumber(7) val depth: Int = 0,
-    @ProtoNumber(8) val isInToc: Boolean = true
+    @ProtoNumber(8) val isInToc: Boolean = true,
+    @ProtoNumber(9) val plainTextLength: Int = plainTextContent.length
 )
+
+fun EpubChapter.plainTextCharacterCount(): Int {
+    return maxOf(plainTextLength, plainTextContent.length)
+}

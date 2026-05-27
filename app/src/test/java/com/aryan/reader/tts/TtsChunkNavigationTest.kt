@@ -60,6 +60,13 @@ class TtsChunkNavigationTest {
         assertEquals(true, shouldStartTtsTransitionPrefetch(currentGeneration = 6, deferredGeneration = -1))
     }
 
+    @Test
+    fun `prefetch stops only when generated chunk is neither loaded nor queued`() {
+        assertEquals(true, shouldStopTtsPrefetchAfterMissingChunk(isLoaded = false, playlistIndex = null))
+        assertEquals(false, shouldStopTtsPrefetchAfterMissingChunk(isLoaded = true, playlistIndex = null))
+        assertEquals(false, shouldStopTtsPrefetchAfterMissingChunk(isLoaded = false, playlistIndex = 2))
+    }
+
     @androidx.annotation.OptIn(UnstableApi::class)
     @Test
     fun `reader tts mini bar is visible only for active reader playback outside reader routes`() {

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.Density
 import com.aryan.reader.SearchResult
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.contentFilePath
+import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.BookProcessingInput
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
@@ -424,7 +425,7 @@ class BookPaginator(
             append('|')
             append(chapter.htmlContent.hashCode())
             append('|')
-            append(chapter.plainTextContent.length)
+            append(chapter.plainTextCharacterCount())
             append('|')
             append(chapter.plainTextContent.hashCode())
             append('|')

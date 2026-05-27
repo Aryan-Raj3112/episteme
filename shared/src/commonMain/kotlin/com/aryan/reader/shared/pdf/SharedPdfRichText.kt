@@ -52,6 +52,17 @@ const val SHARED_PDF_PAGE_BREAK_CHAR: Char = '\u000C'
 private const val SHARED_PDF_ZWSP = "\u200B"
 private const val SHARED_PDF_RICH_FONT_PATH_TAG = "pdf-rich-font-path"
 
+internal fun sharedPdfRichTextSelectionBounds(
+    selectionStart: Int,
+    selectionEnd: Int,
+    textLength: Int
+): Pair<Int, Int>? {
+    val safeLength = textLength.coerceAtLeast(0)
+    val localStart = minOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
+    val localEnd = maxOf(selectionStart, selectionEnd).coerceIn(0, safeLength)
+    return if (localStart < localEnd) localStart to localEnd else null
+}
+
 object SharedPdfRichTextLog {
     var enabled: Boolean = true
 

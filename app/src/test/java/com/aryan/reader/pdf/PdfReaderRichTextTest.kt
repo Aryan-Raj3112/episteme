@@ -182,6 +182,13 @@ class PdfReaderRichTextTest {
     }
 
     @Test
+    fun `selection bounds normalize reversed and clamped rich text selections`() {
+        assertEquals(44 to 45, androidPdfRichTextSelectionBounds(45, 44, textLength = 45))
+        assertEquals(0 to 5, androidPdfRichTextSelectionBounds(-3, 99, textLength = 5))
+        assertEquals(null, androidPdfRichTextSelectionBounds(3, 3, textLength = 5))
+    }
+
+    @Test
     fun `blank page insertion uses one page break when the rich text boundary is already explicit`() {
         val text = "Page 1${PAGE_BREAK_CHAR}Page 2"
         val insertionIndex = "Page 1${PAGE_BREAK_CHAR}".length
