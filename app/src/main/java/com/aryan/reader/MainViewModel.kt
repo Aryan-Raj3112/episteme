@@ -168,6 +168,11 @@ private data class CachedSpeechBubble(
     val maskBitmap: Bitmap?
 )
 
+private data class PendingExternalFileRemoval(
+    val bookId: String,
+    val uriString: String?
+)
+
 private const val BANNER_AUTO_DISMISS_MILLIS = 3_000L
 
 @kotlin.OptIn(ExperimentalSerializationApi::class)
@@ -600,8 +605,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         val existingItem = recentFilesRepository.getFileByBookId(hash)
         if (existingItem != null) {
-            Timber.i("Book with ID: $hash already exists. Skipping import.")
-            return null
+            val pendingRemoval = pendingExternalFileRemovals()
+                .firstOrNull { it.bookId == hash }
+            if (pendingRemoval != null) {
+                deletePendingExternalFileRemoval(
+                    pendingRemoval.copy(uriString = pendingRemoval.uriString ?: existingItem.uriString)
+                )
+            } else {
+                Timber.i("Book with ID: $hash already exists. Skipping import.")
+                return null
+            }
         }
 
         val fileName = displayName ?: ""
@@ -1201,6 +1214,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         sweepOrphanedCache()
+        cleanupPendingExternalFileRemovals()
         restoreReaderSessionIfNeeded()
 
         viewModelScope.launch { billingClientWrapper.initializeConnection() }
@@ -1285,6 +1299,119 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun pendingExternalFileRemovals(): List<PendingExternalFileRemoval> {
+        return prefs.getStringSet(KEY_PENDING_EXTERNAL_FILE_REMOVALS, emptySet())
+            .orEmpty()
+            .mapNotNull(::decodePendingExternalFileRemoval)
+            .distinctBy { it.bookId }
+    }
+
+    private fun markPendingExternalFileRemoval(bookId: String, uriString: String?) {
+        if (bookId.isBlank()) return
+        val removalsByBookId = pendingExternalFileRemovals()
+            .associateBy { it.bookId }
+            .toMutableMap()
+        removalsByBookId[bookId] = PendingExternalFileRemoval(bookId, uriString)
+        writePendingExternalFileRemovals(removalsByBookId.values)
+    }
+
+    private fun clearPendingExternalFileRemovals(bookIds: Set<String>) {
+        if (bookIds.isEmpty()) return
+        val remaining = pendingExternalFileRemovals().filterNot { it.bookId in bookIds }
+        writePendingExternalFileRemovals(remaining)
+    }
+
+    private fun writePendingExternalFileRemovals(removals: Collection<PendingExternalFileRemoval>) {
+        val encoded = removals
+            .filter { it.bookId.isNotBlank() }
+            .mapTo(mutableSetOf(), ::encodePendingExternalFileRemoval)
+        prefs.edit(commit = true) {
+            if (encoded.isEmpty()) {
+                remove(KEY_PENDING_EXTERNAL_FILE_REMOVALS)
+            } else {
+                putStringSet(KEY_PENDING_EXTERNAL_FILE_REMOVALS, encoded)
+            }
+        }
+    }
+
+    private fun cleanupPendingExternalFileRemovals() {
+        val removals = pendingExternalFileRemovals()
+        if (removals.isEmpty()) return
+
+        val pendingBookIds = removals.mapTo(mutableSetOf()) { it.bookId }
+        if (prefs.getString(KEY_LAST_OPEN_BOOK_ID, null) in pendingBookIds) {
+            clearPersistedReaderSession()
+        }
+
+        viewModelScope.launch {
+            removals.forEach { removal ->
+                deletePendingExternalFileRemoval(removal)
+            }
+        }
+    }
+
+    private fun deletePendingExternalFileRemoval(bookId: String, uriString: String?) {
+        markPendingExternalFileRemoval(bookId, uriString)
+        viewModelScope.launch {
+            deletePendingExternalFileRemoval(PendingExternalFileRemoval(bookId, uriString))
+        }
+    }
+
+    private suspend fun deletePendingExternalFileRemoval(removal: PendingExternalFileRemoval) {
+        var shouldRetry = false
+        runCatching {
+            cleanupBookDataLocally(removal.bookId)
+        }.onFailure { error ->
+            Timber.w(error, "Failed to clear local caches for pending external file ${removal.bookId}")
+        }
+
+        runCatching {
+            recentFilesRepository.deleteFilePermanently(listOf(removal.bookId))
+        }.onFailure { error ->
+            shouldRetry = true
+            Timber.w(error, "Failed to remove pending external file ${removal.bookId} from library")
+        }
+
+        removal.uriString?.let { uriString ->
+            runCatching {
+                bookImporter.deleteBookByUriString(uriString)
+            }.onFailure { error ->
+                shouldRetry = true
+                Timber.w(error, "Failed to delete pending external file copy for ${removal.bookId}")
+            }
+        }
+
+        if (!shouldRetry) {
+            clearPendingExternalFileRemovals(setOf(removal.bookId))
+        }
+    }
+
+    private fun encodePendingExternalFileRemoval(removal: PendingExternalFileRemoval): String {
+        return JSONObject()
+            .put("bookId", removal.bookId)
+            .apply {
+                if (!removal.uriString.isNullOrBlank()) {
+                    put("uriString", removal.uriString)
+                }
+            }
+            .toString()
+    }
+
+    private fun decodePendingExternalFileRemoval(value: String): PendingExternalFileRemoval? {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) return null
+        return if (trimmed.startsWith("{")) {
+            runCatching {
+                val json = JSONObject(trimmed)
+                val bookId = json.optString("bookId").takeIf { it.isNotBlank() }
+                val uriString = json.optString("uriString").takeIf { it.isNotBlank() }
+                bookId?.let { PendingExternalFileRemoval(it, uriString) }
+            }.getOrNull()
+        } else {
+            PendingExternalFileRemoval(trimmed, null)
+        }
+    }
+
     private fun restoreReaderSessionIfNeeded() {
         val currentState = _internalState.value
         if (currentState.selectedBookId != null || currentState.selectedPdfUri != null || currentState.selectedEpubUri != null) {
@@ -1295,6 +1422,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             runCatching { FileType.valueOf(typeName) }.getOrNull()
         }
         val restoreBookId = prefs.getString(KEY_LAST_OPEN_BOOK_ID, null) ?: return
+        if (restoreBookId in pendingExternalFileRemovals().map { it.bookId }) {
+            clearPersistedReaderSession()
+            return
+        }
         if (persistedType == null) {
             clearPersistedReaderSession()
             return
@@ -2350,17 +2481,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
         clearPersistedReaderSession()
 
+        var removesExternalFileOnClose = false
         if (closingBookId != null && closingBookId == externalOpenedBookId) {
             val behavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK"
             if (behavior == "ASK") {
                 _internalState.update { it.copy(showExternalFileSavePromptFor = closingBookId) }
             } else if (behavior == "DELETE") {
-                deleteBookPermanently(closingBookId)
+                removesExternalFileOnClose = true
+                deletePendingExternalFileRemoval(closingBookId, uriString)
+            } else {
+                clearPendingExternalFileRemovals(setOf(closingBookId))
             }
             externalOpenedBookId = null
         }
 
-        if (uriString != null) {
+        if (uriString != null && !removesExternalFileOnClose) {
             viewModelScope.launch {
                 val freshBook = recentFilesRepository.getFileByUri(uriString)
                 freshBook?.let {
@@ -4232,6 +4367,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     val (internalUri, bookId, type) = importResult
                     if (isExternalIntent) {
                         externalOpenedBookId = bookId
+                        if (prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") == "DELETE") {
+                            markPendingExternalFileRemoval(bookId, internalUri.toString())
+                        }
                     }
                     val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
                     openBook(
@@ -5336,8 +5474,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val newBehavior = if (keep) "KEEP" else "DELETE"
             setExternalFileBehavior(newBehavior)
         }
-        if (!keep) {
-            deleteBookPermanently(bookId)
+        if (keep) {
+            clearPendingExternalFileRemovals(setOf(bookId))
+        } else {
+            deletePendingExternalFileRemoval(bookId, null)
         }
         _internalState.update { it.copy(showExternalFileSavePromptFor = null) }
     }
@@ -6414,6 +6554,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_LAST_OPEN_BOOK_ID = "last_open_book_id"
         private const val KEY_LAST_OPEN_FILE_TYPE = "last_open_file_type"
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
+        private const val KEY_PENDING_EXTERNAL_FILE_REMOVALS = "pending_external_file_removals"
         private const val KEY_USE_STRICT_FILE_FILTER = "use_strict_file_filter"
         private const val KEY_USE_PDF_FILE_NAME_AS_DISPLAY_NAME = "use_pdf_file_name_as_display_name"
         private const val KEY_SCREEN_CAPTURE_PROTECTION = "screen_capture_protection_enabled"

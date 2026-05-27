@@ -14,6 +14,9 @@ import com.aryan.reader.data.*
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import com.aryan.reader.pdf.data.PdfMetaDao
+import com.aryan.reader.pdf.data.PdfTextDao
+import com.aryan.reader.pdf.data.PdfTextDatabase
 import com.aryan.reader.tts.TtsController
 import com.aryan.reader.tts.TtsPlaybackManager
 import io.mockk.*
@@ -111,6 +114,11 @@ class MainViewModelTest {
         val mockBookCacheDb = mockk<BookCacheDatabase>(relaxed = true)
         every { mockBookCacheDb.bookCacheDao() } returns mockk<BookCacheDao>(relaxed = true)
         every { BookCacheDatabase.getDatabase(any()) } returns mockBookCacheDb
+        mockkObject(PdfTextDatabase.Companion)
+        val mockPdfTextDb = mockk<PdfTextDatabase>(relaxed = true)
+        every { mockPdfTextDb.pdfTextDao() } returns mockk<PdfTextDao>(relaxed = true)
+        every { mockPdfTextDb.pdfMetaDao() } returns mockk<PdfMetaDao>(relaxed = true)
+        every { PdfTextDatabase.getDatabase(any()) } returns mockPdfTextDb
 
         mockkObject(WorkManager.Companion)
         val mockWorkManager = mockk<WorkManager>(relaxed = true)
@@ -125,6 +133,7 @@ class MainViewModelTest {
         mockkConstructor(FeedbackRepository::class)
         mockkConstructor(FontsRepository::class)
         mockkConstructor(TtsController::class)
+        mockkConstructor(BookImporter::class)
 
         every { anyConstructed<BillingClientWrapper>().proUpgradeState } returns billingStateFlow
         every { anyConstructed<BillingClientWrapper>().initializeConnection() } just Runs
@@ -155,6 +164,8 @@ class MainViewModelTest {
         coEvery { anyConstructed<RecentFilesRepository>().removeBooksFromShelf(any(), any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().deleteShelf(any()) } just Runs
+        coEvery { anyConstructed<RecentFilesRepository>().deleteFilePermanently(any()) } just Runs
+        coEvery { anyConstructed<BookImporter>().deleteBookByUriString(any()) } returns true
 
         every { anyConstructed<FontsRepository>().getAllFonts() } returns customFontsFlow
         coEvery { anyConstructed<FontsRepository>().deleteFont(any()) } just Runs
@@ -408,6 +419,34 @@ class MainViewModelTest {
         verify { mockEditor.putBoolean("use_strict_file_filter", true) }
         verify { mockEditor.putBoolean("use_pdf_file_name_as_display_name", true) }
         verify { mockEditor.putString("external_file_behavior", "KEEP") }
+    }
+
+    @Test
+    fun `startup removes pending external always-remove file before restoring session`() = runTest(testDispatcher) {
+        val pendingUri = "file:///data/user/0/com.aryan.reader/files/books/external.epub"
+        val pendingEntry = """{"bookId":"external-book","uriString":"$pendingUri"}"""
+        every {
+            mockPrefs.getStringSet("pending_external_file_removals", any())
+        } returns mutableSetOf(pendingEntry)
+        every { mockPrefs.getString("last_open_book_id", null) } returns "external-book"
+        every { mockPrefs.getString("last_open_file_type", null) } returns FileType.EPUB.name
+
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            advanceUntilIdle()
+
+            coVerify {
+                anyConstructed<RecentFilesRepository>().deleteFilePermanently(listOf("external-book"))
+            }
+            coVerify {
+                anyConstructed<BookImporter>().deleteBookByUriString(pendingUri)
+            }
+            verify(atLeast = 1) { mockEditor.remove("last_open_book_id") }
+            verify(atLeast = 1) { mockEditor.remove("last_open_file_type") }
+            verify { mockEditor.remove("pending_external_file_removals") }
+        } finally {
+            restored.clearForTest()
+        }
     }
 
     @Test
