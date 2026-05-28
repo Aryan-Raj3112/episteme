@@ -322,15 +322,7 @@ class BookPaginator(
     }
 
     private fun getAllTextBlocks(blocks: List<ContentBlock>): List<TextContentBlock> {
-        return blocks.flatMap { block ->
-            when (block) {
-                is WrappingContentBlock -> getAllTextBlocks(block.paragraphsToWrap)
-                is FlexContainerBlock -> getAllTextBlocks(block.children)
-                is TableBlock -> block.rows.flatten().flatMap { getAllTextBlocks(it.content) }
-                is TextContentBlock -> listOf(block)
-                else -> emptyList()
-            }
-        }
+        return flattenTextContentBlocksForNavigation(blocks)
     }
 
     private fun generateConfigurationHash(): Int {
@@ -1391,6 +1383,24 @@ class BookPaginator(
         finalPage
     }
 
+    suspend fun findStableLocatorForAnchor(chapterIndex: Int, anchor: String?): Locator? = withContext(Dispatchers.IO) {
+        if (anchor.isNullOrBlank()) return@withContext Locator(chapterIndex, 0, 0)
+
+        val requestedChapter = chapters.getOrNull(chapterIndex) ?: return@withContext null
+        val requestedBlocks = getBlocksForChapter(requestedChapter, chapterIndex)
+        findLocatorForAnchorInBlocks(chapterIndex, anchor, requestedBlocks)?.let { locator ->
+            return@withContext locator
+        }
+
+        val indexEntry = bookCacheDao.getAnchorIndex(bookId, anchor)
+        val targetChapter = indexEntry?.chapterIndex ?: chapterIndex
+        val chapter = chapters.getOrNull(targetChapter) ?: return@withContext null
+        val blocks = getBlocksForChapter(chapter, targetChapter)
+
+        findLocatorForAnchorInBlocks(targetChapter, anchor, blocks)
+            ?: indexEntry?.let { Locator(it.chapterIndex, it.blockIndex, 0) }
+    }
+
     override fun findPageForAnchor(
         chapterIndex: Int,
         anchor: String?,
@@ -1473,9 +1483,32 @@ class BookPaginator(
         findStablePageForAnchor(targetChapterIndex, anchor)
     }
 
+    suspend fun findStableLocatorForHref(currentChapterAbsPath: String, href: String): Locator? = withContext(Dispatchers.IO) {
+        val (targetChapterPath, anchor) = resolveHref(currentChapterAbsPath, href)
+        if (targetChapterPath == null) {
+            Timber.w("Could not resolve href '$href' to a valid chapter path.")
+            return@withContext null
+        }
+
+        val targetChapterIndex = chapters.indexOfFirst { it.absPath == targetChapterPath }
+        if (targetChapterIndex == -1) {
+            Timber.w("Could not find chapter for path: $targetChapterPath")
+            return@withContext null
+        }
+
+        findStableLocatorForAnchor(targetChapterIndex, anchor)
+    }
+
     suspend fun findStablePageForSearchResult(result: SearchResult): Int? = withContext(Dispatchers.IO) {
         val targetChapterIndex = result.locationInSource
         Timber.i("Finding page for search result: '${result.query}' in chapter $targetChapterIndex")
+
+        findStableLocatorForSearchResult(result)?.let { locator ->
+            findStablePageForLocator(locator)?.let { page ->
+                Timber.i("Found exact search result locator $locator on absolute page $page")
+                return@withContext page
+            }
+        }
 
         val chapterPages = ensureChapterPaginated(targetChapterIndex)
         val chapterStartPage = ensureStableStartPageForChapter(targetChapterIndex)
@@ -1517,6 +1550,12 @@ class BookPaginator(
         val finalPageIndex = chapterStartPage + targetPageInChapter
         Timber.i("Search result found. Final page index: $finalPageIndex")
         finalPageIndex
+    }
+
+    suspend fun findStableLocatorForSearchResult(result: SearchResult): Locator? = withContext(Dispatchers.IO) {
+        val chapter = chapters.getOrNull(result.locationInSource) ?: return@withContext null
+        val blocks = getBlocksForChapter(chapter, result.locationInSource)
+        findLocatorForSearchResultInBlocks(result, blocks)
     }
 
     override fun findPageForSearchResult(result: SearchResult, onResult: (pageIndex: Int) -> Unit) {

@@ -47,4 +47,19 @@ class EpubTtsChunkMatchingTest {
             )
         )
     }
+
+    @Test
+    fun `chunk start matching accepts target offset inside matching source block`() {
+        val chunks = listOf(
+            TtsChunk("Alpha beta gamma", "/4/8/2", 10),
+            TtsChunk("Delta epsilon", "/4/10/2", 0)
+        )
+        val nativeVerticalTarget = TtsChunk(
+            text = "",
+            sourceCfi = "/4/8",
+            startOffsetInSource = 16
+        )
+
+        assertEquals(0, findTtsChunkStartIndex(chunks, nativeVerticalTarget))
+    }
 }

@@ -178,6 +178,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -217,7 +218,15 @@ data class NativeVerticalLocation(
     val firstVisibleItemScrollOffset: Int,
     val firstVisibleItemSize: Int,
     val isAtStart: Boolean,
-    val isAtEnd: Boolean
+    val isAtEnd: Boolean,
+    val visibleTextRanges: List<NativeVerticalVisibleTextRange> = emptyList()
+)
+
+data class NativeVerticalVisibleTextRange(
+    val chapterIndex: Int,
+    val blockIndex: Int,
+    val startCharOffset: Int,
+    val endCharOffset: Int
 )
 
 private data class SelectionBlockKey(
@@ -388,6 +397,37 @@ private fun isBlockSelectedOnPage(
         compareBlockPositionsOnPage(
             block.blockIndex,
             blockCharOffset,
+            selection.endBlockIndex,
+            selection.endBlockCharOffset
+        ) <= 0
+    } else {
+        true
+    }
+
+    return afterStart && beforeEnd
+}
+
+private fun isSelectionBlockKeyInsideSelection(
+    key: SelectionBlockKey,
+    selection: PaginatedSelection
+): Boolean {
+    if (key.pageIndex < selection.startPageIndex || key.pageIndex > selection.endPageIndex) return false
+    if (key.pageIndex > selection.startPageIndex && key.pageIndex < selection.endPageIndex) return true
+
+    val afterStart = if (key.pageIndex == selection.startPageIndex) {
+        compareBlockPositionsOnPage(
+            key.blockIndex,
+            key.blockCharOffset,
+            selection.startBlockIndex,
+            selection.startBlockCharOffset
+        ) >= 0
+    } else {
+        true
+    }
+    val beforeEnd = if (key.pageIndex == selection.endPageIndex) {
+        compareBlockPositionsOnPage(
+            key.blockIndex,
+            key.blockCharOffset,
             selection.endBlockIndex,
             selection.endBlockCharOffset
         ) <= 0
@@ -648,17 +688,18 @@ private fun updatedSelectionForHandleDrag(
                 .thenBy { getTextBlockCharOffset(it.block) }
         )
 
-    val affectedPageIndices = (
-        attachedBlocks.map { it.pageIndex } +
-            selection.startPageIndex +
-            selection.endPageIndex +
-            newStartPageIdx +
-            newEndPageIdx
-        ).toSet()
-
+    val attachedKeys = attachedBlocks.map { blockInfo ->
+        buildSelectionBlockKey(
+            pageIndex = blockInfo.pageIndex,
+            blockIndex = blockInfo.block.blockIndex,
+            blockCharOffset = getTextBlockCharOffset(blockInfo.block)
+        )
+    }.toSet()
     val newTextPerBlock = selection.textPerBlock.toMutableMap()
     newTextPerBlock.keys.removeAll { keyStr ->
-        parseSelectionBlockKey(keyStr)?.let { it.pageIndex in affectedPageIndices } == true
+        val key = parseSelectionBlockKey(keyStr)
+        keyStr in attachedKeys ||
+            (key != null && !isSelectionBlockKeyInsideSelection(key, tentativeSelection))
     }
 
     for (blockInfo in relevantBlocks) {
@@ -854,6 +895,20 @@ private fun findNativeVerticalFlowTextBlockForLocator(
         ?: textBlocks.firstOrNull()
 }
 
+private fun nativeVerticalFlowBlockMatchesLocator(block: ContentBlock, locator: Locator): Boolean {
+    if (block.blockIndex == locator.blockIndex) return true
+    return when (block) {
+        is FlexContainerBlock -> block.children.any { nativeVerticalFlowBlockMatchesLocator(it, locator) }
+        is TableBlock -> block.rows.flatten().any { cell ->
+            cell.content.any { nativeVerticalFlowBlockMatchesLocator(it, locator) }
+        }
+        is WrappingContentBlock ->
+            nativeVerticalFlowBlockMatchesLocator(block.floatedImage, locator) ||
+                block.paragraphsToWrap.any { nativeVerticalFlowBlockMatchesLocator(it, locator) }
+        else -> false
+    }
+}
+
 private fun nativeVerticalFlowItemWeight(block: ContentBlock?): Int {
     if (block == null) return 0
     val textLength = listOf(block).extractTextBlocks()
@@ -994,7 +1049,7 @@ private fun findNativeVerticalFlowItemIndexForLocator(
     locator: Locator
 ): Int? {
     val targetTextBlock = findNativeVerticalFlowTextBlockForLocator(chapters, locator)
-    if (targetTextBlock != null) {
+    if (targetTextBlock != null && targetTextBlock.blockIndex == locator.blockIndex) {
         val exactIndex = items.indexOfFirst { item ->
             item.chapterIndex == locator.chapterIndex &&
                 item.block?.let { block ->
@@ -1009,6 +1064,12 @@ private fun findNativeVerticalFlowItemIndexForLocator(
         }
         if (exactIndex >= 0) return exactIndex
     }
+
+    val matchingContainerIndex = items.indexOfFirst { item ->
+        item.chapterIndex == locator.chapterIndex &&
+            item.block?.let { nativeVerticalFlowBlockMatchesLocator(it, locator) } == true
+    }
+    if (matchingContainerIndex >= 0) return matchingContainerIndex
 
     val blockIndex = items.indexOfFirst { item ->
         item.chapterIndex == locator.chapterIndex &&
@@ -1028,6 +1089,8 @@ private fun locatorForNativeVerticalFlowItem(item: NativeVerticalFlowItem): Loca
 private fun resolveNativeVerticalScrollDeltaForLocator(
     rootWindowBounds: Rect,
     chapterLayoutMap: Map<Int, LayoutCoordinates>,
+    flowItems: List<NativeVerticalFlowItem>,
+    flowItemLayoutMap: Map<String, LayoutCoordinates>,
     blockLayoutMap: Map<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>>,
     chapters: List<NativeVerticalFlowChapter>,
     locator: Locator
@@ -1035,7 +1098,7 @@ private fun resolveNativeVerticalScrollDeltaForLocator(
     if (rootWindowBounds == Rect.Zero) return null
 
     val targetTextBlock = findNativeVerticalFlowTextBlockForLocator(chapters, locator)
-    if (targetTextBlock?.cfi != null) {
+    if (targetTextBlock?.cfi != null && targetTextBlock.blockIndex == locator.blockIndex) {
         val layoutInfo = findSelectionLayout(
             blockLayoutMap = blockLayoutMap,
             cfi = targetTextBlock.cfi!!,
@@ -1055,6 +1118,16 @@ private fun resolveNativeVerticalScrollDeltaForLocator(
                 val targetWindowY = coords.localToWindow(Offset(0f, localY)).y
                 return targetWindowY - rootWindowBounds.top
             }
+        }
+    }
+
+    flowItems.firstOrNull { item ->
+        item.chapterIndex == locator.chapterIndex &&
+            item.block?.let { nativeVerticalFlowBlockMatchesLocator(it, locator) } == true
+    }?.let { item ->
+        val coords = flowItemLayoutMap[item.key]
+        if (coords?.isAttached == true) {
+            return coords.positionInWindow().y - rootWindowBounds.top
         }
     }
 
@@ -1114,6 +1187,57 @@ private fun resolveNativeVerticalFlowVisibleLocator(
         blockIndex = block.blockIndex,
         charOffset = blockStartOffset + relativeOffset
     )
+}
+
+private fun resolveNativeVerticalVisibleTextRanges(
+    rootWindowBounds: Rect,
+    blockLayoutMap: Map<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>>
+): List<NativeVerticalVisibleTextRange> {
+    if (rootWindowBounds == Rect.Zero) return emptyList()
+    val viewportTop = rootWindowBounds.top + 8f
+    val viewportBottom = rootWindowBounds.bottom - 8f
+
+    return blockLayoutMap.entries
+        .asSequence()
+        .mapNotNull { (key, layoutInfo) ->
+            val chapterIndex = key.substringAfterLast("_").toIntOrNull()
+                ?: return@mapNotNull null
+            val (layout, coords, block) = layoutInfo
+            if (!coords.isAttached) return@mapNotNull null
+            val bounds = Rect(coords.positionInWindow(), coords.size.toSize())
+            if (bounds.bottom <= viewportTop || bounds.top >= viewportBottom) {
+                null
+            } else {
+                val blockStart = getTextBlockCharOffset(block)
+                val visibleTopInText = (viewportTop - bounds.top).coerceAtLeast(0f)
+                val visibleBottomInText = (viewportBottom - bounds.top).coerceAtMost(bounds.height)
+                var firstVisibleOffset: Int? = null
+                var lastVisibleOffset: Int? = null
+
+                for (lineIndex in 0 until layout.lineCount) {
+                    val lineTop = runCatching { layout.getLineTop(lineIndex) }.getOrDefault(0f)
+                    val lineBottom = runCatching { layout.getLineBottom(lineIndex) }.getOrDefault(lineTop)
+                    if (lineBottom < visibleTopInText || lineTop > visibleBottomInText) continue
+
+                    val lineStart = runCatching { layout.getLineStart(lineIndex) }.getOrDefault(0)
+                        .coerceIn(0, block.content.length)
+                    val lineEnd = runCatching { layout.getLineEnd(lineIndex, visibleEnd = true) }.getOrDefault(lineStart)
+                        .coerceIn(lineStart, block.content.length)
+                    firstVisibleOffset = minOf(firstVisibleOffset ?: lineStart, lineStart)
+                    lastVisibleOffset = maxOf(lastVisibleOffset ?: lineEnd, lineEnd)
+                }
+
+                val start = blockStart + (firstVisibleOffset ?: 0)
+                val end = blockStart + (lastVisibleOffset ?: block.content.text.length)
+                NativeVerticalVisibleTextRange(
+                    chapterIndex = chapterIndex,
+                    blockIndex = block.blockIndex,
+                    startCharOffset = start,
+                    endCharOffset = end
+                )
+            }
+        }
+        .toList()
 }
 
 private fun resolveReaderFootnoteHtml(
@@ -2003,7 +2127,7 @@ fun PaginatedReaderScreen(
     onStartTtsFromSelection: (String, Int) -> Unit,
     onNoteRequested: (String?) -> Unit,
     onFootnoteRequested: (String) -> Unit,
-    onInternalLinkNavigated: (Int) -> Unit = {},
+    onInternalLinkNavigated: (Int, Locator?) -> Unit = { _, _ -> },
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -2733,6 +2857,7 @@ fun NativeVerticalReaderScreen(
     scrollRequestPage: Int? = null,
     scrollRequestLocator: Locator? = null,
     scrollRequestLocatorId: Long = 0L,
+    scrollRequestLocatorKeepVisible: Boolean = false,
     scrollRequestProgressPercent: Float? = null,
     scrollRequestProgressId: Long = 0L,
     scrollDeltaRequest: Float? = null,
@@ -2753,10 +2878,10 @@ fun NativeVerticalReaderScreen(
     onWordSelectedForAiDefinition: (String) -> Unit,
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
-    onStartTtsFromSelection: (String, Int) -> Unit,
+    onStartTtsFromSelection: (String, Int, Int?) -> Unit,
     onNoteRequested: (String?) -> Unit,
     onFootnoteRequested: (String) -> Unit = {},
-    onInternalLinkNavigated: (Int) -> Unit = {},
+    onInternalLinkNavigated: (Int, Locator?) -> Unit = { _, _ -> },
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String) -> Unit,
     onHighlightDeleted: (String) -> Unit,
@@ -2985,6 +3110,7 @@ fun NativeVerticalReaderScreen(
         val listState = rememberLazyListState()
         val blockLayoutMap = remember(paginator) { ReactiveBlockMap() }
         val chapterLayoutMap = remember(paginator) { mutableStateMapOf<Int, LayoutCoordinates>() }
+        val flowItemLayoutMap = remember(paginator) { mutableStateMapOf<String, LayoutCoordinates>() }
         var flowChapters by remember(paginator) { mutableStateOf<List<NativeVerticalFlowChapter>?>(null) }
         val flowItems = remember(flowChapters) { buildNativeVerticalFlowItems(flowChapters.orEmpty()) }
         var isFlowLoading by remember(paginator) { mutableStateOf(true) }
@@ -2993,19 +3119,39 @@ fun NativeVerticalReaderScreen(
         var didInitialScroll by remember(paginator) { mutableStateOf(false) }
 
         @Suppress("UNUSED_PARAMETER")
-        suspend fun scrollToFlowLocator(locator: Locator?, animate: Boolean): Boolean {
+        suspend fun scrollToFlowLocator(
+            locator: Locator?,
+            animate: Boolean,
+            keepVisible: Boolean = false
+        ): Boolean {
             if (locator == null) return false
             val chapters = flowChapters ?: return false
             val exactDelta = resolveNativeVerticalScrollDeltaForLocator(
                 rootWindowBounds = rootWindowBounds,
                 chapterLayoutMap = chapterLayoutMap,
+                flowItems = flowItems,
+                flowItemLayoutMap = flowItemLayoutMap,
                 blockLayoutMap = blockLayoutMap,
                 chapters = chapters,
                 locator = locator
             )
-            if (exactDelta != null && abs(exactDelta) > 1f) {
-                listState.scrollBy(exactDelta)
-                return true
+            if (exactDelta != null) {
+                val scrollDelta = if (keepVisible) {
+                    val viewportHeight = rootWindowBounds.height
+                    val comfortableTop = viewportHeight * 0.24f
+                    val comfortableBottom = viewportHeight * 0.76f
+                    if (exactDelta in comfortableTop..comfortableBottom) {
+                        0f
+                    } else {
+                        exactDelta - (viewportHeight * 0.38f)
+                    }
+                } else {
+                    exactDelta
+                }
+                if (abs(scrollDelta) > 1f) {
+                    listState.scrollBy(scrollDelta)
+                }
+                if (keepVisible || abs(exactDelta) > 1f) return true
             }
 
             val targetIndex = findNativeVerticalFlowItemIndexForLocator(
@@ -3018,12 +3164,22 @@ fun NativeVerticalReaderScreen(
             val refinedDelta = resolveNativeVerticalScrollDeltaForLocator(
                 rootWindowBounds = rootWindowBounds,
                 chapterLayoutMap = chapterLayoutMap,
+                flowItems = flowItems,
+                flowItemLayoutMap = flowItemLayoutMap,
                 blockLayoutMap = blockLayoutMap,
                 chapters = chapters,
                 locator = locator
             )
-            if (refinedDelta != null && abs(refinedDelta) > 1f) {
-                listState.scrollBy(refinedDelta)
+            if (refinedDelta != null) {
+                val scrollDelta = if (keepVisible) {
+                    val viewportHeight = rootWindowBounds.height
+                    refinedDelta - (viewportHeight * 0.38f)
+                } else {
+                    refinedDelta
+                }
+                if (abs(scrollDelta) > 1f) {
+                    listState.scrollBy(scrollDelta)
+                }
             }
             return true
         }
@@ -3094,10 +3250,10 @@ fun NativeVerticalReaderScreen(
             }
         }
 
-        LaunchedEffect(scrollRequestLocatorId, scrollRequestLocator, flowChapters, rootWindowBounds) {
+        LaunchedEffect(scrollRequestLocatorId, scrollRequestLocator, scrollRequestLocatorKeepVisible, flowChapters, rootWindowBounds) {
             val requestedLocator = scrollRequestLocator ?: return@LaunchedEffect
             if (flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
-            if (scrollToFlowLocator(requestedLocator, animate = false)) {
+            if (scrollToFlowLocator(requestedLocator, animate = false, keepVisible = scrollRequestLocatorKeepVisible)) {
                 paginator.onUserScrolledTo(
                     nativeVerticalCompatPageForProgress(
                         estimateNativeVerticalProgressPercent(book, requestedLocator) ?: 0f,
@@ -3132,6 +3288,7 @@ fun NativeVerticalReaderScreen(
         var lastReportedTotalPageCount by remember { mutableIntStateOf(0) }
         var lastReportedProgressPercent by remember { mutableFloatStateOf(-1f) }
         var lastReportedLocator by remember { mutableStateOf<Locator?>(null) }
+        var lastReportedVisibleTextRanges by remember { mutableStateOf<List<NativeVerticalVisibleTextRange>>(emptyList()) }
 
         LaunchedEffect(paginator, totalPageCount, rootWindowBounds, blockLayoutMap, flowChapters, flowItems) {
             snapshotFlow {
@@ -3165,6 +3322,10 @@ fun NativeVerticalReaderScreen(
                         blockLayoutMap = blockLayoutMap
                     ) ?: flowItems.getOrNull(sample.firstVisiblePageIndex)
                         ?.let { locatorForNativeVerticalFlowItem(it) }
+                    val visibleTextRanges = resolveNativeVerticalVisibleTextRanges(
+                        rootWindowBounds = rootWindowBounds,
+                        blockLayoutMap = blockLayoutMap
+                    )
                     val progressPercent = when {
                         sample.isAtEnd -> 100f
                         sample.isAtStart -> 0f
@@ -3185,12 +3346,14 @@ fun NativeVerticalReaderScreen(
                         compatPage != lastReportedVisiblePage ||
                         total != lastReportedTotalPageCount ||
                         abs(progressPercent - lastReportedProgressPercent) >= 0.05f ||
-                        locator != lastReportedLocator
+                        locator != lastReportedLocator ||
+                        visibleTextRanges != lastReportedVisibleTextRanges
                     ) {
                         lastReportedVisiblePage = compatPage
                         lastReportedTotalPageCount = total
                         lastReportedProgressPercent = progressPercent
                         lastReportedLocator = locator
+                        lastReportedVisibleTextRanges = visibleTextRanges
                         onLocationChanged(
                             NativeVerticalLocation(
                                 locator = locator,
@@ -3202,7 +3365,8 @@ fun NativeVerticalReaderScreen(
                                 firstVisibleItemScrollOffset = sample.firstVisiblePageScrollOffset,
                                 firstVisibleItemSize = sample.firstVisibleItemSize,
                                 isAtStart = sample.isAtStart,
-                                isAtEnd = sample.isAtEnd
+                                isAtEnd = sample.isAtEnd,
+                                visibleTextRanges = visibleTextRanges
                             )
                         )
                         onProgressChanged(compatPage, total, progressPercent)
@@ -3215,6 +3379,9 @@ fun NativeVerticalReaderScreen(
         val ttsHighlightColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
         var activeSelection by remember { mutableStateOf<PaginatedSelection?>(null) }
         var isDraggingHandle by remember { mutableStateOf(false) }
+        var selectionEdgeScrollDelta by remember { mutableFloatStateOf(0f) }
+        var selectionEdgeDragWindowPos by remember { mutableStateOf(Offset.Unspecified) }
+        var selectionEdgeDragHandle by remember { mutableStateOf<SelectionHandle?>(null) }
         var magnifierCenter by remember { mutableStateOf(Offset.Unspecified) }
         val magnifierModifier = if (magnifierCenter.isSpecified) {
             Modifier.magnifier(
@@ -3311,10 +3478,17 @@ fun NativeVerticalReaderScreen(
                                         onFootnoteRequested(footnoteHtml)
                                         return@launch
                                     }
-                                    val targetPage = paginator.findStablePageForHref(chapterPath.orEmpty(), href)
+                                    val targetLocator = paginator.findStableLocatorForHref(chapterPath.orEmpty(), href)
+                                    val targetPage = targetLocator?.let { paginator.findStablePageForLocator(it) }
+                                        ?: paginator.findStablePageForHref(chapterPath.orEmpty(), href)
                                     if (targetPage != null) {
-                                        scrollToCompatPage(targetPage, animate = true)
-                                        onInternalLinkNavigated(targetPage)
+                                        if (targetLocator != null) {
+                                            scrollToFlowLocator(targetLocator, animate = false)
+                                            paginator.onUserScrolledTo(targetPage)
+                                        } else {
+                                            scrollToCompatPage(targetPage, animate = true)
+                                        }
+                                        onInternalLinkNavigated(targetPage, targetLocator)
                                     } else {
                                         Timber.tag(TAG_PAGINATED_LINK_DIAG)
                                             .w("Native vertical link failed href=$href currentChapterPath=$chapterPath")
@@ -3333,6 +3507,7 @@ fun NativeVerticalReaderScreen(
                                     .fillMaxWidth()
                                     .height(spacerHeight)
                                     .onGloballyPositioned { coords ->
+                                        flowItemLayoutMap[item.key] = coords
                                         chapterLayoutMap[chapterIndex] = coords
                                     }
                             )
@@ -3355,6 +3530,7 @@ fun NativeVerticalReaderScreen(
                                     .padding(horizontal = horizontalPadding)
                                     .background(effectiveBg)
                                     .onGloballyPositioned { coords ->
+                                        flowItemLayoutMap[item.key] = coords
                                         if (item.blockOrdinal <= 0) {
                                             chapterLayoutMap[chapterIndex] = coords
                                         }
@@ -3476,7 +3652,7 @@ fun NativeVerticalReaderScreen(
                             },
                             onTts = {
                                 val startAbs = sel.startOffset + sel.startBlockCharOffset
-                                onStartTtsFromSelection(sel.startBaseCfi, startAbs)
+                                onStartTtsFromSelection(sel.startBaseCfi, startAbs, sel.startPageIndex)
                                 activeSelection = null
                             },
                             onDelete = null,
@@ -3489,8 +3665,8 @@ fun NativeVerticalReaderScreen(
                 }
 
                 val latestActiveSelection by rememberUpdatedState(activeSelection)
-                val updateSelection: (Offset, SelectionHandle) -> SelectionHandle =
-                    updateSelection@ { windowPos, currentDragHandle ->
+                val updateSelection: (Offset, SelectionHandle, Boolean) -> SelectionHandle =
+                    updateSelection@ { windowPos, currentDragHandle, withHaptic ->
                         val currentSelection = latestActiveSelection ?: return@updateSelection currentDragHandle
                         val attachedBlocks = attachedSelectionBlocks(blockLayoutMap)
                         val updated = updatedSelectionForHandleDrag(
@@ -3501,7 +3677,9 @@ fun NativeVerticalReaderScreen(
                             blockLayoutMap = blockLayoutMap
                         )
                         if (updated != null) {
-                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            if (withHaptic) {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
                             activeSelection = updated.first
                             updated.second
                         } else {
@@ -3510,6 +3688,26 @@ fun NativeVerticalReaderScreen(
                     }
 
                 val latestUpdateSelection by rememberUpdatedState(updateSelection)
+
+                LaunchedEffect(isDraggingHandle) {
+                    while (isDraggingHandle && isActive) {
+                        val delta = selectionEdgeScrollDelta
+                        if (abs(delta) > 0.5f) {
+                            listState.scrollBy(delta)
+                            withFrameNanos { }
+                            val handle = selectionEdgeDragHandle
+                            val targetWindowPos = selectionEdgeDragWindowPos
+                            if (handle != null && targetWindowPos.isSpecified) {
+                                selectionEdgeDragHandle = latestUpdateSelection(targetWindowPos, handle, false)
+                            }
+                        } else {
+                            withFrameNanos { }
+                        }
+                    }
+                    selectionEdgeScrollDelta = 0f
+                    selectionEdgeDragWindowPos = Offset.Unspecified
+                    selectionEdgeDragHandle = null
+                }
 
                 listOf(SelectionHandle.START, SelectionHandle.END).forEach { handleType ->
                     val isStart = handleType == SelectionHandle.START
@@ -3543,6 +3741,8 @@ fun NativeVerticalReaderScreen(
                                     down.consume()
                                     isDraggingHandle = true
                                     var currentDragHandle = handleType
+                                    selectionEdgeDragHandle = currentDragHandle
+                                    selectionEdgeDragWindowPos = Offset.Unspecified
                                     var downPointerRoot = Offset.Unspecified
                                     var downHandleAnchorRoot = Offset.Unspecified
                                     if (
@@ -3584,6 +3784,7 @@ fun NativeVerticalReaderScreen(
                                             rootCoords!!.isAttached
                                         ) {
                                             try {
+                                                selectionEdgeDragHandle?.let { currentDragHandle = it }
                                                 val pointerWindow = handleCoords!!.localToWindow(change.position)
                                                 val pointerRoot = rootCoords!!.windowToLocal(pointerWindow)
                                                 val edgeSize = 64.dp.toPx()
@@ -3598,11 +3799,7 @@ fun NativeVerticalReaderScreen(
                                                             .coerceIn(2.dp.toPx(), maxScrollStep)
                                                     else -> 0f
                                                 }
-                                                if (edgeScrollDelta != 0f) {
-                                                    coroutineScope.launch {
-                                                        listState.scrollBy(edgeScrollDelta)
-                                                    }
-                                                }
+                                                selectionEdgeScrollDelta = edgeScrollDelta
 
                                                 val targetRootPos = if (
                                                     downPointerRoot.isSpecified &&
@@ -3618,13 +3815,18 @@ fun NativeVerticalReaderScreen(
                                                     y = targetRootPos.y - 2.dp.toPx()
                                                 )
                                                 val targetWindowPos = rootCoords!!.localToWindow(textHitRootPos)
-                                                currentDragHandle = latestUpdateSelection(targetWindowPos, currentDragHandle)
+                                                currentDragHandle = latestUpdateSelection(targetWindowPos, currentDragHandle, true)
+                                                selectionEdgeDragWindowPos = targetWindowPos
+                                                selectionEdgeDragHandle = currentDragHandle
                                             } catch (_: Exception) {
                                                 // Ignore detachment during fast scroll/drag handoff.
                                             }
                                         }
                                     }
                                     isDraggingHandle = false
+                                    selectionEdgeScrollDelta = 0f
+                                    selectionEdgeDragWindowPos = Offset.Unspecified
+                                    selectionEdgeDragHandle = null
                                     magnifierCenter = Offset.Unspecified
                                 }
                             },
@@ -4823,7 +5025,7 @@ internal fun PaginatedReaderContent(
     onGetChapterIndex: (Int) -> Int?,
     onGetChapterPath: (Int) -> String?,
     onLinkClick: (currentChapterPath: String, href: String, onNavComplete: (Int) -> Unit) -> Unit,
-    onInternalLinkNavigated: (Int) -> Unit,
+    onInternalLinkNavigated: (Int, Locator?) -> Unit,
     onTap: (Offset?) -> Unit,
     isProUser: Boolean,
     isOss: Boolean,
@@ -5198,7 +5400,7 @@ internal fun PaginatedReaderContent(
                                     )
                                 } else {
                                     onLinkClick(path, href) { targetPageIndex ->
-                                        onInternalLinkNavigated(targetPageIndex)
+                                        onInternalLinkNavigated(targetPageIndex, null)
                                         coroutineScope.launch {
                                             Timber.tag(TAG_STABLE_PAGE_NAV).d(
                                                 "link_scroll targetPage=$targetPageIndex currentPage=${pagerState.currentPage}"
