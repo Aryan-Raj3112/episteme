@@ -871,7 +871,7 @@ fun EpubReaderTopBar(
                                     EpubOverflowMenuSection.AUTO_SCROLL -> {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.menu_auto_scroll)) },
-                                            enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL && !useNativeVerticalRenderer,
+                                            enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
                                             onClick = {
                                                 showMoreMenu = false
                                                 onStartAutoScroll()

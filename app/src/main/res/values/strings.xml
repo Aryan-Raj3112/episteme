@@ -710,7 +710,7 @@
     <!-- Menu item inside the reading mode submenu. -->
     <string name="menu_reading_mode_vertical">Vertical</string>
     <string name="menu_reading_mode_vertical_webview">Vertical (WebView)</string>
-    <string name="menu_reading_mode_vertical_native">Vertical (custom renderer)</string>
+    <string name="menu_reading_mode_vertical_native">Vertical (Native Beta)</string>
     <!-- Menu item inside the reading mode submenu. -->
     <string name="menu_reading_mode_paginated">Paginated (left-to-right)</string>
     <!-- Accessibility label for a menu item that is currently active/checked. -->

@@ -198,6 +198,7 @@ import com.aryan.reader.paginatedreader.IPaginator
 import com.aryan.reader.paginatedreader.ListItemBlock
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.LocatorConverter
+import com.aryan.reader.paginatedreader.NativeVerticalLocation
 import com.aryan.reader.paginatedreader.NativeVerticalReaderScreen
 import com.aryan.reader.paginatedreader.PaginatedReaderScreen
 import com.aryan.reader.paginatedreader.ParagraphBlock
@@ -205,6 +206,7 @@ import com.aryan.reader.paginatedreader.QuoteBlock
 import com.aryan.reader.paginatedreader.TextContentBlock
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import com.aryan.reader.paginatedreader.nativeVerticalProgressForCompatPage
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
@@ -248,6 +250,7 @@ import timber.log.Timber
 import java.io.File
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -1133,6 +1136,7 @@ fun EpubReaderHost(
     var imageToLoad by remember { mutableStateOf<EpubReaderImageReference?>(null) }
     var isInitialCfiLoad by remember(initialLocator) { mutableStateOf(initialLocator != null) }
     var bookmarkPageMap by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var bookmarkLocatorMap by remember { mutableStateOf<Map<String, Locator>>(emptyMap()) }
 
     LaunchedEffect(Unit) {
         Timber.tag("POS_DIAG").d("Reader Opening: initialLocator=$initialLocator, initialCfi=$initialCfi")
@@ -1159,9 +1163,44 @@ fun EpubReaderHost(
     var nativeVerticalCurrentPage by rememberSaveable(epubBook.title) { mutableIntStateOf(0) }
     var nativeVerticalTotalPages by remember { mutableIntStateOf(0) }
     var nativeVerticalProgress by remember { mutableFloatStateOf(0f) }
+    var nativeVerticalLocation by remember { mutableStateOf<NativeVerticalLocation?>(null) }
     var nativeVerticalScrollRequest by remember { mutableStateOf<Int?>(null) }
+    var nativeVerticalLocatorScrollRequest by remember { mutableStateOf<Locator?>(null) }
+    var nativeVerticalLocatorScrollRequestId by remember { mutableLongStateOf(0L) }
+    var nativeVerticalProgressScrollRequest by remember { mutableStateOf<Float?>(null) }
+    var nativeVerticalProgressScrollRequestId by remember { mutableLongStateOf(0L) }
     var nativeVerticalScrollDeltaRequest by remember { mutableStateOf<Float?>(null) }
     var nativeVerticalScrollDeltaRequestId by remember { mutableLongStateOf(0L) }
+    var nativeVerticalScrollDeltaAnimated by remember { mutableStateOf(true) }
+
+    fun currentNativeVerticalLocator(): Locator? {
+        val bookPaginator = paginator as? BookPaginator
+        val pageChapterIndex = bookPaginator?.findChapterIndexForPage(nativeVerticalCurrentPage)
+        return nativeVerticalLocation?.locator
+            ?: lastKnownLocator?.takeIf { pageChapterIndex == null || it.chapterIndex == pageChapterIndex }
+            ?: bookPaginator?.getLocatorForPage(nativeVerticalCurrentPage)
+    }
+
+    fun requestNativeVerticalLocatorScroll(
+        locator: Locator?,
+        fallbackPage: Int? = null,
+        fallbackChapterIndex: Int? = locator?.chapterIndex
+    ) {
+        if (locator != null) {
+            nativeVerticalLocatorScrollRequest = locator
+            nativeVerticalLocatorScrollRequestId += 1L
+            lastKnownLocator = locator
+            currentChapterIndex = locator.chapterIndex
+        } else if (fallbackPage != null) {
+            nativeVerticalScrollRequest = fallbackPage
+            fallbackChapterIndex?.let { currentChapterIndex = it }
+        }
+    }
+
+    fun requestNativeVerticalProgressScroll(progressPercent: Float) {
+        nativeVerticalProgressScrollRequest = progressPercent.coerceIn(0f, 100f)
+        nativeVerticalProgressScrollRequestId += 1L
+    }
 
     val currentBookProgress by remember(
         currentChapterIndex,
@@ -1299,9 +1338,8 @@ fun EpubReaderHost(
     LaunchedEffect(isNativeVerticalMode) {
         if (isNativeVerticalMode) {
             webViewRefForTts = null
-            isAutoScrollModeActive = false
-            isAutoScrollPlaying = false
-            isAutoScrollTempPaused = false
+        } else {
+            nativeVerticalLocation = null
         }
     }
 
@@ -1346,11 +1384,27 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(isAutoScrollModeActive, isAutoScrollPlaying, autoScrollSpeed, isAutoScrollTempPaused) {
-        if (isAutoScrollModeActive) {
+    LaunchedEffect(isAutoScrollModeActive, isAutoScrollPlaying, autoScrollSpeed, isAutoScrollTempPaused, isNativeVerticalMode) {
+        if (isNativeVerticalMode) {
+            webViewRefForTts?.evaluateJavascript("javascript:window.autoScroll.stop();", null)
+        } else if (isAutoScrollModeActive) {
             updateAutoScrollState(isAutoScrollPlaying, autoScrollSpeed)
         } else {
             webViewRefForTts?.evaluateJavascript("javascript:window.autoScroll.stop();", null)
+        }
+    }
+
+    LaunchedEffect(isNativeVerticalMode, isAutoScrollModeActive, isAutoScrollPlaying, autoScrollSpeed, isAutoScrollTempPaused) {
+        if (!isNativeVerticalMode) return@LaunchedEffect
+        while (isActive && isAutoScrollModeActive && isAutoScrollPlaying && !isAutoScrollTempPaused) {
+            if (nativeVerticalLocation?.isAtEnd == true) {
+                isAutoScrollPlaying = false
+                break
+            }
+            nativeVerticalScrollDeltaRequestId += 1L
+            nativeVerticalScrollDeltaAnimated = false
+            nativeVerticalScrollDeltaRequest = autoScrollSpeed.coerceAtLeast(0f) * 0.5f
+            delay(16L)
         }
     }
 
@@ -1598,8 +1652,11 @@ fun EpubReaderHost(
                             }
                     logTtsChapterDiag("Native vertical locate scrolling to page=$pageIndex. reason=$reason")
                     isNavigatingToPosition = true
-                    nativeVerticalScrollRequest = pageIndex
-                    currentChapterIndex = chapterIndex
+                    requestNativeVerticalLocatorScroll(
+                        locator = locator,
+                        fallbackPage = pageIndex,
+                        fallbackChapterIndex = chapterIndex
+                    )
                     isNavigatingToPosition = false
                     return true
                 }
@@ -1998,9 +2055,11 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(isPageSliderVisible, epubSliderChromeVisible, currentRenderMode, currentPageInChapter, nativeVerticalCurrentPage, paginatedPagerState.currentPage) {
+    LaunchedEffect(isPageSliderVisible, epubSliderChromeVisible, currentRenderMode, currentPageInChapter, nativeVerticalCurrentPage, paginatedPagerState.currentPage, isFastScrubbing) {
         if (isPageSliderVisible && !epubSliderChromeVisible) {
             resetEpubSliderBookmark()
+        } else if (epubSliderChromeVisible && !isFastScrubbing) {
+            sliderCurrentPage = currentEpubSliderPage().toFloat()
         }
     }
 
@@ -2422,10 +2481,12 @@ fun EpubReaderHost(
             return@LaunchedEffect
         }
         Timber.d("Paginator or bookmarks changed. Re-calculating bookmark page map for ${bookmarks.size} bookmarks.")
-        val newMap = bookmarkPageMap.toMutableMap()
+        val activeBookmarkCfis = bookmarks.map { it.cfi }.toSet()
+        val newMap = bookmarkPageMap.filterKeys { it in activeBookmarkCfis }.toMutableMap()
+        val newLocatorMap = bookmarkLocatorMap.filterKeys { it in activeBookmarkCfis }.toMutableMap()
 
         bookmarks.forEach { bookmark ->
-            if (newMap.containsKey(bookmark.cfi)) return@forEach
+            if (newMap.containsKey(bookmark.cfi) && newLocatorMap.containsKey(bookmark.cfi)) return@forEach
 
             scope.launch {
                 val locator = locatorConverter.getLocatorFromCfi(
@@ -2436,6 +2497,8 @@ fun EpubReaderHost(
 
                 if (locator != null) {
                     Timber.d("Bookmark map: Converted CFI '${bookmark.cfi}' to Locator: $locator")
+                    newLocatorMap[bookmark.cfi] = locator
+                    bookmarkLocatorMap = newLocatorMap.toMap()
                     val pageIndex = bookPaginator.findPageForLocator(locator)
                     if (pageIndex != null) {
                         Timber.d("Bookmark map: Found page $pageIndex for locator.")
@@ -2449,6 +2512,8 @@ fun EpubReaderHost(
                 }
             }
         }
+        bookmarkPageMap = newMap.toMap()
+        bookmarkLocatorMap = newLocatorMap.toMap()
     }
 
     LaunchedEffect(paginatedPagerState.currentPage, paginator, currentRenderMode) {
@@ -2487,15 +2552,11 @@ fun EpubReaderHost(
                         scope.launch {
                             val pageToSave = nativeVerticalCurrentPage
                             val bookPaginator = paginator as? BookPaginator
-                            val chapterIndex = bookPaginator?.findChapterIndexForPage(pageToSave)
-                            val visibleLocator = lastKnownLocator?.takeIf {
-                                chapterIndex == null || it.chapterIndex == chapterIndex
-                            }
-                            val pageLocator = bookPaginator?.getLocatorForPage(pageToSave)
-                            val locator = visibleLocator ?: pageLocator
+                            val locator = currentNativeVerticalLocator()
+                            val chapterIndex = locator?.chapterIndex ?: bookPaginator?.findChapterIndexForPage(pageToSave)
 
                             if (locator != null) {
-                                val progress = if (chapterIndex == null || bookPaginator == null) {
+                                val progress = nativeVerticalLocation?.progressPercent ?: if (chapterIndex == null || bookPaginator == null) {
                                     saveResolvedLocatorPosition(locator, null)
                                     onNavigateBack()
                                     return@launch
@@ -2634,12 +2695,8 @@ fun EpubReaderHost(
         return when (currentRenderMode) {
             RenderMode.VERTICAL_SCROLL -> {
                 if (isNativeVerticalMode) {
-                    val pageIndex = nativeVerticalCurrentPage.takeIf { it >= 0 }
-                    val bookPaginator = paginator as? BookPaginator
-                    val chapterIndex = bookPaginator?.findChapterIndexForPage(nativeVerticalCurrentPage)
-                    val locator = lastKnownLocator?.takeIf {
-                        chapterIndex == null || it.chapterIndex == chapterIndex
-                    } ?: bookPaginator?.getLocatorForPage(nativeVerticalCurrentPage)
+                    val pageIndex = nativeVerticalLocation?.compatPageIndex ?: nativeVerticalCurrentPage.takeIf { it >= 0 }
+                    val locator = currentNativeVerticalLocator()
                     locator?.toEpubJumpLocator(pageIndex = pageIndex)
                 } else {
                     SharedReaderLocator(
@@ -2864,11 +2921,11 @@ fun EpubReaderHost(
                 )
                 val targetPage = imagePage?.first
                     ?: bookPaginator?.findStableChapterStartPage(image.chapterIndex)
-                if (targetPage != null) {
-                    nativeVerticalScrollRequest = targetPage
-                    currentChapterIndex = image.chapterIndex
-                    imagePage?.second?.let { lastKnownLocator = it }
-                }
+                requestNativeVerticalLocatorScroll(
+                    locator = imagePage?.second,
+                    fallbackPage = targetPage,
+                    fallbackChapterIndex = image.chapterIndex
+                )
                 return@launch
             }
             imageToLoad = image
@@ -2897,11 +2954,11 @@ fun EpubReaderHost(
                 val bookPaginator = paginator as? BookPaginator
                 val targetPage = locator?.let { bookPaginator?.findStablePageForLocator(it) }
                     ?: bookPaginator?.findStableChapterStartPage(chapterIndex)
-                if (targetPage != null) {
-                    nativeVerticalScrollRequest = targetPage
-                    currentChapterIndex = chapterIndex
-                    locator?.let { lastKnownLocator = it }
-                }
+                requestNativeVerticalLocatorScroll(
+                    locator = locator,
+                    fallbackPage = targetPage,
+                    fallbackChapterIndex = chapterIndex
+                )
                 return@launch
             }
             val targetChunk = locator?.let { it.blockIndex / 20 }
@@ -2936,31 +2993,25 @@ fun EpubReaderHost(
                         val directPage = locator.pageIndex?.takeIf {
                             nativeVerticalTotalPages <= 0 || it in 0 until nativeVerticalTotalPages
                         }
-                        val targetPage = when {
-                            cfi.startsWith("android-locator:") && bookPaginator != null -> {
-                                locator.toAndroidLocatorOrNull()?.let { bookPaginator.findStablePageForLocator(it) }
-                                    ?: directPage
-                            }
-                            cfi.isNotBlank() && !cfi.startsWith("android-") && chapterIndex != null && bookPaginator != null -> {
+                        val targetLocator = when {
+                            cfi.startsWith("android-locator:") -> locator.toAndroidLocatorOrNull()
+                            cfi.isNotBlank() && !cfi.startsWith("android-") && chapterIndex != null -> {
                                 locatorConverter.getLocatorFromCfi(epubBook, chapterIndex, cfi)
-                                    ?.let { bookPaginator.findStablePageForLocator(it) }
-                                    ?: directPage
                             }
-                            cfi.startsWith("android-search:") && chapterIndex != null && bookPaginator != null -> {
+                            cfi.startsWith("android-search:") && chapterIndex != null -> {
                                 val targetChunk = cfi.split(':').getOrNull(1)?.toIntOrNull() ?: 0
-                                bookPaginator.findStablePageForLocator(
-                                    Locator(chapterIndex, targetChunk.coerceAtLeast(0) * 20, 0)
-                                ) ?: directPage
+                                Locator(chapterIndex, targetChunk.coerceAtLeast(0) * 20, 0)
                             }
-                            directPage != null -> directPage
-                            chapterIndex != null && bookPaginator != null ->
-                                bookPaginator.findStableChapterStartPage(chapterIndex)
                             else -> null
                         }
-                        if (targetPage != null) {
-                            nativeVerticalScrollRequest = targetPage
-                            chapterIndex?.let { currentChapterIndex = it }
-                        }
+                        val targetPage = targetLocator?.let { bookPaginator?.findStablePageForLocator(it) }
+                            ?: directPage
+                            ?: chapterIndex?.let { bookPaginator?.findStableChapterStartPage(it) }
+                        requestNativeVerticalLocatorScroll(
+                            locator = targetLocator,
+                            fallbackPage = targetPage,
+                            fallbackChapterIndex = chapterIndex
+                        )
                         if (showBars) showBars = false
                         return@launch
                     }
@@ -3131,8 +3182,12 @@ fun EpubReaderHost(
                         )
                         ?: bookPaginator.findStableChapterStartPage(targetResult.locationInSource)
                         ?: return@launch
-                    nativeVerticalScrollRequest = pageIdx
-                    currentChapterIndex = targetResult.locationInSource
+                    requestNativeVerticalLocatorScroll(
+                        locator = bookPaginator.getLocatorForPage(pageIdx)
+                            ?: Locator(targetResult.locationInSource, targetResult.chunkIndex.coerceAtLeast(0) * 20, 0),
+                        fallbackPage = pageIdx,
+                        fallbackChapterIndex = targetResult.locationInSource
+                    )
                     searchHighlightTarget = targetResult
                     if (showBars) showBars = false
                 }
@@ -3319,9 +3374,11 @@ fun EpubReaderHost(
                                             fragmentJumpLocator(targetChapterIndex, entry.fragmentId, entry.absolutePath)
                                                 .copy(pageIndex = targetPage)
                                         )
-                                        nativeVerticalScrollRequest = targetPage
-                                        currentChapterIndex = targetChapterIndex
-                                        bookPaginator?.getLocatorForPage(targetPage)?.let { lastKnownLocator = it }
+                                        requestNativeVerticalLocatorScroll(
+                                            locator = bookPaginator?.getLocatorForPage(targetPage),
+                                            fallbackPage = targetPage,
+                                            fallbackChapterIndex = targetChapterIndex
+                                        )
                                     }
                                     if (showBars) showBars = false
                                     return@launch
@@ -3457,9 +3514,11 @@ fun EpubReaderHost(
                                     val targetPage = bookPaginator?.findStableChapterStartPage(index)
                                     if (targetPage != null) {
                                         recordEpubJump(chapterStartJumpLocator(index).copy(pageIndex = targetPage))
-                                        nativeVerticalScrollRequest = targetPage
-                                        currentChapterIndex = index
-                                        bookPaginator.getLocatorForPage(targetPage)?.let { lastKnownLocator = it }
+                                        requestNativeVerticalLocatorScroll(
+                                            locator = bookPaginator.getLocatorForPage(targetPage) ?: Locator(index, 0, 0),
+                                            fallbackPage = targetPage,
+                                            fallbackChapterIndex = index
+                                        )
                                         if (showBars) showBars = false
                                     }
                                     return@launch
@@ -3519,11 +3578,11 @@ fun EpubReaderHost(
                                     )
                                     val targetPage = locator?.let { bookPaginator?.findStablePageForLocator(it) }
                                         ?: bookPaginator?.findStableChapterStartPage(bookmark.chapterIndex)
-                                    if (targetPage != null) {
-                                        nativeVerticalScrollRequest = targetPage
-                                        currentChapterIndex = bookmark.chapterIndex
-                                        locator?.let { lastKnownLocator = it }
-                                    }
+                                    requestNativeVerticalLocatorScroll(
+                                        locator = locator,
+                                        fallbackPage = targetPage,
+                                        fallbackChapterIndex = bookmark.chapterIndex
+                                    )
                                     return@launch
                                 }
                                 recordEpubJump(cfiJumpLocator(bookmark.chapterIndex, bookmark.cfi, bookmark.snippet))
@@ -3649,11 +3708,11 @@ fun EpubReaderHost(
                                     val locator = locatorConverter.getLocatorFromCfi(epubBook, highlight.chapterIndex, highlight.cfi)
                                     val targetPage = locator?.let { bookPaginator?.findStablePageForLocator(it) }
                                         ?: bookPaginator?.findStableChapterStartPage(highlight.chapterIndex)
-                                    if (targetPage != null) {
-                                        nativeVerticalScrollRequest = targetPage
-                                        currentChapterIndex = highlight.chapterIndex
-                                        locator?.let { lastKnownLocator = it }
-                                    }
+                                    requestNativeVerticalLocatorScroll(
+                                        locator = locator,
+                                        fallbackPage = targetPage,
+                                        fallbackChapterIndex = highlight.chapterIndex
+                                    )
                                     return@launch
                                 }
                                 recordEpubJump(cfiJumpLocator(highlight.chapterIndex, highlight.cfi, highlight.text))
@@ -3748,6 +3807,8 @@ fun EpubReaderHost(
                 },
                 onDeleteBookmark = { bookmarkToDelete ->
                     bookmarks = bookmarks - bookmarkToDelete
+                    bookmarkPageMap = bookmarkPageMap - bookmarkToDelete.cfi
+                    bookmarkLocatorMap = bookmarkLocatorMap - bookmarkToDelete.cfi
                 },
                 onRenameBookmark = { bookmark, newLabel ->
                     bookmarks = bookmarks.map {
@@ -3936,15 +3997,19 @@ fun EpubReaderHost(
                     RenderMode.VERTICAL_SCROLL -> {
                         if (isNativeVerticalMode) {
                             val bookPaginator = paginator as? BookPaginator
-                            val chapterIndex = currentChapterIndex
+                            val locator = currentNativeVerticalLocator()
+                            val chapterIndex = locator?.chapterIndex ?: currentChapterIndex
                             if (bookPaginator != null) {
-                                val startPage = bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0
-                                val currentPageInChapter = nativeVerticalCurrentPage - startPage
-                                val charsScrolled = bookPaginator.getCharactersScrolledInChapter(
-                                    chapterIndex,
-                                    currentPageInChapter
-                                )
-                                runRecap(chapterIndex, charsScrolled.toInt())
+                                val charsScrolled = locator?.charOffset?.coerceAtLeast(0)
+                                    ?: run {
+                                        val startPage = bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0
+                                        val currentPageInChapter = nativeVerticalCurrentPage - startPage
+                                        bookPaginator.getCharactersScrolledInChapter(
+                                            chapterIndex,
+                                            currentPageInChapter
+                                        ).toInt()
+                                    }
+                                runRecap(chapterIndex, charsScrolled)
                             } else {
                                 showBanner("Wait for book to load fully.", isError = true)
                             }
@@ -4033,6 +4098,7 @@ fun EpubReaderHost(
                         onScrollBy = { amount ->
                             if (isNativeVerticalMode) {
                                 nativeVerticalScrollDeltaRequestId += 1L
+                                nativeVerticalScrollDeltaAnimated = false
                                 nativeVerticalScrollDeltaRequest = amount.toFloat()
                             } else {
                                 webViewRefForTts?.evaluateJavascript(
@@ -4050,8 +4116,11 @@ fun EpubReaderHost(
                                         val targetPage = (paginator as? BookPaginator)
                                             ?.findStableChapterStartPage(targetChapter)
                                         if (targetPage != null) {
-                                            nativeVerticalScrollRequest = targetPage
-                                            currentChapterIndex = targetChapter
+                                            requestNativeVerticalLocatorScroll(
+                                                locator = Locator(targetChapter, 0, 0),
+                                                fallbackPage = targetPage,
+                                                fallbackChapterIndex = targetChapter
+                                            )
                                         }
                                     }
                                 } else {
@@ -4141,14 +4210,21 @@ fun EpubReaderHost(
                                         cfi = ttsState.sourceCfi ?: "",
                                         offset = ttsState.startOffsetInSource
                                     ).takeIf { ttsState.currentText != null && ttsState.sourceCfi != null && ttsState.startOffsetInSource != -1 },
-                                    activeTextureId = null,
+                                    activeTextureId = activeTextureId,
                                     activeTextureAlpha = activeTextureAlpha,
                                     initialLocator = lastKnownLocator,
                                     initialPageIndexInBook = nativeVerticalCurrentPage,
                                     scrollRequestPage = nativeVerticalScrollRequest,
+                                    scrollRequestLocator = nativeVerticalLocatorScrollRequest,
+                                    scrollRequestLocatorId = nativeVerticalLocatorScrollRequestId,
+                                    scrollRequestProgressPercent = nativeVerticalProgressScrollRequest,
+                                    scrollRequestProgressId = nativeVerticalProgressScrollRequestId,
                                     scrollDeltaRequest = nativeVerticalScrollDeltaRequest,
                                     scrollDeltaRequestId = nativeVerticalScrollDeltaRequestId,
+                                    scrollDeltaRequestAnimated = nativeVerticalScrollDeltaAnimated,
                                     onScrollRequestConsumed = { nativeVerticalScrollRequest = null },
+                                    onScrollLocatorRequestConsumed = { nativeVerticalLocatorScrollRequest = null },
+                                    onScrollProgressRequestConsumed = { nativeVerticalProgressScrollRequest = null },
                                     onScrollDeltaConsumed = { nativeVerticalScrollDeltaRequest = null },
                                     modifier = Modifier.fillMaxSize(),
                                     onPaginatorReady = { newPaginator ->
@@ -4173,6 +4249,9 @@ fun EpubReaderHost(
                                         currentScrollYPosition = pageIndex
                                         currentClientHeightValue = 1
                                         currentScrollHeightValue = totalPages.coerceAtLeast(1)
+                                    },
+                                    onLocationChanged = { location ->
+                                        nativeVerticalLocation = location
                                     },
                                     onTap = {
                                         focusManager.clearFocus()
@@ -4227,6 +4306,9 @@ fun EpubReaderHost(
                                         } else {
                                             pendingNoteForNewHighlight = true
                                         }
+                                    },
+                                    onFootnoteRequested = { html ->
+                                        activeFootnoteHtml = html
                                     },
                                     onInternalLinkNavigated = { targetPageIndex ->
                                         val bookPaginator = paginator as? BookPaginator
@@ -5479,8 +5561,27 @@ fun EpubReaderHost(
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
                         if (isNativeVerticalMode) {
-                            val bookmarkedOnPage = remember(nativeVerticalCurrentPage, bookmarkPageMap, bookmarks) {
-                                bookmarks.find { bookmark ->
+                            val currentNativeLocator = currentNativeVerticalLocator()
+                            val bookmarkedOnPage = remember(
+                                currentNativeLocator,
+                                nativeVerticalCurrentPage,
+                                bookmarkLocatorMap,
+                                bookmarkPageMap,
+                                bookmarks
+                            ) {
+                                val locator = currentNativeLocator
+                                val locatorBookmark = if (locator != null) {
+                                    bookmarks.find { bookmark ->
+                                        val bookmarkLocator = bookmarkLocatorMap[bookmark.cfi]
+                                        bookmarkLocator != null &&
+                                            bookmarkLocator.chapterIndex == locator.chapterIndex &&
+                                            bookmarkLocator.blockIndex == locator.blockIndex &&
+                                            abs(bookmarkLocator.charOffset - locator.charOffset) <= 160
+                                    }
+                                } else {
+                                    null
+                                }
+                                locatorBookmark ?: bookmarks.find { bookmark ->
                                     bookmarkPageMap[bookmark.cfi] == nativeVerticalCurrentPage
                                 }
                             }
@@ -5490,15 +5591,13 @@ fun EpubReaderHost(
                                 if (isBookmarked) {
                                     bookmarkedOnPage?.let { bookmarkToRemove ->
                                         bookmarks = bookmarks - bookmarkToRemove
+                                        bookmarkPageMap = bookmarkPageMap - bookmarkToRemove.cfi
+                                        bookmarkLocatorMap = bookmarkLocatorMap - bookmarkToRemove.cfi
                                         Timber.d("Native vertical click: Removing bookmark: $bookmarkToRemove")
                                     }
                                 } else {
                                     val bookPaginator = paginator as? BookPaginator
-                                    val pageChapterIndex =
-                                        bookPaginator?.findChapterIndexForPage(nativeVerticalCurrentPage)
-                                    val locator = lastKnownLocator?.takeIf {
-                                        pageChapterIndex == null || it.chapterIndex == pageChapterIndex
-                                    } ?: bookPaginator?.getLocatorForPage(nativeVerticalCurrentPage)
+                                    val locator = currentNativeVerticalLocator()
                                     if (locator != null && bookPaginator != null) {
                                         scope.launch {
                                             val finalCfi = locatorConverter.getCfiFromLocator(
@@ -5535,6 +5634,7 @@ fun EpubReaderHost(
                                             )
                                             bookmarks = bookmarks + newBookmark
                                             bookmarkPageMap = bookmarkPageMap + (finalCfi to nativeVerticalCurrentPage)
+                                            bookmarkLocatorMap = bookmarkLocatorMap + (finalCfi to locator)
                                             Timber.d("Native vertical click: Adding bookmark: $newBookmark")
                                         }
                                     }
@@ -6086,8 +6186,7 @@ fun EpubReaderHost(
                     onUseNativeVerticalRendererChange = { enabled ->
                         val wasNativeVertical = isNativeVerticalMode
                         val nativeLocator = if (wasNativeVertical) {
-                            (paginator as? BookPaginator)?.getLocatorForPage(nativeVerticalCurrentPage)
-                                ?: lastKnownLocator
+                            currentNativeVerticalLocator() ?: lastKnownLocator
                         } else {
                             null
                         }
@@ -6129,8 +6228,7 @@ fun EpubReaderHost(
                                 isSwitchingToPaginated = true
                                 if (isNativeVerticalMode) {
                                     isSwitchingToPaginated = false
-                                    val locator = (paginator as? BookPaginator)?.getLocatorForPage(nativeVerticalCurrentPage)
-                                        ?: lastKnownLocator
+                                    val locator = currentNativeVerticalLocator() ?: lastKnownLocator
                                     if (locator != null) {
                                         lastKnownLocator = locator
                                         chapterToLoadOnSwitch = locator.chapterIndex
@@ -6416,7 +6514,16 @@ fun EpubReaderHost(
                                 triggerAutoScrollTempPause(1000L)
                             }
                             scope.launch {
-                                webViewRefForTts?.evaluateJavascript("window.scrollTo({ top: 0, behavior: 'smooth' });", null)
+                                if (isNativeVerticalMode) {
+                                    val chapterIndex = currentNativeVerticalLocator()?.chapterIndex ?: currentChapterIndex
+                                    requestNativeVerticalLocatorScroll(
+                                        locator = Locator(chapterIndex, 0, 0),
+                                        fallbackPage = (paginator as? BookPaginator)?.findStableChapterStartPage(chapterIndex),
+                                        fallbackChapterIndex = chapterIndex
+                                    )
+                                } else {
+                                    webViewRefForTts?.evaluateJavascript("window.scrollTo({ top: 0, behavior: 'smooth' });", null)
+                                }
                             }
                         }
                     )
@@ -6772,7 +6879,12 @@ fun EpubReaderHost(
                             if (isActive) {
                                 val targetPage = newValue.roundToInt()
                                 if (isNativeVerticalMode) {
-                                    nativeVerticalScrollRequest = targetPage - 1
+                                    requestNativeVerticalProgressScroll(
+                                        nativeVerticalProgressForCompatPage(
+                                            pageIndex = targetPage - 1,
+                                            totalPageCount = nativeVerticalTotalPages
+                                        )
+                                    )
                                 } else if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
                                     val scrollY = (targetPage - 1) * currentClientHeightValue
                                     webViewRefForTts?.evaluateJavascript("window.scrollTo(0, $scrollY);", null)
@@ -6787,7 +6899,12 @@ fun EpubReaderHost(
                         scope.launch {
                             if (isNativeVerticalMode) {
                                 sliderCurrentPage = page.toFloat()
-                                nativeVerticalScrollRequest = page - 1
+                                requestNativeVerticalProgressScroll(
+                                    nativeVerticalProgressForCompatPage(
+                                        pageIndex = page - 1,
+                                        totalPageCount = nativeVerticalTotalPages
+                                    )
+                                )
                             } else if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
                                 sliderCurrentPage = page.toFloat()
                                 val scrollY = (page - 1) * currentClientHeightValue
