@@ -136,6 +136,18 @@ internal fun DesktopReaderScreen(
             cacheWriteScope = paginationCacheWriteScope
         )
     }
+    LaunchedEffect(session.reader.book.id) {
+        logDesktopReaderOpenTrace {
+            "event=desktop_text_reader_screen_composed bookId=\"${session.reader.book.id.logPreview(120)}\" " +
+                "title=\"${session.reader.book.title.logPreview(120)}\" mode=${session.reader.settings.readingMode} " +
+                "chapters=${session.reader.book.chapters.size} pages=${session.reader.pages.size} " +
+                "currentPage=${session.reader.currentPageIndex + 1} " +
+                "textChars=${session.reader.book.chapters.sumOf { it.plainText.length }} " +
+                "htmlChars=${session.reader.book.chapters.sumOf { it.htmlContent.length }} " +
+                "semanticBlocks=${session.reader.book.chapters.sumOf { it.semanticBlocks.size }} " +
+                "bookmarks=${session.bookmarks.size} highlights=${session.highlights.size}"
+        }
+    }
     var readerViewport by remember(session.reader.book.id) { mutableStateOf(ReaderViewportSpec(0, 0)) }
     val paginationLayoutSignature = session.reader.settings.layoutSignature()
     val paginationContentSignature = remember(session.reader.book) {
@@ -640,6 +652,12 @@ internal fun DesktopReaderScreen(
                         "lineSpacing=${session.reader.settings.lineSpacing} textAlign=${session.reader.settings.textAlign} " +
                         "paragraphSpacing=${session.reader.settings.paragraphSpacing} imageScale=${session.reader.settings.imageScale}"
                 )
+                logDesktopReaderOpenTrace {
+                    "event=desktop_reader_surface_size bookId=\"${session.reader.book.id.logPreview(120)}\" " +
+                        "title=\"${session.reader.book.title.logPreview(120)}\" size=${size.width}x${size.height} " +
+                        "renderPlan=${renderPlan.desktopReaderSurfaceModeLabel()} mode=${session.reader.settings.readingMode} " +
+                        "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)}"
+                }
                 if (next != readerViewport) {
                     logEpubPagination(
                         "viewport_changed width=${next.widthPx} height=${next.heightPx} " +
@@ -665,6 +683,15 @@ internal fun DesktopReaderScreen(
                     "pageCount=${session.reader.pages.size} visiblePages=${session.reader.visiblePages.map { it.pageIndex + 1 }} " +
                     "fullscreen=$isFullscreen surfaceKey=$readerSurfaceKey"
             )
+            logDesktopReaderOpenTrace {
+                "event=desktop_render_plan_ready bookId=\"${session.reader.book.id.logPreview(120)}\" " +
+                    "title=\"${session.reader.book.title.logPreview(120)}\" " +
+                    "renderPlan=${renderPlan.desktopReaderSurfaceModeLabel()} mode=${session.reader.settings.readingMode} " +
+                    "viewport=${readerViewport.widthPx}x${readerViewport.heightPx} " +
+                    "page=${session.reader.currentPageIndex + 1}/${session.reader.pages.size.coerceAtLeast(1)} " +
+                    "htmlChars=${(renderPlan as? ReaderContentRenderPlan.WebDocument)?.html?.length ?: 0} " +
+                    "paginatedReady=$paginatedLayoutReady"
+            }
             if (renderPlan is ReaderContentRenderPlan.NativePaginatedPages) {
                 cleanupRetiredDesktopWebView2InteropHosts(
                     readerAwtWindow,

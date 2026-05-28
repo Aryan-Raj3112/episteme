@@ -165,6 +165,7 @@ class EpubAnnotationSerializerTest {
         val oldDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:7:123456:abc")
         val timestampFallbackLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:7:1780000000000")
         val rangedDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop:2:40:55")
+        val scrollWrappedDesktopLocator = ReaderLocator.fromLegacy(cfi = "desktop-scroll:5238:5238:desktop:2:40:55")
         val androidLocator = ReaderLocator.fromLegacy(cfi = "android-locator:3:42:128")
 
         assertEquals(2, oldDesktopLocator.chapterIndex)
@@ -175,6 +176,10 @@ class EpubAnnotationSerializerTest {
         assertEquals(2, rangedDesktopLocator.chapterIndex)
         assertEquals(40, rangedDesktopLocator.startOffset)
         assertEquals(55, rangedDesktopLocator.endOffset)
+        assertEquals(2, scrollWrappedDesktopLocator.chapterIndex)
+        assertEquals(40, scrollWrappedDesktopLocator.startOffset)
+        assertEquals(55, scrollWrappedDesktopLocator.endOffset)
+        assertEquals("desktop:2:40:55", scrollWrappedDesktopLocator.cfi)
         assertEquals(3, androidLocator.chapterIndex)
         assertEquals(42, androidLocator.blockIndex)
         assertEquals(128, androidLocator.charOffset)

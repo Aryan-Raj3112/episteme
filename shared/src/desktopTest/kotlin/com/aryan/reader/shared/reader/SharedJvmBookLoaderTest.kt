@@ -171,55 +171,56 @@ class SharedJvmBookLoaderTest {
     @Test
     fun `epub loader keeps embedded images in semantic pagination blocks`() = withTempDir { dir ->
         val file = File(dir, "image-book.epub")
-        writeZip(file) {
-            text(
-                "META-INF/container.xml",
-                """
-                <container>
-                  <rootfiles>
-                    <rootfile full-path="OPS/content.opf"/>
-                  </rootfiles>
-                </container>
-                """.trimIndent()
-            )
-            text(
-                "OPS/content.opf",
-                """
-                <package>
-                  <metadata>
-                    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Image Book</dc:title>
-                  </metadata>
-                  <manifest>
-                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
-                    <item id="pixel" href="images/pixel.png" media-type="image/png"/>
-                  </manifest>
-                  <spine>
-                    <itemref idref="chapter"/>
-                  </spine>
-                </package>
-                """.trimIndent()
-            )
-            text(
-                "OPS/chapter.xhtml",
-                """
-                <html>
-                  <body>
-                    <h1>One</h1>
-                    <p>Before</p>
-                    <img src="images/pixel.png" alt="Pixel"/>
-                    <p>After</p>
-                  </body>
-                </html>
-                """.trimIndent()
-            )
-            bytes("OPS/images/pixel.png", onePixelPng)
-        }
+        writeImageEpub(file)
 
         val book = SharedJvmBookLoader.loadEpub(file)
         val image = book.chapters.single().semanticBlocks.filterIsInstance<SemanticImage>().single()
 
         assertTrue(image.path.startsWith("data:image/png;base64,"))
         assertEquals("Pixel", image.altText)
+    }
+
+    @Test
+    fun `epub loader can skip semantic blocks for vertical fast path`() = withTempDir { dir ->
+        val file = File(dir, "image-book.epub")
+        writeImageEpub(file)
+
+        val book = SharedJvmBookLoader.loadEpub(file, parseSemanticBlocks = false)
+        val chapter = book.chapters.single()
+
+        assertTrue(chapter.semanticBlocks.isEmpty())
+        assertTrue(chapter.htmlContent.contains("data:image/png;base64,"))
+        assertTrue(chapter.plainText.contains("Before"))
+        assertTrue(chapter.plainText.contains("After"))
+    }
+
+    @Test
+    fun `epub loader can prepare html for selected vertical chapters only`() = withTempDir { dir ->
+        val file = File(dir, "two-chapters.epub")
+        writeTwoChapterEpub(file)
+
+        val book = SharedJvmBookLoader.loadEpub(
+            file = file,
+            parseSemanticBlocks = false,
+            preparedHtmlChapterRange = 1..1
+        )
+
+        assertEquals(2, book.chapters.size)
+        assertTrue(book.chapters[0].plainText.contains("First chapter text"))
+        assertTrue(book.chapters[0].htmlContent.isBlank())
+        assertTrue(book.chapters[1].plainText.contains("Second chapter text"))
+        assertTrue(book.chapters[1].htmlContent.contains("Second chapter text"))
+    }
+
+    @Test
+    fun `epub loader does not inline stylesheet font resources`() = withTempDir { dir ->
+        val file = File(dir, "font-book.epub")
+        writeImageEpub(file)
+
+        val css = SharedJvmBookLoader.loadEpub(file).css.values.single()
+
+        assertTrue(css.contains("fonts/reader.woff2"))
+        assertTrue(!css.contains("data:font/woff2"))
     }
 
     private fun withTempDir(block: (File) -> Unit) {
@@ -242,6 +243,110 @@ class SharedJvmBookLoaderTest {
     private fun writeZip(file: File, block: ZipBuilder.() -> Unit) {
         ZipOutputStream(file.outputStream()).use { zip ->
             ZipBuilder(zip).block()
+        }
+    }
+
+    private fun writeImageEpub(file: File) {
+        writeZip(file) {
+            text(
+                "META-INF/container.xml",
+                """
+                <container>
+                  <rootfiles>
+                    <rootfile full-path="OPS/content.opf"/>
+                  </rootfiles>
+                </container>
+                """.trimIndent()
+            )
+            text(
+                "OPS/content.opf",
+                """
+                <package>
+                  <metadata>
+                    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Image Book</dc:title>
+                  </metadata>
+                  <manifest>
+                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="style" href="styles/book.css" media-type="text/css"/>
+                    <item id="font" href="styles/fonts/reader.woff2" media-type="font/woff2"/>
+                    <item id="pixel" href="images/pixel.png" media-type="image/png"/>
+                  </manifest>
+                  <spine>
+                    <itemref idref="chapter"/>
+                  </spine>
+                </package>
+                """.trimIndent()
+            )
+            text(
+                "OPS/chapter.xhtml",
+                """
+                <html>
+                  <body>
+                    <h1>One</h1>
+                    <p>Before</p>
+                    <img src="images/pixel.png" alt="Pixel"/>
+                    <p>After</p>
+                  </body>
+                </html>
+                """.trimIndent()
+            )
+            text(
+                "OPS/styles/book.css",
+                """
+                @font-face {
+                  font-family: "Fixture Serif";
+                  src: url("fonts/reader.woff2") format("woff2");
+                }
+                body { font-family: "Fixture Serif"; }
+                """.trimIndent()
+            )
+            bytes("OPS/images/pixel.png", onePixelPng)
+            bytes("OPS/styles/fonts/reader.woff2", byteArrayOf(0, 1, 2, 3))
+        }
+    }
+
+    private fun writeTwoChapterEpub(file: File) {
+        writeZip(file) {
+            text(
+                "META-INF/container.xml",
+                """
+                <container>
+                  <rootfiles>
+                    <rootfile full-path="OPS/content.opf"/>
+                  </rootfiles>
+                </container>
+                """.trimIndent()
+            )
+            text(
+                "OPS/content.opf",
+                """
+                <package>
+                  <metadata>
+                    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Two Chapters</dc:title>
+                  </metadata>
+                  <manifest>
+                    <item id="first" href="first.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="second" href="second.xhtml" media-type="application/xhtml+xml"/>
+                  </manifest>
+                  <spine>
+                    <itemref idref="first"/>
+                    <itemref idref="second"/>
+                  </spine>
+                </package>
+                """.trimIndent()
+            )
+            text(
+                "OPS/first.xhtml",
+                """
+                <html><body><h1>First</h1><p>First chapter text.</p></body></html>
+                """.trimIndent()
+            )
+            text(
+                "OPS/second.xhtml",
+                """
+                <html><body><h1>Second</h1><p>Second chapter text.</p></body></html>
+                """.trimIndent()
+            )
         }
     }
 

@@ -39,6 +39,11 @@ internal fun DesktopEpubWebView(
             "backend_selected backend=${backend.logName} htmlChars=${html.length} htmlHash=${html.hashCode()} " +
                 "network=$networkAccessEnabled highlights=${highlights.size} navMode=${navigationTarget.readingMode}"
         )
+        logDesktopReaderOpenTrace {
+            "event=desktop_webview_selected backend=${backend.logName} htmlChars=${html.length} " +
+                "htmlHash=${html.hashCode()} network=$networkAccessEnabled highlights=${highlights.size} " +
+                "navMode=${navigationTarget.readingMode}"
+        }
     }
     DesktopNativeSwtEpubWebView(
         html = html,
@@ -115,6 +120,10 @@ internal fun rememberDesktopEpubBridgeHandlers(
             },
             DesktopEpubBridgeHandler("readerPositionChanged") { params ->
                 params.readerPositionOrNull()?.let { position ->
+                    logDesktopPositionTrace(
+                        "event=bridge_position_changed page=${position.pageIndex} " +
+                            "locator=${position.locator.desktopPositionTraceSummary()}"
+                    )
                     logDesktopHighlightMap(
                         "bridge_position_changed page=${position.pageIndex} chapter=${position.locator?.chapterIndex} " +
                             "offsets=${position.locator?.startOffset}..${position.locator?.endOffset} " +
@@ -125,6 +134,9 @@ internal fun rememberDesktopEpubBridgeHandlers(
                     )
                     scope.launch { latestOnVisiblePageChanged(position.pageIndex, position.locator) }
                 }
+            },
+            DesktopEpubBridgeHandler("readerDesktopPositionTraceLog") { params ->
+                logDesktopPositionTrace(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900))
             },
             DesktopEpubBridgeHandler("readerSelectionAction") { params ->
                 val selectionAction = params.readerSelectionActionOrNull()

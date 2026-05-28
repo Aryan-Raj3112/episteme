@@ -141,6 +141,7 @@ import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementRule
 import com.aryan.reader.shared.ReaderTtsReplacementSuggestions
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.readerTextureDisplayName
 import com.aryan.reader.shared.resetReaderFormatSettings
@@ -587,9 +588,90 @@ fun SharedReaderScreen(
                 ttsRequestId = ttsRequestId
             )
             val renderPlan = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+                val lastChapterIndex = readerState.book.chapters.lastIndex
+                val activeChapterIndex = if (lastChapterIndex >= 0) {
+                    readerState.currentPage?.chapterIndex?.takeIf { it in 0..lastChapterIndex }
+                        ?: navigationLocator?.chapterIndex?.takeIf { it in 0..lastChapterIndex }
+                        ?: 0
+                } else {
+                    0
+                }
+                var renderedChapterRange by remember(readerState.book.id, lastChapterIndex, settings.readingMode) {
+                    mutableStateOf(readerVerticalRenderedChapterRange(activeChapterIndex, lastChapterIndex))
+                }
+                LaunchedEffect(readerState.book.id, lastChapterIndex, settings.readingMode) {
+                    logReaderPositionTrace {
+                        "event=vertical_render_window_init book=\"${readerState.book.title.readerOpenTracePreview(120)}\" " +
+                            "mode=${settings.readingMode} activeChapter=$activeChapterIndex " +
+                            "range=${renderedChapterRange?.let { "${it.first}..${it.last}" } ?: "all"} " +
+                            "page=${readerState.currentPageIndex} pages=${readerState.pages.size}"
+                    }
+                }
+                LaunchedEffect(
+                    settings.readingMode,
+                    session.navigationRequestId,
+                    lastChapterIndex
+                ) {
+                    if (settings.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
+                    val requestedChapterIndex = navigationLocator?.chapterIndex
+                        ?.takeIf { it in 0..lastChapterIndex }
+                        ?: return@LaunchedEffect
+                    val nextRange = readerVerticalRenderedChapterRange(requestedChapterIndex, lastChapterIndex)
+                    logReaderPositionTrace {
+                        "event=vertical_render_window_navigation_request book=\"${readerState.book.title.readerOpenTracePreview(120)}\" " +
+                            "requestId=${session.navigationRequestId} requestedChapter=$requestedChapterIndex " +
+                            "previousRange=${renderedChapterRange?.let { "${it.first}..${it.last}" } ?: "all"} " +
+                            "nextRange=${nextRange?.let { "${it.first}..${it.last}" } ?: "all"} " +
+                            "locator=${navigationLocator.readerPositionTraceSummary()}"
+                    }
+                    renderedChapterRange = nextRange
+                }
+                LaunchedEffect(
+                    settings.readingMode,
+                    activeChapterIndex,
+                    readerState.currentPageIndex,
+                    lastChapterIndex,
+                    renderedChapterRange
+                ) {
+                    if (settings.readingMode != ReaderReadingMode.VERTICAL) return@LaunchedEffect
+                    val currentRange = renderedChapterRange ?: return@LaunchedEffect
+                    val activeChapterFirstPage = readerState.pages.indexOfFirst { it.chapterIndex == activeChapterIndex }
+                    val activeChapterLastPage = readerState.pages.indexOfLast { it.chapterIndex == activeChapterIndex }
+                    val nearChapterStart = activeChapterFirstPage < 0 ||
+                        readerState.currentPageIndex <= activeChapterFirstPage + 1
+                    val nearChapterEnd = activeChapterLastPage < 0 ||
+                        readerState.currentPageIndex >= activeChapterLastPage - 1
+                    val shouldShiftBackward = activeChapterIndex <= currentRange.first &&
+                        currentRange.first > 0 &&
+                        nearChapterStart
+                    val shouldShiftForward = activeChapterIndex >= currentRange.last &&
+                        currentRange.last < lastChapterIndex &&
+                        nearChapterEnd
+                    if (shouldShiftBackward || shouldShiftForward) {
+                        val nextRange = readerVerticalRenderedChapterRange(activeChapterIndex, lastChapterIndex)
+                        logReaderPositionTrace {
+                            "event=vertical_render_window_passive_shift book=\"${readerState.book.title.readerOpenTracePreview(120)}\" " +
+                                "direction=${if (shouldShiftBackward) "backward" else "forward"} " +
+                                "activeChapter=$activeChapterIndex page=${readerState.currentPageIndex} " +
+                                "chapterPages=${activeChapterFirstPage}..${activeChapterLastPage} " +
+                                "previousRange=${currentRange.first}..${currentRange.last} " +
+                                "nextRange=${nextRange?.let { "${it.first}..${it.last}" } ?: "all"}"
+                        }
+                        renderedChapterRange = nextRange
+                    } else if (activeChapterIndex <= currentRange.first || activeChapterIndex >= currentRange.last) {
+                        logReaderPositionTrace {
+                            "event=vertical_render_window_passive_hold book=\"${readerState.book.title.readerOpenTracePreview(120)}\" " +
+                                "activeChapter=$activeChapterIndex page=${readerState.currentPageIndex} " +
+                                "chapterPages=${activeChapterFirstPage}..${activeChapterLastPage} " +
+                                "range=${currentRange.first}..${currentRange.last} " +
+                                "nearStart=$nearChapterStart nearEnd=$nearChapterEnd"
+                        }
+                    }
+                }
                 val appearanceSignature = settings.appearanceSignature()
                 val formatSignature = settings.layoutSignature()
                 val appearanceScript = remember(appearanceSignature, formatSignature, textureDataUri, readerState.pages) {
+                    val startedAt = currentTimestamp()
                     buildString {
                         append(
                             ReaderHtmlDocumentBuilder.appearanceUpdateScript(
@@ -599,6 +681,12 @@ fun SharedReaderScreen(
                         )
                         append('\n')
                         append(ReaderHtmlDocumentBuilder.pageAnchorsUpdateScript(readerState.pages))
+                    }.also { script ->
+                        logReaderOpenTrace {
+                            "event=vertical_appearance_script_built book=\"${readerState.book.title.readerOpenTracePreview(120)}\" " +
+                                "durationMs=${startedAt.readerOpenTraceElapsedMs()} scriptChars=${script.length} " +
+                                "pages=${readerState.pages.size} mode=${settings.readingMode}"
+                        }
                     }
                 }
                 val highlightPaletteScript = remember(highlightPalette) {
@@ -609,10 +697,28 @@ fun SharedReaderScreen(
                     readerState.book,
                     session.searchQuery,
                     session.searchOptions,
+                    renderedChapterRange?.first,
+                    renderedChapterRange?.last,
                     byokSettings.areReaderAiFeaturesAvailable,
                     effectiveCloudTtsAvailable,
                     externalLookupAvailable
                 ) {
+                    val startedAt = currentTimestamp()
+                    val renderedChapterCount = renderedChapterRange
+                        ?.count { it in readerState.book.chapters.indices }
+                        ?: readerState.book.chapters.size
+                    logReaderOpenTrace {
+                        "event=vertical_html_build_start book=\"${readerState.book.title.readerOpenTracePreview(120)}\" " +
+                            "chapters=${readerState.book.chapters.size} pages=${readerState.pages.size} " +
+                            "renderedChapters=${renderedChapterRange?.let { "${it.first}..${it.last}" } ?: "all"} " +
+                            "renderedChapterCount=$renderedChapterCount activeChapter=$activeChapterIndex " +
+                            "textChars=${readerState.book.chapters.sumOf { it.plainText.length }} " +
+                            "htmlChars=${readerState.book.chapters.sumOf { it.htmlContent.length }} " +
+                            "semanticBlocks=${readerState.book.chapters.sumOf { it.semanticBlocks.size }} " +
+                            "search=${session.searchQuery.isNotBlank()} hasNavigation=${navigationLocator != null} " +
+                            "ai=${byokSettings.areReaderAiFeaturesAvailable} cloudTts=$effectiveCloudTtsAvailable " +
+                            "externalLookup=$externalLookupAvailable"
+                    }
                     ReaderHtmlDocumentBuilder.verticalDocument(
                         book = readerState.book,
                         settings = settings,
@@ -625,8 +731,17 @@ fun SharedReaderScreen(
                         readerAiFeaturesEnabled = byokSettings.areReaderAiFeaturesAvailable,
                         cloudTtsEnabled = effectiveCloudTtsAvailable,
                         externalLookupEnabled = externalLookupAvailable,
-                        textureDataUri = textureDataUri
-                    )
+                        textureDataUri = textureDataUri,
+                        renderedChapterRange = renderedChapterRange
+                    ).also { html ->
+                        logReaderOpenTrace {
+                            "event=vertical_html_build_done book=\"${readerState.book.title.readerOpenTracePreview(120)}\" " +
+                                "durationMs=${startedAt.readerOpenTraceElapsedMs()} htmlChars=${html.length} " +
+                                "chapters=${readerState.book.chapters.size} renderedChapterCount=$renderedChapterCount " +
+                                "renderedChapters=${renderedChapterRange?.let { "${it.first}..${it.last}" } ?: "all"} " +
+                                "pages=${readerState.pages.size}"
+                        }
+                    }
                 }
                 ReaderContentRenderPlan.WebDocument(
                     html = html,
@@ -3398,6 +3513,46 @@ private fun SharedReaderThemeChoice(
 
 private const val ReaderGapChromeLogTag = "EpistemeReaderGap"
 private const val ReaderChromeWebViewLayoutLogTag = "EpistemeWebViewLayout"
+private const val ReaderOpenTraceLogTag = "EpistemeDesktopOpenTrace"
+private const val ReaderPositionTraceLogTag = "EpistemeDesktopPositionTrace"
+private const val ReaderVerticalRenderedChapterRadius = 2
+
+private fun readerVerticalRenderedChapterRange(chapterIndex: Int, lastChapterIndex: Int): IntRange? {
+    if (lastChapterIndex < 0) return null
+    val safeChapterIndex = chapterIndex.coerceIn(0, lastChapterIndex)
+    return (safeChapterIndex - ReaderVerticalRenderedChapterRadius).coerceAtLeast(0)..
+        (safeChapterIndex + ReaderVerticalRenderedChapterRadius).coerceAtMost(lastChapterIndex)
+}
+
+private fun logReaderOpenTrace(message: () -> String) {
+    logSharedReaderDiagnostic(ReaderOpenTraceLogTag, message)
+}
+
+private fun logReaderPositionTrace(message: () -> String) {
+    logSharedReaderDiagnostic(ReaderPositionTraceLogTag, message)
+}
+
+private fun Long.readerOpenTraceElapsedMs(nowMillis: Long = currentTimestamp()): Long {
+    return (nowMillis - this).coerceAtLeast(0L)
+}
+
+private fun String.readerOpenTracePreview(maxLength: Int = 96): String {
+    return replace(Regex("\\s+"), " ")
+        .trim()
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
+}
+
+private fun ReaderLocator?.readerPositionTraceSummary(maxTextLength: Int = 90): String {
+    if (this == null) return "null"
+    return "chapter=${chapterIndex ?: "null"} page=${pageIndex ?: "null"} " +
+        "offsets=${startOffset ?: "null"}..${endOffset ?: "null"} " +
+        "block=${blockIndex ?: "null"} char=${charOffset ?: "null"} " +
+        "chapterId=\"${chapterId.orEmpty().readerOpenTracePreview(80)}\" " +
+        "href=\"${href.orEmpty().readerOpenTracePreview(120)}\" " +
+        "cfi=\"${cfi.orEmpty().readerOpenTracePreview(180)}\" " +
+        "text=\"${textQuote.orEmpty().readerOpenTracePreview(maxTextLength)}\""
+}
 
 private fun logReaderGapChrome(
     layer: String,

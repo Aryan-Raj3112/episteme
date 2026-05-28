@@ -21,7 +21,14 @@ internal data class DesktopCloudConfig(
 }
 
 internal fun loadDesktopCloudConfig(): DesktopCloudConfig {
-    val resourceProperties = Properties().apply {
+    return desktopCloudConfigFromProperties(
+        resourceProperties = loadDesktopCloudResourceProperties(),
+        localProperties = loadDesktopLocalProperties()
+    )
+}
+
+private fun loadDesktopCloudResourceProperties(): Properties {
+    return Properties().apply {
         val classLoader = DesktopCloudConfig::class.java.classLoader
         val stream = classLoader.getResourceAsStream("desktop-cloud.properties")
             ?: classLoader.getResourceAsStream("common/desktop-cloud.properties")
@@ -35,18 +42,27 @@ internal fun loadDesktopCloudConfig(): DesktopCloudConfig {
                 }
         stream?.use { input -> load(input) }
     }
-    val localProperties = Properties().apply {
-        File("local.properties")
-            .takeIf { it.isFile }
+}
+
+private fun loadDesktopLocalProperties(file: File = File("local.properties")): Properties {
+    return Properties().apply {
+        file.takeIf { it.isFile }
             ?.inputStream()
             ?.use { input -> load(input) }
     }
+}
 
+internal fun desktopCloudConfigFromProperties(
+    resourceProperties: Properties,
+    localProperties: Properties = Properties(),
+    systemProperty: (String) -> String? = { key -> System.getProperty("episteme.desktop.$key") },
+    environment: (String) -> String? = { key -> System.getenv(key) }
+): DesktopCloudConfig {
     fun value(vararg keys: String): String {
         return keys.firstNotNullOfOrNull { key ->
-            System.getProperty("episteme.desktop.$key")
-                ?: System.getenv("EPISTEME_DESKTOP_${key.uppercase()}")
-                ?: System.getenv(key)
+            systemProperty(key)
+                ?: environment("EPISTEME_DESKTOP_${key.uppercase()}")
+                ?: environment(key)
                 ?: localProperties.getProperty("DESKTOP_$key")
                 ?: localProperties.getProperty(key)
                 ?: resourceProperties.getProperty(key)

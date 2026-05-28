@@ -11,6 +11,7 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.toStableReaderPositionCfi
 
 sealed interface ReaderLinkTarget {
     data class External(val url: String) : ReaderLinkTarget
@@ -106,10 +107,10 @@ class ReaderEngine(
         highlights: List<UserHighlight> = emptyList()
     ): ReaderSessionState {
         val pages = pagesFor(book, settings)
-        val requestedInitialIndex = initialLocator
+        val locatorResolvedIndex = initialLocator
             ?.let { pages.findPageIndexForLocator(it) }
             ?.takeIf { it >= 0 }
-            ?: initialPageIndex
+        val requestedInitialIndex = locatorResolvedIndex ?: initialPageIndex
         val initialIndex = ReaderSpreadLayout.normalizePageIndex(requestedInitialIndex, pages.size, settings)
         val reader = PaginatedReaderState(
             book = book,
@@ -117,7 +118,13 @@ class ReaderEngine(
             currentPageIndex = initialIndex,
             settings = settings
         )
-        return ReaderSessionState(
+        logReaderPositionTrace {
+            "event=engine_create_session_start book=\"${book.title.positionTracePreview(120)}\" " +
+                "mode=${settings.readingMode} pages=${pages.size} initialPage=$initialPageIndex " +
+                "locatorResolved=${locatorResolvedIndex ?: "null"} requested=$requestedInitialIndex normalized=$initialIndex " +
+                "initialLocator=${initialLocator.positionTraceSummary()}"
+        }
+        val session = ReaderSessionState(
             reader = reader,
             bookmarks = bookmarks
                 .mapNotNull { it.normalizedForBook(book, pages) }
@@ -131,6 +138,13 @@ class ReaderEngine(
                 ?.normalizedForResolvedPage(book, pages, requestedInitialIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0)))
                 ?: reader.currentPage?.toLocator(book)
         )
+        logReaderPositionTrace {
+            "event=engine_create_session_done book=\"${book.title.positionTracePreview(120)}\" " +
+                "mode=${settings.readingMode} currentPage=${session.reader.currentPageIndex} " +
+                "visiblePages=${session.reader.visiblePages.map { it.pageIndex }} " +
+                "navigationLocator=${session.navigationLocator.positionTraceSummary()}"
+        }
+        return session
     }
 
     fun next(state: ReaderSessionState): ReaderSessionState {
@@ -356,12 +370,26 @@ class ReaderEngine(
     fun syncVisiblePage(state: ReaderSessionState, pageIndex: Int, locator: ReaderLocator? = null): ReaderSessionState {
         val target = ReaderSpreadLayout.normalizePageIndex(pageIndex, state.reader.pages.size, state.reader.settings)
         val normalizedLocator = locator?.normalizedForPage(state, pageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0)))
-        if (target == state.reader.currentPageIndex && normalizedLocator == null) return state
-        return state.copy(
+        if (target == state.reader.currentPageIndex && normalizedLocator == null) {
+            logReaderPositionTrace {
+                "event=engine_sync_visible_skip reason=unchanged_no_locator mode=${state.reader.settings.readingMode} " +
+                    "inputPage=$pageIndex target=$target current=${state.reader.currentPageIndex}"
+            }
+            return state
+        }
+        val next = state.copy(
             reader = state.reader.copy(currentPageIndex = target),
             activeSearchResultIndex = state.searchResults.indexOfFirst { it.pageIndex == pageIndex },
             navigationLocator = normalizedLocator ?: state.navigationLocator
         )
+        logReaderPositionTrace {
+            "event=engine_sync_visible_done mode=${state.reader.settings.readingMode} inputPage=$pageIndex " +
+                "target=$target previousPage=${state.reader.currentPageIndex} nextPage=${next.reader.currentPageIndex} " +
+                "inputLocator=${locator.positionTraceSummary()} normalizedLocator=${normalizedLocator.positionTraceSummary()} " +
+                "previousNavigation=${state.navigationLocator.positionTraceSummary()} " +
+                "nextNavigation=${next.navigationLocator.positionTraceSummary()}"
+        }
+        return next
     }
 
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
@@ -901,7 +929,11 @@ private fun ReaderLocator.normalizedForResolvedPage(
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
-        cfi = cfi ?: blockPosition?.androidStyleCfi() ?: "desktop:${page.chapterIndex}:$start:$end"
+        cfi = cfi
+            ?.toStableReaderPositionCfi()
+            ?.takeUnless { it.startsWith("desktop-scroll:") || it.startsWith("desktop-scroll-page:") }
+            ?: blockPosition?.androidStyleCfi()
+            ?: "desktop:${page.chapterIndex}:$start:$end"
     )
 }
 
@@ -987,7 +1019,11 @@ private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
-        cfi = cfi ?: blockPosition?.androidStyleCfi() ?: "desktop:${page.chapterIndex}:$start:$end"
+        cfi = cfi
+            ?.toStableReaderPositionCfi()
+            ?.takeUnless { it.startsWith("desktop-scroll:") || it.startsWith("desktop-scroll-page:") }
+            ?: blockPosition?.androidStyleCfi()
+            ?: "desktop:${page.chapterIndex}:$start:$end"
     )
 }
 
@@ -1154,4 +1190,28 @@ private fun Char?.isWordChar(): Boolean {
 
 private fun logReaderLink(message: String) {
     logSharedReaderDiagnostic("ReaderLinkResolve") { message }
+}
+
+private const val ReaderPositionTraceLogTag = "EpistemeDesktopPositionTrace"
+
+private fun logReaderPositionTrace(message: () -> String) {
+    logSharedReaderDiagnostic(ReaderPositionTraceLogTag, message)
+}
+
+private fun ReaderLocator?.positionTraceSummary(maxTextLength: Int = 90): String {
+    if (this == null) return "null"
+    return "chapter=${chapterIndex ?: "null"} page=${pageIndex ?: "null"} " +
+        "offsets=${startOffset ?: "null"}..${endOffset ?: "null"} " +
+        "block=${blockIndex ?: "null"} char=${charOffset ?: "null"} " +
+        "chapterId=\"${chapterId.orEmpty().positionTracePreview(80)}\" " +
+        "href=\"${href.orEmpty().positionTracePreview(120)}\" " +
+        "cfi=\"${cfi.orEmpty().positionTracePreview(180)}\" " +
+        "text=\"${textQuote.orEmpty().positionTracePreview(maxTextLength)}\""
+}
+
+private fun String.positionTracePreview(maxLength: Int = 96): String {
+    return replace(Regex("\\s+"), " ")
+        .trim()
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
 }

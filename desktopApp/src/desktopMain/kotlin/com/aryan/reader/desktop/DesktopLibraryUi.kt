@@ -1,5 +1,6 @@
 package com.aryan.reader.desktop
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,12 +20,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -117,31 +120,62 @@ internal fun resolvedDesktopReaderSettings(
 
 @Composable
 internal fun DesktopReaderOpeningScreen(
-    opening: DesktopReaderOpening
+    opening: DesktopReaderOpening,
+    readerSettings: ReaderSettings? = null
 ) {
+    LaunchedEffect(opening.requestId) {
+        logDesktopReaderOpenTrace {
+            opening.openTracePrefix("desktop_opening_screen_composed")
+        }
+    }
+    val background = readerSettings?.desktopOpeningBackgroundColor() ?: MaterialTheme.colorScheme.background
+    val foreground = readerSettings?.desktopOpeningForegroundColor() ?: MaterialTheme.colorScheme.onBackground
     Box(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(background)
+            .padding(32.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            CircularProgressIndicator()
+            CircularProgressIndicator(color = foreground)
             Text(
                 text = readerString("desktop_opening_title", "Opening %1\$s", opening.title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+                color = foreground,
                 textAlign = TextAlign.Center
             )
             Text(
                 text = opening.formatLabel,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = foreground.copy(alpha = 0.72f),
                 textAlign = TextAlign.Center
             )
         }
     }
+}
+
+private fun ReaderSettings.desktopOpeningBackgroundColor(): Color {
+    return backgroundColorArgb?.toDesktopOpeningComposeColor()
+        ?: if (darkMode) Color(0xFF171A17) else Color(0xFFFFFCF5)
+}
+
+private fun ReaderSettings.desktopOpeningForegroundColor(): Color {
+    return textColorArgb?.toDesktopOpeningComposeColor()
+        ?: if (darkMode) Color(0xFFE7E3D8) else Color(0xFF24231F)
+}
+
+private fun Long.toDesktopOpeningComposeColor(): Color {
+    val value = this and 0xFFFFFFFFL
+    val alpha = ((value shr 24) and 0xFF) / 255f
+    val red = ((value shr 16) and 0xFF) / 255f
+    val green = ((value shr 8) and 0xFF) / 255f
+    val blue = (value and 0xFF) / 255f
+    return Color(red = red, green = green, blue = blue, alpha = alpha.takeIf { it > 0f } ?: 1f)
 }
 
 @Composable

@@ -112,6 +112,28 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `visible page sync stores stable vertical locator cfi instead of scroll metrics`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(
+            book = longBook(),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+        val page = session.reader.pages[1]
+        val locator = ReaderLocator(
+            chapterIndex = page.chapterIndex,
+            pageIndex = page.pageIndex,
+            startOffset = page.startOffset + 24,
+            endOffset = page.startOffset + 24,
+            cfi = "desktop-scroll:120:800:desktop:${page.chapterIndex}:${page.startOffset + 24}:${page.startOffset + 24}"
+        )
+
+        val synced = engine.syncVisiblePage(session, page.pageIndex, locator)
+
+        assertEquals("desktop:${page.chapterIndex}:${page.startOffset + 24}:${page.startOffset + 24}", synced.navigationLocator?.cfi)
+        assertEquals(locator.startOffset, synced.navigationLocator?.startOffset)
+    }
+
+    @Test
     fun `createSession restores precise locator ahead of fallback page index`() {
         val engine = ReaderEngine()
         val book = longBook()

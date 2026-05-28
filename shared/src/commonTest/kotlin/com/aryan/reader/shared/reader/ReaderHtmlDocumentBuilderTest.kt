@@ -251,6 +251,46 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("data-reader-active-chapter-index=\"1\""))
         assertTrue(html.contains("data-reader-active-start-offset=\"7\""))
         assertTrue(html.contains("scrollToActiveLocator"))
+        assertTrue(html.contains("readerDesktopPositionTraceLog"))
+        assertTrue(html.contains("bestVisibleReaderHost"))
+        assertTrue(html.contains("function prepareVerticalScrollMeasurement(targetChapter)"))
+        assertTrue(html.contains("pendingRestoreLocator = locator"))
+        assertTrue(html.contains("positionCfi = stableReaderCfi(positionCfi) || stableDesktopCfi(chapterIndex, offset, offset)"))
+        assertFalse(html.contains("positionCfi = 'desktop-scroll:' + metrics.scrollY"))
+    }
+
+    @Test
+    fun `vertical document can render a chapter window while retaining page anchors`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = SharedEpubBook(
+                id = "book",
+                fileName = "book.epub",
+                title = "Book",
+                chapters = listOf(
+                    SharedEpubChapter("one", "One", "First chapter body."),
+                    SharedEpubChapter("two", "Two", "Second chapter body."),
+                    SharedEpubChapter("three", "Three", "Third chapter body.")
+                )
+            ),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            pages = listOf(
+                ReaderPage(0, 0, "One", "First chapter body.", 0, 19),
+                ReaderPage(1, 1, "Two", "Second chapter body.", 0, 20),
+                ReaderPage(2, 2, "Three", "Third chapter body.", 0, 19)
+            ),
+            renderedChapterRange = 1..1
+        )
+
+        assertFalse(html.contains("First chapter body."))
+        assertTrue(html.contains("Second chapter body."))
+        assertFalse(html.contains("Third chapter body."))
+        assertFalse(html.contains("data-reader-chapter-index=\"0\""))
+        assertTrue(html.contains("data-reader-chapter-index=\"1\""))
+        assertFalse(html.contains("data-reader-chapter-index=\"2\""))
+        assertTrue(html.contains("\"chapterIndex\":0"))
+        assertTrue(html.contains("\"chapterIndex\":1"))
+        assertTrue(html.contains("\"chapterIndex\":2"))
+        assertTrue(html.contains("function renderedVerticalPageAnchors()"))
     }
 
     @Test
@@ -362,6 +402,8 @@ class ReaderHtmlDocumentBuilderTest {
         assertFalse(html.contains("body.reader-vertical .chapter > :not(.reader-content)"))
         assertTrue(verticalBodyCss.containsMatchIn(html))
         assertTrue(verticalExpansionCss.containsMatchIn(html))
+        assertTrue(html.contains("content-visibility: auto;"))
+        assertTrue(html.contains("contain-intrinsic-size: auto 1200px;"))
         assertTrue(verticalMarginCss.containsMatchIn(html))
         assertTrue(verticalContentCss.containsMatchIn(html))
         assertTrue(verticalChapterSiblingResetCss.containsMatchIn(html))
@@ -691,7 +733,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var targetChapters = readerHostsForLocator(chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("var chapter = readerHostForLocator(chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("data-reader-active-page-index"))
-        assertTrue(html.contains("positionFromReaderHost(activePage, activeStart)"))
+        assertTrue(html.contains("positionFromReaderHost(activePage, activeStart, readerProbeY(), 'active_page')"))
     }
 
     @Test
@@ -779,6 +821,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("""<img src="data:image/png;base64,abc" alt="Cover""""))
+        assertTrue(html.contains("""loading="lazy" decoding="async""""))
         assertTrue(html.contains("""data-reader-block-index="7""""))
         assertTrue(html.contains("""data-reader-cfi="/4/2""""))
         assertTrue(html.contains("""data-reader-block-index="0""""))

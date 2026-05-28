@@ -85,6 +85,7 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
 import com.aryan.reader.shared.reader.SharedEpubMetadataUpdate
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
+import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.readerCloudTtsControlsModel
 import com.aryan.reader.shared.reduce
@@ -127,6 +128,7 @@ import java.util.Base64
 import java.util.UUID
 
 private const val DesktopReaderCloseDisposeSyncDelayMillis = 350L
+private const val DesktopVerticalInitialPreparedHtmlChapterRadius = 2
 
 private enum class DesktopFeatureNoticeAction {
     SIGN_IN,
@@ -1773,6 +1775,11 @@ internal fun EpistemeDesktopApp(
     ): Boolean {
         val guard = readerCloudStalePositionGuards[bookId] ?: return false
         if (guard.matchesIncomingReaderPosition(pageIndex, progress, session)) {
+            logDesktopPositionTrace {
+                "event=persist_skip_stale_echo bookId=\"${bookId.logPreview(80)}\" page=$pageIndex progress=$progress " +
+                    "incomingLocator=${session?.navigationLocator.desktopPositionTraceSummary()} " +
+                    "guardLocator=${guard.readerPosition.desktopPositionTraceSummary()}"
+            }
             logDesktopCloudSync {
                 "desktop.reader.position_skip_stale_echo book=$bookId page=$pageIndex progress=$progress " +
                     guard.desktopCloudSyncSummary("guard")
@@ -1780,6 +1787,11 @@ internal fun EpistemeDesktopApp(
             return true
         }
         readerCloudStalePositionGuards = readerCloudStalePositionGuards - bookId
+        logDesktopPositionTrace {
+            "event=persist_stale_guard_cleared bookId=\"${bookId.logPreview(80)}\" page=$pageIndex progress=$progress " +
+                "incomingLocator=${session?.navigationLocator.desktopPositionTraceSummary()} " +
+                "guardLocator=${guard.readerPosition.desktopPositionTraceSummary()}"
+        }
         logDesktopCloudSync {
             "desktop.reader.position_guard_cleared book=$bookId page=$pageIndex progress=$progress"
         }
@@ -1794,7 +1806,20 @@ internal fun EpistemeDesktopApp(
         pdfViewport: SharedPdfReaderViewport? = null
     ) {
         val hasOpenReaderWindow = readerWindows.any { it.bookId == bookId }
+        val previousBook = state.rawLibraryBooks.firstOrNull { it.id == bookId }
+        logDesktopPositionTrace {
+            "event=persist_request bookId=\"${bookId.logPreview(80)}\" page=$pageIndex progress=$progress " +
+                "hasSession=${session != null} mode=${session?.reader?.settings?.readingMode ?: "none"} " +
+                "openWindow=$hasOpenReaderWindow closing=${bookId in closingReaderBookIds} " +
+                "incomingLocator=${session?.navigationLocator.desktopPositionTraceSummary()} " +
+                "previousPage=${previousBook?.lastPageIndex ?: "null"} " +
+                "previousProgress=${previousBook?.progressPercentage ?: "null"} " +
+                "previousLocator=${previousBook?.readerPosition.desktopPositionTraceSummary()}"
+        }
         if (!hasOpenReaderWindow && bookId !in closingReaderBookIds) {
+            logDesktopPositionTrace {
+                "event=persist_skip_closed bookId=\"${bookId.logPreview(80)}\" page=$pageIndex progress=$progress"
+            }
             logDesktopCloudSync {
                 "desktop.reader.position_skip_closed book=$bookId page=$pageIndex progress=$progress"
             }
@@ -1846,6 +1871,14 @@ internal fun EpistemeDesktopApp(
             }
         )
         updateState(next)
+        logDesktopPositionTrace {
+            val saved = updatedBook
+            "event=persist_done bookId=\"${bookId.logPreview(80)}\" updated=${saved != null} " +
+                "requestedPage=$pageIndex requestedProgress=$progress " +
+                "savedPage=${saved?.lastPageIndex ?: "null"} savedProgress=${saved?.progressPercentage ?: "null"} " +
+                "savedLocator=${saved?.readerPosition.desktopPositionTraceSummary()} " +
+                "shouldSyncSidecars=$shouldSyncSidecars dirtyBaseTimestamp=${dirtyBaseTimestamp ?: "null"}"
+        }
         if (updatedTextReaderDefaults != null) {
             readerWindows = readerWindows.map { windowState ->
                 val content = windowState.content
@@ -2891,10 +2924,19 @@ internal fun EpistemeDesktopApp(
     }
 
     fun applyReaderOpenResult(result: DesktopReaderOpenResult) {
+        val applyStartedAt = System.nanoTime()
+        logDesktopReaderOpenTrace {
+            result.opening.openTracePrefix("desktop_apply_start") +
+                " result=${result.openTraceKind()}"
+        }
         val window = readerWindows.firstOrNull { it.opening.requestId == result.opening.requestId }
         if (window == null) {
             if (result is DesktopReaderOpenResult.Pdf) {
                 result.document.close()
+            }
+            logDesktopReaderOpenTrace {
+                result.opening.openTracePrefix("desktop_apply_missing_window") +
+                    " result=${result.openTraceKind()} durationMs=${applyStartedAt.elapsedOpenTraceMs()}"
             }
             return
         }
@@ -2948,6 +2990,11 @@ internal fun EpistemeDesktopApp(
                 recordBookOpened(result.book.id)
             }
         }
+        logDesktopReaderOpenTrace {
+            result.opening.openTracePrefix("desktop_apply_done") +
+                " result=${result.openTraceKind()} windowId=\"${window.id.logPreview(80)}\" " +
+                "durationMs=${applyStartedAt.elapsedOpenTraceMs()} openWindows=${readerWindows.size}"
+        }
     }
 
     fun openReader(
@@ -2999,23 +3046,57 @@ internal fun EpistemeDesktopApp(
                 ?: SharedAppTab.LIBRARY,
             password = password
         )
+        logDesktopReaderOpenTrace {
+            opening.openTracePrefix("desktop_open_request") +
+                " type=${book.type} surface=$desktopReaderSurface force=$force " +
+                "path=\"${book.path.orEmpty().logPreview(180)}\""
+        }
         val readerDefaultSettings = state.readerDefaultSettings
+        val previousWindowCount = readerWindows.size
         if (force) {
-            readerWindows.firstOrNull { it.bookId == book.id }?.cancelReaderWork()
+            readerWindows.firstOrNull { it.bookId == book.id }?.let { existingWindow ->
+                logDesktopReaderOpenTrace {
+                    opening.openTracePrefix("desktop_force_cancel_existing") +
+                        " windowId=\"${existingWindow.id.logPreview(80)}\""
+                }
+                existingWindow.cancelReaderWork()
+            }
         }
         val openDecision = readerWindows.openOrFocusDesktopReaderWindow(opening, force)
         readerWindows = openDecision.windows
+        logDesktopReaderOpenTrace {
+            opening.openTracePrefix("desktop_window_decision") +
+                " shouldStart=${openDecision.shouldStartOpen} force=$force " +
+                "previousWindows=$previousWindowCount nextWindows=${openDecision.windows.size}"
+        }
         if (!openDecision.shouldStartOpen) {
             recordBookOpened(book.id)
+            logDesktopReaderOpenTrace {
+                opening.openTracePrefix("desktop_focus_existing_done")
+            }
             return
         }
 
         scope.launch {
+            logDesktopReaderOpenTrace {
+                opening.openTracePrefix("desktop_open_coroutine_start")
+            }
             val result = withContext(Dispatchers.IO) {
+                val ioStartedAt = System.nanoTime()
+                logDesktopReaderOpenTrace {
+                    opening.openTracePrefix("desktop_open_io_start") +
+                        " surface=$desktopReaderSurface"
+                }
                 runCatching {
                     when (desktopReaderSurface) {
                         ReaderFeatureSurface.PDF_VIEWER -> {
+                            val pdfStartedAt = System.nanoTime()
                             val path = book.path.orEmpty()
+                            logDesktopReaderOpenTrace {
+                                opening.openTracePrefix("desktop_pdf_load_start") +
+                                    " type=${book.type} path=\"${path.logPreview(180)}\" " +
+                                    "passwordSupplied=${!opening.password.isNullOrEmpty()}"
+                            }
                             val streamReference = SharedOpdsStreamUri.parse(path)
                             val document = if (streamReference != null) {
                                 DesktopPdfium.loadOpdsStream(
@@ -3036,19 +3117,77 @@ internal fun EpistemeDesktopApp(
                                     else -> DesktopPdfium.loadComic(readerFile, book.type)
                                 }
                             }
+                            logDesktopReaderOpenTrace {
+                                opening.openTracePrefix("desktop_pdf_load_done") +
+                                    " type=${book.type} durationMs=${pdfStartedAt.elapsedOpenTraceMs()} " +
+                                    "pages=${document.pageCount}"
+                            }
                             DesktopReaderOpenResult.Pdf(opening, book, document)
                         }
 
                         ReaderFeatureSurface.EPUB_READER,
                         ReaderFeatureSurface.TEXT_READER -> {
                             val path = book.path?.takeIf { it.isNotBlank() } ?: error("Book path is missing.")
+                            val readerFile = File(path)
+                            val settingsStartedAt = System.nanoTime()
+                            val restoredSettings = resolvedDesktopReaderSettings(book, readerDefaultSettings)
+                            val semanticMode = if (restoredSettings.readingMode == ReaderReadingMode.VERTICAL) {
+                                SharedJvmBookLoadSemanticMode.SKIP
+                            } else {
+                                SharedJvmBookLoadSemanticMode.FULL
+                            }
+                            val preparedHtmlChapterRange = if (semanticMode == SharedJvmBookLoadSemanticMode.SKIP) {
+                                val initialChapter = book.readerPosition?.chapterIndex?.takeIf { it >= 0 } ?: 0
+                                (initialChapter - DesktopVerticalInitialPreparedHtmlChapterRadius).coerceAtLeast(0)..
+                                    (initialChapter + DesktopVerticalInitialPreparedHtmlChapterRadius)
+                            } else {
+                                null
+                            }
+                            logDesktopReaderOpenTrace {
+                                opening.openTracePrefix("desktop_settings_restored") +
+                                    " durationMs=${settingsStartedAt.elapsedOpenTraceMs()} " +
+                                    "mode=${restoredSettings.readingMode} semanticMode=${semanticMode.name} " +
+                                    "preparedHtmlChapters=${preparedHtmlChapterRange?.let { "${it.first}..${it.last}" } ?: "all"} " +
+                                    "fontSize=${restoredSettings.fontSize} textAlign=${restoredSettings.textAlign} " +
+                                    "pageWidth=${restoredSettings.pageWidth}"
+                            }
+                            val loadStartedAt = System.nanoTime()
+                            logDesktopReaderOpenTrace {
+                                opening.openTracePrefix("desktop_text_load_start") +
+                                    " type=${book.type} semanticMode=${semanticMode.name} fileBytes=${readerFile.length()} " +
+                                    "path=\"${path.logPreview(180)}\""
+                            }
                             val loadedBook = SharedJvmBookLoader.load(
-                                file = File(path),
+                                file = readerFile,
                                 type = book.type,
                                 titleOverride = book.title?.takeIf { it.isNotBlank() },
-                                authorOverride = book.author?.takeIf { it.isNotBlank() }
+                                authorOverride = book.author?.takeIf { it.isNotBlank() },
+                                semanticMode = semanticMode,
+                                preparedHtmlChapterRange = preparedHtmlChapterRange
                             )
-                            val restoredSettings = resolvedDesktopReaderSettings(book, readerDefaultSettings)
+                            logDesktopReaderOpenTrace {
+                                opening.openTracePrefix("desktop_text_load_done") +
+                                    " durationMs=${loadStartedAt.elapsedOpenTraceMs()} " +
+                                    "loadedTitle=\"${loadedBook.title.logPreview(120)}\" " +
+                                    "chapters=${loadedBook.chapters.size} pagesBeforeSession=n/a " +
+                                    "textChars=${loadedBook.chapters.sumOf { it.plainText.length }} " +
+                                    "htmlChars=${loadedBook.chapters.sumOf { it.htmlContent.length }} " +
+                                    "semanticBlocks=${loadedBook.chapters.sumOf { it.semanticBlocks.size }} " +
+                                    "cssFiles=${loadedBook.css.size} cssChars=${loadedBook.css.values.sumOf { it.length }}"
+                            }
+                            val sessionStartedAt = System.nanoTime()
+                            logDesktopReaderOpenTrace {
+                                opening.openTracePrefix("desktop_session_create_start") +
+                                    " initialPage=${book.lastPageIndex ?: 0} hasLocator=${book.readerPosition != null} " +
+                                    "locator=${book.readerPosition.desktopPositionTraceSummary(70)} " +
+                                    "bookmarks=${book.readerBookmarks.size} highlights=${book.readerHighlights.size}"
+                            }
+                            logDesktopPositionTrace {
+                                opening.openTracePrefix("desktop_position_restore_start") +
+                                    " initialPage=${book.lastPageIndex ?: 0} storedProgress=${book.progressPercentage ?: "null"} " +
+                                    "storedLocator=${book.readerPosition.desktopPositionTraceSummary()} " +
+                                    "mode=${restoredSettings.readingMode}"
+                            }
                             val restoredSession = readerEngine.createSession(
                                 book = loadedBook,
                                 settings = restoredSettings,
@@ -3057,9 +3196,42 @@ internal fun EpistemeDesktopApp(
                                 bookmarks = book.readerBookmarks,
                                 highlights = book.readerHighlights
                             )
+                            logDesktopReaderOpenTrace {
+                                opening.openTracePrefix("desktop_session_create_done") +
+                                    " durationMs=${sessionStartedAt.elapsedOpenTraceMs()} " +
+                                    "pages=${restoredSession.reader.pages.size} " +
+                                    "currentPage=${restoredSession.reader.currentPageIndex + 1} " +
+                                    "navigationLocator=${restoredSession.navigationLocator.desktopPositionTraceSummary(70)} " +
+                                    "visiblePages=${restoredSession.reader.visiblePages.map { it.pageIndex + 1 }}"
+                            }
+                            logDesktopPositionTrace {
+                                opening.openTracePrefix("desktop_position_restore_session_done") +
+                                    " durationMs=${sessionStartedAt.elapsedOpenTraceMs()} " +
+                                    "page=${restoredSession.reader.currentPageIndex} pages=${restoredSession.reader.pages.size} " +
+                                    "navigationLocator=${restoredSession.navigationLocator.desktopPositionTraceSummary()}"
+                            }
                             val restoredProgress = book.progressPercentage
                             val session = if (book.readerPosition == null && book.lastPageIndex == null && restoredProgress != null) {
+                                val progressStartedAt = System.nanoTime()
+                                logDesktopReaderOpenTrace {
+                                    opening.openTracePrefix("desktop_progress_restore_start") +
+                                        " progress=$restoredProgress"
+                                }
                                 readerEngine.goToProgress(restoredSession, restoredProgress.coerceIn(0f, 100f) / 100f)
+                                    .also { restored ->
+                                        logDesktopReaderOpenTrace {
+                                            opening.openTracePrefix("desktop_progress_restore_done") +
+                                                " durationMs=${progressStartedAt.elapsedOpenTraceMs()} " +
+                                                "currentPage=${restored.reader.currentPageIndex + 1} " +
+                                                "navigationLocator=${restored.navigationLocator.desktopPositionTraceSummary(70)}"
+                                        }
+                                        logDesktopPositionTrace {
+                                            opening.openTracePrefix("desktop_position_restore_progress_done") +
+                                                " durationMs=${progressStartedAt.elapsedOpenTraceMs()} " +
+                                                "page=${restored.reader.currentPageIndex} " +
+                                                "navigationLocator=${restored.navigationLocator.desktopPositionTraceSummary()}"
+                                        }
+                                    }
                             } else {
                                 restoredSession
                             }
@@ -3069,6 +3241,11 @@ internal fun EpistemeDesktopApp(
                         else -> error("${SharedFileCapabilities.displayNameFor(book.type)} reader support comes later.")
                     }
                 }.getOrElse { error ->
+                    logDesktopReaderOpenTrace {
+                        opening.openTracePrefix("desktop_open_io_exception") +
+                            " durationMs=${ioStartedAt.elapsedOpenTraceMs()} " +
+                            "error=\"${error.message.orEmpty().logPreview(240)}\""
+                    }
                     if (desktopReaderSurface == ReaderFeatureSurface.PDF_VIEWER &&
                         book.type == FileType.PDF &&
                         error.isDesktopPdfPasswordException()
@@ -3086,7 +3263,16 @@ internal fun EpistemeDesktopApp(
                                 (error.message ?: "unknown error")
                         )
                     }
+                }.also { loadedResult ->
+                    logDesktopReaderOpenTrace {
+                        opening.openTracePrefix("desktop_open_io_done") +
+                            " result=${loadedResult.openTraceKind()} durationMs=${ioStartedAt.elapsedOpenTraceMs()}"
+                    }
                 }
+            }
+            logDesktopReaderOpenTrace {
+                opening.openTracePrefix("desktop_open_result_ready") +
+                    " result=${result.openTraceKind()}"
             }
             applyReaderOpenResult(result)
         }
@@ -3868,11 +4054,18 @@ internal fun EpistemeDesktopApp(
                             ) {
                                 when (val content = readerWindow.content) {
                                 DesktopReaderWindowContent.Opening -> {
-                                    DesktopReaderOpeningScreen(opening = readerWindow.opening)
+                                    val openingBook = state.rawLibraryBooks.firstOrNull { it.id == readerWindow.bookId }
+                                    DesktopReaderOpeningScreen(
+                                        opening = readerWindow.opening,
+                                        readerSettings = openingBook?.let { resolvedDesktopReaderSettings(it, state.readerDefaultSettings) }
+                                    )
                                 }
 
                                 is DesktopReaderWindowContent.PasswordRequired -> {
-                                    DesktopReaderOpeningScreen(opening = readerWindow.opening)
+                                    DesktopReaderOpeningScreen(
+                                        opening = readerWindow.opening,
+                                        readerSettings = resolvedDesktopReaderSettings(content.book, state.readerDefaultSettings)
+                                    )
                                     DesktopPdfPasswordDialog(
                                         title = content.book.displayName,
                                         isError = content.attemptedPassword,

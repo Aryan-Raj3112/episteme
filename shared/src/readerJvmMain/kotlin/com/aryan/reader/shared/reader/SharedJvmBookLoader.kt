@@ -35,6 +35,35 @@ import java.util.UUID
 import java.util.zip.ZipFile
 import javax.imageio.ImageIO
 
+private const val JvmBookOpenTraceTag = "EpistemeDesktopOpenTrace"
+
+private fun logJvmBookOpenTrace(message: () -> String) {
+    logSharedReaderDiagnostic(JvmBookOpenTraceTag, message)
+}
+
+private fun Long.jvmBookOpenTraceElapsedMs(nowNanos: Long = System.nanoTime()): Long {
+    return ((nowNanos - this).coerceAtLeast(0L)) / 1_000_000L
+}
+
+private fun String.jvmBookOpenTracePreview(maxLength: Int = 96): String {
+    return replace(Regex("\\s+"), " ")
+        .trim()
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
+}
+
+private fun SharedEpubBook.jvmBookOpenTraceSummary(): String {
+    return "title=\"${title.jvmBookOpenTracePreview(120)}\" chapters=${chapters.size} " +
+        "textChars=${chapters.sumOf { it.plainText.length }} " +
+        "htmlChars=${chapters.sumOf { it.htmlContent.length }} " +
+        "semanticBlocks=${chapters.sumOf { it.semanticBlocks.size }} " +
+        "cssFiles=${css.size} cssChars=${css.values.sumOf { it.length }} toc=${tableOfContents.size}"
+}
+
+private fun IntRange.toOpenTraceRangeKey(): String {
+    return "$first..$last"
+}
+
 object SharedJvmBookLoader {
     private val persistentBookCache = SharedJvmBookLoadCache()
     private val loadedBookCache = SharedJvmLruMemoryCache<SharedJvmBookLoadCacheKey, SharedEpubBook>(maxEntries = 12)
@@ -44,36 +73,89 @@ object SharedJvmBookLoader {
         file: File,
         type: FileType,
         titleOverride: String? = null,
-        authorOverride: String? = null
+        authorOverride: String? = null,
+        semanticMode: SharedJvmBookLoadSemanticMode = SharedJvmBookLoadSemanticMode.FULL,
+        preparedHtmlChapterRange: IntRange? = null
     ): SharedEpubBook {
+        val loadStartedAt = System.nanoTime()
         require(file.isFile) { "Missing reader file: ${file.absolutePath}" }
+        val preparedHtmlChapterRangeKey = preparedHtmlChapterRange?.toOpenTraceRangeKey()
         val key = SharedJvmBookLoadCacheKey(
             canonicalPath = file.canonicalPath,
             type = type,
             length = file.length(),
-            lastModified = file.lastModified()
+            lastModified = file.lastModified(),
+            semanticMode = semanticMode,
+            htmlChapterRange = preparedHtmlChapterRangeKey
         )
+        logJvmBookOpenTrace {
+            "event=shared_load_start type=${type.name} file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                "semanticMode=${semanticMode.name} preparedHtmlChapters=${preparedHtmlChapterRangeKey ?: "all"} " +
+                "bytes=${file.length()} lastModified=${file.lastModified()} cacheId=${key.cacheId} " +
+                "path=\"${file.absolutePath.jvmBookOpenTracePreview(220)}\""
+        }
         synchronized(loadedBookCache) {
-            loadedBookCache[key]?.let { return it.withOverrides(titleOverride = titleOverride, authorOverride = authorOverride) }
+            loadedBookCache[key]?.let { cached ->
+                logJvmBookOpenTrace {
+                    "event=shared_load_memory_hit cacheId=${key.cacheId} " +
+                        "elapsedMs=${loadStartedAt.jvmBookOpenTraceElapsedMs()} ${cached.jvmBookOpenTraceSummary()}"
+                }
+                return cached.withOverrides(titleOverride = titleOverride, authorOverride = authorOverride)
+            }
         }
 
-        val loaded = persistentBookCache.load(key) ?: when (type) {
-            FileType.EPUB -> loadEpub(file)
-            FileType.HTML -> loadHtml(file)
-            FileType.TXT,
-            FileType.MD -> loadPlainText(file)
-            FileType.FB2 -> loadFb2(file)
-            FileType.DOCX -> loadDocx(file)
-            FileType.ODT -> loadOdt(file, isFlat = false)
-            FileType.FODT -> loadOdt(file, isFlat = true)
-            FileType.MOBI -> loadMobi(file)
-            else -> error("${type.name} is not supported by the shared JVM reader loader.")
-        }.also { parsed ->
+        val diskCacheStartedAt = System.nanoTime()
+        val diskCached = persistentBookCache.load(key)
+        logJvmBookOpenTrace {
+            "event=shared_load_disk_cache_lookup result=${if (diskCached != null) "hit" else "miss"} " +
+                "cacheId=${key.cacheId} durationMs=${diskCacheStartedAt.jvmBookOpenTraceElapsedMs()}"
+        }
+        val source: String
+        val loaded = if (diskCached != null) {
+            source = "disk_cache"
+            diskCached
+        } else {
+            val parseStartedAt = System.nanoTime()
+            logJvmBookOpenTrace {
+                "event=shared_parse_start type=${type.name} semanticMode=${semanticMode.name} cacheId=${key.cacheId} " +
+                    "file=\"${file.name.jvmBookOpenTracePreview(120)}\""
+            }
+            val parsed = when (type) {
+                FileType.EPUB -> loadEpub(
+                    file = file,
+                    parseSemanticBlocks = semanticMode == SharedJvmBookLoadSemanticMode.FULL,
+                    preparedHtmlChapterRange = preparedHtmlChapterRange
+                )
+                FileType.HTML -> loadHtml(file)
+                FileType.TXT,
+                FileType.MD -> loadPlainText(file)
+                FileType.FB2 -> loadFb2(file)
+                FileType.DOCX -> loadDocx(file)
+                FileType.ODT -> loadOdt(file, isFlat = false)
+                FileType.FODT -> loadOdt(file, isFlat = true)
+                FileType.MOBI -> loadMobi(file)
+                else -> error("${type.name} is not supported by the shared JVM reader loader.")
+            }
+            logJvmBookOpenTrace {
+                "event=shared_parse_done type=${type.name} semanticMode=${semanticMode.name} cacheId=${key.cacheId} " +
+                    "durationMs=${parseStartedAt.jvmBookOpenTraceElapsedMs()} ${parsed.jvmBookOpenTraceSummary()}"
+            }
+            val saveStartedAt = System.nanoTime()
             persistentBookCache.save(key, parsed)
+            logJvmBookOpenTrace {
+                "event=shared_load_disk_cache_save cacheId=${key.cacheId} " +
+                    "durationMs=${saveStartedAt.jvmBookOpenTraceElapsedMs()}"
+            }
+            source = "parsed"
+            parsed
         }
 
         synchronized(loadedBookCache) {
             loadedBookCache[key] = loaded
+        }
+        logJvmBookOpenTrace {
+            "event=shared_load_done source=$source cacheId=${key.cacheId} " +
+                "elapsedMs=${loadStartedAt.jvmBookOpenTraceElapsedMs()} ${loaded.jvmBookOpenTraceSummary()}"
         }
         return loaded.withOverrides(titleOverride = titleOverride, authorOverride = authorOverride)
     }
@@ -85,8 +167,26 @@ object SharedJvmBookLoader {
         }
     }
 
-    fun loadEpub(file: File): SharedEpubBook {
+    fun loadEpub(
+        file: File,
+        parseSemanticBlocks: Boolean = true,
+        preparedHtmlChapterRange: IntRange? = null
+    ): SharedEpubBook {
+        val parseStartedAt = System.nanoTime()
+        val preparedHtmlChapterRangeKey = preparedHtmlChapterRange?.toOpenTraceRangeKey()
+        logJvmBookOpenTrace {
+            "event=epub_parse_start file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                "parseSemanticBlocks=$parseSemanticBlocks preparedHtmlChapters=${preparedHtmlChapterRangeKey ?: "all"} " +
+                "bytes=${file.length()} " +
+                "path=\"${file.absolutePath.jvmBookOpenTracePreview(220)}\""
+        }
+        val zipStartedAt = System.nanoTime()
         ZipFile(file).use { zip ->
+            logJvmBookOpenTrace {
+                "event=epub_zip_opened file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${zipStartedAt.jvmBookOpenTraceElapsedMs()} entries=${zip.size()}"
+            }
+            val opfStartedAt = System.nanoTime()
             val container = zip.readTextOrNull("META-INF/container.xml")
             val opfPath = container
                 ?.substringAfter("full-path=\"", missingDelimiterValue = "")
@@ -103,9 +203,33 @@ object SharedJvmBookLoader {
             val title = opf.tagText("title").ifBlank { file.nameWithoutExtension }
             val author = opf.tagText("creator").ifBlank { null }
             val manifest = parseEpubManifest(opf)
+            logJvmBookOpenTrace {
+                "event=epub_opf_ready file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${opfStartedAt.jvmBookOpenTraceElapsedMs()} opfPath=\"${opfPath.jvmBookOpenTracePreview(160)}\" " +
+                    "basePath=\"${basePath.jvmBookOpenTracePreview(120)}\" manifestItems=${manifest.size} opfChars=${opf.length} " +
+                    "title=\"${title.jvmBookOpenTracePreview(120)}\""
+            }
+            val cssStartedAt = System.nanoTime()
             val cssByPath = loadEpubCss(zip, manifest, basePath)
-            val cssRules = parseCssRules(cssByPath)
+            logJvmBookOpenTrace {
+                "event=epub_css_loaded file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${cssStartedAt.jvmBookOpenTraceElapsedMs()} cssFiles=${cssByPath.size} " +
+                    "cssChars=${cssByPath.values.sumOf { it.length }}"
+            }
+            val cssRulesStartedAt = System.nanoTime()
+            val cssRules = if (parseSemanticBlocks) parseCssRules(cssByPath) else OptimizedCssRules()
+            logJvmBookOpenTrace {
+                "event=epub_css_rules_parsed file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${cssRulesStartedAt.jvmBookOpenTraceElapsedMs()} cssFiles=${cssByPath.size} " +
+                    "skipped=${!parseSemanticBlocks}"
+            }
+            val tocStartedAt = System.nanoTime()
             val tableOfContents = parseEpubTableOfContents(zip, manifest, basePath)
+            logJvmBookOpenTrace {
+                "event=epub_toc_loaded file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${tocStartedAt.jvmBookOpenTraceElapsedMs()} entries=${tableOfContents.size}"
+            }
+            val spineStartedAt = System.nanoTime()
             val spine = Regex("<itemref[^>]*idref=[\"']([^\"']+)[\"'][^>]*/?>")
                 .findAll(opf)
                 .mapNotNull { match -> manifest[match.groupValues[1]] }
@@ -114,12 +238,37 @@ object SharedJvmBookLoader {
             val chapterPaths = spine.ifEmpty {
                 manifest.values.filter { it.endsWith(".xhtml", ignoreCase = true) || it.endsWith(".html", ignoreCase = true) }
             }
+            logJvmBookOpenTrace {
+                "event=epub_spine_ready file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${spineStartedAt.jvmBookOpenTraceElapsedMs()} spineItems=${spine.size} " +
+                    "chapterCandidates=${chapterPaths.size}"
+            }
 
+            val chaptersStartedAt = System.nanoTime()
             val chapters = chapterPaths.mapIndexedNotNull { index, href ->
+                val chapterStartedAt = System.nanoTime()
                 val path = normalizeZipPath(basePath + href)
-                val html = zip.readTextOrNull(path) ?: return@mapIndexedNotNull null
-                val resourceReadyHtml = html.sanitizeReaderHtml().withEmbeddedResources(zip, path)
-                val text = html.htmlToText()
+                val html = zip.readTextOrNull(path)
+                if (html == null) {
+                    logJvmBookOpenTrace {
+                        "event=epub_chapter_missing file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                            "index=$index path=\"${path.jvmBookOpenTracePreview(160)}\""
+                    }
+                    return@mapIndexedNotNull null
+                }
+                val shouldPrepareHtml = parseSemanticBlocks ||
+                    preparedHtmlChapterRange == null ||
+                    index in preparedHtmlChapterRange
+                val resourcesStartedAt = System.nanoTime()
+                val resourceReadyHtml = if (shouldPrepareHtml) {
+                    html.sanitizeReaderHtml().withEmbeddedResources(zip, path)
+                } else {
+                    ""
+                }
+                val resourceDurationMs = resourcesStartedAt.jvmBookOpenTraceElapsedMs()
+                val textStartedAt = System.nanoTime()
+                val text = if (parseSemanticBlocks) html.htmlToText() else html.fastHtmlToText()
+                val textDurationMs = textStartedAt.jvmBookOpenTraceElapsedMs()
                 val chapter = chapterFromHtml(
                     id = "chapter_$index",
                     title = html.tagText("h1")
@@ -129,12 +278,30 @@ object SharedJvmBookLoader {
                     html = resourceReadyHtml,
                     plainText = text,
                     baseHref = path,
-                    cssRules = cssRules
+                    cssRules = cssRules,
+                    parseSemanticBlocks = parseSemanticBlocks
                 )
-                chapter.takeIf { text.isNotBlank() || it.semanticBlocks.isNotEmpty() }
+                val accepted = text.isNotBlank() || chapter.semanticBlocks.isNotEmpty() || resourceReadyHtml.hasVisualHtmlContent()
+                val chapterDurationMs = chapterStartedAt.jvmBookOpenTraceElapsedMs()
+                if (parseSemanticBlocks || shouldPrepareHtml || chapterDurationMs >= 50) {
+                    logJvmBookOpenTrace {
+                        "event=epub_chapter_loaded file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                            "index=$index accepted=$accepted durationMs=$chapterDurationMs " +
+                            "htmlPrepared=$shouldPrepareHtml resourceMs=$resourceDurationMs textMs=$textDurationMs " +
+                            "path=\"${path.jvmBookOpenTracePreview(160)}\" title=\"${chapter.title.jvmBookOpenTracePreview(120)}\" " +
+                            "htmlChars=${html.length} embeddedHtmlChars=${resourceReadyHtml.length} textChars=${text.length} " +
+                            "semanticBlocks=${chapter.semanticBlocks.size}"
+                    }
+                }
+                chapter.takeIf { accepted }
+            }
+            logJvmBookOpenTrace {
+                "event=epub_chapters_loaded file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${chaptersStartedAt.jvmBookOpenTraceElapsedMs()} chapters=${chapters.size} " +
+                    "candidates=${chapterPaths.size}"
             }
 
-            return SharedEpubBook(
+            val book = SharedEpubBook(
                 id = file.absolutePath,
                 fileName = file.name,
                 title = title,
@@ -151,6 +318,11 @@ object SharedJvmBookLoader {
                     )
                 }
             )
+            logJvmBookOpenTrace {
+                "event=epub_parse_done file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
+                    "durationMs=${parseStartedAt.jvmBookOpenTraceElapsedMs()} ${book.jvmBookOpenTraceSummary()}"
+            }
+            return book
         }
     }
 
@@ -351,21 +523,39 @@ object SharedJvmBookLoader {
         html: String,
         plainText: String,
         baseHref: String?,
-        cssRules: OptimizedCssRules
+        cssRules: OptimizedCssRules,
+        parseSemanticBlocks: Boolean = true
     ): SharedEpubChapter {
-        val semanticBlocks = runCatching {
-            htmlToSemanticBlocks(
-                html = html,
-                cssRules = cssRules,
-                textStyle = TextStyle(fontSize = 18.sp),
-                chapterAbsPath = baseHref.orEmpty(),
-                extractionBasePath = "",
-                density = Density(1f),
-                fontFamilyMap = emptyMap(),
-                constraints = Constraints(maxWidth = 980, maxHeight = 720),
-                resourceResolver = SharedJvmHtmlResourceResolver
-            )
-        }.getOrDefault(emptyList())
+        val semanticStartedAt = System.nanoTime()
+        var semanticError: Throwable? = null
+        val semanticBlocks = if (parseSemanticBlocks) {
+            runCatching {
+                htmlToSemanticBlocks(
+                    html = html,
+                    cssRules = cssRules,
+                    textStyle = TextStyle(fontSize = 18.sp),
+                    chapterAbsPath = baseHref.orEmpty(),
+                    extractionBasePath = "",
+                    density = Density(1f),
+                    fontFamilyMap = emptyMap(),
+                    constraints = Constraints(maxWidth = 980, maxHeight = 720),
+                    resourceResolver = SharedJvmHtmlResourceResolver
+                )
+            }.onFailure { error ->
+                semanticError = error
+            }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        if (parseSemanticBlocks) {
+            logJvmBookOpenTrace {
+                "event=semantic_blocks_built title=\"${title.jvmBookOpenTracePreview(120)}\" skipped=false " +
+                    "baseHref=\"${baseHref.orEmpty().jvmBookOpenTracePreview(160)}\" " +
+                    "durationMs=${semanticStartedAt.jvmBookOpenTraceElapsedMs()} htmlChars=${html.length} " +
+                    "plainTextChars=${plainText.length} blocks=${semanticBlocks.size} " +
+                    "error=\"${semanticError?.message.orEmpty().jvmBookOpenTracePreview(160)}\""
+            }
+        }
         return SharedEpubChapter(
             id = id,
             title = title,
@@ -1305,17 +1495,34 @@ object SharedJvmBookLoader {
     private fun String.withEmbeddedCssResources(zip: ZipFile, cssPath: String): String {
         return replace(Regex("""url\((['"]?)([^)'"]+)\1\)""", RegexOption.IGNORE_CASE)) { match ->
             val raw = match.groupValues[2].trim()
+            if (raw.isFontResourceReference()) return@replace match.value
             val dataUri = zip.toDataUri(raw, cssPath)
             if (dataUri != null) "url('$dataUri')" else match.value
         }
     }
 
-    private fun ZipFile.toDataUri(rawRef: String, ownerPath: String): String? {
-        val ref = rawRef.substringBefore('#').trim()
+    private fun String.isFontResourceReference(): Boolean {
+        return substringBefore('#')
+            .substringBefore('?')
+            .substringAfterLast('.', "")
+            .lowercase() in setOf("ttf", "otf", "woff", "woff2")
+    }
+
+    private fun String.hasVisualHtmlContent(): Boolean {
+        return contains(Regex("""<\s*(img|svg|math|video|audio|object|canvas)\b""", RegexOption.IGNORE_CASE))
+    }
+
+    private fun ZipFile.toZipResourcePath(rawRef: String, ownerPath: String): String? {
+        val ref = rawRef.substringBefore('#').substringBefore('?').trim()
         if (ref.isBlank() || ref.startsWith("data:", ignoreCase = true)) return null
         if (ref.startsWith("http://", ignoreCase = true) || ref.startsWith("https://", ignoreCase = true)) return null
         val base = ownerPath.substringBeforeLast('/', missingDelimiterValue = "")
-        val path = normalizeZipPath(if (base.isBlank()) ref else "$base/$ref")
+        val decodedRef = ref.percentDecodedOrSelf()
+        return normalizeZipPath(if (base.isBlank()) decodedRef else "$base/$decodedRef")
+    }
+
+    private fun ZipFile.toDataUri(rawRef: String, ownerPath: String): String? {
+        val path = toZipResourcePath(rawRef, ownerPath) ?: return null
         val entry = getEntry(path) ?: return null
         val bytes = getInputStream(entry).use { it.readBytes() }
         return "data:${mimeType(path)};base64,${Base64.getEncoder().encodeToString(bytes)}"
@@ -1355,6 +1562,18 @@ object SharedJvmBookLoader {
 
     private fun String.htmlToText(): String {
         return Jsoup.parse(this).text().normalizeReaderWhitespace()
+    }
+
+    private fun String.fastHtmlToText(): String {
+        return Parser.unescapeEntities(
+            extractBodyOrSelf()
+                .replace(Regex("(?is)<script\\b.*?</script>"), " ")
+                .replace(Regex("(?is)<style\\b.*?</style>"), " ")
+                .replace(Regex("(?i)<\\s*br\\s*/?\\s*>"), "\n")
+                .replace(Regex("(?i)</\\s*(p|div|section|article|aside|main|header|footer|h[1-6]|li|tr|table|blockquote|ul|ol)\\s*>"), "\n")
+                .replace(Regex("(?is)<[^>]+>"), " "),
+            false
+        ).normalizeReaderWhitespace()
     }
 
     private fun String.sanitizeReaderHtml(): String {

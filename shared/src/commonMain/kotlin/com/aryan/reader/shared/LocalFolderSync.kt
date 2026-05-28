@@ -451,18 +451,7 @@ fun BookItem.toSharedFolderBookMetadata(): SharedFolderBookMetadata? {
         !bookmarksJson.isNullOrBlank() ||
         !highlightsJson.isNullOrBlank()
     if (!isDirty) return null
-    val positionCfi = position?.cfi ?: position?.let { locator ->
-        val chapterIndex = locator.chapterIndex
-        val startOffset = locator.startOffset
-        val endOffset = locator.endOffset ?: startOffset
-        when {
-            chapterIndex != null && locator.blockIndex != null && locator.charOffset != null ->
-                "android-locator:$chapterIndex:${locator.blockIndex}:${locator.charOffset}"
-            chapterIndex != null && startOffset != null && endOffset != null ->
-                "desktop:$chapterIndex:$startOffset:$endOffset"
-            else -> null
-        }
-    }
+    val positionCfi = position?.toStablePositionCfi()
 
     return SharedFolderBookMetadata(
         bookId = id,

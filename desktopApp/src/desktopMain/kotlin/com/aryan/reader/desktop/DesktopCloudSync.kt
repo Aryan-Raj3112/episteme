@@ -14,6 +14,7 @@ import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.sharedCloudBookMetadataWinner
 import com.aryan.reader.shared.shouldDownloadRemoteCloudBookContent
 import com.aryan.reader.shared.shouldUploadLocalCloudBookContent
+import com.aryan.reader.shared.toStablePositionCfi
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
 import java.io.File
@@ -862,19 +863,7 @@ private fun desktopShelfTimestamp(record: ShelfRecord, refs: List<BookShelfRef>)
 }
 
 private fun ReaderLocator.cloudPositionCfi(): String? {
-    cfi?.let { return it }
-    val chapter = chapterIndex
-    val start = startOffset
-    val end = endOffset ?: start
-    return when {
-        chapter != null && blockIndex != null && charOffset != null ->
-            "android-locator:$chapter:$blockIndex:$charOffset"
-        chapter != null && start != null && end != null ->
-            "desktop:$chapter:$start:$end"
-        chapter != null && pageIndex != null ->
-            "desktop:$chapter:$pageIndex"
-        else -> null
-    }
+    return toStablePositionCfi()
 }
 
 private fun ReaderBookmark.toDesktopCloudEpubBookmarkOrNull(): EpubBookmark? {

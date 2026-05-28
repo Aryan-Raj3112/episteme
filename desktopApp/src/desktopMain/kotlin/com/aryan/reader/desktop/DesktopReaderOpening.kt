@@ -10,7 +10,8 @@ internal data class DesktopReaderOpening(
     val title: String,
     val formatLabel: String,
     val returnTab: SharedAppTab,
-    val password: String? = null
+    val password: String? = null,
+    val startedAtNanos: Long = System.nanoTime()
 )
 
 internal sealed interface DesktopReaderOpenResult {

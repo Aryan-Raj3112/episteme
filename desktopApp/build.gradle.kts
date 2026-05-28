@@ -1,8 +1,11 @@
 import org.gradle.api.GradleException
 import org.gradle.api.DefaultTask
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.TaskAction
@@ -74,6 +77,26 @@ abstract class RenameDesktopMsiOutputTask : DefaultTask() {
         if (!source.renameTo(target)) {
             throw GradleException("Could not rename MSI from ${source.absolutePath} to ${target.absolutePath}.")
         }
+    }
+}
+
+@DisableCachingByDefault(because = "Generates local desktop service config for native packages.")
+abstract class GenerateDesktopCloudConfigTask : DefaultTask() {
+    @get:Input
+    abstract val configValues: MapProperty<String, String>
+
+    @get:OutputFile
+    abstract val outputFile: RegularFileProperty
+
+    @TaskAction
+    fun generate() {
+        val file = outputFile.get().asFile
+        file.parentFile.mkdirs()
+        file.writeText(
+            configValues.get().entries.joinToString(separator = "\n", postfix = "\n") { (key, value) ->
+                "$key=${value.replace("\\", "\\\\").replace("\n", "")}"
+            }
+        )
     }
 }
 
@@ -448,6 +471,7 @@ val desktopSwtVersion = "3.133.0"
 val desktopSwtDependency = desktopSwtArtifactId(desktopOsName, desktopOsArch)
     ?.let { artifactId -> "org.eclipse.platform:$artifactId:$desktopSwtVersion" }
 val generatedDesktopResourcesDir = layout.buildDirectory.dir("generated/desktopAppResources")
+val generatedDesktopCloudConfigFile = layout.buildDirectory.file("generated/desktopCloudConfig/desktop-cloud.properties")
 val generatedDesktopStringResourcesDir = layout.buildDirectory.dir("generated/desktopStringResources")
 val rootLocalProperties = Properties()
 val rootLocalPropertiesFile = rootProject.file("local.properties")
@@ -504,24 +528,18 @@ val checkBundledPdfiumRuntime by tasks.registering(CheckBundledPdfiumRuntimeTask
     libraryPath.set(bundledPdfiumLibraryPath)
 }
 
+val generateDesktopCloudConfig by tasks.registering(GenerateDesktopCloudConfigTask::class) {
+    configValues.set(desktopCloudConfig)
+    outputFile.set(generatedDesktopCloudConfigFile)
+}
+
 val prepareBundledDesktopResources by tasks.registering(Sync::class) {
-    dependsOn(checkBundledPdfiumRuntime)
+    dependsOn(checkBundledPdfiumRuntime, generateDesktopCloudConfig)
     from(bundledPdfiumDir) {
         into("common/third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}")
     }
     into("common") {
-        from(
-            providers.provider {
-                temporaryDir.resolve("desktop-cloud.properties").also { file ->
-                    file.parentFile.mkdirs()
-                    file.writeText(
-                        desktopCloudConfig.entries.joinToString(separator = "\n", postfix = "\n") { (key, value) ->
-                            "$key=${value.replace("\\", "\\\\").replace("\n", "")}"
-                        }
-                    )
-                }
-            }
-        )
+        from(generatedDesktopCloudConfigFile)
     }
     into(generatedDesktopResourcesDir)
 }
@@ -600,6 +618,7 @@ compose.desktop {
                 "java.management",
                 "java.net.http",
                 "jdk.charsets",
+                "jdk.httpserver",
                 "jdk.unsupported"
             )
             packageName = desktopPackageName

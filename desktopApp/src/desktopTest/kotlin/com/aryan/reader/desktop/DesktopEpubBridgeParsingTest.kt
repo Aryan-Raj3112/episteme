@@ -30,6 +30,7 @@ class DesktopEpubBridgeParsingTest {
         assertEquals(9, position?.locator?.blockIndex)
         assertEquals(140, position?.locator?.charOffset)
         assertEquals("quoted text", position?.locator?.textQuote)
+        assertEquals("/4/2:3", position?.locator?.cfi)
     }
 
     @Test

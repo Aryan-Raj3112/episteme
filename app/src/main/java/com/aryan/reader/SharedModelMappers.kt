@@ -16,6 +16,7 @@ import com.aryan.reader.shared.Shelf as SharedShelf
 import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.SyncedFolder as SharedSyncedFolder
 import com.aryan.reader.shared.Tag as SharedTag
+import com.aryan.reader.shared.toStablePositionCfi
 
 fun FileType.toSharedFileType(): SharedFileType = this
 
@@ -152,17 +153,7 @@ private fun RecentFileItem.toSharedReaderLocatorOrNull(): SharedReaderLocator? {
 }
 
 private fun SharedReaderLocator.toSharedPositionCfi(): String? {
-    cfi?.let { return it }
-    val chapter = chapterIndex
-    val start = startOffset
-    val end = endOffset ?: start
-    return when {
-        chapter != null && blockIndex != null && charOffset != null ->
-            "android-locator:$chapter:$blockIndex:$charOffset"
-        chapter != null && start != null && end != null ->
-            "desktop:$chapter:$start:$end"
-        else -> null
-    }
+    return toStablePositionCfi()
 }
 
 fun TagEntity.toSharedTag(): SharedTag {

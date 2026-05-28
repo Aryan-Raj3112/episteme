@@ -38,9 +38,18 @@ object ReaderHtmlDocumentBuilder {
         readerAiFeaturesEnabled: Boolean = true,
         cloudTtsEnabled: Boolean = true,
         externalLookupEnabled: Boolean = true,
-        textureDataUri: String? = null
+        textureDataUri: String? = null,
+        renderedChapterRange: IntRange? = null
     ): String {
-        val body = book.chapters.mapIndexed { index, chapter ->
+        val renderedChapterIndices = renderedChapterRange
+            ?.asSequence()
+            ?.filter { it in book.chapters.indices }
+            ?.distinct()
+            ?.toList()
+            ?.takeIf { it.isNotEmpty() }
+            ?: book.chapters.indices.toList()
+        val body = renderedChapterIndices.joinToString("\n") { index ->
+            val chapter = book.chapters[index]
             val chapterText = chapter.normalizedReaderText()
             val chapterHtml = chapter.toHtml(searchQuery, searchOptions)
                 .applyUserHighlights(
@@ -56,7 +65,7 @@ object ReaderHtmlDocumentBuilder {
               </div>
             </section>
             """.trimIndent()
-        }.joinToString("\n")
+        }
         return document(
             title = book.title,
             settings = settings,
@@ -380,6 +389,10 @@ object ReaderHtmlDocumentBuilder {
                   text-align: var(--reader-align);
                   position: relative;
                   z-index: 1;
+                }
+                body.reader-vertical .chapter {
+                  content-visibility: auto;
+                  contain-intrinsic-size: auto 1200px;
                 }
                 body.reader-vertical > .chapter,
                 body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(script):not(style),
@@ -749,6 +762,8 @@ object ReaderHtmlDocumentBuilder {
                   };
                   var lastReportedPageIndex = -1;
                   var lastReportedStartOffset = -1;
+                  var pendingRestoreLocator = null;
+                  var pendingRestoreUntil = 0;
                   var reportTimer = null;
                   var selectionMenuTimer = null;
                   var readerCurrentHighlights = [];
@@ -819,6 +834,20 @@ object ReaderHtmlDocumentBuilder {
                     }
                   }
                   window.readerDesktopHighlightMapLog = readerDesktopHighlightMapLog;
+                  function readerDesktopPositionTraceLog(message) {
+                    var line = 'EpistemeDesktopPositionTrace ' + message;
+                    var delivered = false;
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerDesktopPositionTraceLog', JSON.stringify({ message: message }));
+                        delivered = true;
+                      } catch (error) {}
+                    }
+                    if (!delivered) {
+                      try { console.log(line); } catch (error) {}
+                    }
+                  }
+                  window.readerDesktopPositionTraceLog = readerDesktopPositionTraceLog;
                   function readerTtsPreview(value, limit) {
                     return String(value || '').replace(/\s+/g, ' ').trim().substring(0, limit || 120);
                   }
@@ -965,35 +994,124 @@ object ReaderHtmlDocumentBuilder {
                     var hosts = readerHostsForLocator(chapterIndex, startOffset, endOffset);
                     return hosts.length ? hosts[0] : null;
                   }
+                  function readerLocatorTrace(locator) {
+                    locator = locator || {};
+                    return 'chapter=' + (locator.chapterIndex === undefined || locator.chapterIndex === null ? 'null' : locator.chapterIndex) +
+                      ' page=' + (locator.pageIndex === undefined || locator.pageIndex === null ? 'null' : locator.pageIndex) +
+                      ' offsets=' + (locator.startOffset === undefined || locator.startOffset === null ? 'null' : locator.startOffset) +
+                      '..' + (locator.endOffset === undefined || locator.endOffset === null ? 'null' : locator.endOffset) +
+                      ' block=' + (locator.blockIndex === undefined || locator.blockIndex === null ? 'null' : locator.blockIndex) +
+                      ' char=' + (locator.charOffset === undefined || locator.charOffset === null ? 'null' : locator.charOffset) +
+                      ' cfi=' + readerTtsPreview(locator.cfi, 160);
+                  }
+                  function stableReaderCfi(cfi) {
+                    if (cfi === undefined || cfi === null) return null;
+                    var value = String(cfi);
+                    if (value.indexOf('desktop-scroll:') !== 0) return value;
+                    var parts = value.split(':');
+                    if (parts.length < 4) return value;
+                    var stable = parts.slice(3).join(':');
+                    return stable || value;
+                  }
+                  function stableDesktopCfi(chapterIndex, startOffset, endOffset) {
+                    return 'desktop:' + chapterIndex + ':' + startOffset + ':' + (endOffset === undefined || endOffset === null ? startOffset : endOffset);
+                  }
+                  function locatorStartOffset(locator) {
+                    locator = locator || {};
+                    var start = parseInt(locator.startOffset, 10);
+                    if (Number.isFinite(start)) return start;
+                    var charOffset = parseInt(locator.charOffset, 10);
+                    if (Number.isFinite(charOffset)) return charOffset;
+                    var cfi = stableReaderCfi(locator.cfi);
+                    if (cfi && cfi.indexOf('desktop:') === 0) {
+                      var parts = cfi.split(':');
+                      var parsed = parseInt(parts[2], 10);
+                      if (Number.isFinite(parsed)) return parsed;
+                    }
+                    if (cfi && cfi.indexOf('android-locator:') === 0) {
+                      var androidParts = cfi.split(':');
+                      var androidChar = parseInt(androidParts[3], 10);
+                      if (Number.isFinite(androidChar)) return androidChar;
+                    }
+                    return null;
+                  }
+                  function prepareVerticalScrollMeasurement(targetChapter) {
+                    if (!isVerticalReaderDocument()) return;
+                    var chapters = Array.prototype.slice.call(document.querySelectorAll('[data-reader-chapter-index]'));
+                    chapters.forEach(function (chapter) {
+                      chapter.style.contentVisibility = 'visible';
+                      chapter.style.containIntrinsicSize = 'auto';
+                    });
+                    if (targetChapter) {
+                      targetChapter.style.contentVisibility = 'visible';
+                      targetChapter.style.containIntrinsicSize = 'auto';
+                    }
+                    if (document.body) void document.body.offsetHeight;
+                    if (targetChapter) void targetChapter.offsetHeight;
+                  }
+                  function scrollToTopWithTrace(targetTop, strategy, locator, extra) {
+                    var before = verticalScrollMetrics();
+                    var top = Math.max(0, Math.round(Number(targetTop) || 0));
+                    window.scrollTo({ top: top, left: 0, behavior: 'auto' });
+                    var after = verticalScrollMetrics();
+                    var clamped = Math.abs(after.scrollY - top) > 2 && (top > after.maxScroll + 2 || top < 0);
+                    readerDesktopPositionTraceLog(
+                      'event=web_scroll_to_locator_done mode=' + (isVerticalReaderDocument() ? 'vertical' : 'paginated') +
+                      ' strategy=' + strategy +
+                      ' targetY=' + top +
+                      ' beforeY=' + before.scrollY +
+                      ' afterY=' + after.scrollY +
+                      ' maxScroll=' + after.maxScroll +
+                      ' clamped=' + clamped +
+                      ' ' + readerLocatorTrace(locator) +
+                      (extra ? ' ' + extra : '')
+                    );
+                    return { targetY: top, beforeY: before.scrollY, afterY: after.scrollY, maxScroll: after.maxScroll, clamped: clamped };
+                  }
                   function scrollToLocator(locator) {
                     locator = locator || {};
+                    if (isVerticalReaderDocument()) {
+                      pendingRestoreLocator = locator;
+                      pendingRestoreUntil = Date.now() + 5000;
+                    }
+                    readerDesktopPositionTraceLog(
+                      'event=web_scroll_to_locator_start mode=' + (isVerticalReaderDocument() ? 'vertical' : 'paginated') +
+                      ' ' + readerLocatorTrace(locator)
+                    );
                     if (scrollToVerticalPage(locator)) return;
                     var chapterIndex = locator.chapterIndex;
                     if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
                       chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
                     }
-                    if (chapterIndex === null || chapterIndex === '') return;
-                    var activeStart = locator.startOffset;
+                    if (chapterIndex === null || chapterIndex === '') {
+                      readerDesktopPositionTraceLog('event=web_scroll_to_locator_skip reason=missing_chapter ' + readerLocatorTrace(locator));
+                      return;
+                    }
+                    var activeStart = locatorStartOffset(locator);
                     if (activeStart === undefined || activeStart === null) {
                       activeStart = numberAttribute(document.body, 'data-reader-active-start-offset', null);
-                    }
-                    if (activeStart === undefined || activeStart === null) {
-                      var locatorCharOffset = parseInt(locator.charOffset, 10);
-                      if (Number.isFinite(locatorCharOffset)) activeStart = locatorCharOffset;
                     }
                     var requestedPageIndex = parseInt(locator.pageIndex, 10);
                     var chapter = Number.isFinite(requestedPageIndex)
                       ? document.querySelector('[data-reader-page-index="' + selectorValue(requestedPageIndex) + '"]')
                       : null;
                     if (!chapter) chapter = readerHostForLocator(chapterIndex, activeStart, locator.endOffset);
-                    if (!chapter) return;
-                    var locatorCfiBase = locator.cfi ? String(locator.cfi).split('|')[0].split(':')[0] : null;
+                    if (!chapter) {
+                      readerDesktopPositionTraceLog(
+                        'event=web_scroll_to_locator_skip reason=missing_host requestedChapter=' + chapterIndex +
+                        ' activeStart=' + activeStart + ' ' + readerLocatorTrace(locator)
+                      );
+                      return;
+                    }
+                    prepareVerticalScrollMeasurement(chapter);
+                    var stableCfi = stableReaderCfi(locator.cfi);
+                    var locatorCfiBase = stableCfi ? String(stableCfi).split('|')[0].split(':')[0] : null;
                     var exactCfi = locatorCfiBase
                       ? chapter.querySelector('[data-reader-cfi="' + selectorValue(locatorCfiBase) + '"]')
                       : null;
                     if (exactCfi && (activeStart === undefined || activeStart === null)) {
                       var cfiRect = exactCfi.getBoundingClientRect();
-                      window.scrollTo({ top: Math.max(0, cfiRect.top + window.scrollY - 24), left: 0, behavior: 'auto' });
+                      scrollToTopWithTrace(cfiRect.top + window.scrollY - 24, 'exact_cfi', locator, 'requestedChapter=' + chapterIndex);
                       return;
                     }
                     var exact = activeStart === null
@@ -1010,14 +1128,23 @@ object ReaderHtmlDocumentBuilder {
                       var parsedEnd = parseInt(locator.endOffset === undefined || locator.endOffset === null ? activeStart : locator.endOffset, 10);
                       if (Number.isFinite(parsedStart)) {
                         var rangeEnd = Number.isFinite(parsedEnd) && parsedEnd > parsedStart ? parsedEnd : parsedStart + 1;
-                        var exactRange = rangeForOffsets(parseInt(chapterIndex, 10), parsedStart, rangeEnd, locator.cfi);
+                        var exactRange = rangeForOffsets(parseInt(chapterIndex, 10), parsedStart, rangeEnd, stableCfi);
                         if (exactRange) {
                           var rangeRects = exactRange.getClientRects();
                           var rangeRect = rangeRects.length ? rangeRects[0] : exactRange.getBoundingClientRect();
                           exactRange.detach && exactRange.detach();
                           if (rangeRect && (rangeRect.top !== 0 || rangeRect.bottom !== 0)) {
-                            window.scrollTo({ top: Math.max(0, rangeRect.top + window.scrollY - 24), left: 0, behavior: 'auto' });
-                            return;
+                            var exactResult = scrollToTopWithTrace(rangeRect.top + window.scrollY - 24, 'exact_range', locator, 'requestedChapter=' + chapterIndex);
+                            if (!exactResult.clamped || !isVerticalReaderDocument()) {
+                              return;
+                            }
+                            readerDesktopPositionTraceLog(
+                              'event=web_scroll_to_locator_clamped strategy=exact_range requestedChapter=' + chapterIndex +
+                              ' targetY=' + exactResult.targetY +
+                              ' afterY=' + exactResult.afterY +
+                              ' maxScroll=' + exactResult.maxScroll +
+                              ' fallback=content_ratio'
+                            );
                           }
                         }
                       }
@@ -1027,12 +1154,12 @@ object ReaderHtmlDocumentBuilder {
                         var ratio = Math.max(0, Math.min(1, (activeStart - contentStart) / (contentEnd - contentStart)));
                         var contentRect = content.getBoundingClientRect();
                         var approximateY = contentRect.top + window.scrollY + (content.scrollHeight * ratio);
-                        window.scrollTo({ top: Math.max(0, approximateY - 24), left: 0, behavior: 'auto' });
+                        scrollToTopWithTrace(approximateY - 24, 'content_ratio', locator, 'requestedChapter=' + chapterIndex + ' ratio=' + ratio.toFixed(4));
                         return;
                       }
                     }
                     var rect = target.getBoundingClientRect();
-                    window.scrollTo({ top: Math.max(0, rect.top + window.scrollY - 24), left: 0, behavior: 'auto' });
+                    scrollToTopWithTrace(rect.top + window.scrollY - 24, exact ? 'exact_marker' : (exactBlock ? 'exact_block' : 'host_top'), locator, 'requestedChapter=' + chapterIndex);
                   }
                   function scrollToActiveLocator() {
                     scrollToLocator({
@@ -1114,11 +1241,16 @@ object ReaderHtmlDocumentBuilder {
                     }
                     return range;
                   }
-                  function firstVisibleOffsetInContent(content) {
+                  function readerProbeY() {
+                    var height = window.innerHeight || document.documentElement.clientHeight || 0;
+                    if (height <= 0) return 8;
+                    return Math.max(8, Math.min(height - 8, Math.round(height * 0.12)));
+                  }
+                  function firstVisibleOffsetInContent(content, preferredY) {
                     var nodes = textNodesUnder(content, false);
                     var contentStart = numberAttribute(content, 'data-reader-content-start', 0);
                     var offset = contentStart;
-                    var viewportTop = Math.max(8, window.innerHeight * 0.08);
+                    var viewportTop = Number.isFinite(preferredY) ? preferredY : readerProbeY();
                     var viewportBottom = window.innerHeight - 8;
                     for (var n = 0; n < nodes.length; n++) {
                       var node = nodes[n];
@@ -1185,6 +1317,20 @@ object ReaderHtmlDocumentBuilder {
                   function isVerticalReaderDocument() {
                     return !!(document.body && document.body.classList.contains('reader-vertical'));
                   }
+                  function renderedVerticalPageAnchors() {
+                    if (!isVerticalReaderDocument() || !readerPageAnchors.length) return readerPageAnchors;
+                    var hosts = Array.prototype.slice.call(document.querySelectorAll('[data-reader-chapter-index]'));
+                    if (!hosts.length) return readerPageAnchors;
+                    var renderedChapters = {};
+                    hosts.forEach(function (host) {
+                      var chapterIndex = numberAttribute(host, 'data-reader-chapter-index', null);
+                      if (chapterIndex !== null) renderedChapters[chapterIndex] = true;
+                    });
+                    var filtered = readerPageAnchors.filter(function (page) {
+                      return !!renderedChapters[page.chapterIndex];
+                    });
+                    return filtered.length ? filtered : readerPageAnchors;
+                  }
                   function verticalScrollMetrics() {
                     var scrollY = Math.round(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0);
                     var scrollHeight = Math.round(Math.max(
@@ -1202,11 +1348,13 @@ object ReaderHtmlDocumentBuilder {
                   }
                   function pageForVerticalScroll() {
                     if (!isVerticalReaderDocument() || !readerPageAnchors.length) return null;
+                    var anchors = renderedVerticalPageAnchors();
+                    if (!anchors.length) return null;
                     var metrics = verticalScrollMetrics();
-                    if (readerPageAnchors.length === 1 || metrics.maxScroll <= 0) return readerPageAnchors[0];
+                    if (anchors.length === 1 || metrics.maxScroll <= 0) return anchors[0];
                     var ratio = Math.max(0, Math.min(1, metrics.scrollY / metrics.maxScroll));
-                    var index = Math.round((readerPageAnchors.length - 1) * ratio);
-                    return readerPageAnchors[Math.max(0, Math.min(readerPageAnchors.length - 1, index))];
+                    var index = Math.round((anchors.length - 1) * ratio);
+                    return anchors[Math.max(0, Math.min(anchors.length - 1, index))];
                   }
                   function scrollToVerticalPage(locator) {
                     if (!isVerticalReaderDocument() || !locator) return false;
@@ -1214,10 +1362,34 @@ object ReaderHtmlDocumentBuilder {
                     if (cfi.indexOf('desktop-scroll-page:') !== 0) return false;
                     var pageIndex = parseInt(locator.pageIndex, 10);
                     if (!Number.isFinite(pageIndex) || !readerPageAnchors.length) return false;
+                    var chapterIndex = parseInt(locator.chapterIndex, 10);
+                    var startOffset = parseInt(locator.startOffset, 10);
+                    if (Number.isFinite(chapterIndex) && Number.isFinite(startOffset)) {
+                      var chapter = readerHostForLocator(chapterIndex, startOffset, locator.endOffset);
+                      if (chapter) {
+                        prepareVerticalScrollMeasurement(chapter);
+                        var content = chapter.querySelector('.reader-content') || chapter;
+                        var contentStart = numberAttribute(content, 'data-reader-content-start', numberAttribute(chapter, 'data-reader-page-start', 0));
+                        var contentEnd = numberAttribute(content, 'data-reader-content-end', numberAttribute(chapter, 'data-reader-page-end', contentStart));
+                        var targetY = chapter.getBoundingClientRect().top + window.scrollY;
+                        if (contentEnd > contentStart && startOffset > contentStart) {
+                          var ratioInContent = Math.max(0, Math.min(1, (startOffset - contentStart) / (contentEnd - contentStart)));
+                          var contentRect = content.getBoundingClientRect();
+                          targetY = contentRect.top + window.scrollY + (content.scrollHeight * ratioInContent);
+                        }
+                        scrollToTopWithTrace(targetY - 24, 'vertical_page_content', locator, 'ratioSource=content');
+                        return true;
+                      }
+                    }
+                    var anchors = renderedVerticalPageAnchors();
+                    if (!anchors.length) return false;
                     var metrics = verticalScrollMetrics();
-                    var maxPageIndex = Math.max(1, readerPageAnchors.length - 1);
-                    var ratio = Math.max(0, Math.min(1, pageIndex / maxPageIndex));
-                    window.scrollTo({ top: Math.round(metrics.maxScroll * ratio), left: 0, behavior: 'auto' });
+                    var anchorPosition = anchors.findIndex(function (page) { return page.pageIndex === pageIndex; });
+                    var ratio = anchorPosition >= 0
+                      ? anchorPosition / Math.max(1, anchors.length - 1)
+                      : pageIndex / Math.max(1, readerPageAnchors.length - 1);
+                    ratio = Math.max(0, Math.min(1, ratio));
+                    scrollToTopWithTrace(Math.round(metrics.maxScroll * ratio), 'vertical_page_ratio', locator, 'ratio=' + ratio.toFixed(4));
                     return true;
                   }
                   function readerHostIsVisible(host) {
@@ -1225,24 +1397,67 @@ object ReaderHtmlDocumentBuilder {
                     var rect = host.getBoundingClientRect();
                     return rect.bottom >= 8 && rect.top <= window.innerHeight - 8;
                   }
-                  function positionFromReaderHost(host, preferredOffset) {
+                  function readerHostVisibilityScore(host, probeY) {
+                    if (!host) return null;
+                    var rect = host.getBoundingClientRect();
+                    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                    var visibleTop = Math.max(0, rect.top);
+                    var visibleBottom = Math.min(viewportHeight, rect.bottom);
+                    var visibleHeight = Math.max(0, visibleBottom - visibleTop);
+                    var containsProbe = rect.top <= probeY && rect.bottom >= probeY;
+                    var distance = containsProbe ? 0 : Math.min(Math.abs(rect.top - probeY), Math.abs(rect.bottom - probeY));
+                    return {
+                      visibleHeight: visibleHeight,
+                      containsProbe: containsProbe,
+                      distance: distance,
+                      top: Math.round(rect.top),
+                      bottom: Math.round(rect.bottom)
+                    };
+                  }
+                  function bestVisibleReaderHost() {
+                    var chapters = Array.prototype.slice.call(document.querySelectorAll('[data-reader-chapter-index]'));
+                    if (!chapters.length) return null;
+                    var probeY = readerProbeY();
+                    var probeX = Math.max(0, Math.min((window.innerWidth || 0) - 1, Math.round((window.innerWidth || 0) / 2)));
+                    var probeElement = document.elementFromPoint(probeX, probeY);
+                    var probeHost = nearestReaderHost(probeElement);
+                    if (probeHost && readerHostIsVisible(probeHost)) {
+                      return { host: probeHost, probeY: probeY, source: 'element_from_point', score: readerHostVisibilityScore(probeHost, probeY) };
+                    }
+                    var best = null;
+                    chapters.forEach(function (chapter) {
+                      if (!readerHostIsVisible(chapter)) return;
+                      var score = readerHostVisibilityScore(chapter, probeY);
+                      if (!score || score.visibleHeight <= 0) return;
+                      if (!best ||
+                        (score.containsProbe && !best.score.containsProbe) ||
+                        (score.containsProbe === best.score.containsProbe && score.distance < best.score.distance) ||
+                        (score.containsProbe === best.score.containsProbe && score.distance === best.score.distance && score.visibleHeight > best.score.visibleHeight)
+                      ) {
+                        best = { host: chapter, probeY: probeY, source: 'visibility_score', score: score };
+                      }
+                    });
+                    return best;
+                  }
+                  function positionFromReaderHost(host, preferredOffset, preferredY, source) {
                     if (!host) return null;
                     var content = host.querySelector('.reader-content') || host;
                     var chapterIndex = numberAttribute(host, 'data-reader-chapter-index', 0);
                     var pageStart = numberAttribute(host, 'data-reader-page-start', null);
                     var pageEnd = numberAttribute(host, 'data-reader-page-end', null);
-                    var visible = firstVisibleOffsetInContent(content);
+                    var visible = firstVisibleOffsetInContent(content, preferredY);
                     var usePreferredOffset = Number.isFinite(preferredOffset) &&
                       (pageStart === null || preferredOffset >= pageStart) &&
                       (pageEnd === null || preferredOffset <= pageEnd);
                     var offset = usePreferredOffset ? preferredOffset : visible.offset;
-                    var page = pageForVerticalScroll() || pageForLocator(chapterIndex, offset) || readerPageAnchors[0];
+                    var renderedAnchors = renderedVerticalPageAnchors();
+                    var page = pageForLocator(chapterIndex, offset) || pageForVerticalScroll() || renderedAnchors[0] || readerPageAnchors[0];
                     if (!page) return null;
-                    var positionCfi = readerCfiPointForOffset(content, offset, false) || ('desktop:' + chapterIndex + ':' + offset + ':' + offset);
+                    var positionCfi = readerCfiPointForOffset(content, offset, false) || stableDesktopCfi(chapterIndex, offset, offset);
                     var blockPosition = readerBlockPositionForOffset(content, offset, false);
+                    var metrics = isVerticalReaderDocument() ? verticalScrollMetrics() : null;
                     if (isVerticalReaderDocument()) {
-                      var metrics = verticalScrollMetrics();
-                      positionCfi = 'desktop-scroll:' + metrics.scrollY + ':' + metrics.maxScroll + ':' + positionCfi;
+                      positionCfi = stableReaderCfi(positionCfi) || stableDesktopCfi(chapterIndex, offset, offset);
                     }
                     readerDesktopHighlightMapLog(
                       'web_position_payload mode=' + (isVerticalReaderDocument() ? 'vertical' : 'paginated') +
@@ -1253,6 +1468,22 @@ object ReaderHtmlDocumentBuilder {
                       ' char=' + (blockPosition ? blockPosition.charOffset : 'null') +
                       ' chapterId=' + readerTtsPreview(host.getAttribute('data-reader-chapter-id'), 80) +
                       ' href=' + readerTtsPreview(host.getAttribute('data-reader-chapter-href'), 120) +
+                      ' cfi=' + readerTtsPreview(positionCfi, 160) +
+                      ' text="' + readerTtsPreview(snippetFromContentOffset(content, offset), 120) + '"'
+                    );
+                    readerDesktopPositionTraceLog(
+                      'event=web_position_payload mode=' + (isVerticalReaderDocument() ? 'vertical' : 'paginated') +
+                      ' source=' + (source || 'unknown') +
+                      ' page=' + page.pageIndex +
+                      ' chapter=' + chapterIndex +
+                      ' offsets=' + offset + '..' + offset +
+                      ' preferredOffset=' + (Number.isFinite(preferredOffset) ? preferredOffset : 'null') +
+                      ' preferredY=' + (Number.isFinite(preferredY) ? Math.round(preferredY) : 'null') +
+                      ' visibleNode=' + (visible.textNode ? readerElementLabel(visible.textNode.parentElement) : 'null') +
+                      ' scrollY=' + (metrics ? metrics.scrollY : 'null') +
+                      ' maxScroll=' + (metrics ? metrics.maxScroll : 'null') +
+                      ' block=' + (blockPosition ? blockPosition.blockIndex : 'null') +
+                      ' char=' + (blockPosition ? blockPosition.charOffset : 'null') +
                       ' cfi=' + readerTtsPreview(positionCfi, 160) +
                       ' text="' + readerTtsPreview(snippetFromContentOffset(content, offset), 120) + '"'
                     );
@@ -1269,31 +1500,146 @@ object ReaderHtmlDocumentBuilder {
                       cfi: positionCfi
                     };
                   }
+                  function locatorChapterIndex(locator) {
+                    locator = locator || {};
+                    var chapterIndex = parseInt(locator.chapterIndex, 10);
+                    if (Number.isFinite(chapterIndex)) return chapterIndex;
+                    var cfi = stableReaderCfi(locator.cfi);
+                    if (cfi && cfi.indexOf('desktop:') === 0) {
+                      var desktopParts = cfi.split(':');
+                      var desktopChapter = parseInt(desktopParts[1], 10);
+                      if (Number.isFinite(desktopChapter)) return desktopChapter;
+                    }
+                    if (cfi && cfi.indexOf('android-locator:') === 0) {
+                      var androidParts = cfi.split(':');
+                      var androidChapter = parseInt(androidParts[1], 10);
+                      if (Number.isFinite(androidChapter)) return androidChapter;
+                    }
+                    return null;
+                  }
+                  function positionMatchesRestoreLocator(position, locator) {
+                    if (!position || !locator) return false;
+                    var chapterIndex = locatorChapterIndex(locator);
+                    if (chapterIndex !== null && position.chapterIndex !== chapterIndex) return false;
+                    var requestedPage = parseInt(locator.pageIndex, 10);
+                    var requestedOffset = locatorStartOffset(locator);
+                    if (requestedOffset !== null) {
+                      if (Math.abs(position.startOffset - requestedOffset) <= 512) return true;
+                      if (Number.isFinite(requestedPage) && position.pageIndex === requestedPage) return true;
+                      return false;
+                    }
+                    return Number.isFinite(requestedPage) ? position.pageIndex === requestedPage : true;
+                  }
+                  function pendingRestoreVisiblePosition() {
+                    if (!pendingRestoreLocator || !isVerticalReaderDocument()) return null;
+                    if (Date.now() > pendingRestoreUntil) {
+                      readerDesktopPositionTraceLog(
+                        'event=web_restore_guard_expired ' + readerLocatorTrace(pendingRestoreLocator)
+                      );
+                      pendingRestoreLocator = null;
+                      pendingRestoreUntil = 0;
+                      return null;
+                    }
+                    var chapterIndex = locatorChapterIndex(pendingRestoreLocator);
+                    var requestedOffset = locatorStartOffset(pendingRestoreLocator);
+                    if (chapterIndex === null || requestedOffset === null) return null;
+                    var chapter = readerHostForLocator(chapterIndex, requestedOffset, pendingRestoreLocator.endOffset);
+                    if (!chapter || !readerHostIsVisible(chapter)) return null;
+                    var range = rangeForOffsets(chapterIndex, requestedOffset, requestedOffset + 1, stableReaderCfi(pendingRestoreLocator.cfi));
+                    var preferredY = readerProbeY();
+                    var visible = false;
+                    if (range) {
+                      var rects = range.getClientRects();
+                      var rect = rects.length ? rects[0] : range.getBoundingClientRect();
+                      range.detach && range.detach();
+                      if (rect && rect.bottom >= 8 && rect.top <= (window.innerHeight || document.documentElement.clientHeight || 0) - 8) {
+                        visible = true;
+                        preferredY = Math.max(8, Math.min((window.innerHeight || document.documentElement.clientHeight || 0) - 8, Math.round(rect.top)));
+                      }
+                    }
+                    if (!visible) return null;
+                    readerDesktopPositionTraceLog(
+                      'event=web_restore_guard_visible chapter=' + chapterIndex +
+                      ' offset=' + requestedOffset +
+                      ' preferredY=' + preferredY +
+                      ' ' + readerLocatorTrace(pendingRestoreLocator)
+                    );
+                    return positionFromReaderHost(chapter, requestedOffset, preferredY, 'restore_locator_visible');
+                  }
+                  function clearPendingRestoreLocator(reason) {
+                    if (!pendingRestoreLocator) return;
+                    readerDesktopPositionTraceLog(
+                      'event=web_restore_guard_cleared reason=' + reason +
+                      ' pending=' + readerLocatorTrace(pendingRestoreLocator)
+                    );
+                    pendingRestoreLocator = null;
+                    pendingRestoreUntil = 0;
+                  }
                   function currentVisiblePosition() {
                     var activePageIndex = numberAttribute(document.body, 'data-reader-active-page-index', null);
                     if (document.body.classList.contains('reader-paginated') && activePageIndex !== null) {
                       var activePage = document.querySelector('.page[data-reader-page-index="' + selectorValue(activePageIndex) + '"]');
                       if (readerHostIsVisible(activePage)) {
                         var activeStart = numberAttribute(document.body, 'data-reader-active-start-offset', null);
-                        var activePosition = positionFromReaderHost(activePage, activeStart);
+                        var activePosition = positionFromReaderHost(activePage, activeStart, readerProbeY(), 'active_page');
                         if (activePosition) return activePosition;
                       }
                     }
-                    var chapters = document.querySelectorAll('[data-reader-chapter-index]');
-                    for (var i = 0; i < chapters.length; i++) {
-                      var chapter = chapters[i];
-                      if (!readerHostIsVisible(chapter)) continue;
-                      var position = positionFromReaderHost(chapter, null);
+                    var best = bestVisibleReaderHost();
+                    if (best && best.host) {
+                      readerDesktopPositionTraceLog(
+                        'event=web_visible_host_selected source=' + best.source +
+                        ' chapter=' + numberAttribute(best.host, 'data-reader-chapter-index', -1) +
+                        ' probeY=' + best.probeY +
+                        ' visibleHeight=' + (best.score ? Math.round(best.score.visibleHeight) : 'null') +
+                        ' containsProbe=' + (best.score ? best.score.containsProbe : false) +
+                        ' distance=' + (best.score ? Math.round(best.score.distance) : 'null') +
+                        ' rect=' + (best.score ? best.score.top + '..' + best.score.bottom : 'null')
+                      );
+                      var position = positionFromReaderHost(best.host, null, best.probeY, best.source);
                       if (position) return position;
                     }
                     return null;
                   }
                   function reportVisiblePage() {
-                    var position = currentVisiblePosition();
-                    if (!position) return;
-                    if (position.pageIndex === lastReportedPageIndex && Math.abs(position.startOffset - lastReportedStartOffset) < 8) return;
+                    var position = pendingRestoreVisiblePosition() || currentVisiblePosition();
+                    if (!position) {
+                      readerDesktopPositionTraceLog('event=web_position_report_skip reason=no_position');
+                      return;
+                    }
+                    if (pendingRestoreLocator) {
+                      if (!positionMatchesRestoreLocator(position, pendingRestoreLocator)) {
+                        readerDesktopPositionTraceLog(
+                          'event=web_position_report_skip reason=pending_restore page=' + position.pageIndex +
+                          ' chapter=' + position.chapterIndex +
+                          ' offsets=' + position.startOffset + '..' + position.endOffset +
+                          ' pending=' + readerLocatorTrace(pendingRestoreLocator)
+                        );
+                        return;
+                      }
+                      readerDesktopPositionTraceLog(
+                        'event=web_restore_guard_resolved page=' + position.pageIndex +
+                        ' chapter=' + position.chapterIndex +
+                        ' offsets=' + position.startOffset + '..' + position.endOffset +
+                        ' pending=' + readerLocatorTrace(pendingRestoreLocator)
+                      );
+                      pendingRestoreLocator = null;
+                      pendingRestoreUntil = 0;
+                    }
+                    if (position.pageIndex === lastReportedPageIndex && Math.abs(position.startOffset - lastReportedStartOffset) < 8) {
+                      return;
+                    }
                     lastReportedPageIndex = position.pageIndex;
                     lastReportedStartOffset = position.startOffset;
+                    readerDesktopPositionTraceLog(
+                      'event=web_position_report_send page=' + position.pageIndex +
+                      ' chapter=' + position.chapterIndex +
+                      ' offsets=' + position.startOffset + '..' + position.endOffset +
+                      ' block=' + (position.blockIndex === null || position.blockIndex === undefined ? 'null' : position.blockIndex) +
+                      ' char=' + (position.charOffset === null || position.charOffset === undefined ? 'null' : position.charOffset) +
+                      ' cfi=' + readerTtsPreview(position.cfi, 160) +
+                      ' text="' + readerTtsPreview(position.textQuote, 120) + '"'
+                    );
                     if (window.kmpJsBridge) {
                       window.kmpJsBridge.callNative('readerPositionChanged', JSON.stringify(position));
                     }
@@ -3208,7 +3554,11 @@ object ReaderHtmlDocumentBuilder {
                   }, true);
                   document.addEventListener('scroll', scheduleVisiblePageReport, true);
                   window.addEventListener('scroll', scheduleVisiblePageReport, { passive: true });
+                  window.addEventListener('wheel', function () { clearPendingRestoreLocator('wheel'); }, { passive: true });
+                  window.addEventListener('touchstart', function () { clearPendingRestoreLocator('touchstart'); }, { passive: true });
+                  window.addEventListener('keydown', function () { clearPendingRestoreLocator('keydown'); });
                   document.addEventListener('pointerdown', function (event) {
+                    clearPendingRestoreLocator('pointerdown');
                     if (event.button === 0 && !menu.contains(event.target)) {
                       selectionPointerDown = true;
                       hideMenu();
@@ -3407,7 +3757,7 @@ object ReaderHtmlDocumentBuilder {
                 val tag = if (isOrdered) "ol" else "ul"
                 "<$tag${styleAttribute()}>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
             }
-            is SemanticImage -> "<figure${imageAnchorAttributes()}${styleAttribute()}><img src=\"${path.escapeHtml()}\" alt=\"${altText.orEmpty().escapeHtml()}\"${imageSizeAttribute()}></figure>"
+            is SemanticImage -> "<figure${imageAnchorAttributes()}${styleAttribute()}><img src=\"${path.escapeHtml()}\" alt=\"${altText.orEmpty().escapeHtml()}\" loading=\"lazy\" decoding=\"async\"${imageSizeAttribute()}></figure>"
             is SemanticMath -> svgContent ?: "<pre${styleAttribute()}>${altText.orEmpty().highlightAndEscape(searchQuery, searchOptions)}</pre>"
             is SemanticSpacer -> if (isExplicitLineBreak) "<br>" else "<div${styleAttribute("height:1em")}></div>"
             is SemanticTable -> rows.joinToString("", "<table${styleAttribute()}><tbody>", "</tbody></table>") { row ->

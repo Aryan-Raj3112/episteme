@@ -104,14 +104,15 @@ data class ReaderLocator(
             pageIndex: Int? = null,
             textQuote: String? = null
         ): ReaderLocator {
-            val desktopParts = cfi
+            val stableCfi = cfi?.toStableReaderPositionCfi()
+            val desktopParts = stableCfi
                 ?.takeIf { it.startsWith("desktop:") }
                 ?.split(':')
                 .orEmpty()
             val parsedChapterIndex = desktopParts.getOrNull(1)?.toIntOrNull()
             val possibleStartOffset = desktopParts.getOrNull(2)?.toIntOrNull()
             val possibleEndOffset = desktopParts.getOrNull(3)?.toIntOrNull()
-            val androidLocatorParts = cfi
+            val androidLocatorParts = stableCfi
                 ?.takeIf { it.startsWith("android-locator:") }
                 ?.split(':')
                 .orEmpty()
@@ -140,9 +141,40 @@ data class ReaderLocator(
                 blockIndex = parsedBlockIndex,
                 charOffset = parsedCharOffset,
                 textQuote = textQuote,
-                cfi = cfi
+                cfi = stableCfi ?: cfi
             )
         }
+    }
+}
+
+fun String.toStableReaderPositionCfi(): String {
+    val trimmed = trim()
+    if (!trimmed.startsWith("desktop-scroll:")) return trimmed
+    return trimmed
+        .split(':', limit = 4)
+        .getOrNull(3)
+        ?.takeIf { it.isNotBlank() }
+        ?: trimmed
+}
+
+fun ReaderLocator.toStablePositionCfi(): String? {
+    cfi
+        ?.toStableReaderPositionCfi()
+        ?.takeIf { it.isNotBlank() }
+        ?.takeUnless { it.startsWith("desktop-scroll:") || it.startsWith("desktop-scroll-page:") }
+        ?.let { return it }
+
+    val chapter = chapterIndex
+    val start = startOffset
+    val end = endOffset ?: start
+    return when {
+        chapter != null && blockIndex != null && charOffset != null ->
+            "android-locator:$chapter:$blockIndex:$charOffset"
+        chapter != null && start != null && end != null ->
+            "desktop:$chapter:$start:$end"
+        chapter != null && pageIndex != null ->
+            "desktop:$chapter:$pageIndex"
+        else -> null
     }
 }
 

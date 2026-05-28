@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
+import com.aryan.reader.shared.ReaderLocator
 
 private const val PdfZoomPerfLogTag = "EpistemePdfZoomPerf"
 private const val PdfLinkLogTag = "EpistemePdfLink"
@@ -12,6 +13,7 @@ private const val ReaderGapLogTag = "EpistemeReaderGap"
 private const val EpubSelectionDebugLogTag = "EPUB_SELECTION_DEBUG"
 private const val EpubHighlightFlowLogTag = "EpistemeEpubHighlightFlow"
 private const val DesktopHighlightMapLogTag = "EpistemeDesktopHighlightMap"
+private const val DesktopPositionTraceLogTag = "EpistemeDesktopPositionTrace"
 private const val DesktopReaderCloseLogTag = "EpistemeDesktopReaderClose"
 private const val DesktopNativeWebViewLogTag = "EpistemeNativeWebView"
 private const val WebViewLayoutLogTag = "EpistemeWebViewLayout"
@@ -60,6 +62,14 @@ internal fun logDesktopHighlightMap(message: String) {
     logDesktopDiagnostic(DesktopHighlightMapLogTag) { message }
 }
 
+internal fun logDesktopPositionTrace(message: String) {
+    logDesktopDiagnostic(DesktopPositionTraceLogTag) { message }
+}
+
+internal fun logDesktopPositionTrace(message: () -> String) {
+    logDesktopDiagnostic(DesktopPositionTraceLogTag, message)
+}
+
 internal fun logDesktopReaderClose(message: String) {
     logDesktopDiagnostic(DesktopReaderCloseLogTag) { message }
 }
@@ -100,4 +110,13 @@ internal fun DesktopPdfCharHit?.formatLogHit(prefix: String): String {
     return "${prefix}Index=$index ${prefix}Source=$source " +
         "${prefix}X=${point.x.formatLogFloat()} ${prefix}Y=${point.y.formatLogFloat()} " +
         "${prefix}Nx=${normalized.x.formatLogFloat()} ${prefix}Ny=${normalized.y.formatLogFloat()}"
+}
+
+internal fun ReaderLocator?.desktopPositionTraceSummary(maxTextLength: Int = 90): String {
+    if (this == null) return "null"
+    return "chapter=${chapterIndex ?: "null"} page=${pageIndex ?: "null"} " +
+        "offsets=${startOffset ?: "null"}..${endOffset ?: "null"} " +
+        "block=${blockIndex ?: "null"} char=${charOffset ?: "null"} " +
+        "chapterId=\"${chapterId.orEmpty().logPreview(80)}\" href=\"${href.orEmpty().logPreview(120)}\" " +
+        "cfi=\"${cfi.orEmpty().logPreview(180)}\" text=\"${textQuote.orEmpty().logPreview(maxTextLength)}\""
 }

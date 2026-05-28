@@ -24,6 +24,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfRichTextLog
 import com.aryan.reader.shared.pdf.SharedPdfRichTextSerializer
 import com.aryan.reader.shared.toSharedFolderBookMetadata
+import com.aryan.reader.shared.toStablePositionCfi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -903,7 +904,7 @@ private fun BookItem.toDesktopFolderBookMetadata(): SharedFolderBookMetadata? {
         type = type.name,
         lastChapterIndex = readerPosition?.chapterIndex,
         lastPage = readerPosition?.pageIndex ?: lastPageIndex,
-        lastPositionCfi = readerPosition?.cfi,
+        lastPositionCfi = readerPosition?.toStablePositionCfi(),
         progressPercentage = progressPercentage ?: 0f,
         isRecent = isRecent,
         lastModifiedTimestamp = timestamp,

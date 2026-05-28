@@ -1,6 +1,7 @@
 package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.ReaderLocator
+import com.aryan.reader.shared.toStableReaderPositionCfi
 import com.aryan.reader.shared.ui.SharedNativeReaderLinkClick
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -200,7 +201,7 @@ internal fun String.readerPositionOrNull(): DesktopReaderPosition? {
             blockIndex = obj["blockIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
             charOffset = obj["charOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
             textQuote = obj["textQuote"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
-            cfi = obj["cfi"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull
+            cfi = obj["cfi"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull?.toStableReaderPositionCfi()
         )
         DesktopReaderPosition(pageIndex, locator)
     }.getOrNull()
