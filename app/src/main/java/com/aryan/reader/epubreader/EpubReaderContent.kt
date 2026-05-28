@@ -21,15 +21,17 @@ package com.aryan.reader.epubreader
 
 import android.content.Context
 import com.aryan.reader.R
-import timber.log.Timber
+import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.LocatorConverter
+import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
+import timber.log.Timber
 import java.io.File
 
 data class ChapterLoadingResult(
@@ -86,7 +88,9 @@ suspend fun loadChapterContent(
     chunkTargetOverride: Int?,
     isInitialCfiLoad: Boolean,
     cfiToLoad: String?,
-    locatorConverter: LocatorConverter
+    locatorConverter: LocatorConverter,
+    bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
+    bookReplacementFileId: String? = null,
 ): ChapterLoadingResult = withContext(Dispatchers.IO) {
     val chapter =
         epubBook.chapters.getOrNull(chapterIndex) ?: return@withContext ChapterLoadingResult(
@@ -100,6 +104,11 @@ suspend fun loadChapterContent(
             val doc = Jsoup.parse(htmlFile, "UTF-8")
             val head = doc.head().html()
             doc.select("script").remove()
+            applyBookReplacementsToHtmlDocument(
+                document = doc,
+                preferences = bookReplacementPreferences,
+                fileId = bookReplacementFileId,
+            )
             val bodyNodes = doc.body().childNodes().toList()
             val htmlChunks = splitBodyNodesIntoReaderChunks(bodyNodes)
             if (htmlChunks.isEmpty()) {

@@ -34,6 +34,7 @@ import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.epubContentFilePath
 import com.aryan.reader.paginatedreader.CssParser
 import com.aryan.reader.paginatedreader.FontFaceInfo
@@ -43,6 +44,7 @@ import com.aryan.reader.paginatedreader.RenderResult
 import com.aryan.reader.paginatedreader.androidHtmlToSemanticBlocks
 import com.aryan.reader.paginatedreader.loadFontFamilies
 import com.aryan.reader.paginatedreader.semanticBlockModule
+import com.aryan.reader.shared.ReaderBookReplacementPreferencesJson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -79,7 +81,9 @@ data class BookProcessingInput(
     @ProtoNumber(6) val constraintsMaxWidth: Int,
     @ProtoNumber(7) val constraintsMaxHeight: Int,
     @ProtoNumber(8) val fontFaces: List<FontFaceInfo> = emptyList(),
-    @ProtoNumber(9) val styleConfigHash: Int = 0
+    @ProtoNumber(9) val styleConfigHash: Int = 0,
+    @ProtoNumber(10) val bookReplacementPreferencesJson: String = "",
+    @ProtoNumber(11) val bookReplacementFileId: String = ""
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -197,6 +201,9 @@ class BookProcessingWorker(
                 return@withContext Result.failure()
             }
             val input = proto.decodeFromByteArray<BookProcessingInput>(inputFile.readBytes())
+            val bookReplacementPreferences = ReaderBookReplacementPreferencesJson.decodeOrEmpty(
+                input.bookReplacementPreferencesJson,
+            )
             Timber.i("Worker decoded input. Number of chapters received: ${input.chapters.size}")
 
             // Worker now reconstructs everything it needs for a pure light-theme processing run.
@@ -291,6 +298,11 @@ class BookProcessingWorker(
                                 }
                                 Timber.d("Chapter $index (Background Worker): Finished processing MathML. SVG cache has ${svgResults.size} items. Keys: ${svgResults.keys.joinToString()}")
                             }
+                            applyBookReplacementsToHtmlDocument(
+                                document = document,
+                                preferences = bookReplacementPreferences,
+                                fileId = input.bookReplacementFileId,
+                            )
                             val processedHtml = document.outerHtml()
                             Timber.d("Chapter $index (Background Worker): Processed HTML contains <math-placeholder>: ${processedHtml.contains("math-placeholder")}")
 

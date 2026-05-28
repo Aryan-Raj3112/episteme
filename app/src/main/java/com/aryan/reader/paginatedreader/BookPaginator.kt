@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import com.aryan.reader.SearchResult
+import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.epub.plainTextCharacterCount
@@ -51,6 +52,8 @@ import com.aryan.reader.paginatedreader.data.PageIndexEntry
 import com.aryan.reader.paginatedreader.data.ProcessedBook
 import com.aryan.reader.paginatedreader.data.ProcessedChapter
 import com.aryan.reader.paginatedreader.data.SerializableEpubChapter
+import com.aryan.reader.shared.ReaderBookReplacementPreferences
+import com.aryan.reader.shared.ReaderBookReplacementPreferencesJson
 import com.aryan.reader.tts.PageCharacterRange
 import com.aryan.reader.tts.splitTextIntoChunks
 import kotlinx.coroutines.CoroutineScope
@@ -158,7 +161,9 @@ class BookPaginator(
     private val userTextAlign: TextAlign?,
     private val paragraphGapMultiplier: Float,
     private val imageSizeMultiplier: Float,
-    private val verticalMarginMultiplier: Float
+    private val verticalMarginMultiplier: Float,
+    private val bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
+    private val bookReplacementFileId: String? = null
 ) : IPaginator {
     override var totalPageCount by mutableIntStateOf(0)
         private set
@@ -342,6 +347,7 @@ class BookPaginator(
             append("-pg:$paragraphGapMultiplier")
             append("-img:$imageSizeMultiplier")
             append("-vm:$verticalMarginMultiplier")
+            append("-book-replacements:${bookReplacementPreferences.signatureForFile(bookReplacementFileId)}")
             append("-proc:$LATEST_PROCESSING_VERSION")
             append("-pageCache:$LATEST_PAGE_CACHE_VERSION")
             append("-ua:${userAgentStylesheet.hashCode()}")
@@ -805,7 +811,11 @@ class BookPaginator(
             constraintsMaxWidth = constraints.maxWidth,
             constraintsMaxHeight = constraints.maxHeight,
             fontFaces = this.allFontFaces,
-            styleConfigHash = currentConfigHash
+            styleConfigHash = currentConfigHash,
+            bookReplacementPreferencesJson = ReaderBookReplacementPreferencesJson.encode(
+                bookReplacementPreferences.scopedToFile(bookReplacementFileId),
+            ),
+            bookReplacementFileId = bookReplacementFileId.orEmpty()
         )
 
         BookProcessingWorker.enqueue(
@@ -910,6 +920,11 @@ class BookPaginator(
                 element.replaceWith(placeholder)
             }
         }
+        applyBookReplacementsToHtmlDocument(
+            document = document,
+            preferences = bookReplacementPreferences,
+            fileId = bookReplacementFileId,
+        )
         val processedHtml = document.outerHtml()
 
         var parsingCssRules = OptimizedCssRules()

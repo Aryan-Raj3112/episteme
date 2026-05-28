@@ -155,6 +155,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.BookWordReplacementsSheet
 import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
@@ -180,6 +181,7 @@ import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.fetchAiDefinition
 import com.aryan.reader.loadCustomThemes
 import com.aryan.reader.loadGlobalTextureTransparency
+import com.aryan.reader.loadBookReplacementPreferences
 import com.aryan.reader.loadReaderBrightnessSettings
 import com.aryan.reader.loadReaderScreenOrientationMode
 import com.aryan.reader.loadEpubRightToLeftPagination
@@ -206,6 +208,7 @@ import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
 import com.aryan.reader.saveCustomThemes
 import com.aryan.reader.saveGlobalTextureTransparency
+import com.aryan.reader.saveBookReplacementPreferences
 import com.aryan.reader.saveReaderBrightnessSettings
 import com.aryan.reader.saveReaderScreenOrientationMode
 import com.aryan.reader.saveEpubRightToLeftPagination
@@ -213,6 +216,7 @@ import com.aryan.reader.saveReaderThemeId
 import com.aryan.reader.saveReaderSliderToggled
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.shouldRenderReaderSlider
+import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.tts.ReaderTtsOverlaySize
@@ -1316,6 +1320,7 @@ fun EpubReaderHost(
     var showPermissionRationaleDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var showTtsReplacementsSheet by remember { mutableStateOf(false) }
+    var showBookReplacementsSheet by remember { mutableStateOf(false) }
     var showTtsControlsSheet by remember { mutableStateOf(false) }
     var showThemePanel by remember { mutableStateOf(false) }
     var showPaletteManager by remember { mutableStateOf(false) }
@@ -1323,6 +1328,14 @@ fun EpubReaderHost(
     val updateTtsReplacementPreferences: (ReaderTtsReplacementPreferences) -> Unit = { next ->
         ttsReplacementPreferences = next
         saveTtsReplacementPreferences(context, next)
+    }
+    var bookReplacementPreferences by remember { mutableStateOf(loadBookReplacementPreferences(context)) }
+    val updateBookReplacementPreferences: (ReaderBookReplacementPreferences) -> Unit = { next ->
+        bookReplacementPreferences = next
+        saveBookReplacementPreferences(context, next)
+    }
+    val bookReplacementSignature = remember(bookReplacementPreferences, bookId) {
+        bookReplacementPreferences.signatureForFile(bookId)
     }
 
     var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
@@ -2180,7 +2193,7 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(currentChapterIndex) {
+    LaunchedEffect(currentChapterIndex, bookReplacementSignature) {
         isChapterParsing = true
         isChapterReadyForBookmarkCheck = false
         activeFragmentId = null
@@ -2192,7 +2205,9 @@ fun EpubReaderHost(
             chunkTargetOverride = chunkTargetOverride,
             isInitialCfiLoad = isInitialCfiLoad,
             cfiToLoad = cfiToLoad,
-            locatorConverter = locatorConverter
+            locatorConverter = locatorConverter,
+            bookReplacementPreferences = bookReplacementPreferences,
+            bookReplacementFileId = bookId
         )
 
         chapterHead = result.head
@@ -3861,9 +3876,10 @@ fun EpubReaderHost(
                                         val chapterKeyForWebView =
                                             remember(
                                                 chapterToRender.htmlFilePath,
-                                                epubBook.extractionBasePath
+                                                epubBook.extractionBasePath,
+                                                bookReplacementSignature
                                             ) {
-                                                "${epubBook.extractionBasePath}/${chapterToRender.htmlFilePath}"
+                                                "${epubBook.extractionBasePath}/${chapterToRender.htmlFilePath}?bookReplacements=${bookReplacementSignature.hashCode()}"
                                             }
 
                                         val chapterDirectoryPath =
@@ -4797,6 +4813,8 @@ fun EpubReaderHost(
                                 verticalMarginMultiplier = currentVerticalMargin,
                                 fontFamily = activeFontFamily,
                                 textAlign = currentTextAlign,
+                                bookReplacementPreferences = bookReplacementPreferences,
+                                bookReplacementFileId = bookId,
                                 activeHighlightPalette = currentHighlightPalette,
                                 onUpdatePalette = onUpdateHighlightPalette,
                                 isPageTurnAnimationEnabled = isPageTurnAnimationEnabled,
@@ -5613,6 +5631,7 @@ fun EpubReaderHost(
                     modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
                     onOpenTtsReplacements = { showTtsReplacementsSheet = true },
+                    onOpenBookReplacements = { showBookReplacementsSheet = true },
                     onOpenDictionarySettings = { showDictionarySettingsSheet = true },
                     onOpenThemeSettings = { showThemePanel = true },
                     onOpenBrightness = { showBrightnessSheet = true },
@@ -6232,6 +6251,15 @@ fun EpubReaderHost(
             preferences = ttsReplacementPreferences,
             onPreferencesChange = updateTtsReplacementPreferences,
             onDismiss = { showTtsReplacementsSheet = false },
+        )
+
+        BookWordReplacementsSheet(
+            isVisible = showBookReplacementsSheet,
+            bookId = bookId,
+            bookTitle = epubBook.title,
+            preferences = bookReplacementPreferences,
+            onPreferencesChange = updateBookReplacementPreferences,
+            onDismiss = { showBookReplacementsSheet = false },
         )
 
         ReaderFileInfoDialogs(

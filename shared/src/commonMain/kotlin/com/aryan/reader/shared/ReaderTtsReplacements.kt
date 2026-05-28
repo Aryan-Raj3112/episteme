@@ -90,22 +90,11 @@ data class ReaderTtsReplacementApplyResult(
 
 object ReaderTtsReplacementEngine {
     fun validate(rule: ReaderTtsReplacementRule): ReaderTtsReplacementValidation {
-        if (rule.from.isBlank()) {
-            return ReaderTtsReplacementValidation(isValid = false, message = "Enter text to replace.")
-        }
-        if (!rule.isRegex) {
-            return ReaderTtsReplacementValidation(isValid = true)
-        }
-        return runCatching { rule.toRegex() }
-            .fold(
-                onSuccess = { ReaderTtsReplacementValidation(isValid = true) },
-                onFailure = {
-                    ReaderTtsReplacementValidation(
-                        isValid = false,
-                        message = it.message ?: "This regex is not valid.",
-                    )
-                },
-            )
+        val validation = ReaderWordReplacementEngine.validate(rule.toWordReplacementRule())
+        return ReaderTtsReplacementValidation(
+            isValid = validation.isValid,
+            message = validation.message,
+        )
     }
 
     fun apply(
@@ -117,52 +106,31 @@ object ReaderTtsReplacementEngine {
             return ReaderTtsReplacementApplyResult(text = text)
         }
 
-        var current = text
-        val applied = mutableListOf<String>()
-        val errors = mutableListOf<ReaderTtsReplacementError>()
-
-        preferences.activeRulesForBook(bookId).forEach { rule ->
-            if (!rule.enabled || rule.from.isBlank()) return@forEach
-            val regex = runCatching { rule.toRegex() }
-                .onFailure {
-                    errors += ReaderTtsReplacementError(
-                        ruleId = rule.id,
-                        message = it.message ?: "Invalid regex.",
-                    )
-                }
-                .getOrNull() ?: return@forEach
-            val replacement = if (rule.isRegex) rule.to else Regex.escapeReplacement(rule.to)
-            val next = runCatching { regex.replace(current, replacement) }
-                .onFailure {
-                    errors += ReaderTtsReplacementError(
-                        ruleId = rule.id,
-                        message = it.message ?: "Invalid replacement.",
-                    )
-                }
-                .getOrNull() ?: return@forEach
-            if (next != current) {
-                applied += rule.id
-                current = next
-            }
-        }
+        val result = ReaderWordReplacementEngine.apply(
+            text = text,
+            rules = preferences.activeRulesForBook(bookId).map { it.toWordReplacementRule() },
+        )
 
         return ReaderTtsReplacementApplyResult(
-            text = current,
-            appliedRuleIds = applied,
-            errors = errors,
+            text = result.text,
+            appliedRuleIds = result.appliedRuleIds,
+            errors = result.errors.map {
+                ReaderTtsReplacementError(ruleId = it.ruleId, message = it.message)
+            },
         )
     }
+}
 
-    private fun ReaderTtsReplacementRule.toRegex(): Regex {
-        val source = if (isRegex) from else Regex.escape(from)
-        val boundedSource = if (wholeWord) {
-            """(?<![\p{L}\p{N}_])(?:$source)(?![\p{L}\p{N}_])"""
-        } else {
-            source
-        }
-        val options = if (matchCase) emptySet() else setOf(RegexOption.IGNORE_CASE)
-        return Regex(pattern = boundedSource, options = options)
-    }
+private fun ReaderTtsReplacementRule.toWordReplacementRule(): ReaderWordReplacementRule {
+    return ReaderWordReplacementRule(
+        id = id,
+        from = from,
+        to = to,
+        enabled = enabled,
+        isRegex = isRegex,
+        matchCase = matchCase,
+        wholeWord = wholeWord,
+    )
 }
 
 fun ReaderTtsChunk.withTtsReplacements(

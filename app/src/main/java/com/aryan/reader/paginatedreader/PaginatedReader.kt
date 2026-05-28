@@ -160,6 +160,7 @@ import com.aryan.reader.epubreader.ReaderTextAlign
 import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -1162,6 +1163,8 @@ fun PaginatedReaderScreen(
     verticalMarginMultiplier: Float,
     fontFamily: FontFamily,
     textAlign: ReaderTextAlign,
+    bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
+    bookReplacementFileId: String? = bookId,
     ttsHighlightInfo: TtsHighlightInfo?,
     initialChapterIndexInBook: Int?,
     fallbackLocatorForReconfiguration: Locator? = null,
@@ -1217,6 +1220,9 @@ fun PaginatedReaderScreen(
     val latestExternalNavigationAnchor by rememberUpdatedState(explicitNavigationAnchor)
     val latestExternalNavigationEpoch by rememberUpdatedState(explicitNavigationEpoch)
     val latestIsExternalNavigationInProgress by rememberUpdatedState(isExternalNavigationInProgress)
+    val bookReplacementSignature = remember(bookReplacementPreferences, bookReplacementFileId) {
+        bookReplacementPreferences.signatureForFile(bookReplacementFileId)
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize().background(effectiveBg)) {
         val textMeasurer = rememberTextMeasurer()
@@ -1230,6 +1236,9 @@ fun PaginatedReaderScreen(
         var debouncedVerticalMarginMult by remember { mutableFloatStateOf(verticalMarginMultiplier) }
         var debouncedFontFamily by remember { mutableStateOf(fontFamily) }
         var debouncedTextAlign by remember { mutableStateOf(textAlign) }
+        var debouncedBookReplacementSignature by remember { mutableStateOf(bookReplacementSignature) }
+        var debouncedBookReplacementPreferences by remember { mutableStateOf(bookReplacementPreferences) }
+        var debouncedBookReplacementFileId by remember { mutableStateOf(bookReplacementFileId) }
 
         var anchorLocatorForReconfig by remember { mutableStateOf<Locator?>(null) }
         val currentPaginatorRef = remember { mutableStateOf<IPaginator?>(null) }
@@ -1296,7 +1305,7 @@ fun PaginatedReaderScreen(
             }
         }
 
-        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, verticalMarginMultiplier, fontFamily, textAlign) {
+        LaunchedEffect(fontSizeMultiplier, lineHeightMultiplier, paragraphGapMultiplier, imageSizeMultiplier, horizontalMarginMultiplier, verticalMarginMultiplier, fontFamily, textAlign, bookReplacementSignature, bookReplacementFileId) {
             if (fontSizeMultiplier != debouncedFontSizeMult ||
                 lineHeightMultiplier != debouncedLineHeightMult ||
                 paragraphGapMultiplier != debouncedParagraphGapMult ||
@@ -1304,7 +1313,9 @@ fun PaginatedReaderScreen(
                 horizontalMarginMultiplier != debouncedHorizontalMarginMult ||
                 verticalMarginMultiplier != debouncedVerticalMarginMult ||
                 fontFamily != debouncedFontFamily ||
-                textAlign != debouncedTextAlign
+                textAlign != debouncedTextAlign ||
+                bookReplacementSignature != debouncedBookReplacementSignature ||
+                bookReplacementFileId != debouncedBookReplacementFileId
             ) {
                 Timber.d("Formatting changed. Waiting for debounce.")
                 delay(400L)
@@ -1327,6 +1338,9 @@ fun PaginatedReaderScreen(
                 debouncedVerticalMarginMult = verticalMarginMultiplier
                 debouncedFontFamily = fontFamily
                 debouncedTextAlign = textAlign
+                debouncedBookReplacementSignature = bookReplacementSignature
+                debouncedBookReplacementPreferences = bookReplacementPreferences
+                debouncedBookReplacementFileId = bookReplacementFileId
                 Timber.d("Debounce complete. Applying new format settings.")
             }
         }
@@ -1400,7 +1414,7 @@ fun PaginatedReaderScreen(
             }
         }
 
-        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedVerticalMarginMult) {
+        val paginator = remember(book, bookId, textConstraints, layoutTextStyle, userTextAlign, debouncedParagraphGapMult, debouncedImageSizeMult, debouncedVerticalMarginMult, debouncedBookReplacementSignature, debouncedBookReplacementFileId) {
         val userAgentStylesheet = UserAgentStylesheet.default
             var allRules = OptimizedCssRules()
             val allFontFaces = mutableListOf<FontFaceInfo>()
@@ -1466,7 +1480,9 @@ fun PaginatedReaderScreen(
                 userTextAlign = userTextAlign,
                 paragraphGapMultiplier = debouncedParagraphGapMult,
                 imageSizeMultiplier = debouncedImageSizeMult,
-                verticalMarginMultiplier = debouncedVerticalMarginMult
+                verticalMarginMultiplier = debouncedVerticalMarginMult,
+                bookReplacementPreferences = debouncedBookReplacementPreferences,
+                bookReplacementFileId = debouncedBookReplacementFileId
             )
         }
 

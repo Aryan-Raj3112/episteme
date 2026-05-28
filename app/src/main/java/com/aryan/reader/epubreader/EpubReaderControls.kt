@@ -184,7 +184,8 @@ enum class ReaderTool(@StringRes val titleRes: Int, val category: String) {
     SCREEN_ORIENTATION(R.string.menu_screen_orientation, "Top Bar"),
     AUTO_SCROLL(R.string.menu_auto_scroll, "Overflow Menu"),
     TTS_SETTINGS(R.string.menu_tts_settings, "Overflow Menu"),
-    TTS_REPLACEMENTS(R.string.menu_tts_word_replacements, "Overflow Menu")
+    TTS_REPLACEMENTS(R.string.menu_tts_word_replacements, "Overflow Menu"),
+    BOOK_REPLACEMENTS(R.string.menu_book_word_replacements, "Overflow Menu")
 }
 
 enum class FlatItemType { SECTION_HEADER, TOOL, EMPTY_PLACEHOLDER, MORE_HEADER, MORE_TOOL }
@@ -293,6 +294,7 @@ internal enum class EpubOverflowMenuSection {
     KEEP_SCREEN_ON,
     VISUAL_OPTIONS,
     AUTO_SCROLL,
+    BOOK_REPLACEMENTS,
     TTS_SETTINGS,
     FILE_INFO
 }
@@ -316,6 +318,7 @@ internal fun epubOverflowMenuSections(
     if (!hiddenTools.contains(ReaderTool.KEEP_SCREEN_ON.name)) add(EpubOverflowMenuSection.KEEP_SCREEN_ON)
     if (!hiddenTools.contains(ReaderTool.VISUAL_OPTIONS.name)) add(EpubOverflowMenuSection.VISUAL_OPTIONS)
     if (!hiddenTools.contains(ReaderTool.AUTO_SCROLL.name)) add(EpubOverflowMenuSection.AUTO_SCROLL)
+    if (!hiddenTools.contains(ReaderTool.BOOK_REPLACEMENTS.name)) add(EpubOverflowMenuSection.BOOK_REPLACEMENTS)
     if (
         !hiddenTools.contains(ReaderTool.TTS_SETTINGS.name) ||
         !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
@@ -401,6 +404,7 @@ fun EpubReaderTopBar(
     onStartAutoScroll: () -> Unit,
     onOpenTtsSettings: () -> Unit,
     onOpenTtsReplacements: () -> Unit,
+    onOpenBookReplacements: () -> Unit,
     onOpenDictionarySettings: () -> Unit,
     onOpenThemeSettings: () -> Unit,
     onOpenBrightness: () -> Unit,
@@ -855,6 +859,22 @@ fun EpubReaderTopBar(
                                                 showMoreMenu = false
                                                 onStartAutoScroll()
                                             })
+                                    }
+                                    EpubOverflowMenuSection.BOOK_REPLACEMENTS -> {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.menu_book_word_replacements)) },
+                                            onClick = {
+                                                showMoreMenu = false
+                                                onOpenBookReplacements()
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.text_fields),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        )
                                     }
                                     EpubOverflowMenuSection.TTS_SETTINGS -> {
                                         DropdownMenuItem(
@@ -2211,6 +2231,7 @@ private fun ToolPreviewIcon(tool: ReaderTool, isSliderActive: Boolean = false) {
         ReaderTool.SEARCH -> Icon(Icons.Default.Search, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.AI_FEATURES -> Icon(painterResource(id = R.drawable.ai), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.BOOK_REPLACEMENTS -> Icon(painterResource(id = R.drawable.text_fields), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.FILE_INFO -> Icon(Icons.Default.Info, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = title, modifier = Modifier.size(20.dp))
         else -> Icon(Icons.Default.MoreVert, contentDescription = title, modifier = Modifier.size(20.dp))

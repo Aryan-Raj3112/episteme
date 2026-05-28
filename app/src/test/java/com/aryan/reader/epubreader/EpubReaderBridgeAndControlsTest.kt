@@ -257,7 +257,8 @@ class EpubReaderBridgeAndControlsTest {
         val sections = epubOverflowMenuSections(
             hiddenTools = setOf(
                 ReaderTool.TTS_SETTINGS.name,
-                ReaderTool.TTS_REPLACEMENTS.name
+                ReaderTool.TTS_REPLACEMENTS.name,
+                ReaderTool.BOOK_REPLACEMENTS.name
             ),
             hasHiddenToolbarTools = false,
             hasToggleReflow = false,
@@ -267,6 +268,21 @@ class EpubReaderBridgeAndControlsTest {
 
         assertEquals(EpubOverflowMenuSection.AUTO_SCROLL, sections.last())
         assertTrue(EpubOverflowMenuSection.TTS_SETTINGS !in sections)
+        assertTrue(EpubOverflowMenuSection.BOOK_REPLACEMENTS !in sections)
+    }
+
+    @Test
+    fun `epub overflow sections expose book replacements when visible`() {
+        val sections = epubOverflowMenuSections(
+            hiddenTools = emptySet(),
+            hasHiddenToolbarTools = false,
+            hasToggleReflow = false,
+            hasDeleteReflow = false,
+            hasFileInfo = false
+        )
+
+        assertTrue(EpubOverflowMenuSection.BOOK_REPLACEMENTS in sections)
+        assertTrue(sections.indexOf(EpubOverflowMenuSection.BOOK_REPLACEMENTS) < sections.indexOf(EpubOverflowMenuSection.TTS_SETTINGS))
     }
 
     @Test

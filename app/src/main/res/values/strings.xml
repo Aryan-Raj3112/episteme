@@ -731,6 +731,7 @@
     <string name="menu_tts_voice_settings">TTS Voice Settings</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_word_replacements">TTS Word Replacements</string>
+    <string name="menu_book_word_replacements">Book Word Replacements</string>
     <string name="menu_share_save_print">Share, Save or Print</string>
     <!-- TTS = Text-to-Speech. Debug-only menu item. -->
     <string name="menu_tts_settings_debug">TTS Settings (Debug)</string>
@@ -1619,6 +1620,14 @@
     <string name="tts_replacements_plain_text">Plain text</string>
     <!-- Lowercase because it is joined into a comma-separated option summary. -->
     <string name="tts_replacements_case_sensitive">case-sensitive</string>
+    <string name="book_replacements_current_book">Current book</string>
+    <string name="book_replacements_add_rule">Add rule</string>
+    <string name="book_replacements_empty">No replacement rules for this book yet.</string>
+    <string name="book_replacements_new_replacement">New replacement</string>
+    <string name="book_replacements_edit_replacement">Edit replacement</string>
+    <string name="book_replacements_label_with">With</string>
+    <string name="book_replacements_empty_replacement">empty text</string>
+    <string name="book_replacements_preview_default" translatable="false">Alice met the White Rabbit.</string>
     <string name="language_dutch">Nederlands (Dutch)</string>
     <string name="language_ukrainian">Українська (Ukrainian)</string>
     <string name="language_indonesian">Bahasa Indonesia (Indonesian)</string>
