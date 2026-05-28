@@ -72,4 +72,12 @@ class ReaderNavigationTargetsTest {
             findLocatorForAnchorInBlocks(chapterIndex = 5, anchor = "cover-image", blocks = blocks)
         )
     }
+
+    @Test
+    fun `native vertical initial prefetch is bounded around requested chapter`() {
+        assertEquals(
+            listOf(4, 5, 2),
+            nativeVerticalInitialChapterPrefetchOrder(chapterCount = 6, initialChapter = 3)
+        )
+    }
 }

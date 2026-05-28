@@ -206,6 +206,7 @@ class BookPaginator(
     private val paginationQueue = PriorityBlockingQueue<PaginationRequest>()
     private val chaptersBeingProcessed = ConcurrentHashMap.newKeySet<Int>()
     private val chapterPaginationLocks = ConcurrentHashMap<Int, Mutex>()
+    private val chapterBlockLocks = ConcurrentHashMap<Int, Mutex>()
     private val navigationCallbacks = ConcurrentHashMap<Int, MutableList<(List<Page>) -> Unit>>()
     private var paginationWorker: Job? = null
 
@@ -641,6 +642,29 @@ class BookPaginator(
         }
     }
 
+    private suspend fun getCachedBlocksForChapter(chapter: EpubChapter, chapterIndex: Int): List<ContentBlock> {
+        blockCache[chapterIndex]?.let {
+            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                "content_l2_cache_hit chapter=$chapterIndex " + it.readerContentLinkDiagSummary()
+            )
+            return it
+        }
+
+        val lock = chapterBlockLocks.computeIfAbsent(chapterIndex) { Mutex() }
+        return lock.withLock {
+            blockCache[chapterIndex]?.also {
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "content_l2_cache_hit_after_wait chapter=$chapterIndex " + it.readerContentLinkDiagSummary()
+                )
+            } ?: run {
+                Timber.d("getCachedBlocksForChapter: L2 Cache MISS for chapter $chapterIndex. Loading from DB.")
+                getBlocksForChapter(chapter, chapterIndex).also { blocks ->
+                    blockCache.put(chapterIndex, blocks)
+                }
+            }
+        }
+    }
+
     private suspend fun ensureStableStartPageForChapter(chapterIndex: Int): Int? {
         Timber.tag(TAG_STABLE_PAGE_NAV).d(
             "stable_start request chapter=$chapterIndex countsAccurate=$pageCountsAreAccurate finalized=${chapterIndex in finalizedChapterCounts}"
@@ -701,7 +725,7 @@ class BookPaginator(
         ordinalInChapter: Int
     ): Pair<Int, Locator>? = withContext(Dispatchers.IO) {
         val chapter = chapters.getOrNull(chapterIndex) ?: return@withContext null
-        val imageBlocks = getAllBlocks(getBlocksForChapter(chapter, chapterIndex))
+        val imageBlocks = getAllBlocks(getCachedBlocksForChapter(chapter, chapterIndex))
             .filterIsInstance<ImageBlock>()
         if (imageBlocks.isEmpty()) return@withContext null
 
@@ -965,7 +989,7 @@ class BookPaginator(
 
     internal suspend fun getFlowBlocksForChapter(chapterIndex: Int): List<ContentBlock>? = withContext(Dispatchers.IO) {
         val chapter = chapters.getOrNull(chapterIndex) ?: return@withContext null
-        getBlocksForChapter(chapter, chapterIndex)
+        getCachedBlocksForChapter(chapter, chapterIndex)
     }
 
     private fun startPaginationWorker(): Job = coroutineScope.launch(Dispatchers.IO) {
@@ -1211,16 +1235,7 @@ class BookPaginator(
             return it
         }
 
-        val blocks = blockCache[chapterIndex]?.also {
-            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                "content_l2_cache_hit chapter=$chapterIndex " + it.readerContentLinkDiagSummary()
-            )
-        } ?: run {
-            Timber.d("paginateChapter: L2 Cache MISS for chapter $chapterIndex. Loading from DB.")
-            val blocksFromDb = getBlocksForChapter(chapter, chapterIndex)
-            blockCache.put(chapterIndex, blocksFromDb) // Store in L2 cache
-            blocksFromDb
-        }
+        val blocks = getCachedBlocksForChapter(chapter, chapterIndex)
 
         Timber.d("paginateChapter: Chapter $chapterIndex retrieved/parsed into ${blocks.size} content blocks.")
 
@@ -1387,7 +1402,7 @@ class BookPaginator(
         if (anchor.isNullOrBlank()) return@withContext Locator(chapterIndex, 0, 0)
 
         val requestedChapter = chapters.getOrNull(chapterIndex) ?: return@withContext null
-        val requestedBlocks = getBlocksForChapter(requestedChapter, chapterIndex)
+        val requestedBlocks = getCachedBlocksForChapter(requestedChapter, chapterIndex)
         findLocatorForAnchorInBlocks(chapterIndex, anchor, requestedBlocks)?.let { locator ->
             return@withContext locator
         }
@@ -1395,7 +1410,7 @@ class BookPaginator(
         val indexEntry = bookCacheDao.getAnchorIndex(bookId, anchor)
         val targetChapter = indexEntry?.chapterIndex ?: chapterIndex
         val chapter = chapters.getOrNull(targetChapter) ?: return@withContext null
-        val blocks = getBlocksForChapter(chapter, targetChapter)
+        val blocks = getCachedBlocksForChapter(chapter, targetChapter)
 
         findLocatorForAnchorInBlocks(targetChapter, anchor, blocks)
             ?: indexEntry?.let { Locator(it.chapterIndex, it.blockIndex, 0) }
@@ -1554,7 +1569,7 @@ class BookPaginator(
 
     suspend fun findStableLocatorForSearchResult(result: SearchResult): Locator? = withContext(Dispatchers.IO) {
         val chapter = chapters.getOrNull(result.locationInSource) ?: return@withContext null
-        val blocks = getBlocksForChapter(chapter, result.locationInSource)
+        val blocks = getCachedBlocksForChapter(chapter, result.locationInSource)
         findLocatorForSearchResultInBlocks(result, blocks)
     }
 
