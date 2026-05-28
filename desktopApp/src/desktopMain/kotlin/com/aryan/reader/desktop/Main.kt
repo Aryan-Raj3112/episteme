@@ -1680,6 +1680,11 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun isDesktopFolderLocalSyncEnabled(sourceFolder: String?): Boolean {
+        if (sourceFolder.isNullOrBlank()) return false
+        return state.syncedFolders.firstOrNull { it.uriString == sourceFolder }?.localSyncEnabled ?: true
+    }
+
     fun syncBookSidecars(book: BookItem) {
         if (book.sourceFolder.isNullOrBlank()) {
             logDesktopFolderSync("bookSidecars.skipNoFolder book=${book.id}")
@@ -1742,11 +1747,6 @@ internal fun EpistemeDesktopApp(
                 }
             }
         }
-    }
-
-    fun isDesktopFolderLocalSyncEnabled(sourceFolder: String?): Boolean {
-        if (sourceFolder.isNullOrBlank()) return false
-        return state.syncedFolders.firstOrNull { it.uriString == sourceFolder }?.localSyncEnabled ?: true
     }
 
     fun BookItem.matchesIncomingReaderPosition(

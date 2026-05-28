@@ -128,7 +128,30 @@ internal actual fun SharedReaderModalLayer(
             onDispose {}
         } else {
             var disposed = false
+            fun hideImmediately(ownerClosing: Boolean) {
+                if (disposed) return
+                if (
+                    sharedReaderModalLayerShouldHideImmediately(
+                        ownerShowing = ownerWindow.isShowing,
+                        ownerDisplayable = ownerWindow.isDisplayable,
+                        ownerClosing = ownerClosing
+                    )
+                ) {
+                    modalVisible = false
+                }
+            }
             fun syncVisibility(oppositeWindow: AwtWindow?) {
+                if (disposed) return
+                if (
+                    sharedReaderModalLayerShouldHideImmediately(
+                        ownerShowing = ownerWindow.isShowing,
+                        ownerDisplayable = ownerWindow.isDisplayable,
+                        ownerClosing = false
+                    )
+                ) {
+                    hideImmediately(ownerClosing = false)
+                    return
+                }
                 val nextVisible = sharedReaderModalLayerVisible(ownerWindow, explicitOwnerWindow, oppositeWindow)
                 if (nextVisible) {
                     modalVisible = true
@@ -141,13 +164,14 @@ internal actual fun SharedReaderModalLayer(
                 }
             }
             val listener = object : WindowAdapter() {
+                override fun windowClosing(e: WindowEvent?) = hideImmediately(ownerClosing = true)
+                override fun windowClosed(e: WindowEvent?) = hideImmediately(ownerClosing = true)
                 override fun windowActivated(e: WindowEvent?) = syncVisibility(e?.oppositeWindow)
                 override fun windowDeactivated(e: WindowEvent?) = syncVisibility(e?.oppositeWindow)
                 override fun windowGainedFocus(e: WindowEvent?) = syncVisibility(e?.oppositeWindow)
                 override fun windowLostFocus(e: WindowEvent?) = syncVisibility(e?.oppositeWindow)
                 override fun windowIconified(e: WindowEvent?) = syncVisibility(e?.oppositeWindow)
                 override fun windowDeiconified(e: WindowEvent?) = syncVisibility(e?.oppositeWindow)
-                override fun windowClosed(e: WindowEvent?) = syncVisibility(e?.oppositeWindow)
             }
             ownerWindow.addWindowListener(listener)
             ownerWindow.addWindowFocusListener(listener)
@@ -181,7 +205,18 @@ internal actual fun SharedReaderModalLayer(
                 }
                 var disposed = false
                 fun syncVisibility(oppositeWindow: AwtWindow?) {
+                    if (disposed) return
                     if (ownerWindow != null && explicitOwnerWindow != null) {
+                        if (
+                            sharedReaderModalLayerShouldHideImmediately(
+                                ownerShowing = ownerWindow.isShowing,
+                                ownerDisplayable = ownerWindow.isDisplayable,
+                                ownerClosing = false
+                            )
+                        ) {
+                            modalVisible = false
+                            return
+                        }
                         val nextVisible = sharedReaderModalLayerVisible(ownerWindow, explicitOwnerWindow, oppositeWindow)
                         if (nextVisible) {
                             modalVisible = true
@@ -227,11 +262,14 @@ internal actual fun SharedReaderModalLayer(
                 }
                 repeat(frontAttempts) { attempt ->
                     delay(if (attempt == 0) 30L else 80L)
-                    modalWindow.isAlwaysOnTop = true
-                    modalWindow.toFront()
-                    if (modalWindowFocusable && !level.isEdgePanelLayer()) {
-                        modalWindow.requestFocus()
-                        modalWindow.requestFocusInWindow()
+                    if (!modalWindow.isDisplayable) return@repeat
+                    runCatching {
+                        modalWindow.isAlwaysOnTop = true
+                        modalWindow.toFront()
+                        if (modalWindowFocusable && !level.isEdgePanelLayer()) {
+                            modalWindow.requestFocus()
+                            modalWindow.requestFocusInWindow()
+                        }
                     }
                 }
             }
@@ -283,6 +321,14 @@ internal fun sharedReaderModalChromeLayerVisible(
         ownerDisplayable &&
         !ownerMinimized &&
         (ownerActive || ownerFocused || ownerModalActive)
+}
+
+internal fun sharedReaderModalLayerShouldHideImmediately(
+    ownerShowing: Boolean,
+    ownerDisplayable: Boolean,
+    ownerClosing: Boolean
+): Boolean {
+    return ownerClosing || !ownerShowing || !ownerDisplayable
 }
 
 private fun AwtWindow.sharedReaderChromeLayerVisible(oppositeWindow: AwtWindow?): Boolean {

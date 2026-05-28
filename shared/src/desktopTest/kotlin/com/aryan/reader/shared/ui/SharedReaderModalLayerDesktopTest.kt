@@ -144,4 +144,36 @@ class SharedReaderModalLayerDesktopTest {
             )
         )
     }
+
+    @Test
+    fun `modal layer hides immediately while owner window is closing`() {
+        assertTrue(
+            sharedReaderModalLayerShouldHideImmediately(
+                ownerShowing = true,
+                ownerDisplayable = true,
+                ownerClosing = true
+            )
+        )
+        assertTrue(
+            sharedReaderModalLayerShouldHideImmediately(
+                ownerShowing = false,
+                ownerDisplayable = true,
+                ownerClosing = false
+            )
+        )
+        assertTrue(
+            sharedReaderModalLayerShouldHideImmediately(
+                ownerShowing = true,
+                ownerDisplayable = false,
+                ownerClosing = false
+            )
+        )
+        assertFalse(
+            sharedReaderModalLayerShouldHideImmediately(
+                ownerShowing = true,
+                ownerDisplayable = true,
+                ownerClosing = false
+            )
+        )
+    }
 }

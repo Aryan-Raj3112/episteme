@@ -46,10 +46,13 @@ import java.awt.Canvas
 import java.awt.EventQueue
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import javax.swing.SwingUtilities
 
 @Composable
 internal fun DesktopNativeSwtEpubWebView(
@@ -333,6 +336,12 @@ private class DesktopWindowsWebView2Panel(
     @Volatile
     private var disposeInProgress = false
 
+    @Volatile
+    private var hostWindowClosing = false
+
+    private var hostWindow: java.awt.Window? = null
+    private var hostWindowListener: WindowAdapter? = null
+
     init {
         background = initialBackground
         updateModeSwitchPanelState("init")
@@ -398,6 +407,7 @@ private class DesktopWindowsWebView2Panel(
         onLoadStateChanged: (Boolean, Float) -> Unit,
         onError: (String) -> Unit
     ) {
+        updateHostWindowListener()
         this.bridgeHandlersByMethod = bridgeHandlersByMethod
         this.networkAccessEnabled = networkAccessEnabled
         this.onLinkIntercepted = onLinkIntercepted
@@ -467,6 +477,7 @@ private class DesktopWindowsWebView2Panel(
 
     override fun addNotify() {
         super.addNotify()
+        updateHostWindowListener()
         updateModeSwitchPanelState("add_notify")
         logDesktopWebView2(
             "panel_add_notify panel=$instanceId displayable=$isDisplayable showing=$isShowing " +
@@ -485,12 +496,66 @@ private class DesktopWindowsWebView2Panel(
     override fun removeNotify() {
         logDesktopWebView2("panel_remove_notify panel=$instanceId")
         updateModeSwitchPanelState("remove_notify_begin")
-        disposeWebView(waitForSwtDisposal = true, detachAwtCanvas = true)
+        updateHostWindowListener()
+        disposeWebView(
+            waitForSwtDisposal = true,
+            detachAwtCanvas = shouldRetireAwtCanvasFromReaderSurface()
+        )
+        clearHostWindowListener()
         super.removeNotify()
         updateModeSwitchPanelState("remove_notify_end")
     }
 
+    private fun updateHostWindowListener() {
+        val window = SwingUtilities.getWindowAncestor(this)
+        if (hostWindow === window) return
+        clearHostWindowListener()
+        hostWindow = window
+        hostWindowClosing = false
+        if (window == null) return
+        val listener = object : WindowAdapter() {
+            override fun windowClosing(event: WindowEvent?) {
+                hostWindowClosing = true
+                logDesktopWebView2("panel_host_window_closing panel=$instanceId")
+                updateModeSwitchPanelState("host_window_closing")
+            }
+
+            override fun windowClosed(event: WindowEvent?) {
+                hostWindowClosing = true
+                logDesktopWebView2("panel_host_window_closed panel=$instanceId")
+                updateModeSwitchPanelState("host_window_closed")
+            }
+        }
+        hostWindowListener = listener
+        window.addWindowListener(listener)
+    }
+
+    private fun clearHostWindowListener() {
+        hostWindowListener?.let { listener ->
+            hostWindow?.removeWindowListener(listener)
+        }
+        hostWindowListener = null
+        hostWindow = null
+    }
+
+    private fun shouldRetireAwtCanvasFromReaderSurface(): Boolean {
+        val window = hostWindow ?: SwingUtilities.getWindowAncestor(this)
+        val shouldRetire = desktopWebView2ShouldRetireAwtCanvas(
+            hostWindowClosing = hostWindowClosing,
+            hostWindowDisplayable = window?.isDisplayable == true
+        )
+        if (!shouldRetire) {
+            logDesktopWebView2(
+                "panel_retire_skip panel=$instanceId reason=host_window_closing_or_disposed " +
+                    "hostClosing=$hostWindowClosing host=${window.formatAwtComponentState()}"
+            )
+            updateModeSwitchPanelState("retire_skip_host_window_closing_or_disposed")
+        }
+        return shouldRetire
+    }
+
     private fun retireAwtCanvasFromReaderSurface() {
+        if (!shouldRetireAwtCanvasFromReaderSurface()) return
         runOnAwtEventThreadBlocking(
             onError = { error ->
                 logDesktopWebView2(
@@ -1144,6 +1209,13 @@ internal fun desktopWebView2TargetBoundsForCanvas(width: Int, height: Int): Desk
         width = width.coerceAtLeast(1),
         height = height.coerceAtLeast(1)
     )
+}
+
+internal fun desktopWebView2ShouldRetireAwtCanvas(
+    hostWindowClosing: Boolean,
+    hostWindowDisplayable: Boolean
+): Boolean {
+    return !hostWindowClosing && hostWindowDisplayable
 }
 
 private fun java.awt.Component.webView2HostScale(): DesktopWebView2HostScale {
