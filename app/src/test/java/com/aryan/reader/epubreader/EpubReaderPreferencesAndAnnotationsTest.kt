@@ -40,6 +40,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertEquals(ReaderFont.ORIGINAL, format.font)
         assertEquals(ReaderTextAlign.DEFAULT, format.textAlign)
         assertNull(format.customPath)
+        assertFalse(loadNativeVerticalRenderer(context))
     }
 
     @Test
@@ -136,6 +137,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         saveVolumeScrollSetting(context, true)
         saveRemoveEdgePadding(context, true)
         saveFormatIsLocal(context, "book", true)
+        saveNativeVerticalRenderer(context, true)
 
         assertEquals(1.35f, loadTtsSpeechRate(context), 0.0001f)
         assertEquals(0.85f, loadTtsPitch(context), 0.0001f)
@@ -149,6 +151,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         assertTrue(loadVolumeScrollSetting(context))
         assertTrue(loadRemoveEdgePadding(context))
         assertTrue(loadFormatIsLocal(context, "book"))
+        assertTrue(loadNativeVerticalRenderer(context))
         assertEquals(0f, loadHorizontalMargin(context), 0.0001f)
     }
 

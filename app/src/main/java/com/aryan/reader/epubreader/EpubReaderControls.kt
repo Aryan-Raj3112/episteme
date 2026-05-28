@@ -391,11 +391,13 @@ fun EpubReaderTopBar(
     volumeScrollEnabled: Boolean,
     isPageTurnAnimationEnabled: Boolean,
     isRightToLeftPagination: Boolean,
+    useNativeVerticalRenderer: Boolean,
     onNavigateBack: () -> Unit,
     isKeepScreenOn: Boolean,
     onToggleKeepScreenOn: (Boolean) -> Unit,
     onCloseSearch: () -> Unit,
     onChangeRenderMode: (RenderMode) -> Unit,
+    onUseNativeVerticalRendererChange: (Boolean) -> Unit,
     onToggleBookmark: () -> Unit,
     onToggleTapToNavigate: (Boolean) -> Unit,
     onToggleVolumeScroll: (Boolean) -> Unit,
@@ -712,14 +714,29 @@ fun EpubReaderTopBar(
                                         )
                                         if (showReadingModeExpanded) {
                                             DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.menu_reading_mode_vertical)) },
+                                                text = { Text(stringResource(R.string.menu_reading_mode_vertical_webview)) },
                                                 enabled = !isTtsActive,
                                                 onClick = {
+                                                    onUseNativeVerticalRendererChange(false)
                                                     showMoreMenu = false
                                                     onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
                                                 },
                                                 trailingIcon = {
-                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL) Icon(
+                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL && !useNativeVerticalRenderer) Icon(
+                                                        Icons.Default.Check,
+                                                        contentDescription = stringResource(R.string.content_desc_selected)
+                                                    )
+                                                })
+                                            DropdownMenuItem(
+                                                text = { Text(stringResource(R.string.menu_reading_mode_vertical_native)) },
+                                                enabled = !isTtsActive,
+                                                onClick = {
+                                                    onUseNativeVerticalRendererChange(true)
+                                                    showMoreMenu = false
+                                                    onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
+                                                },
+                                                trailingIcon = {
+                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL && useNativeVerticalRenderer) Icon(
                                                         Icons.Default.Check,
                                                         contentDescription = stringResource(R.string.content_desc_selected)
                                                     )
@@ -854,7 +871,7 @@ fun EpubReaderTopBar(
                                     EpubOverflowMenuSection.AUTO_SCROLL -> {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.menu_auto_scroll)) },
-                                            enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
+                                            enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL && !useNativeVerticalRenderer,
                                             onClick = {
                                                 showMoreMenu = false
                                                 onStartAutoScroll()

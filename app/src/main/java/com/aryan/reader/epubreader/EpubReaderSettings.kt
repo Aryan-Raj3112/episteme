@@ -133,6 +133,7 @@ private const val SYSTEM_UI_MODE_KEY = "reader_system_ui_mode"
 private const val PAGE_INFO_MODE_KEY = "reader_page_info_mode"
 private const val PAGE_INFO_POSITION_KEY = "reader_page_info_position"
 private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
+private const val NATIVE_VERTICAL_RENDERER_KEY = "reader_native_vertical_renderer"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.0f
@@ -296,6 +297,16 @@ fun savePullToTurn(context: Context, enabled: Boolean) {
 fun loadPullToTurn(context: Context): Boolean {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     return prefs.getBoolean(PULL_TO_TURN_ENABLED_KEY, true)
+}
+
+fun saveNativeVerticalRenderer(context: Context, enabled: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(NATIVE_VERTICAL_RENDERER_KEY, enabled) }
+}
+
+fun loadNativeVerticalRenderer(context: Context): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(NATIVE_VERTICAL_RENDERER_KEY, false)
 }
 
 private const val PULL_TO_TURN_MULTIPLIER_KEY = "reader_pull_to_turn_multiplier"

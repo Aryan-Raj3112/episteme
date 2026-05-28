@@ -971,6 +971,11 @@ class BookPaginator(
         return styledBlocks
     }
 
+    internal suspend fun getFlowBlocksForChapter(chapterIndex: Int): List<ContentBlock>? = withContext(Dispatchers.IO) {
+        val chapter = chapters.getOrNull(chapterIndex) ?: return@withContext null
+        getBlocksForChapter(chapter, chapterIndex)
+    }
+
     private fun startPaginationWorker(): Job = coroutineScope.launch(Dispatchers.IO) {
         Timber.i("Pagination worker started.")
         while (isActive) {

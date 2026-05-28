@@ -17,25 +17,32 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -110,6 +117,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -153,6 +161,7 @@ import com.aryan.reader.R
 import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.countWords
 import com.aryan.reader.epub.EpubBook
+import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.epubreader.HighlightColor
 import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
@@ -201,6 +210,26 @@ private data class SelectionBlockKey(
     val pageIndex: Int,
     val blockIndex: Int,
     val blockCharOffset: Int
+)
+
+private data class NativeVerticalViewportSample(
+    val firstVisiblePageIndex: Int,
+    val firstVisiblePageScrollOffset: Int,
+    val totalPageCount: Int,
+    val layoutTick: Int
+)
+
+private data class NativeVerticalFlowChapter(
+    val chapterIndex: Int,
+    val title: String?,
+    val blocks: List<ContentBlock>
+)
+
+private data class NativeVerticalFlowItem(
+    val key: String,
+    val chapterIndex: Int,
+    val blockOrdinal: Int,
+    val block: ContentBlock?
 )
 
 private fun buildSelectionBlockKey(
@@ -363,6 +392,249 @@ class ReactiveBlockMap(
         tick++
         delegate.clear()
     }
+
+    fun pruneDetached() {
+        val detachedKeys = delegate
+            .filterValues { (_, coords, _) -> !coords.isAttached }
+            .keys
+            .toList()
+        if (detachedKeys.isEmpty()) return
+        detachedKeys.forEach { delegate.remove(it) }
+        tick++
+    }
+}
+
+private fun estimateNativeVerticalCompatPage(
+    book: EpubBook,
+    paginator: BookPaginator,
+    locator: Locator?,
+    fallbackPage: Int
+): Int {
+    if (locator == null) return fallbackPage
+    val chapterStart = paginator.chapterStartPageIndices[locator.chapterIndex] ?: return fallbackPage
+    val chapterPageCount = paginator.chapterPageCounts[locator.chapterIndex] ?: 1
+    if (chapterPageCount <= 1) return chapterStart
+
+    val chapterChars = book.chaptersForPagination
+        .getOrNull(locator.chapterIndex)
+        ?.plainTextCharacterCount()
+        ?.coerceAtLeast(1)
+        ?: return fallbackPage
+    val ratio = locator.charOffset.toFloat().coerceAtLeast(0f) / chapterChars.toFloat()
+    val pageInChapter = (ratio.coerceIn(0f, 1f) * (chapterPageCount - 1)).roundToInt()
+    return chapterStart + pageInChapter
+}
+
+private fun estimateNativeVerticalProgressPercent(
+    book: EpubBook,
+    locator: Locator?
+): Float? {
+    if (locator == null) return null
+    val totalChars = book.chaptersForPagination
+        .sumOf { it.plainTextCharacterCount().toLong() }
+        .takeIf { it > 0L }
+        ?: return null
+    val completedChars = book.chaptersForPagination
+        .take(locator.chapterIndex)
+        .sumOf { it.plainTextCharacterCount().toLong() }
+    val chapterChars = book.chaptersForPagination
+        .getOrNull(locator.chapterIndex)
+        ?.plainTextCharacterCount()
+        ?.toLong()
+        ?: 0L
+    val chapterOffset = locator.charOffset
+        .toLong()
+        .coerceIn(0L, chapterChars.coerceAtLeast(0L))
+    return (((completedChars + chapterOffset).toDouble() / totalChars.toDouble()) * 100.0)
+        .toFloat()
+        .coerceIn(0f, 100f)
+}
+
+private fun locatorForNativeVerticalFlowBlock(chapterIndex: Int, block: ContentBlock): Locator {
+    val firstTextBlock = listOf(block)
+        .extractTextBlocks()
+        .firstOrNull { it.content.text.isNotBlank() }
+        ?: listOf(block).extractTextBlocks().firstOrNull()
+
+    return if (firstTextBlock != null) {
+        Locator(
+            chapterIndex = chapterIndex,
+            blockIndex = firstTextBlock.blockIndex,
+            charOffset = getTextBlockCharOffset(firstTextBlock)
+        )
+    } else {
+        Locator(
+            chapterIndex = chapterIndex,
+            blockIndex = block.blockIndex,
+            charOffset = 0
+        )
+    }
+}
+
+private fun findNativeVerticalFlowTextBlockForLocator(
+    chapters: List<NativeVerticalFlowChapter>,
+    locator: Locator
+): TextContentBlock? {
+    val blocks = chapters.firstOrNull { it.chapterIndex == locator.chapterIndex }?.blocks
+        ?: return null
+    val textBlocks = blocks.extractTextBlocks()
+    return textBlocks.firstOrNull { block ->
+        val start = getTextBlockCharOffset(block)
+        val end = start + block.content.text.length
+        block.blockIndex == locator.blockIndex && locator.charOffset in start..end
+    } ?: textBlocks.firstOrNull { it.blockIndex >= locator.blockIndex }
+        ?: textBlocks.firstOrNull()
+}
+
+private fun buildNativeVerticalFlowItems(
+    chapters: List<NativeVerticalFlowChapter>
+): List<NativeVerticalFlowItem> {
+    return chapters.flatMap { chapter ->
+        if (chapter.blocks.isEmpty()) {
+            listOf(
+                NativeVerticalFlowItem(
+                    key = "chapter-${chapter.chapterIndex}-empty",
+                    chapterIndex = chapter.chapterIndex,
+                    blockOrdinal = -1,
+                    block = null
+                )
+            )
+        } else {
+            chapter.blocks.mapIndexed { ordinal, block ->
+                NativeVerticalFlowItem(
+                    key = "chapter-${chapter.chapterIndex}-block-$ordinal-${block.blockIndex}",
+                    chapterIndex = chapter.chapterIndex,
+                    blockOrdinal = ordinal,
+                    block = block
+                )
+            }
+        }
+    }
+}
+
+private fun findNativeVerticalFlowItemIndexForLocator(
+    items: List<NativeVerticalFlowItem>,
+    chapters: List<NativeVerticalFlowChapter>,
+    locator: Locator
+): Int? {
+    val targetTextBlock = findNativeVerticalFlowTextBlockForLocator(chapters, locator)
+    if (targetTextBlock != null) {
+        val exactIndex = items.indexOfFirst { item ->
+            item.chapterIndex == locator.chapterIndex &&
+                item.block?.let { block ->
+                    listOf(block).extractTextBlocks().any { textBlock ->
+                        textBlock.cfi == targetTextBlock.cfi ||
+                            (
+                                textBlock.blockIndex == targetTextBlock.blockIndex &&
+                                    getTextBlockCharOffset(textBlock) == getTextBlockCharOffset(targetTextBlock)
+                                )
+                    }
+                } == true
+        }
+        if (exactIndex >= 0) return exactIndex
+    }
+
+    val blockIndex = items.indexOfFirst { item ->
+        item.chapterIndex == locator.chapterIndex &&
+            (item.block?.blockIndex ?: Int.MAX_VALUE) >= locator.blockIndex
+    }
+    if (blockIndex >= 0) return blockIndex
+
+    return items.indexOfFirst { it.chapterIndex == locator.chapterIndex }
+        .takeIf { it >= 0 }
+}
+
+private fun locatorForNativeVerticalFlowItem(item: NativeVerticalFlowItem): Locator? {
+    return item.block?.let { locatorForNativeVerticalFlowBlock(item.chapterIndex, it) }
+        ?: Locator(item.chapterIndex, 0, 0)
+}
+
+private fun nativeVerticalLayoutKey(cfi: String, chapterIndex: Int): String = "${cfi}_$chapterIndex"
+
+private fun resolveNativeVerticalScrollDeltaForLocator(
+    rootWindowBounds: Rect,
+    chapterLayoutMap: Map<Int, LayoutCoordinates>,
+    blockLayoutMap: Map<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>>,
+    chapters: List<NativeVerticalFlowChapter>,
+    locator: Locator
+): Float? {
+    if (rootWindowBounds == Rect.Zero) return null
+
+    val targetTextBlock = findNativeVerticalFlowTextBlockForLocator(chapters, locator)
+    if (targetTextBlock?.cfi != null) {
+        val layoutInfo = blockLayoutMap[nativeVerticalLayoutKey(targetTextBlock.cfi!!, locator.chapterIndex)]
+        if (layoutInfo != null) {
+            val (layout, coords, block) = layoutInfo
+            if (coords.isAttached && layout.lineCount > 0) {
+                val relativeOffset = (locator.charOffset - getTextBlockCharOffset(block))
+                    .coerceIn(0, block.content.text.length)
+                val lineIndex = runCatching { layout.getLineForOffset(relativeOffset) }
+                    .getOrDefault(0)
+                    .coerceIn(0, layout.lineCount - 1)
+                val localY = runCatching { layout.getLineTop(lineIndex) }
+                    .getOrDefault(0f)
+                val targetWindowY = coords.localToWindow(Offset(0f, localY)).y
+                return targetWindowY - rootWindowBounds.top
+            }
+        }
+    }
+
+    val chapterCoords = chapterLayoutMap[locator.chapterIndex]
+    if (chapterCoords?.isAttached == true) {
+        return chapterCoords.positionInWindow().y - rootWindowBounds.top
+    }
+
+    return null
+}
+
+private fun resolveNativeVerticalFlowVisibleLocator(
+    rootWindowBounds: Rect,
+    blockLayoutMap: Map<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>>
+): Locator? {
+    if (rootWindowBounds == Rect.Zero) return null
+    val viewportTop = rootWindowBounds.top + 8f
+    val viewportBottom = rootWindowBounds.bottom - 8f
+
+    val visible = blockLayoutMap.entries
+        .asSequence()
+        .mapNotNull { (key, layoutInfo) ->
+            val chapterIndex = key.substringAfterLast("_").toIntOrNull()
+                ?: return@mapNotNull null
+            val (layout, coords, block) = layoutInfo
+            if (!coords.isAttached) return@mapNotNull null
+            val bounds = Rect(coords.positionInWindow(), coords.size.toSize())
+            if (bounds.bottom <= viewportTop || bounds.top >= viewportBottom) {
+                null
+            } else {
+                Triple(chapterIndex, bounds, layoutInfo)
+            }
+        }
+        .sortedBy { it.second.top }
+        .firstOrNull { it.second.bottom > viewportTop }
+        ?: return null
+
+    val chapterIndex = visible.first
+    val bounds = visible.second
+    val (layout, _, block) = visible.third
+    val blockStartOffset = getTextBlockCharOffset(block)
+    if (layout.lineCount <= 0) {
+        return Locator(chapterIndex, block.blockIndex, blockStartOffset)
+    }
+
+    val maxLayoutY = (layout.size.height - 1).coerceAtLeast(0).toFloat()
+    val localY = (viewportTop - bounds.top).coerceIn(0f, maxLayoutY)
+    val lineIndex = runCatching { layout.getLineForVerticalPosition(localY) }
+        .getOrDefault(0)
+        .coerceIn(0, layout.lineCount - 1)
+    val relativeOffset = runCatching { layout.getLineStart(lineIndex) }
+        .getOrDefault(0)
+        .coerceIn(0, block.content.text.length)
+
+    return Locator(
+        chapterIndex = chapterIndex,
+        blockIndex = block.blockIndex,
+        charOffset = blockStartOffset + relativeOffset
+    )
 }
 
 data class PendingCrossPageSelection(val fromPageIndex: Int)
@@ -1887,6 +2159,920 @@ fun PaginatedReaderScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+@OptIn(ExperimentalSerializationApi::class, FlowPreview::class)
+@Composable
+fun NativeVerticalReaderScreen(
+    modifier: Modifier = Modifier,
+    book: EpubBook,
+    bookId: String? = null,
+    isDarkTheme: Boolean,
+    effectiveBg: Color,
+    effectiveText: Color,
+    searchQuery: String,
+    fontSizeMultiplier: Float,
+    lineHeightMultiplier: Float,
+    paragraphGapMultiplier: Float,
+    imageSizeMultiplier: Float,
+    horizontalMarginMultiplier: Float,
+    verticalMarginMultiplier: Float,
+    fontFamily: FontFamily,
+    textAlign: ReaderTextAlign,
+    bookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
+    bookReplacementFileId: String? = bookId,
+    ttsHighlightInfo: TtsHighlightInfo?,
+    initialLocator: Locator? = null,
+    initialPageIndexInBook: Int = 0,
+    scrollRequestPage: Int? = null,
+    scrollDeltaRequest: Float? = null,
+    scrollDeltaRequestId: Long = 0L,
+    onScrollRequestConsumed: () -> Unit = {},
+    onScrollDeltaConsumed: () -> Unit = {},
+    onPaginatorReady: (IPaginator) -> Unit,
+    onVisiblePageChanged: (pageIndex: Int, chapterIndex: Int?, locator: Locator?) -> Unit = { _, _, _ -> },
+    onProgressChanged: (pageIndex: Int, totalPages: Int, progressPercent: Float) -> Unit = { _, _, _ -> },
+    onTap: (Offset?) -> Unit,
+    isProUser: Boolean,
+    isOss: Boolean = false,
+    onShowDictionaryUpsellDialog: () -> Unit,
+    onWordSelectedForAiDefinition: (String) -> Unit,
+    onTranslate: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    onStartTtsFromSelection: (String, Int) -> Unit,
+    onNoteRequested: (String?) -> Unit,
+    onInternalLinkNavigated: (Int) -> Unit = {},
+    userHighlights: List<UserHighlight>,
+    onHighlightCreated: (String, String, String) -> Unit,
+    onHighlightDeleted: (String) -> Unit,
+    activeHighlightPalette: List<HighlightColor>,
+    onUpdatePalette: (Int, HighlightColor) -> Unit,
+    activeTextureId: String? = null,
+    activeTextureAlpha: Float = 0.55f
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val textureBitmap = remember(activeTextureId) {
+        loadReaderTextureBitmap(context, activeTextureId)
+    }
+    val textureModifier = if (textureBitmap != null) {
+        Modifier.drawBehind {
+            val brush = ShaderBrush(
+                ImageShader(textureBitmap, TileMode.Repeated, TileMode.Repeated)
+            )
+            drawRect(brush = brush, blendMode = BlendMode.SrcOver, alpha = activeTextureAlpha.coerceIn(0f, 1f))
+        }
+    } else {
+        Modifier
+    }
+    val bookReplacementSignature = remember(bookReplacementPreferences, bookReplacementFileId) {
+        bookReplacementPreferences.signatureForFile(bookReplacementFileId)
+    }
+    var rootWindowBounds by remember { mutableStateOf(Rect.Zero) }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .background(effectiveBg)
+            .then(textureModifier)
+            .onGloballyPositioned { coords ->
+                rootWindowBounds = Rect(coords.positionInWindow(), coords.size.toSize())
+            }
+            .testTag("NativeVerticalReader")
+    ) {
+        val textMeasurer = rememberTextMeasurer()
+        val baseTextStyle = MaterialTheme.typography.bodyLarge
+        val density = LocalDensity.current
+        val layoutTextStyle = remember(
+            baseTextStyle,
+            fontSizeMultiplier,
+            lineHeightMultiplier,
+            fontFamily
+        ) {
+            val adjustedFontSize = baseTextStyle.fontSize * fontSizeMultiplier
+            val adjustedLineHeight =
+                adjustedFontSize * paginationLineHeightMultiplierForWebViewSetting(lineHeightMultiplier)
+
+            baseTextStyle.copy(
+                color = Color.Unspecified,
+                fontSize = adjustedFontSize,
+                lineHeight = adjustedLineHeight,
+                fontFamily = fontFamily,
+                lineBreak = LineBreak.Paragraph,
+                letterSpacing = TextUnit.Unspecified,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Proportional,
+                    trim = LineHeightStyle.Trim.None
+                )
+            )
+        }
+        val textStyle = remember(layoutTextStyle, effectiveText) {
+            layoutTextStyle.copy(color = effectiveText)
+        }
+        val userTextAlign = remember(textAlign) {
+            when (textAlign) {
+                ReaderTextAlign.JUSTIFY -> TextAlign.Justify
+                ReaderTextAlign.LEFT -> TextAlign.Left
+                ReaderTextAlign.RIGHT -> TextAlign.Right
+                ReaderTextAlign.DEFAULT -> null
+            }
+        }
+        val requestedHorizontalPadding = 16.dp * horizontalMarginMultiplier
+        val requestedVerticalPadding = 16.dp * verticalMarginMultiplier
+        val effectiveReaderPadding =
+            remember(this.constraints, density, requestedHorizontalPadding, requestedVerticalPadding) {
+                val requestedHorizontalPaddingPx = with(density) { requestedHorizontalPadding.roundToPx() }
+                val requestedVerticalPaddingPx = with(density) { requestedVerticalPadding.roundToPx() }
+                val minReadableWidthPx = with(density) { 96.dp.roundToPx() }
+                    .coerceAtMost(this.constraints.maxWidth)
+                val minReadableHeightPx = with(density) { 160.dp.roundToPx() }
+                    .coerceAtMost(this.constraints.maxHeight)
+                val horizontalPaddingPx = requestedHorizontalPaddingPx.coerceAtMost(
+                    ((this.constraints.maxWidth - minReadableWidthPx) / 2).coerceAtLeast(0)
+                )
+                val verticalPaddingPx = requestedVerticalPaddingPx.coerceAtMost(
+                    ((this.constraints.maxHeight - minReadableHeightPx) / 2).coerceAtLeast(0)
+                )
+                with(density) {
+                    horizontalPaddingPx.toDp() to verticalPaddingPx.toDp()
+                }
+        }
+        val horizontalPadding = effectiveReaderPadding.first
+        val verticalPadding = effectiveReaderPadding.second
+        val textConstraints =
+            remember(this.constraints, density, horizontalPadding, verticalPadding) {
+                val horizontalPaddingPx = with(density) { horizontalPadding.roundToPx() }
+                val verticalPaddingPx = with(density) { verticalPadding.roundToPx() }
+                this.constraints.copy(
+                    minWidth = 0,
+                    maxWidth = (this.constraints.maxWidth - (2 * horizontalPaddingPx)).coerceAtLeast(1),
+                    minHeight = 0,
+                    maxHeight = (this.constraints.maxHeight - (2 * verticalPaddingPx)).coerceAtLeast(1)
+                )
+            }
+
+        val mathMLRenderer = remember { MathMLRenderer(context.applicationContext) }
+        DisposableEffect(Unit) {
+            onDispose {
+                mathMLRenderer.destroy()
+                Timber.d("NativeVerticalReaderScreen disposed, MathMLRenderer destroyed.")
+            }
+        }
+
+        val paginator = remember(
+            book,
+            bookId,
+            textConstraints,
+            layoutTextStyle,
+            userTextAlign,
+            paragraphGapMultiplier,
+            imageSizeMultiplier,
+            verticalMarginMultiplier,
+            bookReplacementSignature,
+            bookReplacementFileId
+        ) {
+            val userAgentStylesheet = UserAgentStylesheet.default
+            var allRules = OptimizedCssRules()
+            val allFontFaces = mutableListOf<FontFaceInfo>()
+
+            val uaResult = CssParser.parse(
+                cssContent = userAgentStylesheet,
+                cssPath = null,
+                baseFontSizeSp = layoutTextStyle.fontSize.value,
+                density = density.density,
+                constraints = textConstraints,
+                isDarkTheme = false,
+                adaptThemeColors = false
+            )
+            allRules = allRules.merge(uaResult.rules)
+            allFontFaces.addAll(uaResult.fontFaces)
+
+            book.css.forEach { (path, content) ->
+                val bookCssResult = CssParser.parse(
+                    cssContent = content,
+                    cssPath = path,
+                    baseFontSizeSp = layoutTextStyle.fontSize.value,
+                    density = density.density,
+                    constraints = textConstraints,
+                    isDarkTheme = false,
+                    adaptThemeColors = false
+                )
+                allRules = allRules.merge(bookCssResult.rules)
+                allFontFaces.addAll(bookCssResult.fontFaces)
+            }
+
+            val fontFamilyMap = loadFontFamilies(
+                fontFaces = allFontFaces,
+                extractionPath = book.extractionBasePath
+            )
+            val bookCacheDao =
+                BookCacheDatabase.getDatabase(context.applicationContext).bookCacheDao()
+            val proto = ProtoBuf { serializersModule = semanticBlockModule }
+            val uniqueBookId = bookId ?: if (book.fileName.length > 20) book.fileName else book.title
+            val initialChapter = initialLocator?.chapterIndex ?: 0
+
+            Timber.tag("NativeVerticalReader").d(
+                "Instantiating BookPaginator for native vertical. initialChapter=$initialChapter"
+            )
+            BookPaginator(
+                coroutineScope = coroutineScope,
+                chapters = book.chaptersForPagination,
+                textMeasurer = textMeasurer,
+                constraints = textConstraints,
+                textStyle = layoutTextStyle,
+                extractionBasePath = book.extractionBasePath,
+                density = density,
+                fontFamilyMap = fontFamilyMap,
+                isDarkTheme = isDarkTheme,
+                themeBackgroundColor = effectiveBg,
+                themeTextColor = effectiveText,
+                bookId = uniqueBookId,
+                bookCacheDao = bookCacheDao,
+                proto = proto,
+                initialChapterToPaginate = initialChapter,
+                bookCss = book.css,
+                userAgentStylesheet = userAgentStylesheet,
+                allFontFaces = allFontFaces,
+                context = context.applicationContext,
+                mathMLRenderer = mathMLRenderer,
+                userTextAlign = userTextAlign,
+                paragraphGapMultiplier = paragraphGapMultiplier,
+                imageSizeMultiplier = imageSizeMultiplier,
+                verticalMarginMultiplier = verticalMarginMultiplier,
+                bookReplacementPreferences = bookReplacementPreferences,
+                bookReplacementFileId = bookReplacementFileId
+            )
+        }
+
+        LaunchedEffect(paginator) {
+            onPaginatorReady(paginator)
+        }
+
+        var isLoading by remember { mutableStateOf(true) }
+        var totalPageCount by remember { mutableIntStateOf(0) }
+        var generation by remember { mutableIntStateOf(0) }
+
+        LaunchedEffect(paginator) {
+            launch {
+                snapshotFlow { paginator.isLoading }.collect { isLoading = it }
+            }
+            launch {
+                snapshotFlow { paginator.totalPageCount }.collect { totalPageCount = it }
+            }
+            launch {
+                snapshotFlow { paginator.generation }.collect { generation = it }
+            }
+        }
+
+        val listState = rememberLazyListState()
+        val blockLayoutMap = remember(paginator) { ReactiveBlockMap() }
+        val chapterLayoutMap = remember(paginator) { mutableStateMapOf<Int, LayoutCoordinates>() }
+        var flowChapters by remember(paginator) { mutableStateOf<List<NativeVerticalFlowChapter>?>(null) }
+        val flowItems = remember(flowChapters) { buildNativeVerticalFlowItems(flowChapters.orEmpty()) }
+        var isFlowLoading by remember(paginator) { mutableStateOf(true) }
+        val initialNativeLocator = remember(paginator) { initialLocator }
+        val initialNativePageIndex = remember(paginator) { initialPageIndexInBook }
+        var didInitialScroll by remember(paginator) { mutableStateOf(false) }
+
+        suspend fun scrollToFlowLocator(locator: Locator?, animate: Boolean): Boolean {
+            if (locator == null) return false
+            val chapters = flowChapters ?: return false
+            val exactDelta = resolveNativeVerticalScrollDeltaForLocator(
+                rootWindowBounds = rootWindowBounds,
+                chapterLayoutMap = chapterLayoutMap,
+                blockLayoutMap = blockLayoutMap,
+                chapters = chapters,
+                locator = locator
+            )
+            if (exactDelta != null && abs(exactDelta) > 1f) {
+                if (animate) {
+                    listState.animateScrollBy(exactDelta)
+                } else {
+                    listState.scrollBy(exactDelta)
+                }
+                return true
+            }
+
+            val targetIndex = findNativeVerticalFlowItemIndexForLocator(
+                items = flowItems,
+                chapters = chapters,
+                locator = locator
+            ) ?: return false
+            if (animate) {
+                listState.animateScrollToItem(targetIndex)
+            } else {
+                listState.scrollToItem(targetIndex)
+            }
+            return true
+        }
+
+        suspend fun scrollToCompatPage(pageIndex: Int, animate: Boolean): Boolean {
+            val targetPage = pageIndex.coerceIn(0, (totalPageCount - 1).coerceAtLeast(0))
+            val locator = paginator.getLocatorForPage(targetPage)
+                ?: paginator.findChapterIndexForPage(targetPage)?.let { Locator(it, 0, 0) }
+                ?: return false
+            val didScroll = scrollToFlowLocator(locator, animate)
+            if (didScroll) paginator.onUserScrolledTo(targetPage)
+            return didScroll
+        }
+
+        LaunchedEffect(paginator) {
+            snapshotFlow { paginator.isLoading }.filter { !it }.first()
+            isFlowLoading = true
+            val loadedChapters = mutableListOf<NativeVerticalFlowChapter>()
+            book.chaptersForPagination.forEachIndexed { chapterIndex, chapter ->
+                val blocks = try {
+                    paginator.getFlowBlocksForChapter(chapterIndex).orEmpty()
+                } catch (e: Exception) {
+                    Timber.e(e, "Native vertical flow failed to load chapter $chapterIndex")
+                    emptyList()
+                }
+                loadedChapters += NativeVerticalFlowChapter(
+                    chapterIndex = chapterIndex,
+                    title = chapter.title,
+                    blocks = blocks
+                )
+            }
+            flowChapters = loadedChapters
+            isFlowLoading = false
+        }
+
+        LaunchedEffect(flowChapters, totalPageCount, rootWindowBounds) {
+            if (didInitialScroll || flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
+            val targetLocator = initialNativeLocator ?: paginator.getLocatorForPage(initialNativePageIndex)
+            if (targetLocator == null) {
+                didInitialScroll = true
+                return@LaunchedEffect
+            }
+            val didScroll = scrollToFlowLocator(targetLocator, animate = false) ||
+                scrollToCompatPage(initialNativePageIndex, animate = false)
+            if (didScroll) {
+                didInitialScroll = true
+            }
+        }
+
+        LaunchedEffect(scrollRequestPage, totalPageCount, flowChapters, rootWindowBounds) {
+            val requestedPage = scrollRequestPage ?: return@LaunchedEffect
+            if (totalPageCount <= 0 || flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
+            if (scrollToCompatPage(requestedPage, animate = true)) {
+                onScrollRequestConsumed()
+            }
+        }
+
+        LaunchedEffect(scrollDeltaRequestId, scrollDeltaRequest) {
+            val delta = scrollDeltaRequest ?: return@LaunchedEffect
+            if (delta != 0f) {
+                listState.animateScrollBy(delta)
+            }
+            onScrollDeltaConsumed()
+        }
+
+        var lastReportedVisiblePage by remember { mutableIntStateOf(-1) }
+        var lastReportedTotalPageCount by remember { mutableIntStateOf(0) }
+        var lastReportedLocator by remember { mutableStateOf<Locator?>(null) }
+
+        LaunchedEffect(paginator, totalPageCount, rootWindowBounds, blockLayoutMap, flowChapters, flowItems) {
+            snapshotFlow {
+                NativeVerticalViewportSample(
+                    firstVisiblePageIndex = listState.firstVisibleItemIndex,
+                    firstVisiblePageScrollOffset = listState.firstVisibleItemScrollOffset,
+                    totalPageCount = totalPageCount.takeIf { it > 0 } ?: (flowChapters?.size ?: 0),
+                    layoutTick = blockLayoutMap.tick
+                )
+            }
+                .debounce(80)
+                .collectLatest { sample ->
+                    val total = sample.totalPageCount
+                    if (total <= 0) return@collectLatest
+                    blockLayoutMap.pruneDetached()
+                    val locator = resolveNativeVerticalFlowVisibleLocator(
+                        rootWindowBounds = rootWindowBounds,
+                        blockLayoutMap = blockLayoutMap
+                    ) ?: flowItems.getOrNull(sample.firstVisiblePageIndex)
+                        ?.let { locatorForNativeVerticalFlowItem(it) }
+                    val progressPercent = estimateNativeVerticalProgressPercent(
+                        book = book,
+                        locator = locator
+                    ) ?: if (total > 1) {
+                        (sample.firstVisiblePageIndex.toFloat() / (flowItems.size - 1).coerceAtLeast(1).toFloat()) * 100f
+                    } else {
+                        0f
+                    }
+                    val compatPage = if (total > 1) {
+                        ((progressPercent.coerceIn(0f, 100f) / 100f) * (total - 1)).roundToInt()
+                    } else {
+                        0
+                    }.coerceIn(0, (total - 1).coerceAtLeast(0))
+                    paginator.onUserScrolledTo(compatPage)
+
+                    if (
+                        compatPage != lastReportedVisiblePage ||
+                        total != lastReportedTotalPageCount ||
+                        locator != lastReportedLocator
+                    ) {
+                        lastReportedVisiblePage = compatPage
+                        lastReportedTotalPageCount = total
+                        lastReportedLocator = locator
+                        onProgressChanged(compatPage, total, progressPercent)
+                        onVisiblePageChanged(compatPage, locator?.chapterIndex, locator)
+                    }
+                }
+        }
+
+        val searchHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+        val ttsHighlightColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+        var activeSelection by remember { mutableStateOf<PaginatedSelection?>(null) }
+        var showPaletteManager by remember { mutableStateOf(false) }
+        var showExternalLinkDialog by remember { mutableStateOf<String?>(null) }
+        val imageLoader = context.imageLoader
+
+        showExternalLinkDialog?.let { urlToShow ->
+            AlertDialog(
+                onDismissRequest = { showExternalLinkDialog = null },
+                title = { Text(stringResource(R.string.dialog_external_link_title)) },
+                text = { Text(urlToShow) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, urlToShow.toUri())
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: ActivityNotFoundException) {
+                                Timber.e(e, "No activity found to handle intent for URL: $urlToShow")
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.error_no_browser),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                            showExternalLinkDialog = null
+                        }
+                    ) { Text(stringResource(R.string.action_open)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        val clipboardManager =
+                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboardManager.setPrimaryClip(
+                            ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), urlToShow)
+                        )
+                        showExternalLinkDialog = null
+                    }) { Text(stringResource(R.string.action_copy)) }
+                }
+            )
+        }
+
+        val renderedFlowChapters = flowChapters
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (isFlowLoading || renderedFlowChapters == null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (renderedFlowChapters.isNotEmpty()) {
+                generation
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    contentPadding = PaddingValues(top = verticalPadding, bottom = verticalPadding)
+                ) {
+                    itemsIndexed(
+                        items = flowItems,
+                        key = { _, item -> item.key }
+                    ) { _, item ->
+                        val chapterIndex = item.chapterIndex
+                        val block = item.block
+                        val onGeneralTapCallback: (Offset) -> Unit = { offset ->
+                            activeSelection = null
+                            onTap(offset)
+                        }
+                        val onLinkClickCallback: (String) -> Unit = { href ->
+                            if (href.startsWith("http://") || href.startsWith("https://")) {
+                                showExternalLinkDialog = href
+                            } else {
+                                val chapterPath = book.chaptersForPagination.getOrNull(chapterIndex)?.absPath
+                                coroutineScope.launch {
+                                    val targetPage = paginator.findStablePageForHref(chapterPath.orEmpty(), href)
+                                    if (targetPage != null) {
+                                        scrollToCompatPage(targetPage, animate = true)
+                                        onInternalLinkNavigated(targetPage)
+                                    } else {
+                                        Timber.tag(TAG_PAGINATED_LINK_DIAG)
+                                            .w("Native vertical link failed href=$href currentChapterPath=$chapterPath")
+                                    }
+                                }
+                            }
+                        }
+
+                        if (block == null) {
+                            Spacer(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(24.dp)
+                                    .onGloballyPositioned { coords ->
+                                        chapterLayoutMap[chapterIndex] = coords
+                                    }
+                            )
+                        } else {
+                            val displayBlock = remember(block, isDarkTheme, effectiveBg, effectiveText) {
+                                Page(listOf(block)).applyReaderThemeForDisplay(
+                                    isDarkTheme = isDarkTheme,
+                                    themeBackgroundColor = effectiveBg,
+                                    themeTextColor = effectiveText
+                                ).content.first()
+                            }
+                            val pageUserHighlights = highlightsForPaginatedPage(
+                                pageChapterIndex = chapterIndex,
+                                userHighlights = userHighlights
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = horizontalPadding)
+                                    .background(effectiveBg)
+                                    .onGloballyPositioned { coords ->
+                                        if (item.blockOrdinal <= 0) {
+                                            chapterLayoutMap[chapterIndex] = coords
+                                        }
+                                    }
+                                    .pointerInput(chapterIndex, item.blockOrdinal) {
+                                        detectTapGestures(onTap = { offset -> onTap(offset) })
+                                    }
+                            ) {
+                                NativeVerticalContentBlock(
+                                    block = displayBlock,
+                                    pageIndex = chapterIndex,
+                                    textStyle = textStyle,
+                                    imageSizeMultiplier = imageSizeMultiplier,
+                                    searchQuery = searchQuery,
+                                    searchHighlightColor = searchHighlightColor,
+                                    ttsHighlightInfo = ttsHighlightInfo,
+                                    ttsHighlightColor = ttsHighlightColor,
+                                    textMeasurer = textMeasurer,
+                                    onLinkClickCallback = onLinkClickCallback,
+                                    onGeneralTapCallback = onGeneralTapCallback,
+                                    userHighlights = pageUserHighlights,
+                                    activeSelection = activeSelection,
+                                    onSelectionChange = { activeSelection = it },
+                                    onHighlightClick = { highlight, _ ->
+                                        onNoteRequested(highlight.cfi)
+                                        activeSelection = null
+                                    },
+                                    isDarkTheme = isDarkTheme,
+                                    themeBackgroundColor = effectiveBg,
+                                    themeTextColor = effectiveText,
+                                    blockLayoutMap = blockLayoutMap,
+                                    density = density,
+                                    imageLoader = imageLoader,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+
+            activeSelection?.let { sel ->
+                Popup(
+                    popupPositionProvider = remember(sel.rect, density) {
+                        SmartPopupPositionProvider(sel.rect, density)
+                    },
+                    onDismissRequest = { activeSelection = null },
+                    properties = PopupProperties(dismissOnClickOutside = false)
+                ) {
+                    PaginatedTextSelectionMenu(
+                        onCopy = {
+                            val clipboardManager =
+                                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboardManager.setPrimaryClip(
+                                ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), sel.text)
+                            )
+                            activeSelection = null
+                        },
+                        onSelectAll = null,
+                        onDictionary = {
+                            if (isProUser || countWords(sel.text) <= 1) {
+                                onWordSelectedForAiDefinition(sel.text)
+                            } else {
+                                onShowDictionaryUpsellDialog()
+                            }
+                            activeSelection = null
+                        },
+                        onTranslate = {
+                            onTranslate(sel.text)
+                            activeSelection = null
+                        },
+                        onSearch = {
+                            onSearch(sel.text)
+                            activeSelection = null
+                        },
+                        onHighlight = { color ->
+                            val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
+                            val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
+                            val finalCfi =
+                                "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
+                            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                "create_request source=native_vertical_highlight_menu color=${color.id} " +
+                                    "savedCfi=$finalCfi startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
+                                    "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
+                                    "localOffsets=${sel.startOffset}..${sel.endOffset} " +
+                                    "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
+                                    "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                            )
+                            onHighlightCreated(finalCfi, sel.text, color.id)
+                            activeSelection = null
+                        },
+                        onNote = {
+                            onNoteRequested(null)
+                            val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
+                            val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
+                            val finalCfi =
+                                "${sel.startBaseCfi}:$startAbsoluteOffset|${sel.endBaseCfi}:$endAbsoluteOffset"
+                            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                "create_request source=native_vertical_note_menu color=${HighlightColor.YELLOW.id} " +
+                                    "savedCfi=$finalCfi startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
+                                    "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
+                                    "localOffsets=${sel.startOffset}..${sel.endOffset} " +
+                                    "blockAbsStarts=${sel.startBlockCharOffset}..${sel.endBlockCharOffset} " +
+                                    "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                            )
+                            onHighlightCreated(finalCfi, sel.text, HighlightColor.YELLOW.id)
+                            activeSelection = null
+                        },
+                        onTts = {
+                            val startAbs = sel.startOffset + sel.startBlockCharOffset
+                            onStartTtsFromSelection(sel.startBaseCfi, startAbs)
+                            activeSelection = null
+                        },
+                        onDelete = null,
+                        isProUser = isProUser,
+                        isOss = isOss,
+                        activeHighlightPalette = activeHighlightPalette,
+                        onOpenPaletteManager = { showPaletteManager = true }
+                    )
+                }
+            }
+
+            if (showPaletteManager) {
+                PaletteManagerDialog(
+                    currentPalette = activeHighlightPalette,
+                    onDismiss = { showPaletteManager = false },
+                    onSave = { newPalette ->
+                        newPalette.forEachIndexed { index, color ->
+                            onUpdatePalette(index, color)
+                        }
+                        showPaletteManager = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NativeVerticalPage(
+    page: Page,
+    pageIndex: Int,
+    textStyle: TextStyle,
+    imageSizeMultiplier: Float,
+    searchQuery: String,
+    searchHighlightColor: Color,
+    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightColor: Color,
+    textMeasurer: TextMeasurer,
+    onLinkClickCallback: (String) -> Unit,
+    onGeneralTapCallback: (Offset) -> Unit,
+    userHighlights: List<UserHighlight>,
+    activeSelection: PaginatedSelection?,
+    onSelectionChange: (PaginatedSelection?) -> Unit,
+    onHighlightClick: (UserHighlight, Rect) -> Unit,
+    isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color,
+    blockLayoutMap: MutableMap<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>>,
+    density: Density,
+    imageLoader: ImageLoader,
+    horizontalPadding: Dp,
+    effectiveBg: Color,
+    onTap: (Offset?) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(effectiveBg)
+            .padding(horizontal = horizontalPadding)
+            .pointerInput(pageIndex) {
+                detectTapGestures(onTap = { offset -> onTap(offset) })
+            }
+    ) {
+        page.content.forEach { block ->
+            NativeVerticalContentBlock(
+                block = block,
+                pageIndex = pageIndex,
+                textStyle = textStyle,
+                imageSizeMultiplier = imageSizeMultiplier,
+                searchQuery = searchQuery,
+                searchHighlightColor = searchHighlightColor,
+                ttsHighlightInfo = ttsHighlightInfo,
+                ttsHighlightColor = ttsHighlightColor,
+                textMeasurer = textMeasurer,
+                onLinkClickCallback = onLinkClickCallback,
+                onGeneralTapCallback = onGeneralTapCallback,
+                userHighlights = userHighlights,
+                activeSelection = activeSelection,
+                onSelectionChange = onSelectionChange,
+                onHighlightClick = onHighlightClick,
+                isDarkTheme = isDarkTheme,
+                themeBackgroundColor = themeBackgroundColor,
+                themeTextColor = themeTextColor,
+                blockLayoutMap = blockLayoutMap,
+                density = density,
+                imageLoader = imageLoader,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
+private fun NativeVerticalContentBlock(
+    block: ContentBlock,
+    pageIndex: Int,
+    textStyle: TextStyle,
+    imageSizeMultiplier: Float,
+    searchQuery: String,
+    searchHighlightColor: Color,
+    ttsHighlightInfo: TtsHighlightInfo?,
+    ttsHighlightColor: Color,
+    textMeasurer: TextMeasurer,
+    onLinkClickCallback: (String) -> Unit,
+    onGeneralTapCallback: (Offset) -> Unit,
+    userHighlights: List<UserHighlight>,
+    activeSelection: PaginatedSelection?,
+    onSelectionChange: (PaginatedSelection?) -> Unit,
+    onHighlightClick: (UserHighlight, Rect) -> Unit,
+    isDarkTheme: Boolean,
+    themeBackgroundColor: Color,
+    themeTextColor: Color,
+    blockLayoutMap: MutableMap<String, Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>>,
+    density: Density,
+    imageLoader: ImageLoader,
+    modifier: Modifier = Modifier
+) {
+    val styledModifier = modifier
+        .padding(
+            start = block.style.margin.left.coerceAtLeast(0.dp),
+            top = block.style.margin.top.coerceAtLeast(0.dp),
+            end = block.style.margin.right.coerceAtLeast(0.dp),
+            bottom = block.style.margin.bottom.coerceAtLeast(0.dp)
+        )
+        .drawCssBorders(block.style, density)
+        .padding(
+            start = block.style.padding.left.coerceAtLeast(0.dp),
+            top = block.style.padding.top.coerceAtLeast(0.dp),
+            end = block.style.padding.right.coerceAtLeast(0.dp),
+            bottom = block.style.padding.bottom.coerceAtLeast(0.dp)
+        )
+
+    when (block) {
+        is WrappingContentBlock -> {
+            WrappingContentLayout(
+                block = block,
+                textStyle = textStyle,
+                imageSizeMultiplier = imageSizeMultiplier,
+                modifier = styledModifier,
+                searchQuery = searchQuery,
+                ttsHighlightInfo = ttsHighlightInfo,
+                searchHighlightColor = searchHighlightColor,
+                ttsHighlightColor = ttsHighlightColor,
+                isDarkTheme = isDarkTheme,
+                themeBackgroundColor = themeBackgroundColor,
+                themeTextColor = themeTextColor,
+                onLinkClick = onLinkClickCallback,
+                onGeneralTap = onGeneralTapCallback
+            )
+        }
+        is MathBlock -> {
+            RenderNativeMathBlock(
+                block = block,
+                textStyle = textStyle,
+                imageLoader = imageLoader,
+                modifier = styledModifier
+            )
+        }
+        is FlexContainerBlock -> {
+            val renderChild: @Composable (ContentBlock) -> Unit = { child ->
+                NativeVerticalContentBlock(
+                    block = child,
+                    pageIndex = pageIndex,
+                    textStyle = textStyle,
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    searchQuery = searchQuery,
+                    searchHighlightColor = searchHighlightColor,
+                    ttsHighlightInfo = ttsHighlightInfo,
+                    ttsHighlightColor = ttsHighlightColor,
+                    textMeasurer = textMeasurer,
+                    onLinkClickCallback = onLinkClickCallback,
+                    onGeneralTapCallback = onGeneralTapCallback,
+                    userHighlights = userHighlights,
+                    activeSelection = activeSelection,
+                    onSelectionChange = onSelectionChange,
+                    onHighlightClick = onHighlightClick,
+                    isDarkTheme = isDarkTheme,
+                    themeBackgroundColor = themeBackgroundColor,
+                    themeTextColor = themeTextColor,
+                    blockLayoutMap = blockLayoutMap,
+                    density = density,
+                    imageLoader = imageLoader,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (block.style.flexDirection == "row") {
+                Row(modifier = styledModifier.fillMaxWidth()) {
+                    block.children.forEach { child ->
+                        Box(modifier = Modifier.weight(1f, fill = false)) {
+                            renderChild(child)
+                        }
+                    }
+                }
+            } else {
+                Column(modifier = styledModifier.fillMaxWidth()) {
+                    block.children.forEach { child -> renderChild(child) }
+                }
+            }
+        }
+        else -> {
+            Box(modifier = styledModifier) {
+                RenderFlexChildBlock(
+                    childBlock = block,
+                    textStyle = textStyle,
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    searchQuery = searchQuery,
+                    searchHighlightColor = searchHighlightColor,
+                    ttsHighlightInfo = ttsHighlightInfo,
+                    ttsHighlightColor = ttsHighlightColor,
+                    textMeasurer = textMeasurer,
+                    onLinkClickCallback = onLinkClickCallback,
+                    onGeneralTapCallback = onGeneralTapCallback,
+                    userHighlights = userHighlights,
+                    activeSelection = activeSelection,
+                    onSelectionChange = onSelectionChange,
+                    onHighlightClick = onHighlightClick,
+                    isDarkTheme = isDarkTheme,
+                    themeBackgroundColor = themeBackgroundColor,
+                    themeTextColor = themeTextColor,
+                    blockLayoutMap = blockLayoutMap,
+                    density = density,
+                    imageLoader = imageLoader,
+                    pageIndex = pageIndex
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderNativeMathBlock(
+    block: MathBlock,
+    textStyle: TextStyle,
+    imageLoader: ImageLoader,
+    modifier: Modifier = Modifier
+) {
+    val svgContent = block.svgContent?.takeIf { it.isNotBlank() }
+    if (svgContent != null) {
+        val imageRequest = Builder(LocalContext.current)
+            .data(SvgData(svgContent))
+            .listener(
+                onError = { _, result ->
+                    Timber.e(result.throwable, "Coil failed to load SVG for native vertical MathBlock.")
+                }
+            )
+            .build()
+        AsyncImage(
+            model = imageRequest,
+            contentDescription = block.altText ?: "Equation",
+            modifier = modifier
+                .fillMaxWidth()
+                .heightIn(min = 24.dp),
+            contentScale = ContentScale.Fit,
+            colorFilter = if (block.isFromMathJax) ColorFilter.tint(textStyle.color) else null,
+            imageLoader = imageLoader
+        )
+    } else {
+        Text(
+            text = block.altText ?: "[Equation not available]",
+            style = textStyle,
+            modifier = modifier
+        )
+    }
+}
+
 private fun parseEmphasisAnnotation(annotation: String, defaultColor: Color): TextEmphasis {
     Timber.d("Parsing annotation string: '$annotation'")
     val map = annotation.split(';').filter { it.isNotBlank() }.associate {
@@ -2789,7 +3975,7 @@ private fun checkLayoutMismatch(
 }
 
 @Suppress("unused")
-@SuppressLint("UnusedBoxWithConstraintsScope")
+@SuppressLint("UnusedBoxWithConstraintsScope", "BinaryOperationInTimber")
 @OptIn(ExperimentalFoundationApi::class)
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 @Composable
