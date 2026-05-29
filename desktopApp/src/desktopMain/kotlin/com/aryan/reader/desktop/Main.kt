@@ -179,6 +179,7 @@ internal fun EpistemeDesktopApp(
         return desktopStringResolver.quantityString(name, quantity, fallbackOne, fallbackOther, *args)
     }
     val featurePolicy = desktopBuildProfile.featurePolicy
+    val desktopAiKeySettingsAvailable = desktopBuildProfile.aiKeySettingsAvailable
     val libraryProjector = remember { SharedLibraryStateProjector(DesktopFolderPathResolver) }
     val readerEngine = remember { ReaderEngine() }
     val libraryDatabase = remember { DesktopLibraryDatabase() }
@@ -3715,7 +3716,7 @@ internal fun EpistemeDesktopApp(
                     if (!enabled) closeAllReaderWindows()
                     updateState(state.reduce(AppAction.TabsEnabledChanged(enabled)))
                 },
-                onAiSettingsRequested = if (desktopBuildProfile.byokAiAvailable) {
+                onAiSettingsRequested = if (desktopAiKeySettingsAvailable) {
                     { showAiByokSettingsDialog = true }
                 } else {
                     null
@@ -3734,7 +3735,7 @@ internal fun EpistemeDesktopApp(
                                     includeAccountAuthActions = false,
                                     syncAvailable = desktopCloudSyncAvailable(),
                                     folderSyncAvailable = true,
-                                    aiSettingsAvailable = desktopBuildProfile.byokAiAvailable,
+                                    aiSettingsAvailable = desktopAiKeySettingsAvailable,
                                     includeLanguage = true,
                                     includeScreenCaptureProtection = false,
                                     includeExternalFileBehavior = false,
@@ -3797,7 +3798,7 @@ internal fun EpistemeDesktopApp(
                                         updateState(state.reduce(AppAction.TabsEnabledChanged(!state.isTabsEnabled)))
                                     }
                                     SharedSettingsAction.FOLDER_SYNC -> setDesktopFolderSyncEnabled(!state.isFolderSyncEnabled)
-                                    SharedSettingsAction.AI_SETTINGS -> if (desktopBuildProfile.byokAiAvailable) showAiByokSettingsDialog = true
+                                    SharedSettingsAction.AI_SETTINGS -> if (desktopAiKeySettingsAvailable) showAiByokSettingsDialog = true
                                     SharedSettingsAction.SIGN_IN -> signInDesktopAccount()
                                     SharedSettingsAction.SIGN_OUT -> signOutDesktopAccount()
                                     SharedSettingsAction.HIDE_READER_AI -> {
@@ -4428,7 +4429,7 @@ internal fun EpistemeDesktopApp(
             )
         }
 
-        if (showAiByokSettingsDialog && desktopBuildProfile.byokAiAvailable) {
+        if (showAiByokSettingsDialog && desktopAiKeySettingsAvailable) {
             DesktopAiByokSettingsDialog(
                 settings = aiByokSettings,
                 secureStorageAvailable = aiByokStore.isSecureStorageAvailable,

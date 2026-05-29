@@ -26,6 +26,8 @@ internal data class DesktopBuildProfile(
     }
 ) {
     val isOssOffline: Boolean get() = flavor == DesktopFlavorOssOffline
+    val aiKeySettingsAvailable: Boolean
+        get() = featurePolicy.aiAndCloud && featurePolicy.networkAccess && legalProfile != SharedLegalProfile.OSS
     val byokAiAvailable: Boolean get() = featurePolicy.byokAi && featurePolicy.aiAndCloud && featurePolicy.networkAccess
     val creditBackedCloudTtsControlsAvailable: Boolean
         get() = featurePolicy.aiAndCloud && featurePolicy.networkAccess && !byokAiAvailable

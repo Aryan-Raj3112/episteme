@@ -22,6 +22,7 @@ class DesktopBuildProfileTest {
         assertTrue(profile.featurePolicy.networkAccess)
         assertFalse(profile.featurePolicy.byokAi)
         assertFalse(profile.byokAiAvailable)
+        assertTrue(profile.aiKeySettingsAvailable)
         assertTrue(profile.creditBackedCloudTtsControlsAvailable)
     }
 
@@ -39,6 +40,7 @@ class DesktopBuildProfileTest {
         assertFalse(profile.featurePolicy.aiAndCloud)
         assertTrue(profile.featurePolicy.byokAi)
         assertFalse(profile.byokAiAvailable)
+        assertFalse(profile.aiKeySettingsAvailable)
         assertFalse(profile.featurePolicy.opdsCatalogs)
         assertFalse(profile.featurePolicy.googleFontsDownload)
         assertFalse(profile.creditBackedCloudTtsControlsAvailable)
@@ -61,14 +63,15 @@ class DesktopBuildProfileTest {
         )
         val onlineOssPolicy = SharedFeaturePolicy.OssOnline
 
-        assertTrue(
-            DesktopBuildProfile(
-                flavor = "oss-online",
-                appName = "Episteme oss",
-                buildLabel = "OSS edition",
-                featurePolicy = onlineOssPolicy
-            ).byokAiAvailable
+        val onlineOssProfile = DesktopBuildProfile(
+            flavor = "oss-online",
+            appName = "Episteme oss",
+            buildLabel = "OSS edition",
+            featurePolicy = onlineOssPolicy
         )
+
+        assertTrue(onlineOssProfile.byokAiAvailable)
+        assertFalse(onlineOssProfile.aiKeySettingsAvailable)
         assertEquals(settings, settings.withDesktopFeaturePolicy(onlineOssPolicy))
         assertTrue(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.Standard).hideReaderAiFeatures)
         assertTrue(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.OssOffline).hideReaderAiFeatures)

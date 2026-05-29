@@ -66,7 +66,7 @@ fun sharedAppShellModel(
         if (featurePolicy.aiAndCloud) add(SharedAppTab.PRO)
     }
     val primaryActions = buildList {
-        if (aiSettingsAvailable && featurePolicy.byokAi && featurePolicy.aiAndCloud) {
+        if (aiSettingsAvailable && featurePolicy.aiAndCloud && !featurePolicy.byokAi) {
             add(SharedAppToolAction.AI_SETTINGS)
         }
     }
