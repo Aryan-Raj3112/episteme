@@ -122,7 +122,11 @@ class ContentStyler(
 
         return when (block) {
             is SemanticParagraph -> {
-                val computedTextAlign = userTextAlign ?: themedStyle.paragraphStyle.textAlign
+                val computedTextAlign = when {
+                    userTextAlign != null -> userTextAlign
+                    themedStyle.paragraphStyle.textAlign == TextAlign.Justify -> TextAlign.Left
+                    else -> themedStyle.paragraphStyle.textAlign
+                }
 
                 ParagraphBlock(
                     content = buildAnnotatedString(block, themedStyle),

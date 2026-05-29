@@ -20,12 +20,16 @@
 package com.aryan.reader.paginatedreader
 
 import android.os.Build
+import android.util.Log
 import timber.log.Timber
 import androidx.annotation.RequiresApi
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -36,9 +40,37 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 private const val DEBUG_PAGINATION_LOGS = false
+private const val AndroidEpubCutoffLogTag = "EpistemeEpubCutoff"
+private const val JustifiedSplitGapProbeMinFraction = 0.18f
+
+internal fun measuredTextHeightForPagination(
+    layoutHeightPx: Int,
+    lastLineBottomPx: Float
+): Int {
+    return maxOf(layoutHeightPx, ceil(lastLineBottomPx.toDouble()).toInt())
+}
+
+private fun TextLayoutResult.paginationMeasuredHeightPx(): Int {
+    val lastLineBottomPx = if (lineCount > 0) getLineBottom(lineCount - 1) else 0f
+    return measuredTextHeightForPagination(size.height, lastLineBottomPx)
+}
+
+private fun logAndroidEpubCutoff(message: String) {
+    Log.d(AndroidEpubCutoffLogTag, message)
+}
+
+private fun CharSequence.firstWordOrEmpty(): String {
+    var start = 0
+    while (start < length && this[start].isWhitespace()) start++
+    if (start >= length) return ""
+    var end = start
+    while (end < length && !this[end].isWhitespace()) end++
+    return subSequence(start, end).toString()
+}
 
 interface BlockMeasurementProvider {
     suspend fun measure(block: ContentBlock): Int
@@ -740,7 +772,7 @@ private suspend fun measureBlockHeight(
                     text = block.content,
                     style = paragraphStyle,
                     constraints = adjustedConstraints
-                ).size.height
+                ).paginationMeasuredHeightPx()
             }
             height + centeredTextSafetyPaddingPx(paragraphStyle, density)
         }
@@ -753,7 +785,7 @@ private suspend fun measureBlockHeight(
                     text = block.content,
                     style = style,
                     constraints = adjustedConstraints
-                ).size.height
+                ).paginationMeasuredHeightPx()
             }
             height + centeredTextSafetyPaddingPx(style, density)
         }
@@ -780,7 +812,7 @@ private suspend fun measureBlockHeight(
                     text = block.content,
                     style = quoteStyle,
                     constraints = adjustedConstraints
-                ).size.height
+                ).paginationMeasuredHeightPx()
             }
             height + centeredTextSafetyPaddingPx(quoteStyle, density)
         }
@@ -794,7 +826,7 @@ private suspend fun measureBlockHeight(
                     text = block.content,
                     style = defaultStyle,
                     constraints = textConstraints
-                ).size.height
+                ).paginationMeasuredHeightPx()
             }
             val markerImageHeight = if (block.itemMarkerImage != null) {
                 with(density) { (defaultStyle.fontSize.value * 0.8f).sp.toPx().roundToInt() }
@@ -991,6 +1023,63 @@ private suspend fun measureBlockHeight(
     return finalHeight
 }
 
+private suspend fun logJustifiedSplitGapIfSuspicious(
+    block: ParagraphBlock,
+    text: AnnotatedString,
+    textMeasurer: TextMeasurer,
+    paragraphStyle: TextStyle,
+    paragraphConstraints: Constraints,
+    layoutResult: TextLayoutResult,
+    lastVisibleLine: Int,
+    splitOffset: Int,
+    availableTextHeight: Int
+) {
+    val isJustified = block.textAlign == TextAlign.Justify ||
+        paragraphStyle.textAlign == TextAlign.Justify ||
+        text.paragraphStyles.any { it.item.textAlign == TextAlign.Justify }
+    if (!isJustified || lastVisibleLine !in 0 until layoutResult.lineCount) return
+
+    val lineStart = layoutResult.getLineStart(lastVisibleLine)
+    val lineEnd = layoutResult.getLineEnd(lastVisibleLine, visibleEnd = true)
+    if (lineStart >= lineEnd || lineEnd > text.length) return
+
+    val visibleRightPx = (lineStart until lineEnd)
+        .asSequence()
+        .filter { !text[it].isWhitespace() }
+        .mapNotNull { index ->
+            runCatching { layoutResult.getBoundingBox(index).right }.getOrNull()
+        }
+        .maxOrNull() ?: return
+
+    val contentWidthPx = paragraphConstraints.maxWidth.takeIf { it > 0 } ?: return
+    val visualGapPx = contentWidthPx - visibleRightPx
+    if (visualGapPx < contentWidthPx * JustifiedSplitGapProbeMinFraction) return
+
+    val nextWord = text.text.subSequence(splitOffset.coerceIn(0, text.length), text.length)
+        .firstWordOrEmpty()
+        .take(48)
+    if (nextWord.isBlank()) return
+
+    val lineText = text.text.substring(lineStart, lineEnd).trimEnd()
+    val candidateLineCount = withContext(Dispatchers.Main) {
+        textMeasurer.measure(
+            text = "$lineText $nextWord",
+            style = paragraphStyle,
+            constraints = paragraphConstraints
+        ).lineCount
+    }
+
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=android_justified_split_gap block=${block.blockIndex} " +
+            "line=$lastVisibleLine lineOffsets=$lineStart..$lineEnd splitOffset=$splitOffset " +
+            "sourceRange=${block.startCharOffsetInSource}..${block.endCharOffsetInSource} " +
+            "contentWidthPx=$contentWidthPx visibleRightPx=${visibleRightPx.roundToInt()} " +
+            "visualGapPx=${visualGapPx.roundToInt()} availableTextHeightPx=$availableTextHeight " +
+            "nextWordChars=${nextWord.length} candidateLineCount=$candidateLineCount " +
+            "note=justify_expands_spaces_so_visual_gap_may_not_be_fit_capacity"
+    )
+}
+
 private suspend fun splitParagraphBlock(
     block: ParagraphBlock,
     textMeasurer: TextMeasurer,
@@ -1035,7 +1124,7 @@ private suspend fun splitParagraphBlock(
         )
     }
 
-    if (layoutResult.size.height <= availableTextHeight) {
+    if (layoutResult.paginationMeasuredHeightPx() <= availableTextHeight) {
         return null
     }
 
@@ -1084,6 +1173,18 @@ private suspend fun splitParagraphBlock(
             splitOffset = layoutResult.getLineEnd(lastVisibleLine, visibleEnd = true)
         }
     }
+
+    logJustifiedSplitGapIfSuspicious(
+        block = block,
+        text = text,
+        textMeasurer = textMeasurer,
+        paragraphStyle = paragraphStyle,
+        paragraphConstraints = paragraphConstraints,
+        layoutResult = layoutResult,
+        lastVisibleLine = lastVisibleLine,
+        splitOffset = splitOffset,
+        availableTextHeight = availableTextHeight
+    )
 
     if (splitOffset <= 0 || splitOffset >= text.length) {
         return null

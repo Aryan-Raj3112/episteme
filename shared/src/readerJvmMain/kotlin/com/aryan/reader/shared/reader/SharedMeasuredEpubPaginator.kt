@@ -71,14 +71,6 @@ class SharedMeasuredEpubPaginator(
                     "page_fit layer=cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
                         "note=clear_book_cache_to_capture_layer_measured"
                 }
-                val cachedGeometryTerms = measuredPageGeometryTerms(settings, viewport, density.density)
-                logEpubCutoff {
-                    "cutoff_probe layer=cache_hit book=\"${book.title.logPreview()}\" pages=${cached.size} " +
-                        "viewport=${viewport.widthPx}x${viewport.heightPx} " +
-                        "measuredContentPx=${cachedGeometryTerms.geometry.pageWidthPx}x${cachedGeometryTerms.geometry.pageHeightPx} " +
-                        "spread=${settings.pageSpreadMode} " +
-                        "note=layout_loaded_from_pagination_cache"
-                }
                 return cached
             }
         }
@@ -92,17 +84,6 @@ class SharedMeasuredEpubPaginator(
                 "spread=${settings.pageSpreadMode} font=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
                 "margins=${settings.resolvedHorizontalMargin}x${settings.resolvedVerticalMargin} " +
                 "pageWidthSetting=${settings.pageWidth} density=${density.density} fontScale=${density.fontScale}"
-        }
-        logEpubCutoff {
-            "cutoff_probe layer=measured_geometry book=\"${book.title.logPreview()}\" " +
-                "viewport=${viewport.widthPx}x${viewport.heightPx} safePx=${geometryTerms.safeWidthPx}x${geometryTerms.safeHeightPx} " +
-                "measuredContentPx=${geometry.pageWidthPx}x${geometry.pageHeightPx} spread=${settings.pageSpreadMode} " +
-                "twoPage=${settings.isTwoPageSpreadEnabled()} pageWidthSettingPx=${geometryTerms.configuredPageWidthPx} " +
-                "horizontalMarginPx=${geometryTerms.pageHorizontalMarginPx} verticalMarginPx=${geometryTerms.pageVerticalMarginPx} " +
-                "gutterPx=${geometryTerms.spreadGutterPx} singleContentWidthPx=${geometryTerms.singlePageContentWidthPx} " +
-                "twoPageOuterWidthPx=${geometryTerms.twoPageAvailableOuterWidthPx} " +
-                "twoPageContentWidthPx=${geometryTerms.twoPageAvailableContentWidthPx} " +
-                "density=${density.density} fontScale=${density.fontScale}"
         }
         val baseStyle = TextStyle(
             fontSize = settings.fontSize.sp,
@@ -1309,7 +1290,7 @@ private inline fun logEpubPageFit(message: () -> String) {
 }
 
 private inline fun logEpubCutoff(message: () -> String) {
-    logSharedReaderDiagnostic("EpistemeEpubCutoff", message)
+    logSharedReaderDiagnostic(SharedEpubCutoffDiagnosticsTag, message)
 }
 
 private inline fun logReaderGapPagination(message: () -> String) {

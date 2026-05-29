@@ -30,3 +30,7 @@ internal actual fun isSharedReaderDiagnosticTagEnabled(tag: String): Boolean {
     if (SharedReaderDiagnosticTags.isEmpty()) return true
     return "*" in SharedReaderDiagnosticTags || tag.lowercase() in SharedReaderDiagnosticTags
 }
+
+internal actual fun writeSharedReaderDiagnostic(tag: String, message: String) {
+    println("$tag $message")
+}

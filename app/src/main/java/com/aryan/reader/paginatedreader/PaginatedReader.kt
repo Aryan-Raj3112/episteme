@@ -10,6 +10,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.ui.unit.isSpecified
 import androidx.annotation.RequiresApi
@@ -40,6 +41,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -112,6 +114,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
@@ -246,6 +249,20 @@ private data class NativeVerticalViewportSample(
     val initialScrollComplete: Boolean
 )
 
+private data class AndroidEpubPageContentBounds(
+    val topPx: Int,
+    val bottomPx: Int,
+    val widthPx: Int,
+    val heightPx: Int,
+    val pageWidthPx: Int,
+    val pageHeightPx: Int,
+    val horizontalPaddingPx: Int,
+    val verticalPaddingPx: Int
+)
+
+private val AndroidEpubPageContentBounds.pageClipBottomPx: Int
+    get() = bottomPx + verticalPaddingPx
+
 private data class NativeVerticalFlowChapter(
     val chapterIndex: Int,
     val title: String?,
@@ -351,6 +368,9 @@ private fun headerFontScale(level: Int): Float = when (level) {
 }
 
 private const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
+private const val AndroidEpubCutoffLogTag = "EpistemeEpubCutoff"
+private const val AndroidEpubCutoffTolerancePx = 1
+private const val AndroidEpubCutoffEdgeProbePx = 2
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 private const val EXPLICIT_NAVIGATION_SHIFT_ANCHOR_WINDOW_MS = 10_000L
@@ -4620,6 +4640,185 @@ private fun List<ContentBlock>.extractTextBlocks(): List<TextContentBlock> {
     return result
 }
 
+private fun LayoutCoordinates.androidEpubPageContentBounds(
+    horizontalPaddingPx: Int,
+    verticalPaddingPx: Int
+): AndroidEpubPageContentBounds {
+    val pageTopPx = positionInWindow().y.roundToInt()
+    val contentTopPx = pageTopPx + verticalPaddingPx
+    val contentBottomPx = pageTopPx + size.height - verticalPaddingPx
+    return AndroidEpubPageContentBounds(
+        topPx = contentTopPx,
+        bottomPx = contentBottomPx,
+        widthPx = (size.width - (horizontalPaddingPx * 2)).coerceAtLeast(0),
+        heightPx = (contentBottomPx - contentTopPx).coerceAtLeast(0),
+        pageWidthPx = size.width,
+        pageHeightPx = size.height,
+        horizontalPaddingPx = horizontalPaddingPx,
+        verticalPaddingPx = verticalPaddingPx
+    )
+}
+
+private fun logAndroidEpubCutoff(message: String) {
+    Log.d(AndroidEpubCutoffLogTag, message)
+}
+
+private fun Modifier.androidEpubNaturalHeight(): Modifier = this.then(
+    Modifier.layout { measurable, constraints ->
+        val placeable = measurable.measure(
+            constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
+        )
+        layout(placeable.width, placeable.height) {
+            placeable.placeRelative(0, 0)
+        }
+    }
+)
+
+private fun TextContentBlock.androidEpubSourceRangeLabel(): String {
+    val start = startCharOffsetInSource
+    val end = endCharOffsetInSource.takeIf { it > start } ?: (start + content.text.length)
+    return "$start..$end"
+}
+
+private fun TextContentBlock.androidEpubKindName(): String {
+    return when (this) {
+        is HeaderBlock -> "header"
+        is ParagraphBlock -> "paragraph"
+        is QuoteBlock -> "quote"
+        is ListItemBlock -> "list_item"
+        else -> "text"
+    }
+}
+
+private fun ContentBlock.androidEpubKindName(): String {
+    return when (this) {
+        is HeaderBlock -> "header"
+        is ParagraphBlock -> "paragraph"
+        is QuoteBlock -> "quote"
+        is ListItemBlock -> "list_item"
+        is TextContentBlock -> "text"
+        is ImageBlock -> "image"
+        is MathBlock -> "math"
+        is TableBlock -> "table"
+        is FlexContainerBlock -> "flex"
+        is WrappingContentBlock -> "wrapping"
+        is SpacerBlock -> "spacer"
+    }
+}
+
+private fun logAndroidEpubBlockOverflowIfNeeded(
+    pageIndex: Int,
+    block: ContentBlock,
+    coordinates: LayoutCoordinates,
+    pageContentBounds: AndroidEpubPageContentBounds?,
+    diagnosticsContext: String,
+    signatureAlreadyLogged: (String) -> Boolean,
+    markSignatureLogged: (String) -> Unit
+) {
+    val bounds = pageContentBounds ?: return
+    val blockTopPx = coordinates.positionInWindow().y.roundToInt()
+    val blockBottomPx = blockTopPx + coordinates.size.height
+    val contentOverflowPx = blockBottomPx - bounds.bottomPx
+    val pageClipOverflowPx = blockBottomPx - bounds.pageClipBottomPx
+    if (pageClipOverflowPx <= AndroidEpubCutoffTolerancePx) return
+    val relativeTopPx = blockTopPx - bounds.topPx
+    val signature = "block:$pageIndex:${block.blockIndex}:$relativeTopPx:${coordinates.size.height}:$pageClipOverflowPx"
+    if (signatureAlreadyLogged(signature)) return
+    markSignatureLogged(signature)
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=android_rendered_block_overflow page=${pageIndex + 1} " +
+            "block=${block.blockIndex} kind=${block.androidEpubKindName()} " +
+            "blockTopPx=$relativeTopPx blockHeightPx=${coordinates.size.height} " +
+            "blockBottomPx=${blockBottomPx - bounds.topPx} contentPx=${bounds.widthPx}x${bounds.heightPx} " +
+            "pagePx=${bounds.pageWidthPx}x${bounds.pageHeightPx} contentOverflowPx=$contentOverflowPx " +
+            "pageClipOverflowPx=$pageClipOverflowPx " +
+            "expectedHeightPx=${block.expectedHeight} actualHeightPx=${coordinates.size.height} " +
+            "paddingPx=${bounds.horizontalPaddingPx}x${bounds.verticalPaddingPx} $diagnosticsContext"
+    )
+}
+
+private fun logAndroidEpubTextCutoffIfNeeded(
+    pageIndex: Int,
+    block: TextContentBlock,
+    layout: TextLayoutResult,
+    coordinates: LayoutCoordinates,
+    pageContentBounds: AndroidEpubPageContentBounds?,
+    diagnosticsContext: String,
+    previousSignature: String?
+): String? {
+    val boxTopPx = coordinates.positionInWindow().y.roundToInt()
+    val boxHeightPx = coordinates.size.height
+    val lastLine = layout.lineCount - 1
+    val lastLineTopPx = if (lastLine >= 0) layout.getLineTop(lastLine).roundToInt() else 0
+    val lastLineBottomPx = if (lastLine >= 0) layout.getLineBottom(lastLine).roundToInt() else layout.size.height
+    val lastLineStart = if (lastLine >= 0) layout.getLineStart(lastLine) else 0
+    val lastLineEnd = if (lastLine >= 0) layout.getLineEnd(lastLine, visibleEnd = true) else 0
+    val overflowBottomInBoxPx = maxOf(layout.size.height, lastLineBottomPx)
+    val boxClipPx = overflowBottomInBoxPx - boxHeightPx
+    val bounds = pageContentBounds
+    val lineBottomInPagePx = if (bounds != null) {
+        boxTopPx + overflowBottomInBoxPx - bounds.topPx
+    } else {
+        overflowBottomInBoxPx
+    }
+    val contentOverflowPx = bounds?.let { boxTopPx + overflowBottomInBoxPx - it.bottomPx } ?: 0
+    val pageClipOverflowPx = bounds?.let { boxTopPx + overflowBottomInBoxPx - it.pageClipBottomPx } ?: 0
+    val contentBottomInsetPx = bounds?.let { it.bottomPx - (boxTopPx + overflowBottomInBoxPx) }
+    val pageClipBottomInsetPx = bounds?.let { it.pageClipBottomPx - (boxTopPx + overflowBottomInBoxPx) }
+    val bottomEdgeRisk = pageClipBottomInsetPx != null && pageClipBottomInsetPx in 0..AndroidEpubCutoffEdgeProbePx
+    if (
+        boxClipPx <= AndroidEpubCutoffTolerancePx &&
+        pageClipOverflowPx <= AndroidEpubCutoffTolerancePx &&
+        !bottomEdgeRisk
+    ) {
+        return previousSignature
+    }
+
+    val signature = buildString {
+        append(pageIndex)
+        append(':')
+        append(block.blockIndex)
+        append(':')
+        append(coordinates.size.width)
+        append('x')
+        append(boxHeightPx)
+        append(':')
+        append(layout.size.width)
+        append('x')
+        append(layout.size.height)
+        append(':')
+        append(lastLineBottomPx)
+        append(':')
+        append(bounds?.pageClipBottomPx ?: -1)
+    }
+    if (signature == previousSignature) return previousSignature
+
+    val layer = if (boxClipPx > AndroidEpubCutoffTolerancePx) {
+        "android_text_clip"
+    } else if (pageClipOverflowPx > AndroidEpubCutoffTolerancePx) {
+        "android_text_page_overflow"
+    } else if (bottomEdgeRisk) {
+        "android_text_bottom_edge"
+    } else {
+        "android_text_page_overflow"
+    }
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=$layer page=${pageIndex + 1} block=${block.blockIndex} " +
+            "kind=${block.androidEpubKindName()} boxPx=${coordinates.size.width}x$boxHeightPx " +
+            "layoutPx=${layout.size.width}x${layout.size.height} lines=${layout.lineCount} " +
+            "lastLine=$lastLine lastLineTopPx=$lastLineTopPx lastLineBottomPx=$lastLineBottomPx " +
+            "lastLineBottomInPagePx=$lineBottomInPagePx boxClipPx=$boxClipPx " +
+            "contentOverflowPx=$contentOverflowPx pageClipOverflowPx=$pageClipOverflowPx " +
+            "contentBottomInsetPx=${contentBottomInsetPx ?: "unknown"} " +
+            "pageClipBottomInsetPx=${pageClipBottomInsetPx ?: "unknown"} " +
+            "contentPx=${bounds?.let { "${it.widthPx}x${it.heightPx}" } ?: "unknown"} " +
+            "pagePx=${bounds?.let { "${it.pageWidthPx}x${it.pageHeightPx}" } ?: "unknown"} " +
+            "lineOffsets=$lastLineStart..$lastLineEnd sourceRange=${block.androidEpubSourceRangeLabel()} " +
+            "textChars=${block.content.text.length} expectedHeightPx=${block.expectedHeight} $diagnosticsContext"
+    )
+    return signature
+}
+
 @Composable
 private fun TextWithEmphasis(
     text: AnnotatedString,
@@ -4637,9 +4836,13 @@ private fun TextWithEmphasis(
     isDarkTheme: Boolean,
     themeBackgroundColor: Color,
     themeTextColor: Color,
+    pageContentBoundsProvider: (() -> AndroidEpubPageContentBounds?)? = null,
+    cutoffDiagnosticsEnabled: Boolean = true,
+    cutoffDiagnosticsContext: String = "",
     onRegisterLayout: ((TextLayoutResult, LayoutCoordinates) -> Unit)? = null
 ) {
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var lastCutoffLogSignature by remember { mutableStateOf<String?>(null) }
     val viewConfiguration = LocalViewConfiguration.current
     var layoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val scope = rememberCoroutineScope()
@@ -4975,9 +5178,33 @@ private fun TextWithEmphasis(
         return null
     }
 
+    fun logCutoffIfNeeded(
+        layout: TextLayoutResult?,
+        coordinates: LayoutCoordinates?,
+        pageContentBounds: AndroidEpubPageContentBounds? = pageContentBoundsProvider?.invoke()
+    ) {
+        if (!cutoffDiagnosticsEnabled) return
+        if (layout == null || coordinates == null || !coordinates.isAttached) return
+        lastCutoffLogSignature = logAndroidEpubTextCutoffIfNeeded(
+            pageIndex = pageIndex,
+            block = block,
+            layout = layout,
+            coordinates = coordinates,
+            pageContentBounds = pageContentBounds,
+            diagnosticsContext = cutoffDiagnosticsContext,
+            previousSignature = lastCutoffLogSignature
+        )
+    }
+
+    val currentPageContentBounds = pageContentBoundsProvider?.invoke()
+    LaunchedEffect(textLayoutResult, layoutCoordinates, currentPageContentBounds) {
+        logCutoffIfNeeded(textLayoutResult, layoutCoordinates, currentPageContentBounds)
+    }
+
     Text(text = displayText, style = style, modifier = modifier
         .onGloballyPositioned {
             layoutCoordinates = it
+            logCutoffIfNeeded(textLayoutResult, it)
             if (textLayoutResult != null && block.cfi != null) {
                 onRegisterLayout?.invoke(textLayoutResult!!, it)
             }
@@ -5100,6 +5327,7 @@ private fun TextWithEmphasis(
         if (layoutCoordinates != null && block.cfi != null) {
             onRegisterLayout?.invoke(it, layoutCoordinates!!)
         }
+        logCutoffIfNeeded(it, layoutCoordinates)
     })
 }
 
@@ -5543,6 +5771,22 @@ internal fun PaginatedReaderContent(
                             }
                         }
                         val linkLayoutTick = blockLayoutMap.tick
+                        val pageHorizontalPaddingPx = with(density) { horizontalPadding.roundToPx() }
+                        val pageVerticalPaddingPx = with(density) { verticalPadding.roundToPx() }
+                        val pageContentBoundsProvider = {
+                            pageLayoutCoordinates
+                                ?.takeIf { it.isAttached }
+                                ?.androidEpubPageContentBounds(
+                                    horizontalPaddingPx = pageHorizontalPaddingPx,
+                                    verticalPaddingPx = pageVerticalPaddingPx
+                                )
+                        }
+                        val cutoffLogSignatures = remember(pageIndex, uiState.generation) {
+                            mutableStateMapOf<String, Boolean>()
+                        }
+                        val cutoffDiagnosticsEnabled = !uiState.isLoading
+                        val cutoffDiagnosticsContext =
+                            "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount}"
 
                         Box(
                             modifier = Modifier
@@ -5599,7 +5843,12 @@ internal fun PaginatedReaderContent(
                                     if (themedPageContent != null) {
                                         val displayPage = themedPageContent
 
-                                        Column(modifier = Modifier.fillMaxSize()) {
+                                        // Measure page blocks at their natural height; pagination, not Column, owns page breaks.
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .wrapContentHeight(unbounded = true)
+                                        ) {
                                             val searchHighlightColor =
                                                 MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
                                             val ttsHighlightColor =
@@ -5651,6 +5900,21 @@ internal fun PaginatedReaderContent(
                                                     Modifier.onGloballyPositioned { coordinates ->
                                                         val actualHeight =
                                                             coordinates.size.height
+                                                        if (cutoffDiagnosticsEnabled) {
+                                                            logAndroidEpubBlockOverflowIfNeeded(
+                                                                pageIndex = pageIndex,
+                                                                block = block,
+                                                                coordinates = coordinates,
+                                                                pageContentBounds = pageContentBoundsProvider(),
+                                                                diagnosticsContext = cutoffDiagnosticsContext,
+                                                                signatureAlreadyLogged = { signature ->
+                                                                    cutoffLogSignatures[signature] == true
+                                                                },
+                                                                markSignatureLogged = { signature ->
+                                                                    cutoffLogSignatures[signature] = true
+                                                                }
+                                                            )
+                                                        }
                                                         if (block.expectedHeight > 0) {
                                                             val snippet = when (block) {
                                                                 is ParagraphBlock -> block.content.text.take(
@@ -5761,7 +6025,7 @@ internal fun PaginatedReaderContent(
                                                         }
                                                     }.then(marginModifier).then(styleModifier)
 
-                                                Box(modifier = diagnosticModifier) {
+                                                Box(modifier = diagnosticModifier.androidEpubNaturalHeight()) {
                                                     val paddingModifier = Modifier.padding(
                                                         start = block.style.padding.left.coerceAtLeast(
                                                             0.dp
@@ -5900,6 +6164,9 @@ internal fun PaginatedReaderContent(
                                                                 isDarkTheme = isDarkTheme,
                                                                 themeBackgroundColor = effectiveBg,
                                                                 themeTextColor = effectiveText,
+                                                                pageContentBoundsProvider = pageContentBoundsProvider,
+                                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
                                                                 onRegisterLayout = { layout, coords ->
                                                                     if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                         Triple(
@@ -5987,6 +6254,9 @@ internal fun PaginatedReaderContent(
                                                                 isDarkTheme = isDarkTheme,
                                                                 themeBackgroundColor = effectiveBg,
                                                                 themeTextColor = effectiveText,
+                                                                pageContentBoundsProvider = pageContentBoundsProvider,
+                                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
                                                                 onRegisterLayout = { layout, coords ->
                                                                     if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                         Triple(
@@ -6073,6 +6343,9 @@ internal fun PaginatedReaderContent(
                                                                 isDarkTheme = isDarkTheme,
                                                                 themeBackgroundColor = effectiveBg,
                                                                 themeTextColor = effectiveText,
+                                                                pageContentBoundsProvider = pageContentBoundsProvider,
+                                                                cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                                cutoffDiagnosticsContext = cutoffDiagnosticsContext,
                                                                 onRegisterLayout = { layout, coords ->
                                                                     if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                         Triple(
@@ -6192,6 +6465,9 @@ internal fun PaginatedReaderContent(
                                                                     isDarkTheme = isDarkTheme,
                                                                     themeBackgroundColor = effectiveBg,
                                                                     themeTextColor = effectiveText,
+                                                                    pageContentBoundsProvider = pageContentBoundsProvider,
+                                                                    cutoffDiagnosticsEnabled = cutoffDiagnosticsEnabled,
+                                                                    cutoffDiagnosticsContext = cutoffDiagnosticsContext,
                                                                     onRegisterLayout = { layout, coords ->
                                                                         if (block.cfi != null) blockLayoutMap["${block.cfi}_$pageIndex"] =
                                                                             Triple(

@@ -39,6 +39,7 @@ class ContentStylerTest {
         ).single() as ParagraphBlock
 
         assertEquals(TextAlign.Justify, block.textAlign)
+        assertEquals(TextAlign.Justify, block.content.paragraphStyles.first().item.textAlign)
         assertEquals("p1", block.elementId)
         assertEquals("/4/2", block.cfi)
         assertEquals(7, block.startCharOffsetInSource)
@@ -58,7 +59,7 @@ class ContentStylerTest {
             )
         ).single() as ParagraphBlock
 
-        assertEquals(TextAlign.Justify, block.textAlign)
+        assertEquals(TextAlign.Left, block.textAlign)
         assertEquals(TextAlign.Left, block.content.paragraphStyles.first().item.textAlign)
     }
 
