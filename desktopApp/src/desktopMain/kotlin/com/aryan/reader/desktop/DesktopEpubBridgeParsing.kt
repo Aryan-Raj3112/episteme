@@ -95,7 +95,8 @@ internal fun AwtKeyEvent.desktopReaderKeyNavigationOrNull(
 
 internal data class DesktopReaderSelectionActionPayload(
     val action: DesktopReaderSelectionAction,
-    val text: String
+    val text: String,
+    val locator: ReaderLocator? = null
 )
 
 internal fun String.readerHighlightClickOrNull(): DesktopReaderHighlightClick? {
@@ -142,7 +143,24 @@ internal fun String.readerSelectionActionOrNull(): DesktopReaderSelectionActionP
             "web-search", "search" -> DesktopReaderSelectionAction.SEARCH
             else -> return@runCatching null
         }
-        DesktopReaderSelectionActionPayload(action, text)
+        val locator = obj["locator"]
+            ?.takeUnless { it is JsonNull }
+            ?.jsonObject
+            ?.let { locatorObj ->
+                ReaderLocator(
+                    chapterIndex = locatorObj["chapterIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+                    chapterId = locatorObj["chapterId"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
+                    href = locatorObj["href"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
+                    pageIndex = locatorObj["pageIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+                    startOffset = locatorObj["startOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+                    endOffset = locatorObj["endOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+                    blockIndex = locatorObj["blockIndex"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+                    charOffset = locatorObj["charOffset"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.intOrNull,
+                    textQuote = locatorObj["textQuote"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull,
+                    cfi = locatorObj["cfi"]?.takeUnless { it is JsonNull }?.jsonPrimitive?.contentOrNull?.toStableReaderPositionCfi()
+                )
+            }
+        DesktopReaderSelectionActionPayload(action, text, locator)
     }.getOrNull()
 
     parse(this)?.let { return it }

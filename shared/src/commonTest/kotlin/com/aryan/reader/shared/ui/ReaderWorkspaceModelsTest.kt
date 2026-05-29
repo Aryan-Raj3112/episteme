@@ -75,9 +75,10 @@ class ReaderWorkspaceModelsTest {
         assertFalse(model.preferAutoHide)
         assertTrue(model.forceVisible)
         assertEquals(
-            setOf("search", "inspector", "annotation", "rich-text", "loading", "error", "auto-scroll", "tts"),
+            setOf("search", "inspector", "annotation", "rich-text", "loading", "error", "auto-scroll"),
             model.forceVisibleReasons
         )
+        assertEquals(setOf("tts"), model.revealVisibleReasons)
     }
 
     @Test
@@ -94,6 +95,33 @@ class ReaderWorkspaceModelsTest {
                 requestedVisible = true,
                 lockedVisible = false,
                 forcedVisible = false
+            )
+        )
+    }
+
+    @Test
+    fun `active tts reveals chrome without locking reader tap toggle`() {
+        val model = readerWorkspaceChromeModel(
+            preferAutoHide = true,
+            searchActive = false,
+            leftPanelOpen = false,
+            inspectorOpen = false,
+            annotationEditing = false,
+            richTextEditing = false,
+            loading = false,
+            errorMessage = null,
+            autoScroll = ReaderAutoScrollState(),
+            ttsBusy = true
+        )
+
+        assertFalse(model.forceVisible)
+        assertEquals(emptySet(), model.forceVisibleReasons)
+        assertEquals(setOf("tts"), model.revealVisibleReasons)
+        assertFalse(
+            readerWorkspaceChromeVisibleAfterReaderTap(
+                requestedVisible = true,
+                lockedVisible = false,
+                forcedVisible = model.forceVisible
             )
         )
     }
@@ -448,7 +476,7 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
-    fun `pdf workspace forces chrome for search editing errors and tts`() {
+    fun `pdf workspace forces chrome for search editing errors and reveals tts`() {
         val model = pdfReaderWorkspaceModel(
             state = SharedPdfReaderState.initial(pageCount = 4).copy(searchQuery = "needle"),
             displayMode = PdfDisplayMode.VERTICAL_SCROLL,
@@ -474,7 +502,8 @@ class ReaderWorkspaceModelsTest {
         assertTrue("annotation" in model.chrome.forceVisibleReasons)
         assertTrue("error" in model.chrome.forceVisibleReasons)
         assertFalse("auto-scroll" in model.chrome.forceVisibleReasons)
-        assertTrue("tts" in model.chrome.forceVisibleReasons)
+        assertFalse("tts" in model.chrome.forceVisibleReasons)
+        assertTrue("tts" in model.chrome.revealVisibleReasons)
         assertFalse(ReaderWorkspaceTopAction.AI in model.topActions)
     }
 

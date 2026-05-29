@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.ImportExport
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
@@ -160,6 +161,7 @@ fun SharedAppShell(
                         SharedAppSidebar(
                             selectedTab = shellModel.selectedPrimaryTab,
                             primaryTabs = shellModel.primaryTabs,
+                            primaryActions = shellModel.primaryActions,
                             currentUser = currentUser,
                             accountAvailable = accountAvailable,
                             isOssBuild = isOssBuild,
@@ -169,6 +171,12 @@ fun SharedAppShell(
                             accountAvatar = accountAvatar,
                             onSyncEnabledChange = onSyncEnabledChange,
                             onTabSelected = onTabSelected,
+                            onPrimaryAction = { action ->
+                                when (action) {
+                                    SharedAppToolAction.AI_SETTINGS -> onAiSettingsRequested?.invoke()
+                                    else -> Unit
+                                }
+                            },
                             moreMenu = {
                                 SharedMoreMenuButton(
                                     compact = false,
@@ -189,7 +197,14 @@ fun SharedAppShell(
                         SharedAppCompactRail(
                             selectedTab = shellModel.selectedPrimaryTab,
                             primaryTabs = shellModel.primaryTabs,
+                            primaryActions = shellModel.primaryActions,
                             onTabSelected = onTabSelected,
+                            onPrimaryAction = { action ->
+                                when (action) {
+                                    SharedAppToolAction.AI_SETTINGS -> onAiSettingsRequested?.invoke()
+                                    else -> Unit
+                                }
+                            },
                             moreMenu = {
                                 SharedMoreMenuButton(
                                     compact = true,
@@ -245,6 +260,7 @@ fun SharedAppShell(
 private fun SharedAppSidebar(
     selectedTab: SharedAppTab,
     primaryTabs: List<SharedAppTab>,
+    primaryActions: List<SharedAppToolAction>,
     currentUser: UserData?,
     accountAvailable: Boolean,
     isOssBuild: Boolean,
@@ -254,6 +270,7 @@ private fun SharedAppSidebar(
     accountAvatar: (@Composable (UserData, Modifier) -> Unit)?,
     onSyncEnabledChange: (Boolean) -> Unit,
     onTabSelected: (SharedAppTab) -> Unit,
+    onPrimaryAction: (SharedAppToolAction) -> Unit,
     moreMenu: @Composable () -> Unit
 ) {
     Surface(
@@ -278,6 +295,15 @@ private fun SharedAppSidebar(
                 accountAvatar = accountAvatar
             )
             primaryTabs.forEach { tab ->
+                if (tab == SharedAppTab.PRO) {
+                    primaryActions.forEach { action ->
+                        SharedSidebarButton(
+                            label = action.labelForPrimaryNavigation(),
+                            icon = action.iconForPrimaryNavigation(),
+                            onClick = { onPrimaryAction(action) }
+                        )
+                    }
+                }
                 SharedSidebarNavItem(
                     tab = tab,
                     selected = selectedTab == tab,
@@ -287,6 +313,15 @@ private fun SharedAppSidebar(
                     SharedSidebarSyncToggle(
                         model = syncToggleModel,
                         onSyncEnabledChange = onSyncEnabledChange
+                    )
+                }
+            }
+            if (SharedAppTab.PRO !in primaryTabs) {
+                primaryActions.forEach { action ->
+                    SharedSidebarButton(
+                        label = action.labelForPrimaryNavigation(),
+                        icon = action.iconForPrimaryNavigation(),
+                        onClick = { onPrimaryAction(action) }
                     )
                 }
             }
@@ -301,17 +336,39 @@ private fun SharedAppSidebar(
 private fun SharedAppCompactRail(
     selectedTab: SharedAppTab,
     primaryTabs: List<SharedAppTab>,
+    primaryActions: List<SharedAppToolAction>,
     onTabSelected: (SharedAppTab) -> Unit,
+    onPrimaryAction: (SharedAppToolAction) -> Unit,
     moreMenu: @Composable () -> Unit
 ) {
     NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         primaryTabs.forEach { tab ->
+            if (tab == SharedAppTab.PRO) {
+                primaryActions.forEach { action ->
+                    NavigationRailItem(
+                        selected = false,
+                        onClick = { onPrimaryAction(action) },
+                        icon = { Icon(action.iconForPrimaryNavigation(), contentDescription = null) },
+                        label = { Text(action.labelForPrimaryNavigation()) }
+                    )
+                }
+            }
             NavigationRailItem(
                 selected = selectedTab == tab,
                 onClick = { onTabSelected(tab) },
                 icon = { Icon(tab.icon, contentDescription = null) },
                 label = { Text(tab.localizedLabel()) }
             )
+        }
+        if (SharedAppTab.PRO !in primaryTabs) {
+            primaryActions.forEach { action ->
+                NavigationRailItem(
+                    selected = false,
+                    onClick = { onPrimaryAction(action) },
+                    icon = { Icon(action.iconForPrimaryNavigation(), contentDescription = null) },
+                    label = { Text(action.labelForPrimaryNavigation()) }
+                )
+            }
         }
         Spacer(Modifier.weight(1f))
         moreMenu()
@@ -695,6 +752,21 @@ private fun SharedMoreMenuItem(
         },
         onClick = onClick
     )
+}
+
+@Composable
+private fun SharedAppToolAction.labelForPrimaryNavigation(): String {
+    return when (this) {
+        SharedAppToolAction.AI_SETTINGS -> readerString("desktop_ai_keys", "AI keys")
+        else -> labelForMoreMenu(isTabsEnabled = false)
+    }
+}
+
+private fun SharedAppToolAction.iconForPrimaryNavigation(): ImageVector {
+    return when (this) {
+        SharedAppToolAction.AI_SETTINGS -> Icons.Default.Lock
+        else -> iconForMoreMenu()
+    }
 }
 
 @Composable

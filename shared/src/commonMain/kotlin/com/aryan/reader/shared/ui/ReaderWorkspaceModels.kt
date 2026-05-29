@@ -51,7 +51,8 @@ enum class ReaderWorkspaceBottomAction {
 data class ReaderWorkspaceChromeModel(
     val preferAutoHide: Boolean,
     val forceVisible: Boolean,
-    val forceVisibleReasons: Set<String> = emptySet()
+    val forceVisibleReasons: Set<String> = emptySet(),
+    val revealVisibleReasons: Set<String> = emptySet()
 )
 
 internal fun readerWorkspaceChromeVisible(
@@ -283,7 +284,7 @@ fun readerWorkspaceChromeModel(
     autoScroll: ReaderAutoScrollState,
     ttsBusy: Boolean
 ): ReaderWorkspaceChromeModel {
-    val reasons = buildSet {
+    val forceReasons = buildSet {
         if (searchActive) add("search")
         if (leftPanelOpen) add("left-panel")
         if (inspectorOpen) add("inspector")
@@ -292,11 +293,14 @@ fun readerWorkspaceChromeModel(
         if (loading) add("loading")
         if (!errorMessage.isNullOrBlank()) add("error")
         if (autoScroll.sanitized().enabled) add("auto-scroll")
+    }
+    val revealReasons = buildSet {
         if (ttsBusy) add("tts")
     }
     return ReaderWorkspaceChromeModel(
         preferAutoHide = preferAutoHide,
-        forceVisible = reasons.isNotEmpty(),
-        forceVisibleReasons = reasons
+        forceVisible = forceReasons.isNotEmpty(),
+        forceVisibleReasons = forceReasons,
+        revealVisibleReasons = revealReasons
     )
 }

@@ -260,6 +260,29 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `vertical document reports visible locator from top reader edge`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta gamma"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+
+        assertTrue(html.contains("return Math.max(1, Math.min(height - 1, 8));"))
+        assertFalse(html.contains("Math.round(height * 0.12)"))
+        assertTrue(html.contains("function firstVisibleLineRect()"))
+        assertTrue(html.contains("function firstVisibleLineStart(targetLineRect)"))
+        assertTrue(html.contains("var topLineStart = topLineRect ? firstVisibleLineStart(topLineRect) : null;"))
+        assertTrue(html.contains("event=web_line_start_choice"))
+        assertTrue(html.contains("return visibleResult(node, i, offset + i);"))
+        assertFalse(html.contains("charRect.top >= viewportTop - 0.5"))
+        assertTrue(html.contains("var sourceOffset = boundaryOffsetWithinContent(content, node, localOffset);"))
+        assertTrue(html.contains("return positionFromReaderHost(chapter, requestedOffset, preferredY, 'restore_locator_visible');"))
+        assertTrue(html.contains("var position = pendingRestoreVisiblePosition() || currentVisiblePosition();"))
+        assertTrue(html.contains("return fallback || { offset: contentStart, textNode: null };"))
+        assertTrue(html.contains("EpistemeDesktopTtsStartTrace"))
+        assertTrue(html.contains("readerTtsStartTraceLog('event=web_position_report_send"))
+    }
+
+    @Test
     fun `vertical document can render a chapter window while retaining page anchors`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = SharedEpubBook(
@@ -592,6 +615,9 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("selection_segments_rejected contents="))
         assertTrue(html.contains("function readerHighlightFlowLog(message)"))
         assertTrue(html.contains("selection_begin mode="))
+        assertTrue(html.contains("var actionSegments = selectionSegmentsForRange(actionRange);"))
+        assertTrue(html.contains("payload.locator = {"))
+        assertTrue(html.contains("window.kmpJsBridge.callNative('readerSelectionAction', JSON.stringify(payload));"))
         assertTrue(html.contains("bridge_send_success attempt="))
         assertTrue(html.contains("<p><span>Alpha beta</span></p><p><span>Gamma delta</span></p>"))
     }

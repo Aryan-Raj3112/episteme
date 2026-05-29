@@ -248,6 +248,11 @@ fun ReaderWorkspaceShell(
                 chromeVisible = true
             }
         }
+        LaunchedEffect(model.kind, model.chrome.revealVisibleReasons) {
+            if (model.chrome.revealVisibleReasons.isNotEmpty()) {
+                chromeVisible = true
+            }
+        }
         fun closeLeftPanel(restoreReaderFocus: Boolean) {
             val shouldRestoreFocus = readerWorkspaceShouldRestoreFocusAfterPanelClose(
                 closingPanelOpen = leftPanelOpen,

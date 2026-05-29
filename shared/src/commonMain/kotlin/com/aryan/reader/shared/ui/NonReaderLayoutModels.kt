@@ -42,6 +42,7 @@ data class SharedAppMoreSection(
 
 data class SharedAppShellModel(
     val primaryTabs: List<SharedAppTab>,
+    val primaryActions: List<SharedAppToolAction>,
     val selectedPrimaryTab: SharedAppTab,
     val toolActions: List<SharedAppToolAction>,
     val moreSections: List<SharedAppMoreSection>,
@@ -63,6 +64,11 @@ fun sharedAppShellModel(
         add(SharedAppTab.LIBRARY)
         if (featurePolicy.opdsCatalogs) add(SharedAppTab.CATALOGS)
         if (featurePolicy.aiAndCloud) add(SharedAppTab.PRO)
+    }
+    val primaryActions = buildList {
+        if (aiSettingsAvailable && featurePolicy.byokAi && featurePolicy.aiAndCloud) {
+            add(SharedAppToolAction.AI_SETTINGS)
+        }
     }
     val selectedPrimaryTab = when (selectedTab) {
         SharedAppTab.SHELVES -> SharedAppTab.LIBRARY
@@ -86,6 +92,7 @@ fun sharedAppShellModel(
     }
     return SharedAppShellModel(
         primaryTabs = primaryTabs,
+        primaryActions = primaryActions,
         selectedPrimaryTab = selectedPrimaryTab,
         toolActions = toolActions,
         moreSections = sharedAppMoreSections(toolActions),

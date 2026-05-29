@@ -25,7 +25,7 @@ internal fun DesktopEpubWebView(
     onHighlightSelected: (String) -> Unit,
     isFullscreen: Boolean,
     onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
-    onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
+    onSelectionAction: (DesktopReaderSelectionActionPayload) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
     onPointerActivity: () -> Unit = {},
@@ -75,7 +75,7 @@ internal fun rememberDesktopEpubBridgeHandlers(
     onHighlightCreated: (UserHighlight) -> Unit,
     onHighlightSelected: (String) -> Unit,
     onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
-    onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
+    onSelectionAction: (DesktopReaderSelectionActionPayload) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
     onPointerActivity: () -> Unit
@@ -132,16 +132,23 @@ internal fun rememberDesktopEpubBridgeHandlers(
                             "text=\"${position.locator?.textQuote.orEmpty().logPreview(120)}\" " +
                             "cfi=\"${position.locator?.cfi.orEmpty().logPreview(160)}\""
                     )
+                    logDesktopTtsStartTrace {
+                        "event=bridge_position_changed page=${position.pageIndex} " +
+                            "locator=${position.locator.desktopPositionTraceSummary(160)}"
+                    }
                     scope.launch { latestOnVisiblePageChanged(position.pageIndex, position.locator) }
                 }
             },
             DesktopEpubBridgeHandler("readerDesktopPositionTraceLog") { params ->
                 logDesktopPositionTrace(params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900))
             },
+            DesktopEpubBridgeHandler("readerTtsStartTraceLog") { params ->
+                logDesktopTtsStartTrace { params.readerSelectionDebugMessageOrNull() ?: params.logPreview(900) }
+            },
             DesktopEpubBridgeHandler("readerSelectionAction") { params ->
                 val selectionAction = params.readerSelectionActionOrNull()
                 if (selectionAction != null) {
-                    scope.launch { latestOnSelectionAction(selectionAction.action, selectionAction.text) }
+                    scope.launch { latestOnSelectionAction(selectionAction) }
                 }
             },
             DesktopEpubBridgeHandler("readerKeyNavigation") { params ->
@@ -192,9 +199,11 @@ internal val DesktopEpubKeyNavigationScript = """
       if (!window.readerDesktopChromeTapInstalled) {
         window.readerDesktopChromeTapInstalled = true;
         var chromeTapStart = null;
+        var lastChromeTapNotifiedAt = 0;
         function notifyChromeTap() {
           if (!window.kmpJsBridge || !window.kmpJsBridge.callNative) return;
           window.kmpJsBridge.callNative('readerPointerActivity', '{}');
+          lastChromeTapNotifiedAt = Date.now();
         }
         function chromeTapIgnored(target) {
           if (!target || !target.closest) return false;
@@ -230,11 +239,19 @@ internal val DesktopEpubKeyNavigationScript = """
           if (chromeTapIgnored(event.target) || hasActiveReaderSelection()) return;
           notifyChromeTap();
         }
+        function maybeNotifyChromeTapFromClick(event) {
+          if (Date.now() - lastChromeTapNotifiedAt < 250) return;
+          if (chromeTapIgnored(event.target) || hasActiveReaderSelection()) return;
+          notifyChromeTap();
+        }
         document.addEventListener('pointerdown', beginChromeTap, true);
         document.addEventListener('pointerup', finishChromeTap, true);
         document.addEventListener('pointercancel', function () { chromeTapStart = null; }, true);
         document.addEventListener('click', function (event) {
-          if (window.PointerEvent) return;
+          if (window.PointerEvent) {
+            maybeNotifyChromeTapFromClick(event);
+            return;
+          }
           beginChromeTap(event);
           finishChromeTap(event);
         }, true);

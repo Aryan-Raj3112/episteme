@@ -276,6 +276,7 @@ class NonReaderLayoutModelsTest {
             listOf(SharedAppTab.LIBRARY, SharedAppTab.CATALOGS, SharedAppTab.PRO),
             model.primaryTabs
         )
+        assertEquals(emptyList(), model.primaryActions)
         assertEquals(SharedAppTab.LIBRARY, model.selectedPrimaryTab)
         assertTrue(SharedAppToolAction.SETTINGS in model.toolActions)
         assertTrue(SharedAppToolAction.APP_THEME in model.toolActions)
@@ -305,6 +306,13 @@ class NonReaderLayoutModelsTest {
         val withoutAi = sharedAppShellModel(SharedAppTab.SHELVES, aiSettingsAvailable = false)
         assertEquals(SharedAppTab.LIBRARY, withoutAi.selectedPrimaryTab)
         assertFalse(SharedAppToolAction.AI_SETTINGS in withoutAi.toolActions)
+
+        val byokModel = sharedAppShellModel(
+            selectedTab = SharedAppTab.LIBRARY,
+            aiSettingsAvailable = true,
+            featurePolicy = SharedFeaturePolicy.OssOnline
+        )
+        assertEquals(listOf(SharedAppToolAction.AI_SETTINGS), byokModel.primaryActions)
     }
 
     @Test
@@ -377,6 +385,7 @@ class NonReaderLayoutModelsTest {
         )
 
         assertEquals(listOf(SharedAppTab.LIBRARY), model.primaryTabs)
+        assertEquals(emptyList(), model.primaryActions)
         assertEquals(SharedAppTab.LIBRARY, model.selectedPrimaryTab)
         assertFalse(SharedAppToolAction.AI_SETTINGS in model.toolActions)
         assertFalse(SharedAppToolAction.HELP_FEEDBACK in model.toolActions)

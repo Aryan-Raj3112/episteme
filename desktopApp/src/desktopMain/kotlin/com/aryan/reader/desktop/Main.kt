@@ -47,6 +47,7 @@ import com.aryan.reader.shared.RecapResult
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderFeatureSurface
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.ReaderTtsCacheSummary
 import com.aryan.reader.shared.ReaderTtsChunk
@@ -2041,10 +2042,24 @@ internal fun EpistemeDesktopApp(
         val content = textReaderWindowContent(windowId) ?: return
         val replacementBookId = content.book.id.ifBlank { content.session.reader.book.title }
         val sourceChunks = chunks.filter { it.text.isNotBlank() }
+        logDesktopTtsStartTrace {
+            "event=desktop_start_request windowId=\"${windowId.logPreview(80)}\" scope=${readScope.name} " +
+                "incomingChunks=${chunks.size} sourceChunks=${sourceChunks.size} startChunkIndex=$startChunkIndex " +
+                "restartActive=$restartActive applyReplacements=$applyReplacements " +
+                "currentPage=${content.session.reader.currentPageIndex} sessionLocator=${content.session.navigationLocator.desktopPositionTraceSummary(160)} " +
+                "incomingFirst=${chunks.firstOrNull().desktopTtsStartTraceSummary(160)} " +
+                "sourceFirst=${sourceChunks.firstOrNull().desktopTtsStartTraceSummary(160)}"
+        }
         val ttsChunks = if (applyReplacements) {
             sourceChunks.withTtsReplacements(state.readerTtsReplacementPreferences, replacementBookId)
         } else {
             sourceChunks
+        }
+        logDesktopTtsStartTrace {
+            "event=desktop_start_prepared windowId=\"${windowId.logPreview(80)}\" scope=${readScope.name} " +
+                "ttsChunks=${ttsChunks.size} boundedStart=${startChunkIndex.coerceIn(0, ttsChunks.lastIndex.coerceAtLeast(0))} " +
+                "first=${ttsChunks.firstOrNull().desktopTtsStartTraceSummary(160)} " +
+                "second=${ttsChunks.getOrNull(1).desktopTtsStartTraceSummary(160)}"
         }
         val settings = aiByokSettings.sanitized()
         val currentCloudTts = content.extrasState.cloudTts
@@ -2114,6 +2129,11 @@ internal fun EpistemeDesktopApp(
         val ttsSessionId = System.currentTimeMillis()
         val boundedStartChunkIndex = startChunkIndex.coerceIn(0, ttsChunks.lastIndex)
         val playbackChunks = ttsChunks.drop(boundedStartChunkIndex)
+        logDesktopTtsStartTrace {
+            "event=desktop_playback_window windowId=\"${windowId.logPreview(80)}\" scope=${readScope.name} " +
+                "boundedStart=$boundedStartChunkIndex playbackChunks=${playbackChunks.size} " +
+                "playbackFirst=${playbackChunks.firstOrNull().desktopTtsStartTraceSummary(160)}"
+        }
         val initialProgress = ReaderTtsProgress(
             sessionId = ttsSessionId,
             scope = readScope,
@@ -2189,6 +2209,10 @@ internal fun EpistemeDesktopApp(
                             "sourceCfi=\"${chunk.sourceCfi.orEmpty().logPreview()}\" chars=${chunk.text.length} " +
                             "text=\"${chunk.text.logPreview()}\""
                     )
+                    logDesktopTtsStartTrace {
+                        "event=desktop_chunk_start scope=${readScope.name} index=${index + 1}/${ttsChunks.size} " +
+                            "chunk=${chunk.desktopTtsStartTraceSummary(180)}"
+                    }
                 }
             }.onFailure { error ->
                 logDesktopTts("reader_sequence_failed error=\"${error.desktopTtsSummary()}\"")
@@ -2266,7 +2290,7 @@ internal fun EpistemeDesktopApp(
         )
     }
 
-    fun toggleReaderCloudTts(windowId: String, text: String) {
+    fun toggleReaderCloudTts(windowId: String, text: String, locator: ReaderLocator? = null) {
         val content = textReaderWindowContent(windowId) ?: return
         val normalizedText = text.trim()
         val settings = aiByokSettings.sanitized()
@@ -2313,14 +2337,24 @@ internal fun EpistemeDesktopApp(
             }
             return
         }
-        val page = content.session.reader.currentPage
-        val selectionChunks = if (page != null) {
+        val locatorChunks = locator
+            ?.takeIf { it.startOffset != null || !it.cfi.isNullOrBlank() }
+            ?.let { selectionLocator ->
+                ReaderTtsPlanner.chunksFromCurrentLocation(
+                    content.session.copy(navigationLocator = selectionLocator)
+                ).takeIf { it.isNotEmpty() }
+            }
+        val page = locator
+            ?.pageIndex
+            ?.let { content.session.reader.pages.getOrNull(it) }
+            ?: content.session.reader.currentPage
+        val selectionChunks = locatorChunks ?: if (page != null) {
             ReaderTtsPlanner.chunksForText(
                 text = normalizedText,
-                pageIndex = page.pageIndex,
-                chapterIndex = page.chapterIndex,
+                pageIndex = locator?.pageIndex ?: page.pageIndex,
+                chapterIndex = locator?.chapterIndex ?: page.chapterIndex,
                 chapterTitle = page.chapterTitle,
-                sourceStartOffset = page.startOffset
+                sourceStartOffset = locator?.startOffset ?: page.startOffset
             )
         } else {
             ReaderTtsPlanner.chunksForText(
@@ -2330,7 +2364,11 @@ internal fun EpistemeDesktopApp(
                 chapterTitle = desktopString("desktop_selection", "Selection")
             )
         }
-        startReaderCloudTts(windowId, ReaderTtsReadScope.PAGE, selectionChunks)
+        startReaderCloudTts(
+            windowId = windowId,
+            readScope = if (locatorChunks != null) ReaderTtsReadScope.BOOK else ReaderTtsReadScope.PAGE,
+            chunks = selectionChunks
+        )
     }
 
     fun finishImportFiles(
@@ -4271,7 +4309,7 @@ internal fun EpistemeDesktopApp(
                                                 )
                                             }
                                         },
-                                        onCloudTtsToggle = { text -> toggleReaderCloudTts(readerWindow.id, text) },
+                                        onCloudTtsToggle = { text, locator -> toggleReaderCloudTts(readerWindow.id, text, locator) },
                                         onCloudTtsStart = { readScope, chunks ->
                                             startReaderCloudTts(readerWindow.id, readScope, chunks)
                                         },

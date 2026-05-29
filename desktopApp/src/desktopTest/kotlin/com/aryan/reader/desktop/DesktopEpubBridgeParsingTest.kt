@@ -53,4 +53,47 @@ class DesktopEpubBridgeParsingTest {
         assertTrue(json.contains("\"blockIndex\":9"))
         assertTrue(json.contains("\"charOffset\":140"))
     }
+
+    @Test
+    fun `selection action bridge keeps locator fields for selected tts`() {
+        val payload = """
+            {
+              "action": "speak",
+              "text": "selected text",
+              "locator": {
+                "chapterIndex": 3,
+                "chapterId": "chap-3",
+                "href": "text/chapter3.xhtml",
+                "pageIndex": 41,
+                "startOffset": 900,
+                "endOffset": 913,
+                "blockIndex": 7,
+                "charOffset": 900,
+                "textQuote": "selected text",
+                "cfi": "desktop-scroll:10:20:/4/8:12|/4/8:25"
+              }
+            }
+        """.trimIndent().readerSelectionActionOrNull()
+
+        assertEquals(DesktopReaderSelectionAction.SPEAK, payload?.action)
+        assertEquals("selected text", payload?.text)
+        assertEquals(3, payload?.locator?.chapterIndex)
+        assertEquals("chap-3", payload?.locator?.chapterId)
+        assertEquals("text/chapter3.xhtml", payload?.locator?.href)
+        assertEquals(41, payload?.locator?.pageIndex)
+        assertEquals(900, payload?.locator?.startOffset)
+        assertEquals(913, payload?.locator?.endOffset)
+        assertEquals(7, payload?.locator?.blockIndex)
+        assertEquals(900, payload?.locator?.charOffset)
+        assertEquals("selected text", payload?.locator?.textQuote)
+        assertEquals("/4/8:12|/4/8:25", payload?.locator?.cfi)
+    }
+
+    @Test
+    fun `desktop epub chrome tap script keeps click fallback for pointer-capable webviews`() {
+        assertTrue(DesktopEpubKeyNavigationScript.contains("var lastChromeTapNotifiedAt = 0;"))
+        assertTrue(DesktopEpubKeyNavigationScript.contains("function maybeNotifyChromeTapFromClick(event)"))
+        assertTrue(DesktopEpubKeyNavigationScript.contains("if (window.PointerEvent) {"))
+        assertTrue(DesktopEpubKeyNavigationScript.contains("maybeNotifyChromeTapFromClick(event);"))
+    }
 }

@@ -1961,6 +1961,8 @@
     <string name="desktop_layout_spacing">Layout and Spacing</string>
     <string name="desktop_library_empty_desc">Import files into app storage or add a folder to read files in place.</string>
     <string name="desktop_library_subtitle">Browse your collection</string>
+    <!-- Desktop primary navigation shortcut for bring-your-own-key AI configuration. -->
+    <string name="desktop_ai_keys">AI keys</string>
     <!-- Desktop library tab label with count. %1$d = number of smart shelves. Keep as a full tab phrase, not a reusable noun. -->
     <string name="desktop_library_tab_smart_shelves_count">Smart %1$d</string>
     <!-- Desktop library tab label with count. %1$d = number of unread books. Keep as a full tab phrase. -->

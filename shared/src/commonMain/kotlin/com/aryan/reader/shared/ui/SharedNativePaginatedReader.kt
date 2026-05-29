@@ -227,7 +227,7 @@ fun SharedNativePaginatedReader(
     modifier: Modifier = Modifier,
     enabledSelectionActions: Set<SharedNativeReaderSelectionAction> = emptySet(),
     onCopyText: (String) -> Unit = {},
-    onSelectionAction: (SharedNativeReaderSelectionAction, String) -> Unit = { _, _ -> },
+    onSelectionAction: (SharedNativeReaderSelectionAction, String, ReaderLocator?) -> Unit = { _, _, _ -> },
     onHighlightCreated: (UserHighlight) -> Unit = {},
     onHighlightSelected: (String) -> Unit = {},
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
@@ -391,7 +391,7 @@ fun SharedNativePaginatedReader(
                         updateActiveSelection(null)
                     },
                     onSelectionAction = { action ->
-                        onSelectionAction(action, selection.text)
+                        onSelectionAction(action, selection.text, selection.toReaderLocator())
                         updateActiveSelection(null)
                     },
                     onHighlight = { color ->
@@ -2850,17 +2850,7 @@ internal fun sharedNativeReaderHighlightForSelection(
     selection: SharedNativeReaderTextSelection,
     color: HighlightColor
 ): UserHighlight {
-    val blockIndex = selection.startBlockIndex.takeIf { it >= 0 }
-    val locator = ReaderLocator(
-        chapterIndex = selection.chapterIndex,
-        pageIndex = selection.pageIndex,
-        startOffset = selection.startOffset,
-        endOffset = selection.endOffset,
-        blockIndex = blockIndex,
-        charOffset = blockIndex?.let { selection.startOffset },
-        textQuote = selection.text,
-        cfi = selection.cfi
-    )
+    val locator = selection.toReaderLocator()
     return UserHighlight(
         id = "native-${selection.chapterIndex}-${selection.startPageIndex}-${selection.startBlockIndex}-${selection.startLocalOffset}-${selection.endPageIndex}-${selection.endBlockIndex}-${selection.endLocalOffset}-${color.id}",
         cfi = selection.cfi,
@@ -2868,6 +2858,20 @@ internal fun sharedNativeReaderHighlightForSelection(
         color = color,
         chapterIndex = selection.chapterIndex,
         locator = locator
+    )
+}
+
+private fun SharedNativeReaderTextSelection.toReaderLocator(): ReaderLocator {
+    val blockIndex = startBlockIndex.takeIf { it >= 0 }
+    return ReaderLocator(
+        chapterIndex = chapterIndex,
+        pageIndex = pageIndex,
+        startOffset = startOffset,
+        endOffset = endOffset,
+        blockIndex = blockIndex,
+        charOffset = blockIndex?.let { startOffset },
+        textQuote = text,
+        cfi = cfi
     )
 }
 

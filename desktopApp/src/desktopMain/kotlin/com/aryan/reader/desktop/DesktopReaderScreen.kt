@@ -39,6 +39,7 @@ import com.aryan.reader.shared.ReaderAutoScrollState
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderToolbarPreferences
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsReadScope
@@ -97,7 +98,7 @@ internal fun DesktopReaderScreen(
     onExternalLookup: (ReaderExternalLookupAction, String) -> Unit,
     onAiAction: (ReaderAiFeature, String) -> Unit,
     onAiResultDismiss: () -> Unit,
-    onCloudTtsToggle: (String) -> Unit,
+    onCloudTtsToggle: (String, ReaderLocator?) -> Unit,
     onCloudTtsStart: (ReaderTtsReadScope, List<ReaderTtsChunk>) -> Unit,
     onCloudTtsPauseResume: () -> Unit,
     onCloudTtsStop: () -> Unit,
@@ -496,14 +497,14 @@ internal fun DesktopReaderScreen(
         )
     }
 
-    val handleDesktopSelectionAction: (DesktopReaderSelectionAction, String) -> Unit = { action, text ->
+    val handleDesktopSelectionAction: (DesktopReaderSelectionAction, String, ReaderLocator?) -> Unit = { action, text, locator ->
         val settings = aiByokSettings.sanitized()
         when (action) {
             DesktopReaderSelectionAction.DEFINE -> {
                 if (settings.areReaderAiFeaturesAvailable) onAiAction(ReaderAiFeature.DEFINE, text)
             }
             DesktopReaderSelectionAction.SPEAK -> {
-                if (settings.isCloudTtsAvailable) onCloudTtsToggle(text)
+                if (settings.isCloudTtsAvailable) onCloudTtsToggle(text, locator)
             }
             DesktopReaderSelectionAction.SEARCH -> onExternalLookup(ReaderExternalLookupAction.SEARCH, text)
         }
@@ -514,14 +515,14 @@ internal fun DesktopReaderScreen(
         if (externalLookupAvailable) add(SharedNativeReaderSelectionAction.SEARCH)
         if (settings.isCloudTtsAvailable) add(SharedNativeReaderSelectionAction.SPEAK)
     }
-    val handleNativeSelectionAction: (SharedNativeReaderSelectionAction, String) -> Unit = { action, text ->
+    val handleNativeSelectionAction: (SharedNativeReaderSelectionAction, String, ReaderLocator?) -> Unit = { action, text, locator ->
         when (action) {
             SharedNativeReaderSelectionAction.DEFINE ->
-                handleDesktopSelectionAction(DesktopReaderSelectionAction.DEFINE, text)
+                handleDesktopSelectionAction(DesktopReaderSelectionAction.DEFINE, text, locator)
             SharedNativeReaderSelectionAction.SPEAK ->
-                handleDesktopSelectionAction(DesktopReaderSelectionAction.SPEAK, text)
+                handleDesktopSelectionAction(DesktopReaderSelectionAction.SPEAK, text, locator)
             SharedNativeReaderSelectionAction.SEARCH ->
-                handleDesktopSelectionAction(DesktopReaderSelectionAction.SEARCH, text)
+                handleDesktopSelectionAction(DesktopReaderSelectionAction.SEARCH, text, locator)
         }
     }
     val handleDesktopEpubLinkClicked: (DesktopEpubLinkClick) -> Unit = { link ->
@@ -794,7 +795,9 @@ internal fun DesktopReaderScreen(
                                         onSessionChange(nextSession)
                                     }
                                 },
-                                onSelectionAction = handleDesktopSelectionAction,
+                                onSelectionAction = { payload ->
+                                    handleDesktopSelectionAction(payload.action, payload.text, payload.locator)
+                                },
                                 onLinkClicked = handleDesktopEpubLinkClicked,
                                 onVisiblePageChanged = onVisiblePageChanged,
                                 onPointerActivity = onChromeActivity,

@@ -848,6 +848,20 @@ object ReaderHtmlDocumentBuilder {
                     }
                   }
                   window.readerDesktopPositionTraceLog = readerDesktopPositionTraceLog;
+                  function readerTtsStartTraceLog(message) {
+                    var line = 'EpistemeDesktopTtsStartTrace ' + message;
+                    var delivered = false;
+                    if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                      try {
+                        window.kmpJsBridge.callNative('readerTtsStartTraceLog', JSON.stringify({ message: message }));
+                        delivered = true;
+                      } catch (error) {}
+                    }
+                    if (!delivered) {
+                      try { console.log(line); } catch (error) {}
+                    }
+                  }
+                  window.readerTtsStartTraceLog = readerTtsStartTraceLog;
                   function readerTtsPreview(value, limit) {
                     return String(value || '').replace(/\s+/g, ' ').trim().substring(0, limit || 120);
                   }
@@ -1244,7 +1258,7 @@ object ReaderHtmlDocumentBuilder {
                   function readerProbeY() {
                     var height = window.innerHeight || document.documentElement.clientHeight || 0;
                     if (height <= 0) return 8;
-                    return Math.max(8, Math.min(height - 8, Math.round(height * 0.12)));
+                    return Math.max(1, Math.min(height - 1, 8));
                   }
                   function firstVisibleOffsetInContent(content, preferredY) {
                     var nodes = textNodesUnder(content, false);
@@ -1252,6 +1266,97 @@ object ReaderHtmlDocumentBuilder {
                     var offset = contentStart;
                     var viewportTop = Number.isFinite(preferredY) ? preferredY : readerProbeY();
                     var viewportBottom = window.innerHeight - 8;
+                    var fallback = null;
+                    function visibleResult(node, localOffset, rawOffset) {
+                      var sourceOffset = boundaryOffsetWithinContent(content, node, localOffset);
+                      return { offset: sourceOffset === null ? rawOffset : sourceOffset, textNode: node };
+                    }
+                    function usableLineRect(rect) {
+                      return rect && rect.width > 0 && rect.height > 0;
+                    }
+                    function firstVisibleLineRect() {
+                      var best = null;
+                      function better(candidate, current) {
+                        if (!current) return true;
+                        var candidateCrossesTop = candidate.top <= viewportTop + 0.5 && candidate.bottom >= viewportTop;
+                        var currentCrossesTop = current.top <= viewportTop + 0.5 && current.bottom >= viewportTop;
+                        if (candidateCrossesTop !== currentCrossesTop) return candidateCrossesTop;
+                        if (candidateCrossesTop) {
+                          if (Math.abs(candidate.top - current.top) > 0.5) return candidate.top > current.top;
+                        } else if (Math.abs(candidate.top - current.top) > 0.5) {
+                          return candidate.top < current.top;
+                        }
+                        return candidate.left < current.left;
+                      }
+                      for (var ln = 0; ln < nodes.length; ln++) {
+                        var lineWhole = document.createRange();
+                        lineWhole.selectNodeContents(nodes[ln]);
+                        var lineRects = lineWhole.getClientRects();
+                        lineWhole.detach && lineWhole.detach();
+                        for (var lr = 0; lr < lineRects.length; lr++) {
+                          var rect = lineRects[lr];
+                          if (!usableLineRect(rect)) continue;
+                          if (rect.bottom < viewportTop || rect.top > viewportBottom) continue;
+                          if (better(rect, best)) best = rect;
+                        }
+                      }
+                      return best;
+                    }
+                    function sameVisualLine(rect, lineRect) {
+                      if (!usableLineRect(rect) || !usableLineRect(lineRect)) return false;
+                      var rectMid = (rect.top + rect.bottom) / 2;
+                      var lineMid = (lineRect.top + lineRect.bottom) / 2;
+                      var tolerance = Math.max(2, Math.min(8, lineRect.height * 0.35));
+                      return Math.abs(rectMid - lineMid) <= tolerance;
+                    }
+                    function firstVisibleLineStart(targetLineRect) {
+                      var lineOffset = contentStart;
+                      var best = null;
+                      var direction = 'ltr';
+                      try { direction = window.getComputedStyle(content).direction || 'ltr'; } catch (error) {}
+                      for (var ln = 0; ln < nodes.length; ln++) {
+                        var lineNode = nodes[ln];
+                        var lineText = lineNode.nodeValue || '';
+                        for (var li = 0; li < lineText.length; li++) {
+                          if (!lineText[li] || /^\s$/.test(lineText[li])) continue;
+                          var lineRange = document.createRange();
+                          lineRange.setStart(lineNode, li);
+                          lineRange.setEnd(lineNode, Math.min(li + 1, lineText.length));
+                          var charLineRect = lineRange.getBoundingClientRect();
+                          lineRange.detach && lineRange.detach();
+                          if (sameVisualLine(charLineRect, targetLineRect)) {
+                            var visualEdge = direction === 'rtl' ? -charLineRect.right : charLineRect.left;
+                            if (!best || visualEdge < best.visualEdge - 0.5 || (
+                              Math.abs(visualEdge - best.visualEdge) <= 0.5 && lineOffset + li < best.rawOffset
+                            )) {
+                              best = {
+                                node: lineNode,
+                                localOffset: li,
+                                rawOffset: lineOffset + li,
+                                visualEdge: visualEdge,
+                                rect: charLineRect
+                              };
+                            }
+                          }
+                        }
+                        lineOffset += lineText.length;
+                      }
+                      if (!best) return null;
+                      var result = visibleResult(best.node, best.localOffset, best.rawOffset);
+                      readerTtsStartTraceLog(
+                        'event=web_line_start_choice offset=' + result.offset +
+                        ' rawOffset=' + best.rawOffset +
+                        ' lineTop=' + Math.round(targetLineRect.top) +
+                        ' lineBottom=' + Math.round(targetLineRect.bottom) +
+                        ' charLeft=' + Math.round(best.rect.left) +
+                        ' charRight=' + Math.round(best.rect.right) +
+                        ' text="' + readerTtsPreview(snippetFromContentOffset(content, result.offset), 120) + '"'
+                      );
+                      return result;
+                    }
+                    var topLineRect = firstVisibleLineRect();
+                    var topLineStart = topLineRect ? firstVisibleLineStart(topLineRect) : null;
+                    if (topLineStart) return topLineStart;
                     for (var n = 0; n < nodes.length; n++) {
                       var node = nodes[n];
                       var text = node.nodeValue || '';
@@ -1278,12 +1383,12 @@ object ReaderHtmlDocumentBuilder {
                         var charRect = charRange.getBoundingClientRect();
                         charRange.detach && charRange.detach();
                         if (charRect.bottom >= viewportTop && charRect.top <= viewportBottom) {
-                          return { offset: offset + i, textNode: node };
+                          return visibleResult(node, i, offset + i);
                         }
                       }
                       offset += text.length;
                     }
-                    return { offset: contentStart, textNode: null };
+                    return fallback || { offset: contentStart, textNode: null };
                   }
                   function snippetFromContentOffset(content, startOffset) {
                     var nodes = textNodesUnder(content, false);
@@ -1487,6 +1592,19 @@ object ReaderHtmlDocumentBuilder {
                       ' cfi=' + readerTtsPreview(positionCfi, 160) +
                       ' text="' + readerTtsPreview(snippetFromContentOffset(content, offset), 120) + '"'
                     );
+                    readerTtsStartTraceLog(
+                      'event=web_position_payload mode=' + (isVerticalReaderDocument() ? 'vertical' : 'paginated') +
+                      ' source=' + (source || 'unknown') +
+                      ' page=' + page.pageIndex +
+                      ' chapter=' + chapterIndex +
+                      ' offsets=' + offset + '..' + offset +
+                      ' preferredY=' + (Number.isFinite(preferredY) ? Math.round(preferredY) : 'null') +
+                      ' visibleNode=' + (visible.textNode ? readerElementLabel(visible.textNode.parentElement) : 'null') +
+                      ' block=' + (blockPosition ? blockPosition.blockIndex : 'null') +
+                      ' char=' + (blockPosition ? blockPosition.charOffset : 'null') +
+                      ' cfi=' + readerTtsPreview(positionCfi, 160) +
+                      ' text="' + readerTtsPreview(snippetFromContentOffset(content, offset), 160) + '"'
+                    );
                     return {
                       pageIndex: page.pageIndex,
                       chapterIndex: chapterIndex,
@@ -1639,6 +1757,15 @@ object ReaderHtmlDocumentBuilder {
                       ' char=' + (position.charOffset === null || position.charOffset === undefined ? 'null' : position.charOffset) +
                       ' cfi=' + readerTtsPreview(position.cfi, 160) +
                       ' text="' + readerTtsPreview(position.textQuote, 120) + '"'
+                    );
+                    readerTtsStartTraceLog(
+                      'event=web_position_report_send page=' + position.pageIndex +
+                      ' chapter=' + position.chapterIndex +
+                      ' offsets=' + position.startOffset + '..' + position.endOffset +
+                      ' block=' + (position.blockIndex === null || position.blockIndex === undefined ? 'null' : position.blockIndex) +
+                      ' char=' + (position.charOffset === null || position.charOffset === undefined ? 'null' : position.charOffset) +
+                      ' cfi=' + readerTtsPreview(position.cfi, 160) +
+                      ' text="' + readerTtsPreview(position.textQuote, 160) + '"'
                     );
                     if (window.kmpJsBridge) {
                       window.kmpJsBridge.callNative('readerPositionChanged', JSON.stringify(position));
@@ -2217,12 +2344,52 @@ object ReaderHtmlDocumentBuilder {
                     }
                   }
                   function sendSelectionAction(action, text) {
+                    var payload = {
+                      action: action,
+                      text: text
+                    };
+                    var actionRange = savedRange;
+                    if (!actionRange) {
+                      var actionSelection = window.getSelection && window.getSelection();
+                      if (actionSelection && actionSelection.rangeCount > 0) actionRange = actionSelection.getRangeAt(0);
+                    }
+                    var actionSegments = selectionSegmentsForRange(actionRange);
+                    if (actionSegments.length) {
+                      var firstSegment = actionSegments[0];
+                      var lastSegment = actionSegments[actionSegments.length - 1];
+                      var sameChapter = actionSegments.every(function (segment) {
+                        return segment.chapterIndex === firstSegment.chapterIndex;
+                      });
+                      if (sameChapter) {
+                        var pageIndex = firstSegment.pageIndex;
+                        if (pageIndex < 0 && firstSegment.startOffset !== null) {
+                          var anchorPage = pageForLocator(firstSegment.chapterIndex, firstSegment.startOffset);
+                          if (anchorPage) pageIndex = anchorPage.pageIndex;
+                        }
+                        var cfi = readerHighlightCfiForRange(
+                          firstSegment,
+                          lastSegment,
+                          firstSegment.chapterIndex,
+                          firstSegment.startOffset,
+                          lastSegment.endOffset
+                        );
+                        payload.locator = {
+                          chapterIndex: firstSegment.chapterIndex,
+                          chapterId: firstSegment.chapterId,
+                          href: firstSegment.chapterHref || null,
+                          pageIndex: pageIndex >= 0 ? pageIndex : null,
+                          startOffset: firstSegment.startOffset,
+                          endOffset: lastSegment.endOffset,
+                          blockIndex: firstSegment.blockIndex,
+                          charOffset: firstSegment.charOffset,
+                          textQuote: text,
+                          cfi: cfi
+                        };
+                      }
+                    }
                     if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
                       try {
-                        window.kmpJsBridge.callNative('readerSelectionAction', JSON.stringify({
-                          action: action,
-                          text: text
-                        }));
+                        window.kmpJsBridge.callNative('readerSelectionAction', JSON.stringify(payload));
                         return true;
                       } catch (error) {
                         console.log('READER_SELECTION_ACTION bridge_error action=' + action + ' error=' + error);

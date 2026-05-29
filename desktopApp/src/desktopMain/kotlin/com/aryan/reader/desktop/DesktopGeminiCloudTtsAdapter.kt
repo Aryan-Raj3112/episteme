@@ -127,6 +127,12 @@ class DesktopGeminiCloudTtsAdapter(
                 )
             }
             .filter { it.text.isNotBlank() }
+        logDesktopTtsStartTrace {
+            "event=adapter_speak_chunks book=\"${bookTitle.desktopTtsPreview()}\" scope=${readScope.name} " +
+                "inputChunks=${chunks.size} sequenceChunks=${sequenceChunks.size} " +
+                "inputFirst=${chunks.firstOrNull().desktopTtsStartTraceSummary(160)} " +
+                "sequenceFirstText=\"${sequenceChunks.firstOrNull()?.text.orEmpty().desktopTtsPreview(180)}\""
+        }
         logDesktopTts(
             "chunk_sequence_speak_start book=\"${bookTitle.desktopTtsPreview()}\" scope=${readScope.name} " +
                 "chunks=${sequenceChunks.size} totalTextChars=${sequenceChunks.sumOf { it.text.length }}"
@@ -362,6 +368,10 @@ class DesktopGeminiCloudTtsAdapter(
                 currentTurnAudioBytesReceived.set(0)
                 currentTurnComplete.set(turnComplete)
                 logDesktopTts("sequence_turn_start index=${index + 1}/${chunks.size} textChars=${text.length}")
+                logDesktopTtsStartTrace {
+                    "event=adapter_turn_start index=${index + 1}/${chunks.size} chapter=\"${chunk.chapterTitle.orEmpty().desktopTtsPreview()}\" " +
+                        "textChars=${text.length} text=\"${text.desktopTtsPreview(220)}\""
+                }
                 withContext(callbackContext) {
                     onChunkStart(index)
                 }

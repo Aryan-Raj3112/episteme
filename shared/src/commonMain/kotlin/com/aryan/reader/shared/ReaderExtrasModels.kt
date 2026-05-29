@@ -10,11 +10,13 @@ import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
+import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 
 const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
 const val GEMINI_CLOUD_TTS_MODEL_ID = "gemini:$GEMINI_CLOUD_TTS_MODEL"
 const val DEFAULT_CLOUD_TTS_SPEAKER_ID = "Aoede"
 const val READER_TTS_CHUNK_MAX_LENGTH = 250
+private const val ReaderTtsStartTraceLogTag = "EpistemeDesktopTtsStartTrace"
 
 data class ReaderCloudTtsVoice(
     val id: String,
@@ -325,15 +327,42 @@ object ReaderTtsPlanner {
         val anchor = session.navigationLocator
         val pageIndex = anchor?.pageIndex ?: session.reader.currentPageIndex
         val pages = session.reader.pages.dropWhile { it.pageIndex < pageIndex.coerceAtLeast(0) }
+        val syntheticDesktopAnchor = anchor?.isSyntheticDesktopTtsAnchor() == true
         val chunks = chunksForPages(session.reader.book, pages)
         val chapterIndex = anchor?.chapterIndex
         val startOffset = anchor?.startOffset
-        if (chapterIndex == null && startOffset == null) return chunks
-        var nextIndex = 0
-        return chunks.mapNotNull { chunk ->
-            chunk.afterLocator(chapterIndex = chapterIndex, startOffset = startOffset)
-                ?.copy(index = nextIndex++)
+        logReaderTtsStartTrace {
+            "event=planner_from_here_start pageIndex=$pageIndex pages=${pages.size} chunks=${chunks.size} " +
+                "syntheticDesktop=$syntheticDesktopAnchor " +
+                "anchor=${anchor.readerTtsLocatorSummary()} first=${chunks.firstOrNull().readerTtsChunkSummary()} " +
+                "second=${chunks.getOrNull(1).readerTtsChunkSummary()}"
         }
+        if (chapterIndex == null && startOffset == null) return chunks
+        val target = anchor?.toTtsChunkTarget()
+        val startChunkIndex = findReaderTtsChunkStartIndex(chunks, target)
+            ?: chunks.indexOfFirst { it.isOnOrAfterLocator(chapterIndex, startOffset) }.takeIf { it >= 0 }
+            ?: run {
+                logReaderTtsStartTrace {
+                    "event=planner_from_here_empty reason=no_start_chunk target=${target.readerTtsTargetSummary()} " +
+                        "anchor=${anchor.readerTtsLocatorSummary()} chunks=${chunks.size}"
+                }
+                return emptyList()
+            }
+        val initialChunk = anchor?.let { chunks[startChunkIndex].sliceFromLocator(it) }
+        val sessionChunks = if (initialChunk == null) {
+            chunks.drop(startChunkIndex + 1)
+        } else {
+            chunks.withInitialChunkOverride(startChunkIndex, initialChunk).drop(startChunkIndex)
+        }
+        logReaderTtsStartTrace {
+            "event=planner_from_here_result target=${target.readerTtsTargetSummary()} startChunkIndex=$startChunkIndex " +
+                "sourceChunk=${chunks.getOrNull(startChunkIndex).readerTtsChunkSummary()} " +
+                "initialChunk=${initialChunk.readerTtsChunkSummary()} resultChunks=${sessionChunks.size} " +
+                "resultFirst=${sessionChunks.firstOrNull().readerTtsChunkSummary()}"
+        }
+        return sessionChunks
+            .filter { it.text.isNotBlank() }
+            .mapIndexed { index, chunk -> chunk.copy(index = index) }
     }
 
     fun chunksForText(
@@ -401,28 +430,51 @@ object ReaderTtsPlanner {
         }
     }
 
-    private fun ReaderTtsChunk.afterLocator(chapterIndex: Int?, startOffset: Int?): ReaderTtsChunk? {
+    private fun ReaderTtsChunk.isOnOrAfterLocator(chapterIndex: Int?, startOffset: Int?): Boolean {
         if (chapterIndex != null) {
-            if (this.chapterIndex < chapterIndex) return null
-            if (this.chapterIndex > chapterIndex) return this
+            if (this.chapterIndex < chapterIndex) return false
+            if (this.chapterIndex > chapterIndex) return true
         }
-        val anchorOffset = startOffset ?: return this
-        if (endOffset <= anchorOffset) return null
-        if (anchorOffset <= this.startOffset) return this
-        return trimStartTo(anchorOffset)
+        val anchorOffset = startOffset ?: return true
+        return endOffset > anchorOffset
     }
 
-    private fun ReaderTtsChunk.trimStartTo(sourceOffset: Int): ReaderTtsChunk? {
-        val boundedOffset = sourceOffset.coerceIn(startOffset, endOffset)
-        if (boundedOffset <= startOffset) return this
-        if (boundedOffset >= endOffset) return null
-        val rawDrop = (boundedOffset - startOffset).coerceIn(0, text.length)
-        val remaining = text.drop(rawDrop)
+    private fun ReaderTtsChunk.sliceFromLocator(locator: ReaderLocator): ReaderTtsChunk? {
+        if (locator.chapterIndex != null && locator.chapterIndex != chapterIndex) return this
+        val sourceOffset = locator.startOffset ?: return this
+        val rawDrop = (sourceOffset - startOffset).coerceIn(0, text.length)
+        val drop = rawDrop
+        if (drop <= 0) {
+            logReaderTtsStartTrace {
+                "event=planner_slice_keep reason=drop_at_start rawDrop=$rawDrop " +
+                    "locator=${locator.readerTtsLocatorSummary()} chunk=${readerTtsChunkSummary()}"
+            }
+            return this
+        }
+        if (drop >= text.length) {
+            logReaderTtsStartTrace {
+                "event=planner_slice_skip reason=drop_past_end rawDrop=$rawDrop " +
+                    "chosenDrop=$drop locator=${locator.readerTtsLocatorSummary()} chunk=${readerTtsChunkSummary()}"
+            }
+            return null
+        }
+        val remaining = text.drop(drop)
         val leadingWhitespace = remaining.indexOfFirst { !it.isWhitespace() }
-        if (leadingWhitespace < 0) return null
+        if (leadingWhitespace < 0) {
+            logReaderTtsStartTrace {
+                "event=planner_slice_skip reason=blank_after_drop rawDrop=$rawDrop " +
+                    "chosenDrop=$drop locator=${locator.readerTtsLocatorSummary()} chunk=${readerTtsChunkSummary()}"
+            }
+            return null
+        }
         val nextText = remaining.drop(leadingWhitespace)
         if (nextText.isBlank()) return null
-        val nextStartOffset = (boundedOffset + leadingWhitespace).coerceAtMost(endOffset)
+        val nextStartOffset = (sourceOffset + leadingWhitespace).coerceAtMost(endOffset)
+        logReaderTtsStartTrace {
+            "event=planner_slice_result rawDrop=$rawDrop chosenDrop=$drop " +
+                "leadingWhitespace=$leadingWhitespace nextStart=$nextStartOffset locator=${locator.readerTtsLocatorSummary()} " +
+                "chunk=${readerTtsChunkSummary()} nextText=\"${nextText.readerTtsLogPreview()}\""
+        }
         return copy(
             text = nextText,
             spokenText = nextText,
@@ -545,7 +597,7 @@ object ReaderTtsPlanner {
                 chunks += ReaderTtsTextRange(
                     text = currentText.toString(),
                     start = currentStart,
-                    end = currentStart + currentText.length
+                    end = currentEnd
                 )
             }
             currentText = StringBuilder()
@@ -554,19 +606,25 @@ object ReaderTtsPlanner {
         }
 
         for (sentence in sentenceRanges) {
+            val appendText = if (currentText.isEmpty()) {
+                sentence.text
+            } else {
+                val gapStart = (currentEnd - sourceStart).coerceIn(0, source.length)
+                val gapEnd = (sentence.end - sourceStart).coerceIn(gapStart, source.length)
+                source.substring(gapStart, gapEnd)
+            }
             if (sentence.text.length > maxLength) {
                 flushCurrent()
                 chunks += sentence
                 continue
             }
-            if (currentText.isNotEmpty() && currentText.length + sentence.text.length + 1 > maxLength) {
+            if (currentText.isNotEmpty() && currentText.length + appendText.length > maxLength) {
                 flushCurrent()
                 currentText.append(sentence.text)
                 currentStart = sentence.start
                 currentEnd = sentence.end
             } else {
-                if (currentText.isNotEmpty()) currentText.append(" ")
-                currentText.append(sentence.text)
+                currentText.append(appendText)
                 if (currentStart < 0) currentStart = sentence.start
                 currentEnd = sentence.end
             }
@@ -612,6 +670,162 @@ object ReaderTtsPlanner {
         val start: Int,
         val end: Int
     )
+
+    private data class ReaderTtsChunkTarget(
+        val text: String,
+        val sourceCfi: String?,
+        val startOffset: Int
+    )
+
+    private fun ReaderLocator.toTtsChunkTarget(): ReaderTtsChunkTarget? {
+        val offset = startOffset ?: return null
+        val sourceCfi = cfi
+            ?.readerTtsSourceCfiBase()
+            ?.takeIf { it.startsWith("/") }
+        return ReaderTtsChunkTarget(
+            text = textQuote.orEmpty(),
+            sourceCfi = sourceCfi,
+            startOffset = offset
+        )
+    }
+
+    private fun ReaderLocator.isSyntheticDesktopTtsAnchor(): Boolean {
+        val value = cfi.orEmpty()
+        return value.startsWith("desktop:") ||
+            value.startsWith("desktop-scroll:") ||
+            value.startsWith("desktop-scroll-page:")
+    }
+
+    private fun findReaderTtsChunkStartIndex(
+        chunks: List<ReaderTtsChunk>,
+        target: ReaderTtsChunkTarget?
+    ): Int? {
+        if (target == null) return null
+
+        val exactIndex = chunks.indexOfFirst {
+            readerSameTtsChunkSource(it.sourceCfi, target.sourceCfi) &&
+                it.startOffset == target.startOffset &&
+                it.text.normalizedReaderTtsText() == target.text.normalizedReaderTtsText()
+        }
+        if (exactIndex >= 0) return exactIndex
+
+        val sourceAndOffsetIndex = chunks.indexOfFirst {
+            readerSameTtsChunkSource(it.sourceCfi, target.sourceCfi) &&
+                target.startOffset >= it.startOffset &&
+                target.startOffset < it.endOffset
+        }
+        if (sourceAndOffsetIndex >= 0) return sourceAndOffsetIndex
+
+        val sourceAndTextIndex = chunks.indexOfFirst {
+            readerSameTtsChunkSource(it.sourceCfi, target.sourceCfi) &&
+                readerTtsTextMatches(it.text, target.text)
+        }
+        if (sourceAndTextIndex >= 0) return sourceAndTextIndex
+
+        val sourceNearestOffsetIndex = chunks
+            .mapIndexedNotNull { index, chunk ->
+                if (readerSameTtsChunkSource(chunk.sourceCfi, target.sourceCfi)) {
+                    index to kotlin.math.abs(chunk.startOffset - target.startOffset)
+                } else {
+                    null
+                }
+            }
+            .minByOrNull { it.second }
+            ?.first
+        if (sourceNearestOffsetIndex != null) return sourceNearestOffsetIndex
+
+        return findUniqueReaderTtsTextMatch(chunks, target.text)
+    }
+
+    private fun List<ReaderTtsChunk>.withInitialChunkOverride(
+        startChunkIndex: Int,
+        initialChunk: ReaderTtsChunk?
+    ): List<ReaderTtsChunk> {
+        if (initialChunk == null || startChunkIndex !in indices) return this
+        val existing = this[startChunkIndex]
+        if (
+            existing.text == initialChunk.text &&
+            existing.sourceCfi == initialChunk.sourceCfi &&
+            existing.startOffset == initialChunk.startOffset
+        ) {
+            return this
+        }
+        return toMutableList().also { it[startChunkIndex] = initialChunk }
+    }
+
+    private fun readerSameTtsChunkSource(first: String?, second: String?): Boolean {
+        val firstSource = first.orEmpty()
+        val secondSource = second.orEmpty()
+        if (firstSource.isBlank() || secondSource.isBlank()) return firstSource == secondSource
+        val firstPath = firstSource.readerTtsSourceCfiBase()
+        val secondPath = secondSource.readerTtsSourceCfiBase()
+        return firstPath == secondPath ||
+            readerTtsCfiPathContains(firstPath, secondPath) ||
+            readerTtsCfiPathContains(secondPath, firstPath)
+    }
+
+    private fun readerTtsCfiPathContains(parentPath: String, childPath: String): Boolean {
+        if (parentPath.isBlank() || childPath.isBlank() || parentPath == childPath) return false
+        val parentParts = parentPath.split('/').filter { it.isNotEmpty() }
+        val childParts = childPath.split('/').filter { it.isNotEmpty() }
+        return parentParts.size < childParts.size && childParts.take(parentParts.size) == parentParts
+    }
+
+    private fun readerTtsTextMatches(first: String, second: String): Boolean {
+        val firstNormalized = first.normalizedReaderTtsText()
+        val secondNormalized = second.normalizedReaderTtsText()
+        if (firstNormalized.isBlank() || secondNormalized.isBlank()) return false
+        return firstNormalized == secondNormalized ||
+            firstNormalized.startsWith(secondNormalized) ||
+            secondNormalized.startsWith(firstNormalized)
+    }
+
+    private fun findUniqueReaderTtsTextMatch(chunks: List<ReaderTtsChunk>, text: String): Int? {
+        val matches = chunks.mapIndexedNotNull { index, chunk ->
+            index.takeIf { readerTtsTextMatches(chunk.text, text) }
+        }
+        return matches.singleOrNull()
+    }
+
+    private fun String.readerTtsSourceCfiBase(): String {
+        return substringBefore('|').substringBefore(':')
+    }
+
+    private fun String.normalizedReaderTtsText(): String {
+        return replace(Regex("\\s+"), " ").trim()
+    }
+
+    private inline fun logReaderTtsStartTrace(message: () -> String) {
+        logSharedReaderDiagnostic(ReaderTtsStartTraceLogTag, message)
+    }
+
+    private fun ReaderLocator?.readerTtsLocatorSummary(maxTextLength: Int = 120): String {
+        if (this == null) return "null"
+        return "chapter=${chapterIndex ?: "null"} page=${pageIndex ?: "null"} " +
+            "offsets=${startOffset ?: "null"}..${endOffset ?: "null"} " +
+            "block=${blockIndex ?: "null"} char=${charOffset ?: "null"} " +
+            "cfi=\"${cfi.orEmpty().readerTtsLogPreview(180)}\" text=\"${textQuote.orEmpty().readerTtsLogPreview(maxTextLength)}\""
+    }
+
+    private fun ReaderTtsChunk?.readerTtsChunkSummary(maxTextLength: Int = 120): String {
+        if (this == null) return "null"
+        return "index=$index page=$pageIndex chapter=$chapterIndex offsets=$startOffset..$endOffset " +
+            "sourceCfi=\"${sourceCfi.orEmpty().readerTtsLogPreview(160)}\" textChars=${text.length} " +
+            "text=\"${text.readerTtsLogPreview(maxTextLength)}\" spoken=\"${spokenText.readerTtsLogPreview(maxTextLength)}\""
+    }
+
+    private fun ReaderTtsChunkTarget?.readerTtsTargetSummary(maxTextLength: Int = 120): String {
+        if (this == null) return "null"
+        return "offset=$startOffset sourceCfi=\"${sourceCfi.orEmpty().readerTtsLogPreview(160)}\" " +
+            "text=\"${text.readerTtsLogPreview(maxTextLength)}\""
+    }
+
+    private fun String.readerTtsLogPreview(maxLength: Int = 120): String {
+        return replace(Regex("\\s+"), " ")
+            .trim()
+            .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+            .replace("\"", "\\\"")
+    }
 }
 
 data class ReaderCloudTtsState(

@@ -285,6 +285,142 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `tts planner keeps synthetic desktop locators at android style chunk boundary`() {
+        val visibleLine = "Gilberte's either noticing or suffering by his peculations. Tears came to my eyes."
+        val source = "Hidden before this visual line. $visibleLine Later visible sentence."
+        val visibleStart = source.indexOf(visibleLine)
+        val book = SharedEpubBook(
+            id = "tts-desktop-line",
+            fileName = "tts-desktop-line.epub",
+            title = "TTS desktop line",
+            chapters = listOf(SharedEpubChapter("one", "One", source))
+        )
+        val page = ReaderPage(
+            pageIndex = 0,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = source,
+            startOffset = 0,
+            endOffset = source.length
+        )
+        val session = ReaderSessionState(
+            reader = PaginatedReaderState(
+                book = book,
+                pages = listOf(page),
+                currentPageIndex = 0
+            ),
+            navigationLocator = ReaderLocator(
+                chapterIndex = 0,
+                pageIndex = 0,
+                startOffset = visibleStart,
+                endOffset = visibleStart,
+                textQuote = visibleLine,
+                cfi = "desktop:0:$visibleStart:$visibleStart"
+            )
+        )
+
+        val first = ReaderTtsPlanner.chunksFromCurrentLocation(session).first()
+
+        assertEquals(visibleStart, first.startOffset)
+        assertTrue(first.text.startsWith(visibleLine))
+        assertFalse(first.text.startsWith("Hidden before"))
+    }
+
+    @Test
+    fun `tts planner trims onward chunks with source offsets after sentence gaps`() {
+        val source = "First hidden sentence.\n\nSecond visible sentence starts on the top line."
+        val visibleOffset = source.indexOf("Second")
+        val book = SharedEpubBook(
+            id = "tts-visible-gap",
+            fileName = "tts-visible-gap.epub",
+            title = "TTS visible gap",
+            chapters = listOf(SharedEpubChapter("one", "One", source))
+        )
+        val session = ReaderEngine().createSession(book).copy(
+            navigationLocator = ReaderLocator(
+                chapterIndex = 0,
+                pageIndex = 0,
+                startOffset = visibleOffset,
+                endOffset = visibleOffset,
+                textQuote = "Second visible sentence starts on the top line."
+            )
+        )
+
+        val first = ReaderTtsPlanner.chunksFromCurrentLocation(session).first()
+
+        assertEquals(visibleOffset, first.startOffset)
+        assertTrue(first.text.startsWith("Second visible sentence starts"))
+        assertFalse(first.text.startsWith("cond visible"))
+    }
+
+    @Test
+    fun `tts planner matches android source cfi before slicing initial chunk`() {
+        val hidden = "Hidden block text that should never be trimmed into."
+        val visible = "Visible line starts here and should be spoken."
+        val visibleOffset = 20
+        val hiddenBlock = SemanticParagraph(
+            text = hidden,
+            spans = emptyList(),
+            style = CssStyle(),
+            elementId = null,
+            cfi = "/4/2",
+            startCharOffsetInSource = 0,
+            blockIndex = 0
+        )
+        val visibleBlock = SemanticParagraph(
+            text = visible,
+            spans = emptyList(),
+            style = CssStyle(),
+            elementId = null,
+            cfi = "/4/4",
+            startCharOffsetInSource = visibleOffset,
+            blockIndex = 1
+        )
+        val book = SharedEpubBook(
+            id = "tts-cfi-match",
+            fileName = "tts-cfi-match.epub",
+            title = "TTS CFI match",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "one",
+                    title = "One",
+                    plainText = "$hidden\n$visible",
+                    semanticBlocks = listOf(hiddenBlock, visibleBlock)
+                )
+            )
+        )
+        val page = ReaderPage(
+            pageIndex = 0,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = "$hidden\n$visible",
+            startOffset = 0,
+            endOffset = hidden.length + visible.length + visibleOffset
+        )
+        val session = ReaderSessionState(
+            reader = PaginatedReaderState(
+                book = book,
+                pages = listOf(page),
+                currentPageIndex = 0
+            ),
+            navigationLocator = ReaderLocator(
+                chapterIndex = 0,
+                pageIndex = 0,
+                startOffset = visibleOffset,
+                endOffset = visibleOffset,
+                textQuote = visible,
+                cfi = "/4/4:0"
+            )
+        )
+
+        val first = ReaderTtsPlanner.chunksFromCurrentLocation(session).first()
+
+        assertEquals("/4/4", first.sourceCfi)
+        assertTrue(first.text.startsWith("Visible line starts here"))
+        assertFalse(first.text.contains("Hidden block"))
+    }
+
+    @Test
     fun `tts planner maps trimmed page text back to source offsets`() {
         val source = "Intro.\n\n   Leading words continue."
         val book = SharedEpubBook(

@@ -65,7 +65,7 @@ internal fun DesktopNativeSwtEpubWebView(
     onHighlightSelected: (String) -> Unit,
     isFullscreen: Boolean,
     onKeyboardNavigation: (DesktopReaderKeyNavigation) -> Unit,
-    onSelectionAction: (DesktopReaderSelectionAction, String) -> Unit,
+    onSelectionAction: (DesktopReaderSelectionActionPayload) -> Unit,
     onLinkClicked: (DesktopEpubLinkClick) -> Unit,
     onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
     onPointerActivity: () -> Unit = {},
