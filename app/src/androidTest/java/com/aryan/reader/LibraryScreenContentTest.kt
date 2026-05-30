@@ -339,6 +339,7 @@ class LibraryScreenContentTest {
                     isRefreshing = false,
                     syncedFolders = emptyList(),
                     onRemoveFolderClick = {},
+                    onFolderLocalSyncChange = { _, _, _ -> },
                     onOpdsBookDownloaded = { _, _ -> },
                     onStreamOpdsBook = { _, _ -> },
                     onDeleteCatalogStreams = {},

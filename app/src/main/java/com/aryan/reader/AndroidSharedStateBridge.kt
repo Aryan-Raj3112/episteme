@@ -23,7 +23,8 @@ internal object AndroidSharedStateBridge {
         val sharedInput = SharedLibraryProjectionInput(
             state = projectionState.toSharedReaderScreenState(
                 rawBooks = taggedBooks,
-                dbTags = input.dbTags
+                dbTags = input.dbTags,
+                includeReaderAnnotations = false
             ),
             booksFromStore = taggedBooks
                 .filterNot { it.bookId.endsWith("_reflow") }
@@ -195,7 +196,8 @@ internal object AndroidSharedStateBridge {
     private fun ReaderScreenState.toBridgeSharedState(projectedState: ReaderScreenState): SharedReaderScreenState {
         return toSharedReaderScreenState(
             rawBooks = projectedState.rawLibraryFiles.ifEmpty { rawLibraryFiles },
-            dbTags = projectedState.allTags.ifEmpty { allTags }
+            dbTags = projectedState.allTags.ifEmpty { allTags },
+            includeReaderAnnotations = false
         )
     }
 

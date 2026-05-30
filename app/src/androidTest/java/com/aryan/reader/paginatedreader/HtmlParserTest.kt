@@ -96,7 +96,7 @@ class HtmlParserTest {
         assertThat(blocks).hasSize(1)
         val pBlock = blocks.first() as SemanticParagraph
         val blockStyle = pBlock.style.spanStyle
-        assertThat(blockStyle.color).isEqualTo(Color.Green)
+        assertThat(blockStyle.color).isEqualTo(Color(0, 128, 0))
     }
 
     @Test

@@ -71,6 +71,24 @@ class EpubReaderSearchTest {
     }
 
     @Test
+    fun `search scans oversized text nodes in bounded windows`() = runTest {
+        val root = temp.newFolder("bounded-window")
+        val filler = "alpha ".repeat(7_000)
+        writeChapter(
+            root,
+            "chapter.xhtml",
+            "<html><body><p>${filler}Needle ${filler}pineedle ${filler}Needle</p></body></html>"
+        )
+        val book = epubBook(root, listOf(chapter("ch1", "Large", "chapter.xhtml")))
+
+        val results = createEpubSearcher(book)("needle")
+
+        assertEquals(2, results.size)
+        assertEquals(listOf(0, 1), results.map { it.occurrenceIndexInLocation })
+        assertTrue(results.all { it.snippet.text.contains("Needle", ignoreCase = true) })
+    }
+
+    @Test
     fun `search currently requires only a word start and highlights the matched substring`() = runTest {
         val root = temp.newFolder("word-start")
         writeChapter(root, "chapter.xhtml", "<html><body><p>cart art artist</p></body></html>")

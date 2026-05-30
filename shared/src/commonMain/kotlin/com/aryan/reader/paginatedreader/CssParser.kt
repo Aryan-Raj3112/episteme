@@ -1483,7 +1483,7 @@ object CssParser {
         density: Float,
         containerWidthPx: Int
     ): Float? {
-        val tokens = Regex("""([+-]?\d*\.?\d+(?:px|dp|em|rem|pt|%)?)|([+\-*/()])""")
+        val tokens = Regex("""(\d*\.?\d+(?:px|dp|em|rem|pt|%)?)|([+\-*/()])""")
             .findAll(expression.replace("\\s+".toRegex(), ""))
             .map { it.value }
             .toList()
@@ -1505,12 +1505,16 @@ object CssParser {
 
         fun parseFactor(): Float? {
             val token = tokens.getOrNull(index++) ?: return null
-            if (token == "(") {
-                val value = parseExpression?.invoke() ?: return null
-                if (tokens.getOrNull(index) == ")") index++
-                return value
+            return when (token) {
+                "+" -> parseFactor()
+                "-" -> parseFactor()?.let { -it }
+                "(" -> {
+                    val value = parseExpression?.invoke() ?: return null
+                    if (tokens.getOrNull(index) == ")") index++
+                    value
+                }
+                else -> parseNumber(token)
             }
-            return parseNumber(token)
         }
 
         fun parseTerm(): Float? {
@@ -1549,7 +1553,8 @@ object CssParser {
             }
         }
 
-        return parseExpression?.invoke()
+        val result = parseExpression?.invoke()
+        return if (result != null && index == tokens.size) result else null
     }
 
     internal fun parseCssSizeToDp(

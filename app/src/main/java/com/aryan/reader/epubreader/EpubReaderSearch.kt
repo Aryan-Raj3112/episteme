@@ -53,15 +53,64 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
+import org.jsoup.nodes.TextNode
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
+
+private const val EPUB_SEARCH_WINDOW_CHARS = 32_768
+private const val EPUB_SEARCH_SNIPPET_RADIUS = 35
+private const val EPUB_SEARCH_MAX_OVERLAP_CHARS = 4_096
+
+private val epubSearchSkippedTags = setOf("script", "style", "noscript")
+private val epubSearchBlockBoundaryTags = setOf(
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "br",
+    "caption",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "figcaption",
+    "figure",
+    "footer",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hr",
+    "li",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "pre",
+    "section",
+    "table",
+    "td",
+    "th",
+    "tr",
+    "ul"
+)
 
 /**
  * Creates the search implementation for EPUB chapters.
  */
 fun createEpubSearcher(epubBook: EpubBook): suspend (String) -> List<SearchResult> = { query ->
     withContext(Dispatchers.Default) {
+        val searchQuery = query.trim()
+        if (searchQuery.isBlank()) {
+            return@withContext emptyList()
+        }
+
         val results = mutableListOf<SearchResult>()
         epubBook.chapters.forEachIndexed { chapterIndex, chapter ->
             try {
@@ -69,52 +118,206 @@ fun createEpubSearcher(epubBook: EpubBook): suspend (String) -> List<SearchResul
                 if (!htmlFile.exists()) return@forEachIndexed
 
                 val doc = Jsoup.parse(htmlFile, "UTF-8")
-                val bodyChildren = doc.body().children().toList()
-                val chunks = bodyChildren.chunked(20)
+                doc.select("script, style, noscript").remove()
+                val bodyNodes = doc.body().childNodes().toList()
+                val chunks = bodyNodes.chunked(20)
+                var occurrenceIndexInChapter = 0
 
-                chunks.forEachIndexed { chunkIndex, chunkOfElements ->
-                    val chunkHtml = chunkOfElements.joinToString(separator = "\n") { it.outerHtml() }
-                    val content = Jsoup.parse(chunkHtml).text()
-                    var lastIndex = -1
-
-                    while (true) {
-                        lastIndex = content.indexOf(query, startIndex = lastIndex + 1, ignoreCase = true)
-                        if (lastIndex == -1) break
-
-                        val isWordStart = lastIndex == 0 || !content[lastIndex - 1].isLetterOrDigit()
-                        if (isWordStart) {
-                            val snippetStart = max(0, lastIndex - 35)
-                            val snippetEnd = min(content.length, lastIndex + query.length + 35)
-                            val rawSnippet = content.substring(snippetStart, snippetEnd)
-                            val annotatedSnippet = buildAnnotatedString {
-                                append(rawSnippet)
-                                val highlightStart = content.indexOf(query, lastIndex, ignoreCase = true) - snippetStart
-                                val highlightEnd = highlightStart + query.length
-                                addStyle(
-                                    style = SpanStyle(fontWeight = FontWeight.Bold),
-                                    start = highlightStart,
-                                    end = highlightEnd
-                                )
-                            }
-                            results.add(
-                                SearchResult(
-                                    locationInSource = chapterIndex,
-                                    locationTitle = chapter.title,
-                                    snippet = annotatedSnippet,
-                                    query = query,
-                                    occurrenceIndexInLocation = results.count { it.locationInSource == chapterIndex },
-                                    chunkIndex = chunkIndex
-                                )
-                            )
-                        }
-                    }
+                chunks.forEachIndexed { chunkIndex, chunkNodes ->
+                    occurrenceIndexInChapter = appendSearchResultsFromNodes(
+                        nodes = chunkNodes,
+                        query = searchQuery,
+                        chapterIndex = chapterIndex,
+                        chapterTitle = chapter.title,
+                        chunkIndex = chunkIndex,
+                        occurrenceIndexInChapter = occurrenceIndexInChapter,
+                        results = results
+                    )
                 }
             } catch (e: Exception) {
-                Timber.e("Failed to search in chapter $chapterIndex", e)
+                Timber.e(e, "Failed to search in chapter $chapterIndex")
+            } catch (e: OutOfMemoryError) {
+                Timber.e(e, "Skipping search in chapter $chapterIndex after running out of memory")
             }
         }
         results
     }
+}
+
+private fun appendSearchResultsFromNodes(
+    nodes: List<Node>,
+    query: String,
+    chapterIndex: Int,
+    chapterTitle: String,
+    chunkIndex: Int,
+    occurrenceIndexInChapter: Int,
+    results: MutableList<SearchResult>
+): Int {
+    val searchWindow = EpubSearchWindow(
+        query = query,
+        chapterIndex = chapterIndex,
+        chapterTitle = chapterTitle,
+        chunkIndex = chunkIndex,
+        initialOccurrenceIndex = occurrenceIndexInChapter,
+        results = results
+    )
+    nodes.forEach { node ->
+        searchWindow.visit(node)
+    }
+    searchWindow.finish()
+    return searchWindow.occurrenceIndex
+}
+
+private class EpubSearchWindow(
+    private val query: String,
+    private val chapterIndex: Int,
+    private val chapterTitle: String,
+    private val chunkIndex: Int,
+    initialOccurrenceIndex: Int,
+    private val results: MutableList<SearchResult>
+) {
+    private val buffer = StringBuilder()
+    private val overlapChars = (query.length + EPUB_SEARCH_SNIPPET_RADIUS)
+        .coerceIn(EPUB_SEARCH_SNIPPET_RADIUS * 2, EPUB_SEARCH_MAX_OVERLAP_CHARS)
+    private var lastAppendedWasWhitespace = true
+    private var previousCharBeforeBuffer: Char? = null
+
+    var occurrenceIndex: Int = initialOccurrenceIndex
+        private set
+
+    fun visit(node: Node) {
+        when (node) {
+            is TextNode -> appendNormalizedText(node.wholeText)
+            is Element -> {
+                val tagName = node.tagName().lowercase()
+                if (tagName in epubSearchSkippedTags) return
+
+                if (tagName == "br") {
+                    appendNormalizedWhitespace()
+                    return
+                }
+
+                node.childNodes().forEach(::visit)
+                if (tagName in epubSearchBlockBoundaryTags) {
+                    appendNormalizedWhitespace()
+                }
+            }
+            else -> node.childNodes().forEach(::visit)
+        }
+    }
+
+    fun finish() {
+        scanBuffer(buffer.length)
+        buffer.clear()
+        previousCharBeforeBuffer = null
+    }
+
+    private fun appendNormalizedText(text: String) {
+        text.forEach { char ->
+            if (char.isWhitespace()) {
+                appendNormalizedWhitespace()
+            } else {
+                buffer.append(char)
+                lastAppendedWasWhitespace = false
+                trimScannedPrefixIfNeeded()
+            }
+        }
+    }
+
+    private fun appendNormalizedWhitespace() {
+        if (buffer.isEmpty() || lastAppendedWasWhitespace) {
+            lastAppendedWasWhitespace = true
+            return
+        }
+        buffer.append(' ')
+        lastAppendedWasWhitespace = true
+        trimScannedPrefixIfNeeded()
+    }
+
+    private fun trimScannedPrefixIfNeeded() {
+        if (buffer.length < EPUB_SEARCH_WINDOW_CHARS) return
+
+        val scanEndExclusive = (buffer.length - overlapChars).coerceAtLeast(0)
+        if (scanEndExclusive <= 0) return
+
+        scanBuffer(scanEndExclusive)
+        previousCharBeforeBuffer = buffer[scanEndExclusive - 1]
+        buffer.delete(0, scanEndExclusive)
+    }
+
+    private fun scanBuffer(scanEndExclusive: Int) {
+        var searchFrom = 0
+        while (searchFrom < scanEndExclusive) {
+            val matchStart = buffer.indexOfIgnoreCase(query, searchFrom, scanEndExclusive)
+            if (matchStart == -1) break
+
+            if (isWordStart(matchStart)) {
+                addSearchResult(matchStart)
+            }
+            searchFrom = matchStart + 1
+        }
+    }
+
+    private fun isWordStart(matchStart: Int): Boolean {
+        val previousChar = if (matchStart > 0) {
+            buffer[matchStart - 1]
+        } else {
+            previousCharBeforeBuffer
+        }
+        return previousChar == null || !previousChar.isLetterOrDigit()
+    }
+
+    private fun addSearchResult(matchStart: Int) {
+        val snippetStart = max(0, matchStart - EPUB_SEARCH_SNIPPET_RADIUS)
+        val snippetEnd = min(buffer.length, matchStart + query.length + EPUB_SEARCH_SNIPPET_RADIUS)
+        val rawSnippet = buffer.substring(snippetStart, snippetEnd)
+        val highlightStart = matchStart - snippetStart
+        val highlightEnd = highlightStart + query.length
+        val annotatedSnippet = buildAnnotatedString {
+            append(rawSnippet)
+            addStyle(
+                style = SpanStyle(fontWeight = FontWeight.Bold),
+                start = highlightStart,
+                end = highlightEnd
+            )
+        }
+
+        results.add(
+            SearchResult(
+                locationInSource = chapterIndex,
+                locationTitle = chapterTitle,
+                snippet = annotatedSnippet,
+                query = query,
+                occurrenceIndexInLocation = occurrenceIndex,
+                chunkIndex = chunkIndex
+            )
+        )
+        occurrenceIndex++
+    }
+}
+
+private fun CharSequence.indexOfIgnoreCase(
+    query: String,
+    startIndex: Int,
+    matchStartLimitExclusive: Int
+): Int {
+    if (query.isEmpty()) return -1
+    val lastStart = min(length - query.length, matchStartLimitExclusive - 1)
+    if (lastStart < startIndex) return -1
+
+    var index = startIndex.coerceAtLeast(0)
+    while (index <= lastStart) {
+        var queryIndex = 0
+        while (
+            queryIndex < query.length &&
+            this[index + queryIndex].equals(query[queryIndex], ignoreCase = true)
+        ) {
+            queryIndex++
+        }
+        if (queryIndex == query.length) return index
+        index++
+    }
+    return -1
 }
 
 /**

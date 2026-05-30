@@ -119,6 +119,41 @@ class SharedModelMappersTest {
     }
 
     @Test
+    fun `shared projection state reuses mapped android book instances by id`() {
+        val book = recentFile("book")
+        val sharedBook = book.toSharedBookItem()
+        val sharedShelf = SharedShelf(
+            id = "manual",
+            name = "Manual",
+            type = SharedShelfType.MANUAL,
+            books = listOf(sharedBook),
+            directBooks = listOf(sharedBook)
+        )
+        val projected = SharedReaderScreenState(
+            recentBooks = listOf(sharedBook),
+            libraryBooks = listOf(sharedBook),
+            rawLibraryBooks = listOf(sharedBook),
+            shelves = listOf(sharedShelf),
+            openTabs = listOf(sharedBook),
+            booksAvailableForAdding = listOf(sharedBook)
+        )
+
+        val android = projected.toAndroidReaderScreenState(
+            base = ReaderScreenState(),
+            androidBooksById = mapOf(book.bookId to book)
+        )
+
+        val mappedBook = android.rawLibraryFiles.single()
+        assertSame(book, mappedBook)
+        assertSame(mappedBook, android.recentFiles.single())
+        assertSame(mappedBook, android.allRecentFiles.single())
+        assertSame(mappedBook, android.shelves.single().books.single())
+        assertSame(mappedBook, android.shelves.single().directBooks.single())
+        assertSame(mappedBook, android.openTabs.single())
+        assertSame(mappedBook, android.booksAvailableForAdding.single())
+    }
+
+    @Test
     fun `enum filter and folder mappers round trip between android and shared`() {
         val filters = LibraryFilters(
             fileTypes = setOf(FileType.PDF, FileType.EPUB),
@@ -157,6 +192,18 @@ class SharedModelMappersTest {
         )
 
         assertEquals(listOf(tag), tagged.single().tags)
+    }
+
+    @Test
+    fun `tag resolver reuses book item when resolved tags are unchanged`() {
+        val file = recentFile("book")
+
+        val resolved = listOf(file).withResolvedTags(
+            dbTags = emptyList(),
+            tagRefs = emptyList()
+        )
+
+        assertSame(file, resolved.single())
     }
 
     private fun recentFile(

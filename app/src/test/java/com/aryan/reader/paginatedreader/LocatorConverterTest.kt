@@ -22,6 +22,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 
 @OptIn(ExperimentalSerializationApi::class)
 class LocatorConverterTest {
@@ -170,6 +172,27 @@ class LocatorConverterTest {
         assertNull(converter.getLocatorFromCfi(book(), chapterIndex = 0, cfi = "/4/2"))
     }
 
+    @Test
+    fun `large uncached chapter file is skipped instead of parsed on demand`() = runTest {
+        val tempDir = Files.createTempDirectory("large-locator-chapter").toFile()
+        try {
+            File(tempDir, "c1.xhtml").writeText("<html><body>${"x".repeat(2_200_000)}</body></html>")
+            val dao = FakeBookCacheDao(null)
+            val converter = LocatorConverter(dao, proto, mockk<Context>(relaxed = true))
+
+            val locator = converter.getLocatorFromCfi(
+                book = book(extractionBasePath = tempDir.absolutePath),
+                chapterIndex = 0,
+                cfi = "/4/2"
+            )
+
+            assertNull(locator)
+            assertTrue(dao.insertedChapters.isEmpty())
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
     private fun converterFor(blocks: List<SemanticBlock>, estimatedPageCount: Int = 1): LocatorConverter {
         val chapter = ProcessedChapter(
             bookId = "Book",
@@ -211,7 +234,7 @@ class LocatorConverterTest {
         )
     }
 
-    private fun book(): EpubBook {
+    private fun book(extractionBasePath: String = ""): EpubBook {
         return EpubBook(
             fileName = "book.epub",
             title = "Book",
@@ -228,7 +251,7 @@ class LocatorConverterTest {
                     htmlContent = ""
                 )
             ),
-            extractionBasePath = ""
+            extractionBasePath = extractionBasePath
         )
     }
 
@@ -236,12 +259,15 @@ class LocatorConverterTest {
         private val chapter: ProcessedChapter?
     ) : BookCacheDao() {
         val requestedBookIds = mutableListOf<String>()
+        val insertedChapters = mutableListOf<ProcessedChapter>()
 
         override suspend fun getProcessedChapter(bookId: String, chapterIndex: Int, styleConfigHash: Int?): ProcessedChapter? {
             requestedBookIds += bookId
             return chapter
         }
-        override suspend fun insertProcessedChapters(chapters: List<ProcessedChapter>) = Unit
+        override suspend fun insertProcessedChapters(chapters: List<ProcessedChapter>) {
+            insertedChapters += chapters
+        }
 
         override suspend fun getProcessedBook(bookId: String): ProcessedBook? = null
         override suspend fun insertProcessedBook(book: ProcessedBook) = Unit

@@ -202,7 +202,7 @@ class EpubReaderScreenTest {
 
         openOverflowMenu()
         clickText(text(R.string.menu_change_reading_mode))
-        clickText(text(R.string.menu_reading_mode_vertical))
+        clickText(text(R.string.menu_reading_mode_vertical_webview))
         waitForRenderMode(RenderMode.VERTICAL_SCROLL)
 
         waitForRecentFile(timeoutMillis = 20_000) { recentFile ->

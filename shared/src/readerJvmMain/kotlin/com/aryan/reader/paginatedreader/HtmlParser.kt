@@ -434,6 +434,13 @@ private class SemanticHtmlParser(
             "table" -> parseTableElementToSemantic(element, elementStyle, inheritedLinkHref)?.let { listOf(it) } ?: emptyList()
             "math-placeholder" -> parseMathPlaceholderToSemantic(element, elementStyle)
             "img" -> parseImageElementToSemantic(element, elementStyle)?.let { listOf(it) } ?: emptyList()
+            "p" -> {
+                if (element.hasSemanticBlockDescendant()) {
+                    parseContainer(element, elementStyle, inheritedLinkHref)
+                } else {
+                    textElementToSemanticParagraphs(element, elementStyle, inheritedLinkHref)
+                }
+            }
             "h1", "h2", "h3", "h4", "h5", "h6" -> {
                 val hasNonTextChildren = element.hasSemanticBlockDescendant()
                 if (hasNonTextChildren) {
@@ -502,6 +509,36 @@ private class SemanticHtmlParser(
                 listOf(first.withElementId(elementId)) + result.drop(1)
             } else result
         } else result
+    }
+
+    private fun textElementToSemanticParagraphs(
+        element: Element,
+        style: CssStyle,
+        inheritedLinkHref: String?
+    ): List<SemanticBlock> {
+        val textChunks = buildSemanticTextAndSpanChunksFromNodes(
+            nodes = element.childNodes(),
+            rootStyle = style,
+            rootElement = element,
+            inheritedLinkHref = inheritedLinkHref
+        )
+        val elementId = element.id().ifBlank { null }
+        val cfi = element.getCfiPath()
+        return textChunks.mapIndexedNotNull { chunkIndex, chunk ->
+            if (chunk.text.isBlank()) {
+                null
+            } else {
+                SemanticParagraph(
+                    text = chunk.text,
+                    spans = chunk.spans,
+                    style = style,
+                    elementId = elementId.takeIf { chunkIndex == 0 },
+                    cfi = cfi,
+                    startCharOffsetInSource = chunk.startCharOffsetInSource,
+                    blockIndex = nextBlockIndex++
+                )
+            }
+        }
     }
 
     private fun parseContainer(

@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.*
 import org.junit.After
+import org.junit.AfterClass
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -53,6 +54,14 @@ class MainViewModelTest {
     private val shelfRefsFlow = MutableStateFlow<List<BookShelfCrossRef>>(emptyList())
     private val tagsFlow = MutableStateFlow<List<TagEntity>>(emptyList())
     private val tagRefsFlow = MutableStateFlow<List<BookTagCrossRef>>(emptyList())
+
+    companion object {
+        @JvmStatic
+        @AfterClass
+        fun resetMainDispatcher() {
+            Dispatchers.resetMain()
+        }
+    }
 
     private class TestMainViewModel(application: Application) : MainViewModel(application) {
         fun clearForTest() {
@@ -182,7 +191,6 @@ class MainViewModelTest {
                 testDispatcher.scheduler.advanceUntilIdle()
             }
         } finally {
-            Dispatchers.resetMain()
             unmockkAll()
         }
     }

@@ -1,6 +1,6 @@
 package com.aryan.reader.paginatedreader
 
-import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class PaginatorMeasurementContractTest {
@@ -11,7 +11,7 @@ class PaginatorMeasurementContractTest {
             lastLineBottomPx = 119.2f
         )
 
-        assertThat(measuredHeight).isEqualTo(120)
+        assertEquals(120, measuredHeight)
     }
 
     @Test
@@ -21,6 +21,6 @@ class PaginatorMeasurementContractTest {
             lastLineBottomPx = 132.1f
         )
 
-        assertThat(measuredHeight).isEqualTo(133)
+        assertEquals(133, measuredHeight)
     }
 }
