@@ -58,6 +58,7 @@ class PaginatedReaderViewModel : ViewModel() {
 
     @VisibleForTesting
     internal fun setPaginatorForTest(testPaginator: IPaginator) {
+        paginator?.dispose()
         paginator = testPaginator
         observePaginatorState()
     }
@@ -176,5 +177,10 @@ class PaginatedReaderViewModel : ViewModel() {
 
     fun onLinkClick(currentChapterPath: String, href: String, onNavigationComplete: (Int) -> Unit) {
         paginator?.navigateToHref(currentChapterPath, href, onNavigationComplete)
+    }
+
+    override fun onCleared() {
+        paginator?.dispose()
+        super.onCleared()
     }
 }

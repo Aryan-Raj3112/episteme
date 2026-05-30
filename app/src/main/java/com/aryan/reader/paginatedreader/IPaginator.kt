@@ -53,4 +53,5 @@ interface IPaginator {
     fun getCfiForPage(pageIndex: Int): String?
     fun onUserScrolledTo(pageIndex: Int)
     fun getActiveAnchorForPage(pageIndex: Int, tocAnchors: List<String>): String?
+    fun dispose() = Unit
 }

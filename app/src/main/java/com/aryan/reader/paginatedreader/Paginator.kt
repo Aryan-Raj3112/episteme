@@ -38,10 +38,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 import kotlin.math.roundToInt
+import kotlin.coroutines.coroutineContext
 
 private const val DEBUG_PAGINATION_LOGS = false
 private const val AndroidEpubCutoffLogTag = "EpistemeEpubCutoff"
@@ -72,6 +74,30 @@ private fun CharSequence.firstWordOrEmpty(): String {
     return subSequence(start, end).toString()
 }
 
+private fun CharSequence.skipWhitespaceFrom(index: Int): Int {
+    var current = index.coerceIn(0, length)
+    while (current < length && this[current].isWhitespace()) current++
+    return current
+}
+
+private fun CharSequence.trimTrailingWhitespaceBefore(index: Int): Int {
+    var current = index.coerceIn(0, length)
+    while (current > 0 && this[current - 1].isWhitespace()) current--
+    return current
+}
+
+private fun CharSequence.nextWordEndAfter(index: Int): Int {
+    var current = skipWhitespaceFrom(index)
+    while (current < length && !this[current].isWhitespace()) current++
+    return current
+}
+
+private fun CharSequence.previousWordEndBefore(index: Int): Int {
+    var current = trimTrailingWhitespaceBefore(index)
+    while (current > 0 && !this[current - 1].isWhitespace()) current--
+    return trimTrailingWhitespaceBefore(current)
+}
+
 interface BlockMeasurementProvider {
     suspend fun measure(block: ContentBlock): Int
     suspend fun split(block: ParagraphBlock, availableHeight: Int): Pair<ParagraphBlock, ParagraphBlock>?
@@ -91,6 +117,7 @@ class SuspendingAndroidBlockMeasurementProvider(
     private val measurementCache = ConcurrentHashMap<Int, Int>()
 
     override suspend fun measure(block: ContentBlock): Int {
+        coroutineContext.ensureActive()
         val cacheKey = blockMeasurementCacheKey(block)
         measurementCache[cacheKey]?.let { return it }
 
@@ -117,6 +144,7 @@ class SuspendingAndroidBlockMeasurementProvider(
     }
 
     override suspend fun split(block: ParagraphBlock, availableHeight: Int): Pair<ParagraphBlock, ParagraphBlock>? {
+        coroutineContext.ensureActive()
         return splitParagraphBlock(
             block = block,
             textMeasurer = textMeasurer,
@@ -128,6 +156,7 @@ class SuspendingAndroidBlockMeasurementProvider(
     }
 
     override suspend fun split(block: WrappingContentBlock, availableHeight: Int): Pair<WrappingContentBlock, List<ContentBlock>>? {
+        coroutineContext.ensureActive()
 
         val imageBlock = block.floatedImage
         val (imageWidthPx, imageHeightPx) = run {
@@ -177,6 +206,7 @@ class SuspendingAndroidBlockMeasurementProvider(
         val wrappingContentWidth = (constraints.maxWidth - imageWidthPx).toInt().coerceAtLeast(0)
 
         while (textOffset < fullText.length) {
+            coroutineContext.ensureActive()
             val isBesideImage = currentY < imageHeightPx
             val currentMaxWidth = if (isBesideImage) wrappingContentWidth else constraints.maxWidth
 
@@ -244,6 +274,7 @@ class SuspendingAndroidBlockMeasurementProvider(
         var splitOccurred = false
 
         for ((index, paraRange) in paragraphOffsets.withIndex()) {
+            coroutineContext.ensureActive()
             val originalPara = block.paragraphsToWrap[index]
 
             if (splitOccurred) {
@@ -319,6 +350,7 @@ class SuspendingAndroidBlockMeasurementProvider(
     }
 
     override suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>? {
+        coroutineContext.ensureActive()
         var currentHeight = 0
         var splitRowIndex = -1
 
@@ -336,16 +368,19 @@ class SuspendingAndroidBlockMeasurementProvider(
         currentHeight += decorationTop
 
         for (i in block.rows.indices) {
+            coroutineContext.ensureActive()
             val row = block.rows[i]
             var maxRowHeight = 0
             val totalColspan = row.sumOf { it.colspan }.toFloat().coerceAtLeast(1f)
 
-            row.forEach { cell ->
+            for (cell in row) {
+                coroutineContext.ensureActive()
                 val cellMaxWidth = ((constraints.maxWidth) * (cell.colspan.toFloat() / totalColspan)).roundToInt()
                 val cellConstraints = constraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
 
                 var cellHeight = 0
-                cell.content.forEach { b ->
+                for (b in cell.content) {
+                    coroutineContext.ensureActive()
                     cellHeight += measureBlockHeight(
                         block = b,
                         textMeasurer = textMeasurer,
@@ -386,6 +421,7 @@ class SuspendingAndroidBlockMeasurementProvider(
     }
 
     override suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>? {
+        coroutineContext.ensureActive()
         if (block.style.flexDirection == "row") return null
 
         var currentHeight = 0
@@ -402,6 +438,7 @@ class SuspendingAndroidBlockMeasurementProvider(
         currentHeight += decorationTop
 
         for (i in block.children.indices) {
+            coroutineContext.ensureActive()
             val child = block.children[i]
             val childHeight = measure(child)
             val margin = with(density) {
@@ -493,6 +530,7 @@ suspend fun paginate(
     val safetyMarginPerBlock = 0
 
     while (remainingBlocks.isNotEmpty()) {
+        coroutineContext.ensureActive()
         val block = remainingBlocks.removeAt(0)
 
         if (currentPageContent.isNotEmpty() && block.style.forcesBreakBefore()) {
@@ -759,6 +797,7 @@ private suspend fun measureBlockHeight(
     density: Density,
     imageSizeMultiplier: Float = 1.0f
 ): Int {
+    coroutineContext.ensureActive()
     val boxMetrics = computeBlockBoxMetrics(block, constraints, density)
     val verticalPaddingPx = boxMetrics.verticalPaddingPx
     val verticalBorderPx = boxMetrics.verticalBorderPx
@@ -798,7 +837,9 @@ private suspend fun measureBlockHeight(
             ) ?: with(density) { 250.dp.toPx() }
 
             val finalHeight = measuredHeight.coerceAtMost(constraints.maxHeight.toFloat()).roundToInt()
-            Timber.tag("IMAGE_DIAG").d("Measured Image [#${block.blockIndex}]: $finalHeight px (Capped at ${constraints.maxHeight})")
+            if (DEBUG_PAGINATION_LOGS) {
+                Timber.tag("IMAGE_DIAG").d("Measured Image [#${block.blockIndex}]: $finalHeight px (Capped at ${constraints.maxHeight})")
+            }
             finalHeight
         }
         is SpacerBlock -> {
@@ -838,11 +879,13 @@ private suspend fun measureBlockHeight(
         }
         is TableBlock -> {
             var totalHeight = 0
-            block.rows.forEach { row ->
+            for (row in block.rows) {
+                coroutineContext.ensureActive()
                 var maxRowHeight = 0
                 val totalColspan = row.sumOf { it.colspan }.toFloat().coerceAtLeast(1f)
 
-                row.forEach { cell ->
+                for (cell in row) {
+                    coroutineContext.ensureActive()
                     val cellBlockStyle = cell.style.blockStyle
                     val cellMaxWidth = when {
                         cellBlockStyle.width.isSpecified -> with(density) { cellBlockStyle.width.toPx().roundToInt() }
@@ -911,6 +954,7 @@ private suspend fun measureBlockHeight(
 
             // Loop until all text is measured.
             while (textOffset < fullText.length) {
+                coroutineContext.ensureActive()
                 val isBesideImage = currentY < imageHeightPx
                 val currentMaxWidth = if (isBesideImage) {
                     wrappingContentWidth
@@ -1034,6 +1078,7 @@ private suspend fun logJustifiedSplitGapIfSuspicious(
     splitOffset: Int,
     availableTextHeight: Int
 ) {
+    coroutineContext.ensureActive()
     val isJustified = block.textAlign == TextAlign.Justify ||
         paragraphStyle.textAlign == TextAlign.Justify ||
         text.paragraphStyles.any { it.item.textAlign == TextAlign.Justify }
@@ -1069,6 +1114,7 @@ private suspend fun logJustifiedSplitGapIfSuspicious(
         ).lineCount
     }
 
+    coroutineContext.ensureActive()
     logAndroidEpubCutoff(
         "cutoff_probe layer=android_justified_split_gap block=${block.blockIndex} " +
             "line=$lastVisibleLine lineOffsets=$lineStart..$lineEnd splitOffset=$splitOffset " +
@@ -1080,6 +1126,321 @@ private suspend fun logJustifiedSplitGapIfSuspicious(
     )
 }
 
+private suspend fun logRenderedJustifiedSplitGapIfSuspicious(
+    block: ParagraphBlock,
+    part1Text: AnnotatedString,
+    part2Text: AnnotatedString,
+    textMeasurer: TextMeasurer,
+    paragraphStyle: TextStyle,
+    paragraphConstraints: Constraints,
+    originalLayoutResult: TextLayoutResult,
+    originalLastVisibleLine: Int,
+    splitOffset: Int,
+    availableTextHeight: Int
+) {
+    coroutineContext.ensureActive()
+    val isJustified = block.textAlign == TextAlign.Justify ||
+        paragraphStyle.textAlign == TextAlign.Justify ||
+        part1Text.paragraphStyles.any { it.item.textAlign == TextAlign.Justify }
+    if (!isJustified || part1Text.isEmpty()) return
+
+    val renderedPart1Layout = withContext(Dispatchers.Main) {
+        textMeasurer.measure(
+            text = part1Text,
+            style = paragraphStyle,
+            constraints = paragraphConstraints
+        )
+    }
+    coroutineContext.ensureActive()
+
+    val renderedLastLine = renderedPart1Layout.lineCount - 1
+    if (renderedLastLine < 0) return
+
+    val renderedLineStart = renderedPart1Layout.getLineStart(renderedLastLine)
+    val renderedLineEnd = renderedPart1Layout.getLineEnd(renderedLastLine, visibleEnd = true)
+    if (renderedLineStart >= renderedLineEnd || renderedLineEnd > part1Text.length) return
+
+    val visibleRightPx = (renderedLineStart until renderedLineEnd)
+        .asSequence()
+        .filter { !part1Text[it].isWhitespace() }
+        .mapNotNull { index ->
+            runCatching { renderedPart1Layout.getBoundingBox(index).right }.getOrNull()
+        }
+        .maxOrNull() ?: return
+
+    val contentWidthPx = paragraphConstraints.maxWidth.takeIf { it > 0 } ?: return
+    val visualGapPx = contentWidthPx - visibleRightPx
+    val renderedLineText = part1Text.text.substring(renderedLineStart, renderedLineEnd).trim()
+    val renderedLineWordCount = renderedLineText.split(Regex("\\s+")).count { it.isNotBlank() }
+    val sparseByGap = visualGapPx >= contentWidthPx * 0.10f
+    val sparseByWords = renderedLineWordCount <= 4 && visualGapPx >= contentWidthPx * 0.06f
+    if (!sparseByGap && !sparseByWords) return
+
+    val nextWord = part2Text.text.firstWordOrEmpty().take(48)
+    if (nextWord.isBlank()) return
+
+    val visualCandidateLineCount = withContext(Dispatchers.Main) {
+        textMeasurer.measure(
+            text = "$renderedLineText $nextWord",
+            style = paragraphStyle,
+            constraints = paragraphConstraints
+        ).lineCount
+    }
+
+    val part2LineCount = withContext(Dispatchers.Main) {
+        textMeasurer.measure(
+            text = part2Text,
+            style = paragraphStyle,
+            constraints = paragraphConstraints
+        ).lineCount
+    }
+    val nextWordEnd = part2Text.text.nextWordEndAfter(0)
+    val remainingAfterNextWordStart = part2Text.text.skipWhitespaceFrom(nextWordEnd)
+    val remainingAfterNextWordLineCount = if (remainingAfterNextWordStart < part2Text.length) {
+        withContext(Dispatchers.Main) {
+            textMeasurer.measure(
+                text = part2Text.subSequence(remainingAfterNextWordStart, part2Text.length),
+                style = paragraphStyle,
+                constraints = paragraphConstraints
+            ).lineCount
+        }
+    } else {
+        0
+    }
+
+    val originalLineStart = if (originalLastVisibleLine in 0 until originalLayoutResult.lineCount) {
+        originalLayoutResult.getLineStart(originalLastVisibleLine)
+    } else {
+        -1
+    }
+    val originalLineEnd = if (originalLastVisibleLine in 0 until originalLayoutResult.lineCount) {
+        originalLayoutResult.getLineEnd(originalLastVisibleLine, visibleEnd = true)
+    } else {
+        -1
+    }
+
+    coroutineContext.ensureActive()
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=android_justified_split_gap block=${block.blockIndex} " +
+            "sourceRange=${block.startCharOffsetInSource}..${block.endCharOffsetInSource} " +
+            "splitOffset=$splitOffset availableTextHeightPx=$availableTextHeight " +
+            "renderedLines=${renderedPart1Layout.lineCount} renderedLastLine=$renderedLastLine " +
+            "renderedLineOffsets=$renderedLineStart..$renderedLineEnd " +
+            "renderedLineChars=${renderedLineText.length} renderedLineWords=$renderedLineWordCount " +
+            "contentWidthPx=$contentWidthPx renderedVisibleRightPx=${visibleRightPx.roundToInt()} " +
+            "renderedVisualGapPx=${visualGapPx.roundToInt()} nextWordChars=${nextWord.length} " +
+            "visualCandidateLineCount=$visualCandidateLineCount part2Lines=$part2LineCount " +
+            "remainingAfterNextWordLines=$remainingAfterNextWordLineCount " +
+            "originalLastLine=$originalLastVisibleLine originalLineOffsets=$originalLineStart..$originalLineEnd " +
+            "note=rendered_split_final_line_is_unjustified_so_gap_can_appear_after_pagination"
+    )
+}
+
+private data class RenderedSplitCandidate(
+    val splitOffset: Int,
+    val prefixHeightPx: Int,
+    val prefixLineCount: Int,
+    val remainingLineCount: Int,
+    val lastLineChars: Int,
+    val lastLineWords: Int,
+    val lastLineVisualGapPx: Int,
+    val contentWidthPx: Int
+) {
+    val sparseLastLine: Boolean
+        get() = lastLineVisualGapPx >= contentWidthPx * 0.20f ||
+            (lastLineWords <= 4 && lastLineVisualGapPx >= contentWidthPx * 0.08f)
+}
+
+private fun isBetterRenderedJustifySplitCandidate(
+    candidate: RenderedSplitCandidate,
+    current: RenderedSplitCandidate
+): Boolean {
+    if (candidate.sparseLastLine != current.sparseLastLine) {
+        return !candidate.sparseLastLine
+    }
+    if (candidate.sparseLastLine) {
+        if (candidate.lastLineVisualGapPx != current.lastLineVisualGapPx) {
+            return candidate.lastLineVisualGapPx < current.lastLineVisualGapPx
+        }
+        return candidate.splitOffset > current.splitOffset
+    }
+    if (candidate.prefixLineCount != current.prefixLineCount) {
+        return candidate.prefixLineCount > current.prefixLineCount
+    }
+    if (candidate.lastLineVisualGapPx != current.lastLineVisualGapPx) {
+        return candidate.lastLineVisualGapPx < current.lastLineVisualGapPx
+    }
+    return candidate.splitOffset > current.splitOffset
+}
+
+private suspend fun measureRenderedSplitCandidate(
+    text: AnnotatedString,
+    textMeasurer: TextMeasurer,
+    paragraphStyle: TextStyle,
+    paragraphConstraints: Constraints,
+    splitOffset: Int
+): RenderedSplitCandidate? {
+    val prefixEnd = text.text.trimTrailingWhitespaceBefore(splitOffset)
+    if (prefixEnd <= 0 || prefixEnd >= text.length) return null
+
+    val remainingStart = text.text.skipWhitespaceFrom(prefixEnd)
+    if (remainingStart >= text.length) return null
+
+    val prefixLayout = withContext(Dispatchers.Main) {
+        textMeasurer.measure(
+            text = text.subSequence(0, prefixEnd),
+            style = paragraphStyle,
+            constraints = paragraphConstraints
+        )
+    }
+    coroutineContext.ensureActive()
+
+    val remainingLayout = withContext(Dispatchers.Main) {
+        textMeasurer.measure(
+            text = text.subSequence(remainingStart, text.length),
+            style = paragraphStyle,
+            constraints = paragraphConstraints
+        )
+    }
+    coroutineContext.ensureActive()
+
+    val lastLine = prefixLayout.lineCount - 1
+    if (lastLine < 0) return null
+    val lineStart = prefixLayout.getLineStart(lastLine)
+    val lineEnd = prefixLayout.getLineEnd(lastLine, visibleEnd = true)
+    if (lineStart >= lineEnd || lineEnd > prefixEnd) return null
+    val prefixText = text.text.substring(0, prefixEnd)
+    val lastLineText = prefixText.substring(lineStart, lineEnd).trim()
+    val lastLineWords = lastLineText.split(Regex("\\s+")).count { it.isNotBlank() }
+    val contentWidthPx = paragraphConstraints.maxWidth.takeIf { it > 0 } ?: return null
+    val visibleRightPx = (lineStart until lineEnd)
+        .asSequence()
+        .filter { !prefixText[it].isWhitespace() }
+        .mapNotNull { index ->
+            runCatching { prefixLayout.getBoundingBox(index).right }.getOrNull()
+        }
+        .maxOrNull() ?: return null
+    val lastLineVisualGapPx = (contentWidthPx - visibleRightPx).roundToInt()
+
+    return RenderedSplitCandidate(
+        splitOffset = prefixEnd,
+        prefixHeightPx = prefixLayout.paginationMeasuredHeightPx(),
+        prefixLineCount = prefixLayout.lineCount,
+        remainingLineCount = remainingLayout.lineCount,
+        lastLineChars = lastLineText.length,
+        lastLineWords = lastLineWords,
+        lastLineVisualGapPx = lastLineVisualGapPx,
+        contentWidthPx = contentWidthPx
+    )
+}
+
+private suspend fun adjustJustifiedSplitOffsetForRenderedPrefix(
+    block: ParagraphBlock,
+    text: AnnotatedString,
+    textMeasurer: TextMeasurer,
+    paragraphStyle: TextStyle,
+    paragraphConstraints: Constraints,
+    initialSplitOffset: Int,
+    availableTextHeight: Int,
+    orphanLines: Int,
+    widowLines: Int
+): Int? {
+    coroutineContext.ensureActive()
+    val isJustified = block.textAlign == TextAlign.Justify ||
+        paragraphStyle.textAlign == TextAlign.Justify ||
+        text.paragraphStyles.any { it.item.textAlign == TextAlign.Justify }
+    if (!isJustified) return initialSplitOffset
+
+    val normalizedInitialOffset = text.text.trimTrailingWhitespaceBefore(initialSplitOffset)
+    var candidateOffset = normalizedInitialOffset
+    var bestCandidate: RenderedSplitCandidate? = null
+
+    while (candidateOffset > 0) {
+        coroutineContext.ensureActive()
+        val candidate = measureRenderedSplitCandidate(
+            text = text,
+            textMeasurer = textMeasurer,
+            paragraphStyle = paragraphStyle,
+            paragraphConstraints = paragraphConstraints,
+            splitOffset = candidateOffset
+        )
+        if (candidate != null &&
+            candidate.prefixHeightPx <= availableTextHeight &&
+            candidate.prefixLineCount >= orphanLines &&
+            candidate.remainingLineCount >= widowLines
+        ) {
+            bestCandidate = candidate
+            break
+        }
+        candidateOffset = text.text.previousWordEndBefore(candidateOffset)
+    }
+
+    if (bestCandidate == null) {
+        logAndroidEpubCutoff(
+            "cutoff_probe layer=android_justified_split_adjust block=${block.blockIndex} " +
+                "sourceRange=${block.startCharOffsetInSource}..${block.endCharOffsetInSource} " +
+                "initialSplitOffset=$initialSplitOffset adjustedSplitOffset=null " +
+                "availableTextHeightPx=$availableTextHeight reason=no_rendered_prefix_fit"
+        )
+        return null
+    }
+
+    var acceptedCandidate: RenderedSplitCandidate = bestCandidate ?: return null
+    var furthestFittingCandidate: RenderedSplitCandidate = acceptedCandidate
+    while (true) {
+        coroutineContext.ensureActive()
+        val nextOffset = text.text.nextWordEndAfter(furthestFittingCandidate.splitOffset)
+        if (nextOffset <= furthestFittingCandidate.splitOffset || nextOffset >= text.length) break
+
+        val nextCandidate = measureRenderedSplitCandidate(
+            text = text,
+            textMeasurer = textMeasurer,
+            paragraphStyle = paragraphStyle,
+            paragraphConstraints = paragraphConstraints,
+            splitOffset = nextOffset
+        ) ?: break
+
+        if (nextCandidate.prefixHeightPx > availableTextHeight ||
+            nextCandidate.prefixLineCount < orphanLines ||
+            nextCandidate.remainingLineCount < widowLines
+        ) {
+            break
+        }
+        furthestFittingCandidate = nextCandidate
+        if (isBetterRenderedJustifySplitCandidate(nextCandidate, acceptedCandidate)) {
+            acceptedCandidate = nextCandidate
+        }
+    }
+
+    if (acceptedCandidate.splitOffset != normalizedInitialOffset ||
+        acceptedCandidate.splitOffset != furthestFittingCandidate.splitOffset
+    ) {
+        val reason = if (acceptedCandidate.splitOffset != furthestFittingCandidate.splitOffset) {
+            "best_rendered_last_line"
+        } else {
+            "rendered_prefix_fit"
+        }
+        logAndroidEpubCutoff(
+            "cutoff_probe layer=android_justified_split_adjust block=${block.blockIndex} " +
+                "sourceRange=${block.startCharOffsetInSource}..${block.endCharOffsetInSource} " +
+                "initialSplitOffset=$initialSplitOffset normalizedInitialOffset=$normalizedInitialOffset " +
+                "adjustedSplitOffset=${acceptedCandidate.splitOffset} availableTextHeightPx=$availableTextHeight " +
+                "adjustedPrefixHeightPx=${acceptedCandidate.prefixHeightPx} " +
+                "adjustedPrefixLines=${acceptedCandidate.prefixLineCount} " +
+                "adjustedRemainingLines=${acceptedCandidate.remainingLineCount} " +
+                "adjustedLineChars=${acceptedCandidate.lastLineChars} " +
+                "adjustedLineWords=${acceptedCandidate.lastLineWords} " +
+                "adjustedLineGapPx=${acceptedCandidate.lastLineVisualGapPx} " +
+                "furthestFitSplitOffset=${furthestFittingCandidate.splitOffset} " +
+                "furthestFitLineWords=${furthestFittingCandidate.lastLineWords} " +
+                "furthestFitLineGapPx=${furthestFittingCandidate.lastLineVisualGapPx} " +
+                "reason=$reason"
+        )
+    }
+
+    return acceptedCandidate.splitOffset
+}
+
 private suspend fun splitParagraphBlock(
     block: ParagraphBlock,
     textMeasurer: TextMeasurer,
@@ -1088,6 +1449,7 @@ private suspend fun splitParagraphBlock(
     availableHeight: Int,
     density: Density
 ): Pair<ParagraphBlock, ParagraphBlock>? {
+    coroutineContext.ensureActive()
     val text = block.content
     if (text.isEmpty()) return null
     val boxMetrics = computeBlockBoxMetrics(block, constraints, density)
@@ -1124,6 +1486,7 @@ private suspend fun splitParagraphBlock(
         )
     }
 
+    coroutineContext.ensureActive()
     if (layoutResult.paginationMeasuredHeightPx() <= availableTextHeight) {
         return null
     }
@@ -1163,6 +1526,7 @@ private suspend fun splitParagraphBlock(
                 constraints = paragraphConstraints
             )
         }
+        coroutineContext.ensureActive()
         if (part2Layout.lineCount < widowLines) {
             if (DEBUG_PAGINATION_LOGS) {
                 Timber.d("Widow control: Adjusting split to keep at least $widowLines line(s) at the top of the next page.")
@@ -1173,6 +1537,18 @@ private suspend fun splitParagraphBlock(
             splitOffset = layoutResult.getLineEnd(lastVisibleLine, visibleEnd = true)
         }
     }
+
+    splitOffset = adjustJustifiedSplitOffsetForRenderedPrefix(
+        block = block,
+        text = text,
+        textMeasurer = textMeasurer,
+        paragraphStyle = paragraphStyle,
+        paragraphConstraints = paragraphConstraints,
+        initialSplitOffset = splitOffset,
+        availableTextHeight = availableTextHeight,
+        orphanLines = orphanLines,
+        widowLines = widowLines
+    ) ?: return null
 
     logJustifiedSplitGapIfSuspicious(
         block = block,
@@ -1206,6 +1582,19 @@ private suspend fun splitParagraphBlock(
     if (part1Text.isEmpty() || part2Text.isEmpty()) {
         return null
     }
+
+    logRenderedJustifiedSplitGapIfSuspicious(
+        block = block,
+        part1Text = part1Text,
+        part2Text = part2Text,
+        textMeasurer = textMeasurer,
+        paragraphStyle = paragraphStyle,
+        paragraphConstraints = paragraphConstraints,
+        originalLayoutResult = layoutResult,
+        originalLastVisibleLine = lastVisibleLine,
+        splitOffset = splitOffset,
+        availableTextHeight = availableTextHeight
+    )
 
     val part2TextWithoutIndent = buildAnnotatedString {
         append(part2Text)
@@ -1275,7 +1664,8 @@ private suspend fun calculateContentHeightWithMargins(
     imageSizeMultiplier: Float = 1.0f
 ): Int {
     var totalHeight = 0
-    children.forEachIndexed { index, child ->
+    for ((index, child) in children.withIndex()) {
+        coroutineContext.ensureActive()
         val childHeight = measureBlockHeight(child, textMeasurer, constraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
         val margin = with(density) {
             if (index > 0) {
@@ -1362,7 +1752,7 @@ private fun centeredTextSafetyPaddingPx(
     style: TextStyle,
     density: Density
 ): Int {
-    if (style.textAlign != androidx.compose.ui.text.style.TextAlign.Center) return 0
+    if (style.textAlign != TextAlign.Center) return 0
 
     val fallbackLineHeight = if (style.fontSize.isSpecified) {
         style.fontSize * 1.2f

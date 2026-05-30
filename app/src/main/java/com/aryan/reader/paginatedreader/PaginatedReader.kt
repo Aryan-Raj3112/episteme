@@ -61,7 +61,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -374,6 +373,7 @@ private const val AndroidEpubCutoffEdgeProbePx = 2
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 private const val EXPLICIT_NAVIGATION_SHIFT_ANCHOR_WINDOW_MS = 10_000L
+private const val DEBUG_PAGE_TURN_DIAG = false
 
 private fun highlightDiagSnippet(text: String, maxLength: Int = 80): String {
     return text
@@ -1498,6 +1498,25 @@ internal fun AnnotatedString.readerUrlAnnotationAtOffset(offset: Int): String? {
     return null
 }
 
+internal fun String.isReaderExternalHref(): Boolean {
+    val href = trim()
+    if (href.startsWith("//")) return true
+
+    val schemeEnd = href.indexOf(':')
+    if (schemeEnd <= 0) return false
+
+    val scheme = href.substring(0, schemeEnd)
+    if (!scheme.first().isLetter()) return false
+    if (!scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }) return false
+
+    return scheme.lowercase() in setOf("http", "https", "mailto", "tel", "sms", "geo")
+}
+
+private fun String.readerExternalHrefForDisplay(): String {
+    val href = trim()
+    return if (href.startsWith("//")) "https:$href" else href
+}
+
 private const val READER_LINK_HIT_SLOP_PX = 2f
 
 internal fun AnnotatedString.readerUrlAnnotationAtPosition(
@@ -1710,6 +1729,9 @@ private fun LinkAwareText(
 ) {
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     val viewConfiguration = LocalViewConfiguration.current
+    val latestLayoutResult = rememberUpdatedState(layoutResult)
+    val latestOnLinkClick = rememberUpdatedState(onLinkClick)
+    val latestOnGeneralTap = rememberUpdatedState(onGeneralTap)
     val displayText = remember(text, isDarkTheme, themeBackgroundColor, themeTextColor, style.color) {
         text.withReaderLinkDisplayStyle(
             isDarkTheme = isDarkTheme,
@@ -1729,33 +1751,33 @@ private fun LinkAwareText(
         text = displayText,
         style = style,
         modifier = modifier
-            .pointerInput(displayText, layoutResult, viewConfiguration.touchSlop) {
+            .pointerInput(displayText, viewConfiguration.touchSlop) {
                 awaitEachGesture {
                     awaitReaderLinkTap(
                         source = "LinkAwareText",
                         urlAtPosition = { offset ->
-                            layoutResult?.let { layout ->
+                            latestLayoutResult.value?.let { layout ->
                                 displayText.readerUrlAnnotationAtPosition(layout, offset)
                             }
                         },
                         touchSlop = viewConfiguration.touchSlop,
-                        onLinkClick = onLinkClick
+                        onLinkClick = { latestOnLinkClick.value(it) }
                     )
                 }
             }
             .pointerInput(displayText) {
                 detectTapGestures(
                     onTap = { offset ->
-                        val url = layoutResult?.let { layout ->
+                        val url = latestLayoutResult.value?.let { layout ->
                             displayText.readerUrlAnnotationAtPosition(layout, offset)
                         }
                         if (url != null) {
                             Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                                 "detect_tap_link source=LinkAwareText href=${url.readerLinkDiagPreview()}"
                             )
-                            onLinkClick(url)
+                            latestOnLinkClick.value(url)
                         } else {
-                            onGeneralTap(offset)
+                            latestOnGeneralTap.value(offset)
                         }
                     }
                 )
@@ -1949,6 +1971,9 @@ private fun WrappingContentLayout(
         mutableStateOf<List<Triple<TextLayoutResult, Offset, Int>>>(emptyList())
     }
     var totalHeight by remember { mutableIntStateOf(0) }
+    val latestTextLayouts = rememberUpdatedState(textLayouts)
+    val latestOnLinkClick = rememberUpdatedState(onLinkClick)
+    val latestOnGeneralTap = rememberUpdatedState(onGeneralTap)
 
     Layout(content = {
         AsyncImage(
@@ -1962,12 +1987,12 @@ private fun WrappingContentLayout(
                 drawText(layout, topLeft = offset)
             }
         }
-        .pointerInput(displayFullText, textLayouts, viewConfiguration.touchSlop) {
+        .pointerInput(displayFullText, viewConfiguration.touchSlop) {
             awaitEachGesture {
                 awaitReaderLinkTap(
                     source = "WrappingContentLayout:block=${block.blockIndex}",
                     urlAtPosition = { offset ->
-                        textLayouts.firstNotNullOfOrNull { (layout, topLeft, textStartOffset) ->
+                        latestTextLayouts.value.firstNotNullOfOrNull { (layout, topLeft, textStartOffset) ->
                             val localOffset = Offset(offset.x - topLeft.x, offset.y - topLeft.y)
                             if (
                                 localOffset.x >= 0f &&
@@ -1986,14 +2011,14 @@ private fun WrappingContentLayout(
                         }
                     },
                     touchSlop = viewConfiguration.touchSlop,
-                    onLinkClick = onLinkClick
+                    onLinkClick = { latestOnLinkClick.value(it) }
                 )
             }
         }
-        .pointerInput(displayFullText, textLayouts) {
+        .pointerInput(displayFullText) {
             detectTapGestures(
                 onTap = { offset ->
-                    for ((layout, topLeft, textStartOffset) in textLayouts) {
+                    for ((layout, topLeft, textStartOffset) in latestTextLayouts.value) {
                         val localOffset = Offset(offset.x - topLeft.x, offset.y - topLeft.y)
                         if (
                             localOffset.x >= 0f &&
@@ -2011,12 +2036,12 @@ private fun WrappingContentLayout(
                                     "detect_tap_link source=WrappingContentLayout:block=${block.blockIndex} " +
                                         "href=${url.readerLinkDiagPreview()}"
                                 )
-                                onLinkClick(url)
+                                latestOnLinkClick.value(url)
                                 return@detectTapGestures
                             }
                         }
                     }
-                    onGeneralTap(offset)
+                    latestOnGeneralTap.value(offset)
                 }
             )
         }) { measurables, constraints ->
@@ -2294,15 +2319,17 @@ fun PaginatedReaderScreen(
             layoutTextStyle.copy(color = effectiveText)
         }
 
-        LaunchedEffect(pagerState) {
-            snapshotFlow { pagerState.currentPage }.collect { page ->
-                Timber.tag("PageTurnDiag").i("Pager Settled: Now on page $page at ${System.currentTimeMillis()}")
+        if (DEBUG_PAGE_TURN_DIAG) {
+            LaunchedEffect(pagerState) {
+                snapshotFlow { pagerState.currentPage }.collect { page ->
+                    Timber.tag("PageTurnDiag").i("Pager Settled: Now on page $page at ${System.currentTimeMillis()}")
+                }
             }
-        }
 
-        LaunchedEffect(pagerState) {
-            snapshotFlow { pagerState.isScrollInProgress }.collect { isScrolling ->
-                Timber.tag("PageTurnDiag").d("Pager Scroll State: isScrolling=$isScrolling")
+            LaunchedEffect(pagerState) {
+                snapshotFlow { pagerState.isScrollInProgress }.collect { isScrolling ->
+                    Timber.tag("PageTurnDiag").d("Pager Scroll State: isScrolling=$isScrolling")
+                }
             }
         }
 
@@ -2492,6 +2519,15 @@ fun PaginatedReaderScreen(
             currentPaginatorRef.value = paginator
         }
 
+        DisposableEffect(paginator) {
+            onDispose {
+                if (currentPaginatorRef.value === paginator) {
+                    currentPaginatorRef.value = null
+                }
+                paginator.dispose()
+            }
+        }
+
         LaunchedEffect(paginator) {
             if (anchorLocatorForReconfig != null) {
                 Timber.tag("POS_DIAG").d("Restoration Triggered. Anchor Locator: $anchorLocatorForReconfig")
@@ -2674,7 +2710,7 @@ fun PaginatedReaderScreen(
                 val startTime = System.currentTimeMillis()
                 val result = paginator.getPageContent(pageIndex)
                 val duration = System.currentTimeMillis() - startTime
-                if (duration > 16) {
+                if (DEBUG_PAGE_TURN_DIAG && duration > 16) {
                     Timber.tag("PageTurnDiag")
                         .w("HEAVY TASK: paginator.getPageContent($pageIndex) took ${duration}ms on Thread ${Thread.currentThread().name}")
                 }
@@ -3149,6 +3185,12 @@ fun NativeVerticalReaderScreen(
             onPaginatorReady(paginator)
         }
 
+        DisposableEffect(paginator) {
+            onDispose {
+                paginator.dispose()
+            }
+        }
+
         var isLoading by remember { mutableStateOf(true) }
         var totalPageCount by remember { mutableIntStateOf(0) }
         var generation by remember { mutableIntStateOf(0) }
@@ -3599,8 +3641,8 @@ fun NativeVerticalReaderScreen(
                             onTap(offset)
                         }
                         val onLinkClickCallback: (String) -> Unit = { href ->
-                            if (href.startsWith("http://") || href.startsWith("https://")) {
-                                showExternalLinkDialog = href
+                            if (href.isReaderExternalHref()) {
+                                showExternalLinkDialog = href.readerExternalHrefForDisplay()
                             } else {
                                 val chapterPath = book.chaptersForPagination.getOrNull(chapterIndex)?.absPath
                                 coroutineScope.launch {
@@ -4848,6 +4890,9 @@ private fun TextWithEmphasis(
     val scope = rememberCoroutineScope()
     var pressedHighlightCfi by remember { mutableStateOf<String?>(null) }
     val density = LocalDensity.current
+    val latestTextLayoutResult = rememberUpdatedState(textLayoutResult)
+    val latestOnLinkClick = rememberUpdatedState(onLinkClick)
+    val latestOnGeneralTap = rememberUpdatedState(onGeneralTap)
     val displayText = remember(text, isDarkTheme, themeBackgroundColor, themeTextColor, style.color) {
         text.withReaderLinkDisplayStyle(
             isDarkTheme = isDarkTheme,
@@ -5210,24 +5255,24 @@ private fun TextWithEmphasis(
             }
         }
         .then(customDrawer)
-        .pointerInput(displayText, textLayoutResult, viewConfiguration.touchSlop) {
+        .pointerInput(displayText, viewConfiguration.touchSlop) {
             awaitEachGesture {
                 awaitReaderLinkTap(
                     source = "TextWithEmphasis:block=${block.blockIndex}",
                     urlAtPosition = { offset ->
-                        textLayoutResult?.let { layout ->
+                        latestTextLayoutResult.value?.let { layout ->
                             displayText.readerUrlAnnotationAtPosition(layout, offset)
                         }
                     },
                     touchSlop = viewConfiguration.touchSlop,
-                    onLinkClick = onLinkClick
+                    onLinkClick = { latestOnLinkClick.value(it) }
                 )
             }
         }
         .pointerInput(userHighlights, displayText) {
             detectTapGestures(
                 onLongPress = { offset ->
-                    textLayoutResult?.let { layout ->
+                    latestTextLayoutResult.value?.let { layout ->
                         val charOffset = layout.getOffsetForPosition(offset)
                         val wordBoundary = layout.getWordBoundary(charOffset)
 
@@ -5286,7 +5331,7 @@ private fun TextWithEmphasis(
                     }
                 },
                 onTap = { offset ->
-                    textLayoutResult?.let { layout ->
+                    latestTextLayoutResult.value?.let { layout ->
                         val hit = getHighlightAt(offset, layout)
                         if (hit != null) {
                             val (highlight, localRect) = hit
@@ -5308,9 +5353,9 @@ private fun TextWithEmphasis(
                                 "detect_tap_link source=TextWithEmphasis:block=${block.blockIndex} " +
                                     "page=$pageIndex charOffset=$charOffset href=${url.readerLinkDiagPreview()}"
                             )
-                            onLinkClick(url)
+                            latestOnLinkClick.value(url)
                         } else {
-                            onGeneralTap(offset)
+                            latestOnGeneralTap.value(offset)
                         }
                     }
                 }
@@ -5578,13 +5623,17 @@ internal fun PaginatedReaderContent(
                         }
 
                         LaunchedEffect(pageIndex, uiState.generation) {
-                            val fetchStartTime = System.currentTimeMillis()
-                            Timber.tag("PageTurnDiag").d("Page $pageIndex: Starting content fetch")
+                            if (DEBUG_PAGE_TURN_DIAG) {
+                                Timber.tag("PageTurnDiag").d("Page $pageIndex: Starting content fetch")
+                            }
+                            val fetchStartTime = if (DEBUG_PAGE_TURN_DIAG) System.currentTimeMillis() else 0L
 
                             pageContent = onGetPage(pageIndex)
 
-                            val fetchDuration = System.currentTimeMillis() - fetchStartTime
-                            Timber.tag("PageTurnDiag").d("Page $pageIndex: Content fetched in ${fetchDuration}ms")
+                            if (DEBUG_PAGE_TURN_DIAG) {
+                                val fetchDuration = System.currentTimeMillis() - fetchStartTime
+                                Timber.tag("PageTurnDiag").d("Page $pageIndex: Content fetched in ${fetchDuration}ms")
+                            }
 
                             onGetChapterPath(pageIndex)?.let { currentChapterPath = it }
                         }
@@ -5596,10 +5645,6 @@ internal fun PaginatedReaderContent(
                                     "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
                                     page.readerPageLinkDiagSummary()
                             )
-                        }
-
-                        SideEffect {
-                            Timber.tag("PageTurnDiag").v("Page $pageIndex: Re-composing content area")
                         }
 
                         val textBlocksOnPage =
@@ -5746,11 +5791,11 @@ internal fun PaginatedReaderContent(
                                     "chapterPath=${currentChapterPath.orEmpty().readerLinkDiagPreview()} " +
                                     "href=${href.readerLinkDiagPreview()}"
                             )
-                            if (href.startsWith("http://") || href.startsWith("https://")) {
+                            if (href.isReaderExternalHref()) {
                                 Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                                     "external_link_dialog href=${href.readerLinkDiagPreview()}"
                                 )
-                                showExternalLinkDialog = href
+                                showExternalLinkDialog = href.readerExternalHrefForDisplay()
                             } else {
                                 val path = currentChapterPath
                                 if (path == null) {
@@ -5770,7 +5815,8 @@ internal fun PaginatedReaderContent(
                                 }
                             }
                         }
-                        val linkLayoutTick = blockLayoutMap.tick
+                        val latestPageLayoutCoordinates = rememberUpdatedState(pageLayoutCoordinates)
+                        val latestOnLinkClickCallback = rememberUpdatedState(onLinkClickCallback)
                         val pageHorizontalPaddingPx = with(density) { horizontalPadding.roundToPx() }
                         val pageVerticalPaddingPx = with(density) { verticalPadding.roundToPx() }
                         val pageContentBoundsProvider = {
@@ -5795,12 +5841,12 @@ internal fun PaginatedReaderContent(
                                 .then(pageTextureModifier)
                                 .then(pageModifier)
                                 .onGloballyPositioned { pageLayoutCoordinates = it }
-                                .pointerInput(pageIndex, linkLayoutTick, pageLayoutCoordinates, pageViewConfiguration.touchSlop) {
+                                .pointerInput(pageIndex, pageViewConfiguration.touchSlop) {
                                     awaitEachGesture {
                                         awaitReaderLinkTap(
                                             source = "PageLinkInterceptor:page=$pageIndex",
                                             urlAtPosition = { offset ->
-                                                val hit = pageLayoutCoordinates
+                                                val hit = latestPageLayoutCoordinates.value
                                                     ?.takeIf { it.isAttached }
                                                     ?.let { coordinates ->
                                                         blockLayoutMap.readerLinkAtPagePosition(
@@ -5819,7 +5865,7 @@ internal fun PaginatedReaderContent(
                                                 hit?.href
                                             },
                                             touchSlop = pageViewConfiguration.touchSlop,
-                                            onLinkClick = onLinkClickCallback
+                                            onLinkClick = { latestOnLinkClickCallback.value(it) }
                                         )
                                     }
                                 }
@@ -6825,9 +6871,6 @@ internal fun PaginatedReaderContent(
                                                                             Modifier
                                                                         }
                                                                     )
-                                                                    .onGloballyPositioned { coords ->
-                                                                        Timber.tag("IMAGE_DIAG").v("Actual Rendered Height for [#${block.blockIndex}]: ${coords.size.height}px")
-                                                                    }
 
                                                                 AsyncImage(
                                                                     model = imageRequest,
