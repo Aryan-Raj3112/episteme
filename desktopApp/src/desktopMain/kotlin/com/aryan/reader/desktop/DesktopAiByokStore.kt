@@ -60,7 +60,7 @@ internal class DesktopAiByokStore(
                 loadedSettings.copy(ttsModel = GEMINI_CLOUD_TTS_MODEL_ID)
             } else {
                 loadedSettings
-            }
+            }.toDesktopPersistableAiSettings()
             if (secureStorageAvailable &&
                 (legacyGeminiKey.isNotBlank() || legacyGroqKey.isNotBlank() || settings != loadedSettings)
             ) {
@@ -82,7 +82,7 @@ internal class DesktopAiByokStore(
     }
 
     fun save(settings: ReaderAiByokSettings) {
-        val sanitized = settings.sanitized()
+        val sanitized = settings.toDesktopPersistableAiSettings()
         logDesktopTts(
             "settings_save_start file=\"${settingsFile.absolutePath.desktopTtsPreview(220)}\" " +
                 "secureStorage=${secretCodec.isAvailable} geminiKey=${sanitized.geminiKey.isNotBlank()} " +

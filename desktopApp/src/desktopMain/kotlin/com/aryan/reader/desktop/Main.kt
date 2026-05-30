@@ -216,7 +216,7 @@ internal fun EpistemeDesktopApp(
     var aiByokSettings by remember {
         mutableStateOf(aiByokStore.load())
     }
-    val sanitizedAiByokSettings = aiByokSettings.sanitized()
+    val sanitizedAiByokSettings = aiByokSettings.toDesktopPersistableAiSettings()
     val desktopByokCloudTtsAvailable = featurePolicy.aiAndCloud &&
         featurePolicy.networkAccess &&
         sanitizedAiByokSettings.isByokCloudTtsAvailable
@@ -259,9 +259,22 @@ internal fun EpistemeDesktopApp(
     var accountStatusMessage by remember { mutableStateOf<String?>(null) }
     var accountBusy by remember { mutableStateOf(false) }
     var accountRefreshRequestCount by remember { mutableStateOf(0) }
+    fun requestDesktopAccountRefreshAfterUsage(usage: DesktopPaidAiUsage = DesktopPaidAiUsage()) {
+        if (!featurePolicy.aiAndCloud || desktopBuildProfile.byokAiAvailable) return
+        scope.launch {
+            val nextCredits = desktopCreditsAfterPaidAiUsage(state.credits, usage.cost)
+            if (nextCredits != state.credits) {
+                state = libraryProjector.projectDesktopLibraryState(
+                    state = state.copy(credits = nextCredits),
+                    shelfRecords = shelfRecords,
+                    shelfRefs = shelfRefs
+                )
+            }
+            accountRefreshRequestCount++
+        }
+    }
     fun effectiveAiSettings(): ReaderAiByokSettings {
-        val hidden = aiByokSettings.hideReaderAiFeatures
-        val sanitized = aiByokSettings.sanitized()
+        val sanitized = aiByokSettings.toDesktopPersistableAiSettings()
         val byokCloudTtsAvailable = featurePolicy.aiAndCloud &&
             featurePolicy.networkAccess &&
             sanitized.isByokCloudTtsAvailable
@@ -270,7 +283,7 @@ internal fun EpistemeDesktopApp(
         } else {
             ReaderAiByokSettings(
                 geminiKey = if (featurePolicy.aiAndCloud && featurePolicy.networkAccess) sanitized.geminiKey else "",
-                hideReaderAiFeatures = hidden,
+                hideReaderAiFeatures = false,
                 ttsModel = if (featurePolicy.aiAndCloud && featurePolicy.networkAccess) sanitized.ttsModel else "",
                 ttsSpeakerId = sanitized.ttsSpeakerId,
                 serverBackedReaderAiFeatures = featurePolicy.aiAndCloud && featurePolicy.networkAccess,
@@ -296,10 +309,7 @@ internal fun EpistemeDesktopApp(
                 currentSignedIn = { state.currentUser != null },
                 currentIsProUser = { state.isProUser },
                 currentCredits = { state.credits },
-                onUsageCompleted = {
-                    scope.launch { accountRefreshRequestCount++ }
-                    Unit
-                }
+                onUsageReported = ::requestDesktopAccountRefreshAfterUsage
             )
         }
     }
@@ -311,7 +321,7 @@ internal fun EpistemeDesktopApp(
             authTokenProvider = { desktopAuthRepository.freshIdToken() },
             useWorkerProvider = { true },
             onWorkerUsageCompleted = {
-                scope.launch { accountRefreshRequestCount++ }
+                requestDesktopAccountRefreshAfterUsage()
                 Unit
             }
         )
@@ -1165,8 +1175,8 @@ internal fun EpistemeDesktopApp(
     }
 
     fun updateAiByokSettings(next: ReaderAiByokSettings) {
-        val sanitized = next.sanitized()
-        if (sanitized.ttsSpeakerId != aiByokSettings.sanitized().ttsSpeakerId && desktopTtsAdapter.isPlaybackActive) {
+        val sanitized = next.toDesktopPersistableAiSettings()
+        if (sanitized.ttsSpeakerId != aiByokSettings.toDesktopPersistableAiSettings().ttsSpeakerId && desktopTtsAdapter.isPlaybackActive) {
             scope.launch {
                 snackbarHostState.showSnackbar(
                     desktopString("desktop_stop_reading_change_voices", "Stop reading to change voices.")
@@ -1174,19 +1184,12 @@ internal fun EpistemeDesktopApp(
             }
             return
         }
-        val settingsToSave = if (!desktopBuildProfile.byokAiAvailable) {
-            aiByokSettings.sanitized().copy(
-                hideReaderAiFeatures = sanitized.hideReaderAiFeatures,
-                ttsSpeakerId = sanitized.ttsSpeakerId
-            )
-        } else {
-            logDesktopTts(
-                "settings_update keyPresent=${sanitized.geminiKey.isNotBlank()} " +
-                    "ttsModel=\"${sanitized.ttsModel.desktopTtsPreview()}\" speaker=\"${sanitized.ttsSpeakerId.desktopTtsPreview()}\" " +
-                    "cloudAvailable=${sanitized.isCloudTtsAvailable}"
-            )
-            sanitized
-        }
+        val settingsToSave = sanitized
+        logDesktopTts(
+            "settings_update keyPresent=${sanitized.geminiKey.isNotBlank()} " +
+                "ttsModel=\"${sanitized.ttsModel.desktopTtsPreview()}\" speaker=\"${sanitized.ttsSpeakerId.desktopTtsPreview()}\" " +
+                "cloudAvailable=${sanitized.isCloudTtsAvailable}"
+        )
 
         aiByokSettings = settingsToSave
         readerWindows = readerWindows.replaceAllDesktopTextReaderContent { content ->
@@ -1270,12 +1273,6 @@ internal fun EpistemeDesktopApp(
             return desktopFeatureUnavailableNotice(
                 messageKey = "desktop_ai_not_configured_desc",
                 messageFallback = "Desktop AI is not configured for this build."
-            )
-        }
-        if (effectiveAiSettings().hideReaderAiFeatures) {
-            return desktopFeatureUnavailableNotice(
-                messageKey = "desktop_reader_ai_hidden_desc",
-                messageFallback = "Reader AI features are hidden."
             )
         }
         if (feature == ReaderAiFeature.DEFINE && desktopReaderWordCount(text) > 1 && state.currentUser == null) {
@@ -3741,11 +3738,11 @@ internal fun EpistemeDesktopApp(
                                     includeExternalFileBehavior = false,
                                     includeStrictFileFilter = false,
                                     includeReaderTabs = false,
-                                    includeHideReaderAi = featurePolicy.aiAndCloud,
+                                    includeHideReaderAi = false,
                                     isTabsEnabled = state.isTabsEnabled,
                                     isSyncEnabled = state.isSyncEnabled,
                                     isFolderSyncEnabled = state.isFolderSyncEnabled,
-                                    hideReaderAi = effectiveAiSettings().hideReaderAiFeatures,
+                                    hideReaderAi = false,
                                     languageTitle = desktopString("options_language", "Language"),
                                     languageSummary = selectedDesktopLanguageOption(desktopLanguageTag).let { option ->
                                         desktopString(option.labelKey, option.fallbackLabel)
@@ -3801,11 +3798,7 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.AI_SETTINGS -> if (desktopAiKeySettingsAvailable) showAiByokSettingsDialog = true
                                     SharedSettingsAction.SIGN_IN -> signInDesktopAccount()
                                     SharedSettingsAction.SIGN_OUT -> signOutDesktopAccount()
-                                    SharedSettingsAction.HIDE_READER_AI -> {
-                                        val next = aiByokSettings.copy(hideReaderAiFeatures = !effectiveAiSettings().hideReaderAiFeatures)
-                                        aiByokSettings = next
-                                        runCatching { aiByokStore.save(next.sanitized()) }
-                                    }
+                                    SharedSettingsAction.HIDE_READER_AI -> Unit
                                     SharedSettingsAction.CUSTOM_FONTS -> selectAppTab(SharedAppTab.CUSTOM_FONTS)
                                     SharedSettingsAction.HELP_FEEDBACK -> selectAppTab(SharedAppTab.FEEDBACK)
                                     SharedSettingsAction.SUPPORT -> selectAppTab(SharedAppTab.SUPPORT)

@@ -16,6 +16,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.ceil
 
 internal class DesktopPaidAiAdapter(
     private val config: DesktopCloudConfig,
@@ -25,7 +26,7 @@ internal class DesktopPaidAiAdapter(
     private val currentSignedIn: () -> Boolean,
     private val currentIsProUser: () -> Boolean,
     private val currentCredits: () -> Int,
-    private val onUsageCompleted: suspend () -> Unit = {}
+    private val onUsageReported: (DesktopPaidAiUsage) -> Unit = {}
 ) : AiAdapter {
     override val isAvailable: Boolean
         get() = networkAccess() &&
@@ -196,13 +197,18 @@ internal class DesktopPaidAiAdapter(
                 val responseCode = connection.responseCode
                 val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
                 if (responseCode in 200..299) {
-                    val parsed = readWorkerStream(stream, onChunk, onUsageReceived)
+                    val parsed = readWorkerStream(
+                        stream = stream,
+                        onChunk = onChunk,
+                        onUsageReceived = onUsageReceived,
+                        onUsageReported = onUsageReported
+                    )
                     if (parsed.text.isBlank()) throw IllegalStateException("The AI service returned an empty response.")
-                    onUsageCompleted()
                     return@runCatching parsed
                 }
                 val responseText = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
                 if (connection.responseCode == 402 || responseText.contains("INSUFFICIENT_CREDITS")) {
+                    onUsageReported(DesktopPaidAiUsage())
                     throw IllegalStateException("Out of credits. Pro and credits can only be purchased from the Android app.")
                 }
                 if (connection.responseCode == 401) {
@@ -222,6 +228,19 @@ internal class DesktopPaidAiAdapter(
     }
 }
 
+internal data class DesktopPaidAiUsage(
+    val cost: Double? = null,
+    val freeRemaining: Int? = null
+)
+
+internal fun desktopCreditsAfterPaidAiUsage(currentCredits: Int, cost: Double?): Int {
+    val deducted = cost
+        ?.takeIf { it.isFinite() && it > 0.0 }
+        ?.let { ceil(it).toInt() }
+        ?: return currentCredits
+    return (currentCredits - deducted).coerceAtLeast(0)
+}
+
 private data class DesktopPaidAiResponse(
     val text: String,
     val cost: Double? = null,
@@ -233,18 +252,35 @@ private val DesktopPaidAiJson = Json { ignoreUnknownKeys = true }
 private fun readWorkerStream(
     stream: InputStream?,
     onChunk: (String) -> Unit,
-    onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit
+    onUsageReceived: (cost: Double?, freeRemaining: Int?) -> Unit,
+    onUsageReported: (DesktopPaidAiUsage) -> Unit
 ): DesktopPaidAiResponse {
     val output = StringBuilder()
     var cost: Double? = null
     var freeRemaining: Int? = null
+    var paidUsageReported = false
+    var freeUsageReported = false
     stream?.bufferedReader(Charsets.UTF_8)?.useLines { lines ->
         lines.forEach { line ->
-            val parsed = parseWorkerStreamLine(line) ?: return@forEach
+            val parsed = try {
+                parseWorkerStreamLine(line)
+            } catch (error: IllegalStateException) {
+                if (desktopPaidAiShouldRefreshAccountAfterError(error)) {
+                    onUsageReported(DesktopPaidAiUsage())
+                }
+                throw error
+            } ?: return@forEach
             parsed.cost?.let { cost = it }
             parsed.freeRemaining?.let { freeRemaining = it }
             if (parsed.cost != null || parsed.freeRemaining != null) {
                 onUsageReceived(parsed.cost, parsed.freeRemaining)
+                if (parsed.cost != null && !paidUsageReported) {
+                    paidUsageReported = true
+                    onUsageReported(DesktopPaidAiUsage(cost = parsed.cost, freeRemaining = parsed.freeRemaining))
+                } else if (parsed.freeRemaining != null && !freeUsageReported) {
+                    freeUsageReported = true
+                    onUsageReported(DesktopPaidAiUsage(freeRemaining = parsed.freeRemaining))
+                }
             }
             parsed.chunk?.let { chunk ->
                 output.append(chunk)
@@ -274,6 +310,14 @@ private data class DesktopPaidAiStreamLine(
     val cost: Double? = null,
     val freeRemaining: Int? = null
 )
+
+private fun desktopPaidAiShouldRefreshAccountAfterError(error: Throwable): Boolean {
+    val details = generateSequence(error) { it.cause }
+        .joinToString(" ") { it.message.orEmpty() }
+    return details.contains("Out of credits", ignoreCase = true) ||
+        details.contains("INSUFFICIENT_CREDITS", ignoreCase = true) ||
+        details.contains("402", ignoreCase = true)
+}
 
 private fun workerErrorMessage(errorBody: String): String? {
     return when {

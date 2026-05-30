@@ -87,6 +87,54 @@ class DesktopAiByokStoreTest {
     }
 
     @Test
+    fun `save with blank key clears protected secret entry`() {
+        val settingsFile = Files.createTempDirectory("reader-ai-store-clear").resolve("ai-byok.properties")
+        val store = DesktopAiByokStore(settingsFile.toFile(), ReversibleSecretCodec)
+
+        store.save(
+            ReaderAiByokSettings(
+                geminiKey = "gemini_secret",
+                groqKey = "groq_secret",
+                modelForAll = "groq:qwen/qwen3-32b"
+            )
+        )
+        store.save(
+            ReaderAiByokSettings(
+                groqKey = "groq_secret",
+                modelForAll = "groq:qwen/qwen3-32b"
+            )
+        )
+
+        val raw = settingsFile.readText()
+        assertFalse(raw.contains("geminiKeyProtected="))
+        assertTrue(raw.contains("groqKeyProtected="))
+
+        val loaded = store.load()
+        assertEquals("", loaded.geminiKey)
+        assertEquals("groq_secret", loaded.groqKey)
+        assertEquals("groq:qwen/qwen3-32b", loaded.modelForAll)
+    }
+
+    @Test
+    fun `load ignores legacy hidden reader ai preference on desktop`() {
+        val settingsFile = Files.createTempDirectory("reader-ai-store-visible").resolve("ai-byok.properties")
+        settingsFile.writeText(
+            """
+            hideReaderAiFeatures=true
+            modelForAll=groq:qwen/qwen3-32b
+            useOneModel=true
+            """.trimIndent()
+        )
+        val store = DesktopAiByokStore(settingsFile.toFile(), ReversibleSecretCodec)
+
+        val loaded = store.load()
+
+        assertFalse(loaded.hideReaderAiFeatures)
+        assertTrue(loaded.useOneModel)
+        assertEquals("groq:qwen/qwen3-32b", loaded.modelForAll)
+    }
+
+    @Test
     fun `load does not probe secure storage when settings file is missing`() {
         val settingsFile = Files.createTempDirectory("reader-ai-store-missing").resolve("ai-byok.properties")
         val store = DesktopAiByokStore(settingsFile.toFile(), ThrowingAvailabilitySecretCodec)

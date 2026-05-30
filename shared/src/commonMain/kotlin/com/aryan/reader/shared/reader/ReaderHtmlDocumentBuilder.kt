@@ -1082,17 +1082,52 @@ object ReaderHtmlDocumentBuilder {
                     );
                     return { targetY: top, beforeY: before.scrollY, afterY: after.scrollY, maxScroll: after.maxScroll, clamped: clamped };
                   }
-                  function scrollToLocator(locator) {
+                  function shouldCenterScrollTarget(options) {
+                    return !!(options && options.align === 'center' && isVerticalReaderDocument());
+                  }
+                  function scrollTargetTopFromRect(rect, options) {
+                    var documentTop = (rect ? rect.top : 0) + window.scrollY;
+                    if (shouldCenterScrollTarget(options)) {
+                      var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                      if (viewportHeight > 0) {
+                        var rectHeight = rect && Number.isFinite(rect.height) ? Math.max(0, Math.min(rect.height, viewportHeight)) : 0;
+                        return documentTop - Math.round((viewportHeight - rectHeight) / 2);
+                      }
+                    }
+                    return documentTop - 24;
+                  }
+                  function scrollTargetTopFromY(documentY, options) {
+                    var top = Number(documentY) || 0;
+                    if (shouldCenterScrollTarget(options)) {
+                      var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                      if (viewportHeight > 0) return top - Math.round(viewportHeight / 2);
+                    }
+                    return top - 24;
+                  }
+                  function scrollTraceExtra(extra, options) {
+                    if (!shouldCenterScrollTarget(options)) return extra;
+                    return extra ? extra + ' align=center' : 'align=center';
+                  }
+                  function shouldTrackScrollRestore(options) {
+                    return !(options && options.trackRestore === false);
+                  }
+                  function scrollToLocator(locator, options) {
                     locator = locator || {};
+                    options = options || {};
                     if (isVerticalReaderDocument()) {
-                      pendingRestoreLocator = locator;
-                      pendingRestoreUntil = Date.now() + 5000;
+                      if (shouldTrackScrollRestore(options)) {
+                        pendingRestoreLocator = locator;
+                        pendingRestoreUntil = Date.now() + 5000;
+                      } else {
+                        clearPendingRestoreLocator('transient_scroll');
+                      }
                     }
                     readerDesktopPositionTraceLog(
                       'event=web_scroll_to_locator_start mode=' + (isVerticalReaderDocument() ? 'vertical' : 'paginated') +
-                      ' ' + readerLocatorTrace(locator)
+                      ' ' + readerLocatorTrace(locator) +
+                      (shouldCenterScrollTarget(options) ? ' align=center' : '')
                     );
-                    if (scrollToVerticalPage(locator)) return;
+                    if (scrollToVerticalPage(locator, options)) return;
                     var chapterIndex = locator.chapterIndex;
                     if (chapterIndex === undefined || chapterIndex === null || chapterIndex === '') {
                       chapterIndex = document.body.getAttribute('data-reader-active-chapter-index');
@@ -1125,7 +1160,7 @@ object ReaderHtmlDocumentBuilder {
                       : null;
                     if (exactCfi && (activeStart === undefined || activeStart === null)) {
                       var cfiRect = exactCfi.getBoundingClientRect();
-                      scrollToTopWithTrace(cfiRect.top + window.scrollY - 24, 'exact_cfi', locator, 'requestedChapter=' + chapterIndex);
+                      scrollToTopWithTrace(scrollTargetTopFromRect(cfiRect, options), 'exact_cfi', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options));
                       return;
                     }
                     var exact = activeStart === null
@@ -1145,10 +1180,10 @@ object ReaderHtmlDocumentBuilder {
                         var exactRange = rangeForOffsets(parseInt(chapterIndex, 10), parsedStart, rangeEnd, stableCfi);
                         if (exactRange) {
                           var rangeRects = exactRange.getClientRects();
-                          var rangeRect = rangeRects.length ? rangeRects[0] : exactRange.getBoundingClientRect();
+                          var rangeRect = shouldCenterScrollTarget(options) ? exactRange.getBoundingClientRect() : (rangeRects.length ? rangeRects[0] : exactRange.getBoundingClientRect());
                           exactRange.detach && exactRange.detach();
                           if (rangeRect && (rangeRect.top !== 0 || rangeRect.bottom !== 0)) {
-                            var exactResult = scrollToTopWithTrace(rangeRect.top + window.scrollY - 24, 'exact_range', locator, 'requestedChapter=' + chapterIndex);
+                            var exactResult = scrollToTopWithTrace(scrollTargetTopFromRect(rangeRect, options), 'exact_range', locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options));
                             if (!exactResult.clamped || !isVerticalReaderDocument()) {
                               return;
                             }
@@ -1168,12 +1203,12 @@ object ReaderHtmlDocumentBuilder {
                         var ratio = Math.max(0, Math.min(1, (activeStart - contentStart) / (contentEnd - contentStart)));
                         var contentRect = content.getBoundingClientRect();
                         var approximateY = contentRect.top + window.scrollY + (content.scrollHeight * ratio);
-                        scrollToTopWithTrace(approximateY - 24, 'content_ratio', locator, 'requestedChapter=' + chapterIndex + ' ratio=' + ratio.toFixed(4));
+                        scrollToTopWithTrace(scrollTargetTopFromY(approximateY, options), 'content_ratio', locator, scrollTraceExtra('requestedChapter=' + chapterIndex + ' ratio=' + ratio.toFixed(4), options));
                         return;
                       }
                     }
                     var rect = target.getBoundingClientRect();
-                    scrollToTopWithTrace(rect.top + window.scrollY - 24, exact ? 'exact_marker' : (exactBlock ? 'exact_block' : 'host_top'), locator, 'requestedChapter=' + chapterIndex);
+                    scrollToTopWithTrace(scrollTargetTopFromRect(rect, options), exact ? 'exact_marker' : (exactBlock ? 'exact_block' : 'host_top'), locator, scrollTraceExtra('requestedChapter=' + chapterIndex, options));
                   }
                   function scrollToActiveLocator() {
                     scrollToLocator({
@@ -1461,7 +1496,7 @@ object ReaderHtmlDocumentBuilder {
                     var index = Math.round((anchors.length - 1) * ratio);
                     return anchors[Math.max(0, Math.min(anchors.length - 1, index))];
                   }
-                  function scrollToVerticalPage(locator) {
+                  function scrollToVerticalPage(locator, options) {
                     if (!isVerticalReaderDocument() || !locator) return false;
                     var cfi = String(locator.cfi || '');
                     if (cfi.indexOf('desktop-scroll-page:') !== 0) return false;
@@ -1482,7 +1517,7 @@ object ReaderHtmlDocumentBuilder {
                           var contentRect = content.getBoundingClientRect();
                           targetY = contentRect.top + window.scrollY + (content.scrollHeight * ratioInContent);
                         }
-                        scrollToTopWithTrace(targetY - 24, 'vertical_page_content', locator, 'ratioSource=content');
+                        scrollToTopWithTrace(scrollTargetTopFromY(targetY, options), 'vertical_page_content', locator, scrollTraceExtra('ratioSource=content', options));
                         return true;
                       }
                     }
@@ -3423,7 +3458,7 @@ object ReaderHtmlDocumentBuilder {
                   window.readerSetTtsLocator = function (locator, follow) {
                     try {
                       applyTtsLocator(locator);
-                      if (follow && locator) scrollToLocator(locator);
+                      if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });
                     } catch (error) {
                       readerTtsLog('locator_exception error=' + readerTtsPreview(error, 180));
                     }

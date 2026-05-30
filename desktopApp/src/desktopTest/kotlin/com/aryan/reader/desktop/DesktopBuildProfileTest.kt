@@ -73,8 +73,8 @@ class DesktopBuildProfileTest {
         assertTrue(onlineOssProfile.byokAiAvailable)
         assertFalse(onlineOssProfile.aiKeySettingsAvailable)
         assertEquals(settings, settings.withDesktopFeaturePolicy(onlineOssPolicy))
-        assertTrue(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.Standard).hideReaderAiFeatures)
-        assertTrue(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.OssOffline).hideReaderAiFeatures)
+        assertFalse(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.Standard).hideReaderAiFeatures)
+        assertFalse(settings.withDesktopFeaturePolicy(SharedFeaturePolicy.OssOffline).hideReaderAiFeatures)
 
         val byokCloudTtsSettings = settings.copy(
             geminiKey = "gemini_secret",
@@ -134,6 +134,31 @@ class DesktopBuildProfileTest {
         assertTrue(byokAdapter.isAvailable)
         assertTrue(workerAdapter.isAvailable)
         assertFalse(unavailableAdapter.isAvailable)
+    }
+
+    @Test
+    fun `desktop persisted AI settings keep Android model controls and force visibility`() {
+        val settings = ReaderAiByokSettings(
+            geminiKey = " gemini_secret ",
+            groqKey = " groq_secret ",
+            useOneModel = true,
+            modelForAll = "groq:qwen/qwen3-32b",
+            defineModel = "gemini:gemini-flash-lite-latest",
+            summarizeModel = "groq:llama-3.3-70b-versatile",
+            recapModel = "gemini:gemini-2.5-flash-lite",
+            hideReaderAiFeatures = true
+        )
+
+        val persisted = settings.toDesktopPersistableAiSettings()
+
+        assertEquals("gemini_secret", persisted.geminiKey)
+        assertEquals("groq_secret", persisted.groqKey)
+        assertTrue(persisted.useOneModel)
+        assertEquals("groq:qwen/qwen3-32b", persisted.modelForAll)
+        assertEquals("gemini:gemini-flash-lite-latest", persisted.defineModel)
+        assertEquals("groq:llama-3.3-70b-versatile", persisted.summarizeModel)
+        assertEquals("gemini:gemini-2.5-flash-lite", persisted.recapModel)
+        assertFalse(persisted.hideReaderAiFeatures)
     }
 
     @Test

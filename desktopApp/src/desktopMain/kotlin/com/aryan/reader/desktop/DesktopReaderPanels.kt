@@ -193,7 +193,7 @@ internal fun DesktopAiByokSettingsDialog(
                 DesktopSavedAiKeyRow(
                     label = readerString("provider_gemini", "Gemini"),
                     keyValue = sanitized.geminiKey,
-                    onClear = { onSettingsChange(sanitized.copy(geminiKey = "", ttsModel = "")) }
+                    onClear = { onSettingsChange(sanitized.copy(geminiKey = "")) }
                 )
                 DesktopSavedAiKeyRow(
                     label = readerString("provider_groq", "Groq"),
@@ -245,26 +245,6 @@ internal fun DesktopAiByokSettingsDialog(
                 }
 
                 HorizontalDivider()
-
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(readerString("options_show_ai_in_reader", "Show AI in reader"), style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            readerString(
-                                "desktop_show_ai_in_reader_desc",
-                                "Matches the Android hide toggle for smart dictionary, summaries, and recaps."
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = !sanitized.hideReaderAiFeatures,
-                        onCheckedChange = { enabled ->
-                            onSettingsChange(sanitized.copy(hideReaderAiFeatures = !enabled))
-                        }
-                    )
-                }
 
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {

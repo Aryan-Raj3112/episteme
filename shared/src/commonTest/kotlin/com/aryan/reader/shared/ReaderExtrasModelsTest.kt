@@ -49,6 +49,35 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `reader ai one model setting matches Android model selection logic`() {
+        val oneModel = ReaderByokTextRequests.build(
+            settings = ReaderAiByokSettings(
+                geminiKey = "gemini_test",
+                groqKey = "gsk_test",
+                useOneModel = true,
+                modelForAll = "groq:qwen/qwen3-32b",
+                defineModel = "gemini:gemini-flash-lite-latest"
+            ),
+            feature = ReaderAiFeature.DEFINE,
+            text = "epistemic"
+        )
+        val perFeature = ReaderByokTextRequests.build(
+            settings = ReaderAiByokSettings(
+                geminiKey = "gemini_test",
+                groqKey = "gsk_test",
+                useOneModel = false,
+                modelForAll = "groq:qwen/qwen3-32b",
+                defineModel = "gemini:gemini-flash-lite-latest"
+            ),
+            feature = ReaderAiFeature.DEFINE,
+            text = "epistemic"
+        )
+
+        assertEquals("groq:qwen/qwen3-32b", assertIs<ReaderByokTextRequestResult.Ready>(oneModel).request.model.id)
+        assertEquals("gemini:gemini-flash-lite-latest", assertIs<ReaderByokTextRequestResult.Ready>(perFeature).request.model.id)
+    }
+
+    @Test
     fun `BYOK cloud tts is available only with gemini key and cloud tts model`() {
         assertFalse(ReaderAiByokSettings(geminiKey = "key").isCloudTtsAvailable)
         assertFalse(ReaderAiByokSettings(ttsModel = GEMINI_CLOUD_TTS_MODEL_ID).isCloudTtsAvailable)

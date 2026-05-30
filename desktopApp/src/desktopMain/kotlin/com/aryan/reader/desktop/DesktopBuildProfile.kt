@@ -74,8 +74,12 @@ internal fun ReaderAiByokSettings.withDesktopFeaturePolicy(
     featurePolicy: SharedFeaturePolicy
 ): ReaderAiByokSettings {
     return if (featurePolicy.byokAi && featurePolicy.aiAndCloud && featurePolicy.networkAccess) {
-        sanitized()
+        toDesktopPersistableAiSettings()
     } else {
-        ReaderAiByokSettings(hideReaderAiFeatures = true)
+        ReaderAiByokSettings()
     }
+}
+
+internal fun ReaderAiByokSettings.toDesktopPersistableAiSettings(): ReaderAiByokSettings {
+    return sanitized().copy(hideReaderAiFeatures = false)
 }

@@ -260,6 +260,29 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `vertical document centers followed tts locator without changing active locator scroll`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta gamma"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        )
+        val activeScrollStart = html.indexOf("function scrollToActiveLocator()")
+        val activeCallStart = html.indexOf("scrollToLocator({", activeScrollStart)
+        val activeCallEnd = html.indexOf("});", activeCallStart)
+        assertTrue(activeScrollStart >= 0)
+        assertTrue(activeCallStart > activeScrollStart)
+        assertTrue(activeCallEnd > activeCallStart)
+        val activeScrollCall = html.substring(activeCallStart, activeCallEnd)
+
+        assertTrue(html.contains("function scrollToLocator(locator, options)"))
+        assertTrue(html.contains("function shouldCenterScrollTarget(options)"))
+        assertTrue(html.contains("function shouldTrackScrollRestore(options)"))
+        assertTrue(html.contains("return documentTop - Math.round((viewportHeight - rectHeight) / 2);"))
+        assertTrue(html.contains("if (follow && locator) scrollToLocator(locator, { align: 'center', trackRestore: false });"))
+        assertFalse(activeScrollCall.contains("align: 'center'"))
+        assertFalse(activeScrollCall.contains("trackRestore: false"))
+    }
+
+    @Test
     fun `vertical document reports visible locator from top reader edge`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta gamma"),

@@ -227,6 +227,7 @@ class DesktopGeminiCloudTtsAdapter(
         val messageBuffer = StringBuilder()
         var webSocket: WebSocket? = null
         var activeTempCacheFile: File? = null
+        var workerGeneratedAudio = false
 
         fun handleMessage(message: String) {
             handleGeminiTtsMessage(
@@ -431,6 +432,10 @@ class DesktopGeminiCloudTtsAdapter(
                         logDesktopTts("stream_failed reason=empty_turn_audio index=${index + 1}/${chunks.size}")
                         throw IllegalStateException("Cloud TTS returned no audio for a text chunk.")
                     }
+                    if (useWorker) {
+                        workerGeneratedAudio = true
+                        onWorkerUsageCompleted()
+                    }
                     activeCacheOutput.getAndSet(null)?.close()
                     runCatching {
                         patchReaderTtsWavHeader(tempCacheFile, turnAudioBytes.toInt())
@@ -465,8 +470,15 @@ class DesktopGeminiCloudTtsAdapter(
             activeWebSocket = null
             activePlayer = null
             logDesktopTts("stream_complete chunks=${chunks.size} audioBytes=${audioBytesReceived.get()}")
-            if (useWorker) onWorkerUsageCompleted()
+            if (useWorker && workerGeneratedAudio) onWorkerUsageCompleted()
         } catch (error: Throwable) {
+            if (useWorker && desktopTtsShouldRefreshAccountAfterError(error)) {
+                try {
+                    onWorkerUsageCompleted()
+                } catch (_: Throwable) {
+                    // Keep the original TTS failure as the visible error.
+                }
+            }
             currentTurnComplete.set(null)
             activeCacheOutput.getAndSet(null)?.let { output -> runCatching { output.close() } }
             activeTempCacheFile?.delete()
@@ -663,6 +675,14 @@ private fun desktopTtsConnectionMessage(error: Throwable): String {
             }
         }
     }
+}
+
+private fun desktopTtsShouldRefreshAccountAfterError(error: Throwable): Boolean {
+    val details = generateSequence(error) { it.cause }
+        .joinToString(" ") { it.message.orEmpty() }
+    return details.contains("Out of credits", ignoreCase = true) ||
+        details.contains("INSUFFICIENT_CREDITS", ignoreCase = true) ||
+        details.contains("402", ignoreCase = true)
 }
 
 private class DesktopStreamingPcmPlayer(
