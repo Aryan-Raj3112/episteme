@@ -56,6 +56,21 @@ internal fun shouldRenderReaderSlider(
     isSearchActive: Boolean
 ): Boolean = isToggledOn && isBottomChromeVisible && !isSearchActive
 
+internal fun readerSliderStepPage(
+    currentPage: Int,
+    delta: Int,
+    minPage: Int,
+    maxPage: Int
+): Int {
+    val lowerBound = min(minPage, maxPage)
+    val upperBound = max(minPage, maxPage)
+    val nextPage = currentPage.toLong() + delta.toLong()
+
+    return nextPage
+        .coerceIn(lowerBound.toLong(), upperBound.toLong())
+        .toInt()
+}
+
 internal fun readerSliderTogglePreferenceKey(bookId: String): String =
     READER_SLIDER_TOGGLE_PREFIX + bookId
 

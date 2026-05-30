@@ -81,6 +81,68 @@ class ReaderSliderChromeStateTest {
     }
 
     @Test
+    fun `one based slider stepping clamps to epub page range`() {
+        assertEquals(
+            1,
+            readerSliderStepPage(
+                currentPage = 1,
+                delta = -1,
+                minPage = 1,
+                maxPage = 20
+            )
+        )
+        assertEquals(
+            11,
+            readerSliderStepPage(
+                currentPage = 10,
+                delta = 1,
+                minPage = 1,
+                maxPage = 20
+            )
+        )
+        assertEquals(
+            20,
+            readerSliderStepPage(
+                currentPage = 20,
+                delta = 1,
+                minPage = 1,
+                maxPage = 20
+            )
+        )
+    }
+
+    @Test
+    fun `zero based slider stepping clamps to pdf display page range`() {
+        assertEquals(
+            0,
+            readerSliderStepPage(
+                currentPage = 0,
+                delta = -1,
+                minPage = 0,
+                maxPage = 9
+            )
+        )
+        assertEquals(
+            6,
+            readerSliderStepPage(
+                currentPage = 5,
+                delta = 1,
+                minPage = 0,
+                maxPage = 9
+            )
+        )
+        assertEquals(
+            9,
+            readerSliderStepPage(
+                currentPage = 9,
+                delta = 1,
+                minPage = 0,
+                maxPage = 9
+            )
+        )
+    }
+
+    @Test
     fun `slider content color falls back on light page when theme text is low contrast`() {
         val colors = readerSliderChromeColors(
             pageBackground = Color.White,

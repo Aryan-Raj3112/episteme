@@ -31,7 +31,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -731,7 +730,6 @@ fun EpubReaderHost(
     val scrubDebounceJob = remember { mutableStateOf<Job?>(null) }
     val volumeScrollFocusDebounceJob = remember { mutableStateOf<Job?>(null) }
     var sliderStartPage by remember { mutableIntStateOf(0) }
-    var startPageThumbnail by remember { mutableStateOf<Bitmap?>(null) }
 
     var pendingNoteForNewHighlight by remember { mutableStateOf(false) }
     var highlightToNoteCfi by remember { mutableStateOf<String?>(null) }
@@ -2163,18 +2161,6 @@ fun EpubReaderHost(
         }
     }
 
-    LaunchedEffect(epubSliderChromeVisible, currentRenderMode, isNativeVerticalMode, sliderStartPage, webViewRefForTts) {
-        if (epubSliderChromeVisible && currentRenderMode == RenderMode.VERTICAL_SCROLL && !isNativeVerticalMode) {
-            startPageThumbnail?.recycle()
-            startPageThumbnail = webViewRefForTts?.let { webView ->
-                captureWebViewVisibleArea(webView)
-            }
-        } else if (!epubSliderChromeVisible || currentRenderMode == RenderMode.PAGINATED || isNativeVerticalMode) {
-            startPageThumbnail?.recycle()
-            startPageThumbnail = null
-        }
-    }
-
     val latestChapterIndex by rememberUpdatedState(currentChapterIndex)
 
     LaunchedEffect(ttsState.bookTitle, ttsState.chapterIndex, ttsState.sourceCfi, ttsState.playbackSource) {
@@ -2359,8 +2345,6 @@ fun EpubReaderHost(
             chapterChunks = emptyList()
             chapterChunkElementStartIndices = emptyList()
             chapterChunkElementCounts = emptyList()
-            startPageThumbnail?.recycle()
-            startPageThumbnail = null
             autoScrollResumeJob.value?.cancel()
             autoScrollResumeJob.value = null
         }
@@ -7097,7 +7081,6 @@ fun EpubReaderHost(
 
                 EpubReaderPageSlider(
                     isVisible = epubSliderChromeVisible,
-                    currentRenderMode = currentRenderMode,
                     totalPages = when {
                         isNativeVerticalMode -> nativeVerticalTotalPages
                         currentRenderMode == RenderMode.VERTICAL_SCROLL -> totalPagesInCurrentChapter
@@ -7105,9 +7088,6 @@ fun EpubReaderHost(
                     },
                     sliderCurrentPage = sliderCurrentPage,
                     sliderStartPage = sliderStartPage,
-                    startPageThumbnail = startPageThumbnail,
-                    paginator = paginator,
-                    chapters = chapters,
                     onScrub = { newValue ->
                         sliderCurrentPage = newValue
                         isFastScrubbing = true
@@ -7159,9 +7139,7 @@ fun EpubReaderHost(
                         .padding(bottom = bottomPadding + 45.dp + if (isEpubJumpHistoryVisible) 40.dp else 0.dp),
                     activeColor = epubReaderSliderColors.activeTrackColor,
                     inactiveColor = epubReaderSliderColors.inactiveTrackColor,
-                    contentColor = epubReaderSliderColors.contentColor,
-                    thumbnailSurfaceColor = epubReaderSliderColors.thumbnailSurfaceColor,
-                    thumbnailContentColor = epubReaderSliderColors.thumbnailContentColor
+                    contentColor = epubReaderSliderColors.contentColor
                 )
 
                 if (epubSliderChromeVisible && isFastScrubbing) {

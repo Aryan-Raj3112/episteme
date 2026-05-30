@@ -1,30 +1,6 @@
-/*
- * Episteme Reader - A native Android document reader.
- * Copyright (C) 2026 Episteme
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as
- * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
- * mail: epistemereader@gmail.com
- */
-// EpubReaderControls.kt
 package com.aryan.reader.epubreader
 
-import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.os.Build
-import android.webkit.WebView
 import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
 import androidx.compose.foundation.lazy.LazyListState
@@ -38,14 +14,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -73,6 +47,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.NavigateBefore
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -126,9 +102,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -141,7 +115,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
-import androidx.core.graphics.createBitmap
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
@@ -150,17 +123,13 @@ import com.aryan.reader.SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.areReaderAiFeaturesEnabled
-import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.loadNativeVoice
-import com.aryan.reader.paginatedreader.BookPaginator
-import com.aryan.reader.paginatedreader.IPaginator
+import com.aryan.reader.readerSliderStepPage
+import com.aryan.reader.shared.ui.ReaderMinimalSlider
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.ReaderTtsOverlaySize
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.aryan.reader.tts.formatReaderTtsChunkLabel
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import timber.log.Timber
 import kotlin.math.roundToInt
 
 enum class ReaderTool(@StringRes val titleRes: Int, val category: String) {
@@ -1202,26 +1171,18 @@ fun EpubReaderBottomBar(
 }
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
-@SuppressLint("UnusedBoxWithConstraintsScope")
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EpubReaderPageSlider(
     isVisible: Boolean,
-    currentRenderMode: RenderMode,
     totalPages: Int,
     sliderCurrentPage: Float,
     sliderStartPage: Int,
-    startPageThumbnail: Bitmap?,
-    paginator: IPaginator?,
-    chapters: List<EpubChapter>,
     onScrub: (Float) -> Unit,
     onJumpToPage: (Int) -> Unit,
     modifier: Modifier = Modifier,
     activeColor: Color = Color.Unspecified,
     inactiveColor: Color = Color.Unspecified,
-    contentColor: Color = Color.Unspecified,
-    thumbnailSurfaceColor: Color = Color.Unspecified,
-    thumbnailContentColor: Color = Color.Unspecified
+    contentColor: Color = Color.Unspecified
 ) {
     val effectiveActiveColor = if (activeColor == Color.Unspecified) {
         MaterialTheme.colorScheme.primary
@@ -1238,16 +1199,8 @@ fun EpubReaderPageSlider(
     } else {
         contentColor
     }
-    val effectiveThumbnailSurfaceColor = if (thumbnailSurfaceColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.surfaceVariant
-    } else {
-        thumbnailSurfaceColor
-    }
-    val effectiveThumbnailContentColor = if (thumbnailContentColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    } else {
-        thumbnailContentColor
-    }
+    val maxPage = totalPages.coerceAtLeast(1)
+    val currentPage = sliderCurrentPage.roundToInt().coerceIn(1, maxPage)
 
     AnimatedVisibility(
         visible = isVisible,
@@ -1255,128 +1208,73 @@ fun EpubReaderPageSlider(
         exit = slideOutVertically(animationSpec = tween(200)) { fullHeight -> fullHeight } + fadeOut(animationSpec = tween(200)),
         modifier = modifier
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Spacer(Modifier.height(72.dp))
-            Box(
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
+        ) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
-                        .padding(horizontal = 32.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    BoxWithConstraints(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Slider(
-                            value = sliderCurrentPage,
-                            onValueChange = onScrub,
-                            valueRange = 1f..(totalPages.toFloat().coerceAtLeast(1f)),
-                            steps = if (totalPages > 2) totalPages - 2 else 0,
-                            modifier = Modifier.fillMaxWidth(),
-                            thumb = {
-                                Surface(
-                                    modifier = Modifier.size(20.dp),
-                                    shape = CircleShape,
-                                    color = effectiveActiveColor,
-                                    tonalElevation = 0.dp,
-                                    shadowElevation = 0.dp
-                                ) {}
-                            },
-                            track = { sliderState ->
-                                val trackHeight = 2.dp
-                                val trackShape = RoundedCornerShape(trackHeight)
-                                val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
-                                val fraction = if (range == 0f) 0f else {
-                                    ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(trackHeight)
-                                        .background(
-                                            color = effectiveInactiveColor,
-                                            shape = trackShape
-                                        )
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth(fraction)
-                                            .fillMaxHeight()
-                                            .background(
-                                                color = effectiveActiveColor,
-                                                shape = trackShape
-                                            )
-                                    )
-                                }
-                            }
-                        )
-
-                        // Thumbnail Indicator
-                        val startPageOffsetFraction = if (totalPages > 1) {
-                            (sliderStartPage - 1).toFloat() / (totalPages - 1)
-                        } else {
-                            0f
-                        }
-                        val thumbWidth = 20.dp
-                        val trackWidth = maxWidth - thumbWidth
-                        val startPagePixelPosition = (trackWidth * startPageOffsetFraction) + (thumbWidth / 2)
-                        val thumbnailModifier = Modifier
-                            .graphicsLayer { clip = false }
-                            .align(Alignment.TopStart)
-                            .offset(
-                                x = startPagePixelPosition - (45.dp / 2),
-                                y = (-72).dp
+                IconButton(
+                    onClick = {
+                        onJumpToPage(
+                            readerSliderStepPage(
+                                currentPage = currentPage,
+                                delta = -1,
+                                minPage = 1,
+                                maxPage = maxPage
                             )
+                        )
+                    },
+                    enabled = currentPage > 1,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateBefore,
+                        contentDescription = stringResource(R.string.desktop_previous_page),
+                        tint = effectiveContentColor.copy(alpha = if (currentPage > 1) 0.9f else 0.32f)
+                    )
+                }
 
-                        if (currentRenderMode == RenderMode.VERTICAL_SCROLL) {
-                            startPageThumbnail?.let { thumbnail ->
-                                ThumbnailWithIndicator(
-                                    modifier = thumbnailModifier,
-                                    borderColor = effectiveActiveColor,
-                                    onClick = { onJumpToPage(sliderStartPage) }
-                                ) {
-                                    Image(
-                                        bitmap = thumbnail.asImageBitmap(),
-                                        contentDescription = stringResource(R.string.content_desc_start_page_thumbnail),
-                                        contentScale = ContentScale.FillBounds,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-                            }
-                        } else {
-                            val startPageChapterIndex = remember(sliderStartPage, paginator) {
-                                (paginator as? BookPaginator)?.findChapterIndexForPage(sliderStartPage - 1)
-                            }
-                            val startPageChapterTitle = remember(startPageChapterIndex) {
-                                startPageChapterIndex?.let { chapters.getOrNull(it)?.title }
-                            }
-                            ThumbnailWithIndicator(
-                                modifier = thumbnailModifier,
-                                borderColor = effectiveActiveColor,
-                                onClick = { onJumpToPage(sliderStartPage) }
-                            ) {
-                                PaginatedThumbnailContent(
-                                    pageNumber = sliderStartPage,
-                                    chapterTitle = startPageChapterTitle,
-                                    surfaceColor = effectiveThumbnailSurfaceColor,
-                                    contentColor = effectiveThumbnailContentColor
-                                )
-                            }
-                        }
-                    }
+                ReaderMinimalSlider(
+                    value = sliderCurrentPage.coerceIn(1f, maxPage.toFloat()),
+                    onValueChange = onScrub,
+                    valueRange = 1f..maxPage.toFloat(),
+                    enabled = maxPage > 1,
+                    activeColor = effectiveActiveColor,
+                    inactiveColor = effectiveInactiveColor,
+                    thumbColor = effectiveActiveColor,
+                    markerValue = sliderStartPage.toFloat(),
+                    markerColor = effectiveActiveColor,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(32.dp)
+                )
 
-                    Text(
-                        text = "${sliderCurrentPage.roundToInt()} / $totalPages",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = effectiveContentColor,
-                        fontSize = 18.sp
+                IconButton(
+                    onClick = {
+                        onJumpToPage(
+                            readerSliderStepPage(
+                                currentPage = currentPage,
+                                delta = 1,
+                                minPage = 1,
+                                maxPage = maxPage
+                            )
+                        )
+                    },
+                    enabled = currentPage < maxPage,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.NavigateNext,
+                        contentDescription = stringResource(R.string.desktop_next_page),
+                        tint = effectiveContentColor.copy(alpha = if (currentPage < maxPage) 0.9f else 0.32f)
                     )
                 }
             }
@@ -1415,109 +1313,6 @@ fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onSurface
             )
-        }
-    }
-}
-
-@Composable
-internal fun ThumbnailWithIndicator(
-    modifier: Modifier = Modifier,
-    borderColor: Color = Color.Unspecified,
-    onClick: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    val effectiveBorderColor = if (borderColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        borderColor
-    }
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Surface(
-            modifier = Modifier
-                .width(45.dp)
-                .height(64.dp)
-                .clickable(onClick = onClick),
-            shape = RoundedCornerShape(4.dp),
-            border = BorderStroke(2.dp, effectiveBorderColor)
-        ) {
-            content()
-        }
-        Box(
-            modifier = Modifier
-                .offset(y = (-4).dp)
-                .size(8.dp)
-                .rotate(45f)
-                .background(effectiveBorderColor)
-        )
-    }
-}
-
-@Composable
-private fun PaginatedThumbnailContent(
-    pageNumber: Int,
-    chapterTitle: String?,
-    surfaceColor: Color = Color.Unspecified,
-    contentColor: Color = Color.Unspecified
-) {
-    val effectiveSurfaceColor = if (surfaceColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.surfaceVariant
-    } else {
-        surfaceColor
-    }
-    val effectiveContentColor = if (contentColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    } else {
-        contentColor
-    }
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = effectiveSurfaceColor,
-        contentColor = effectiveContentColor
-    ) {
-        Column(
-            modifier = Modifier.padding(4.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (chapterTitle != null) {
-                Text(
-                    text = chapterTitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    lineHeight = 10.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-            Text(
-                text = "$pageNumber",
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
-}
-
-suspend fun captureWebViewVisibleArea(webView: WebView): Bitmap? {
-    return withContext(Dispatchers.Main) {
-        if (webView.width <= 0 || webView.height <= 0) return@withContext null
-        try {
-            val thumbnailWidth = 180
-            val thumbnailHeight = 256
-            val bitmap = createBitmap(thumbnailWidth, thumbnailHeight)
-            val canvas = Canvas(bitmap)
-            val scale = thumbnailWidth.toFloat() / webView.width.toFloat()
-            canvas.scale(scale, scale)
-            canvas.translate(-webView.scrollX.toFloat(), -webView.scrollY.toFloat())
-            webView.draw(canvas)
-            bitmap
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to capture webview content")
-            null
         }
     }
 }

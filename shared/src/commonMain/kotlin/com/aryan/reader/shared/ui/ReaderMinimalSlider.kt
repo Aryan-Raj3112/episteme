@@ -34,7 +34,9 @@ fun ReaderMinimalSlider(
     onValueChangeFinished: (() -> Unit)? = null,
     activeColor: Color? = null,
     inactiveColor: Color? = null,
-    thumbColor: Color? = null
+    thumbColor: Color? = null,
+    markerValue: Float? = null,
+    markerColor: Color? = null
 ) {
     var widthPx by remember { mutableFloatStateOf(0f) }
     var dragValue by remember { mutableStateOf<Float?>(null) }
@@ -87,6 +89,8 @@ fun ReaderMinimalSlider(
     val effectiveActiveColor = activeColor ?: MaterialTheme.colorScheme.primary
     val effectiveInactiveColor = inactiveColor ?: MaterialTheme.colorScheme.surfaceVariant
     val effectiveThumbColor = thumbColor ?: MaterialTheme.colorScheme.primary
+    val effectiveMarkerColor = markerColor ?: effectiveActiveColor
+    val markerFraction = readerMinimalSliderMarkerFraction(markerValue, valueRange)
     val disabledAlpha = if (enabled) 1f else 0.38f
 
     Box(
@@ -122,6 +126,22 @@ fun ReaderMinimalSlider(
                 cornerRadius = cornerRadius
             )
 
+            markerFraction?.let { fraction ->
+                val markerWidth = 2.dp.toPx()
+                val markerHeight = 12.dp.toPx()
+                val markerX = if (size.width <= markerWidth) {
+                    size.width / 2f
+                } else {
+                    (size.width * fraction).coerceIn(markerWidth / 2f, size.width - markerWidth / 2f)
+                }
+                drawRoundRect(
+                    color = effectiveMarkerColor.copy(alpha = effectiveMarkerColor.alpha * disabledAlpha),
+                    topLeft = Offset(markerX - markerWidth / 2f, centerY - markerHeight / 2f),
+                    size = Size(markerWidth, markerHeight),
+                    cornerRadius = CornerRadius(markerWidth / 2f, markerWidth / 2f)
+                )
+            }
+
             val thumbCenterX = if (size.width <= thumbRadius * 2f) {
                 size.width / 2f
             } else {
@@ -134,4 +154,17 @@ fun ReaderMinimalSlider(
             )
         }
     }
+}
+
+internal fun readerMinimalSliderMarkerFraction(
+    markerValue: Float?,
+    valueRange: ClosedFloatingPointRange<Float>
+): Float? {
+    val marker = markerValue ?: return null
+    val rangeStart = valueRange.start
+    val rangeEnd = valueRange.endInclusive
+    if (rangeEnd <= rangeStart) return null
+
+    return ((marker.coerceIn(rangeStart, rangeEnd) - rangeStart) / (rangeEnd - rangeStart))
+        .coerceIn(0f, 1f)
 }

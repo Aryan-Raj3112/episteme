@@ -1,13 +1,10 @@
 package com.aryan.reader.pdf
 
-import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -21,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,10 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -192,42 +185,6 @@ internal fun PageScrubbingAnimation(
                 color = MaterialTheme.colorScheme.onSurface
             )
         }
-    }
-}
-
-@Composable
-internal fun ThumbnailWithIndicator(
-    thumbnail: Bitmap,
-    modifier: Modifier = Modifier,
-    borderColor: Color = Color.Unspecified,
-    onClick: () -> Unit
-) {
-    val effectiveBorderColor = if (borderColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        borderColor
-    }
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(
-            modifier = Modifier
-                .width(45.dp)
-                .height(64.dp)
-                .clickable(onClick = onClick),
-            shape = RoundedCornerShape(4.dp),
-            border = BorderStroke(2.dp, effectiveBorderColor)
-        ) {
-            Image(
-                bitmap = thumbnail.asImageBitmap(),
-                contentDescription = stringResource(R.string.content_desc_start_page_thumbnail),
-                contentScale = ContentScale.FillBounds,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        Box(modifier = Modifier
-            .offset(y = (-4).dp)
-            .size(8.dp)
-            .rotate(45f)
-            .background(effectiveBorderColor))
     }
 }
 
