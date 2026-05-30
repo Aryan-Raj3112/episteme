@@ -16,7 +16,7 @@
     <string name="action_clear">Clear</string>
     <string name="action_apply">Apply</string>
     <string name="action_enable">Enable</string>
-    <!-- Generic error label. %1$s = the error message. -->
+    <!-- Generic error label. %1$s = the error message. Example: "Error: File not found." -->
     <string name="error_message_format">Error: %1$s</string>
     <string name="action_go_back">Go Back</string>
     <!-- Tab label in the multi-tab PDF reader — means the slot is available (unused), NOT "free of cost". -->
@@ -29,12 +29,12 @@
     <string name="dialog_close_all_tabs_desc">Are you sure you want to close all active tabs?</string>
 
     <!-- Shared Composables & Dialogs -->
-    <!-- Full legal agreement sentence. %1$s = introductory phrase (e.g. "By signing in,"); %2$s = hyperlinked "Terms of Service"; %3$s = hyperlinked "Privacy Policy". The three parts are assembled in code. -->
+    <!-- Full legal agreement sentence. %1$s = introductory phrase such as "By signing in,"; %2$s = hyperlinked "Terms of Service"; %3$s = hyperlinked "Privacy Policy". Example: "By signing in, you agree to our Terms of Service and acknowledge you have read our Privacy Policy." -->
     <string name="legal_agreement_full">%1$s you agree to our %2$s and acknowledge you have read our %3$s.</string>
     <string name="legal_terms_of_service">Terms of Service</string>
     <string name="legal_privacy_policy">Privacy Policy</string>
     <string name="legal_licenses">Licenses</string>
-    <!-- Shown in the multi-select top bar. %1$d = number of items the user has selected. -->
+    <!-- Shown in the multi-select top bar. %1$d = number of items the user has selected. Example: "3 selected". -->
     <string name="items_selected_count">%1$d selected</string>
     <string name="clear_selection">Clear Selection</string>
     <!-- Combined toggle label for a pin/unpin action on a book. -->
@@ -47,10 +47,10 @@
     <string name="file_information">File Information</string>
     <string name="book_name">Book Name</string>
     <string name="copy_name">Copy Name</string>
-    <!-- Shown in the file information dialog. %1$s = the original filename before the user renamed it. -->
+    <!-- Shown in the file information dialog. %1$s = the original filename before the user renamed it. Example: "Original Name: Notes.epub". -->
     <string name="original_name">Original Name: %1$s</string>
     <string name="revert_to_original">Revert to Original</string>
-    <!-- Shown in the file information dialog. %1$s = the file\'s name on disk. -->
+    <!-- Shown in the file information dialog. %1$s = the file\'s name on disk. Example: "File Name: Notes.epub". -->
     <string name="file_name">File Name: %1$s</string>
     <string name="author">Author</string>
     <string name="format">Format</string>
@@ -63,7 +63,7 @@
     <string name="internal_storage">Internal storage</string>
     <!-- "Episteme" is the app brand name and must not be translated. -->
     <string name="about_title">About Episteme</string>
-    <!-- Shown in the About dialog header. %1$s = version string (e.g. "1.0.41"); %2$d = integer build number. -->
+    <!-- Shown in the About dialog header. %1$s = version string; %2$d = integer build number. Example: "Version: 1.0.41 (Build: 1041)". -->
     <string name="about_version">Version: %1$s (Build: %2$d)</string>
     <string name="empty_select_file">Select a File</string>
     <string name="clear_cloud_data_title">Clear All Synced Data?</string>
@@ -83,9 +83,9 @@
     <string name="sync_folder">Sync Folder</string>
     <string name="local_folder">Local Folder</string>
     <!-- "OPDS" is the name of a catalog protocol — do not translate. -->
-    <string name="opds_stream" translatable="false">OPDS Stream</string>
+    <string name="opds_stream" translatable="false">OPDS</string>
     <string name="pinned">Pinned</string>
-    <!-- Reading progress shown on a book card. %1$d = percentage (0–100). %% is a literal percent sign. -->
+    <!-- Reading progress shown on a book card. %1$d = percentage from 0 to 100. %% is a literal percent sign. Example: "42% complete". -->
     <string name="progress_complete">%1$d%% complete</string>
     <string name="not_available_locally">Not available locally</string>
 
@@ -110,7 +110,7 @@
     <!-- Top Bar Options -->
     <string name="options_recent_limit">Recent Files Limit</string>
     <string name="options_no_limit">No limit</string>
-    <!-- Shown as a selectable limit option. %1$d = number of files (e.g. "10 files", "25 files"). -->
+    <!-- Shown as a selectable recent-file limit option. %1$d = number of files. Example: "25 files". -->
     <string name="options_files_limit">%1$d files</string>
     <string name="options_clear_book_cache">Clear Book Cache</string>
     <string name="options_clear_reflow_cache">Clear Reflow Cache</string>
@@ -119,17 +119,17 @@
     <string name="library_title">Library</string>
     <!-- Placeholder text inside the library search field. -->
     <string name="search_placeholder">Search title or author…</string>
-    <!-- Active file-type filter chip label. %1$s = comma-separated list of active types (e.g. "PDF, EPUB"). -->
+    <!-- Active file-type filter chip label. %1$s = comma-separated list of active types. Example: "Types: PDF, EPUB". -->
     <string name="filter_types">Types: %1$s</string>
-    <!-- Active folder filter chip label. %1$d = number of folder filters currently active. -->
+    <!-- Active folder filter chip label. %1$d = number of folder filters currently active. Example: "Folders: 2". -->
     <string name="filter_folders">Folders: %1$d</string>
-    <!-- Active read-status filter chip label. %1$s = status name (e.g. "Unread", "In Progress"). -->
+    <!-- Active read-status filter chip label. %1$s = status name. Example: "Status: In Progress". -->
     <string name="filter_status">Status: %1$s</string>
     <string name="tab_all_books">All Books</string>
     <string name="tab_shelves">Shelves</string>
     <string name="tab_folders">Folders</string>
     <string name="tab_catalogs">Catalogs</string>
-    <!-- Shown when the library search has no matches. %1$s = the user\'s search query. -->
+    <!-- Shown when the library search has no matches. %1$s = the user\'s search query. Example: "No results found for \"hobbit\"". -->
     <string name="no_results_found">No results found for \"%1$s\"</string>
     <string name="library_empty_desc">Select a PDF, EPUB, MOBI, or AZW3 file from your device to get started.</string>
     <!-- Floating action button label to add a file to the library. -->
@@ -144,21 +144,21 @@
     <!-- Floating action button label shown inside a shelf to add books to it. -->
     <string name="fab_add_books">Add books</string>
     <string name="shelf_empty">This shelf is empty</string>
-    <!-- FAB label shown while adding books. %1$s = the name of the target shelf. -->
+    <!-- FAB label shown while adding books. %1$s = the name of the target shelf. Example: "Add to Favorites". -->
     <string name="add_to_shelf">Add to %1$s</string>
-    <!-- FAB button label showing count of selected books. %1$d = number selected. Intentionally all-caps. -->
+    <!-- FAB button label showing count of selected books. %1$d = number selected. Intentionally all-caps. Example: "ADD (3)". -->
     <string name="fab_add_count">ADD (%1$d)</string>
     <string name="no_unshelved_books">No unshelved books to add</string>
     <string name="all_books_in_shelf">All books are already in this shelf</string>
     <string name="dialog_rename_shelf">Rename Shelf</string>
     <string name="dialog_delete_shelf">Delete Shelf?</string>
-    <!-- Confirmation dialog. %1$s = name of the shelf being deleted. -->
+    <!-- Confirmation dialog. %1$s = name of the shelf being deleted. Example: "Are you sure you want to delete the 'Favorites' shelf? All books will be moved to Unshelved." -->
     <string name="dialog_delete_shelf_desc">Are you sure you want to delete the \'%1$s\' shelf? All books will be moved to Unshelved.</string>
     <string name="dialog_remove_from_shelf">Remove from Shelf?</string>
 
-    <!-- Dialog title when deleting multiple shelves. %1$s = shelf name(s). -->
+    <!-- Dialog title when deleting multiple shelves. %1$s = localized shelf count phrase such as "3 shelves". Example: "Delete 3 shelves?" -->
     <string name="dialog_delete_shelves">Delete %1$s?</string>
-    <!-- Dialog body when deleting multiple shelves. %1$d = count of selected shelves; %2$s = "shelf" or "shelves" (resolved from a plural). -->
+    <!-- Dialog body when deleting multiple shelves. %1$d = selected shelf count; %2$s = localized shelf noun such as "shelves" (do not include the number). Example: "Are you sure you want to delete the 3 selected shelves? All books within will be moved to Unshelved." -->
     <string name="dialog_delete_shelves_desc">Are you sure you want to delete the %1$d selected %2$s? All books within will be moved to Unshelved.</string>
 
     <!-- Folder Sync -->
@@ -180,6 +180,7 @@
     <string name="menu_enable_folder_local_sync">Enable local sync</string>
     <string name="folder_local_sync_disabled">Local sync disabled</string>
     <string name="dialog_disable_folder_local_sync_title">Disable local folder sync?</string>
+    <!-- Confirmation body for disabling local folder sync. %1$s = sync metadata folder name. Example: "Episteme will stop scanning this folder and stop writing JSON sync files. Remove the EpistemeSyncData folder from this folder too?" -->
     <string name="dialog_disable_folder_local_sync_desc">Episteme will stop scanning this folder and stop writing JSON sync files. Remove the %1$s folder from this folder too?</string>
     <string name="action_disable_keep_sync_data">Keep sync data</string>
     <string name="action_disable_remove_sync_data">Remove sync data</string>
@@ -237,9 +238,9 @@
     <string name="username">Username</string>
     <string name="password">Password</string>
     <string name="delete_catalog">Delete Catalog</string>
-    <!-- Confirmation dialog. %1$s = the name of the catalog being deleted. -->
+    <!-- Confirmation dialog. %1$s = the name of the catalog being deleted. Example: "Are you sure you want to delete 'Project Gutenberg'?" -->
     <string name="delete_catalog_desc">Are you sure you want to delete \'%1$s\'?</string>
-    <!-- Warning shown when deleting a catalog that has associated streaming books. %1$d = number of streaming books that will also be removed from the library. -->
+    <!-- Warning shown when deleting a catalog that has associated streaming books. %1$d = number of streaming books that will also be removed from the library. Example: "Deleting this catalog will also permanently remove 4 streaming books associated with it from your library." -->
     <string name="delete_catalog_warning">Deleting this catalog will also permanently remove %1$d streaming books associated with it from your library.</string>
     <!-- Label for a preset badge/chip shown on OPDS catalog entries. -->
     <string name="preset_label">Preset</string>
@@ -305,7 +306,7 @@
     <string name="action_browse_google_fonts">Browse Google Fonts</string>
     <string name="google_fonts_search_placeholder">Search 1900+ fonts…</string>
     <string name="google_fonts_popular_choices">Popular Choices</string>
-    <!-- Empty state in the Google Fonts browser. %1$s = the user-entered search query. -->
+    <!-- Empty state in the Google Fonts browser. %1$s = the user-entered search query. Example: "No fonts found matching 'Roboto'". -->
     <string name="google_fonts_no_matches">No fonts found matching \'%1$s\'</string>
     <string name="content_desc_already_downloaded">Already Downloaded</string>
     <string name="no_custom_fonts">No Custom Fonts</string>
@@ -315,10 +316,10 @@
     <string name="font_preview_text" translatable="false">Grumpy wizards make toxic brew for the evil queen! 1234567890 ?.,;:</string>
     <string name="font_preview_error">Preview unavailable (Invalid font file)</string>
     <string name="dialog_delete_font">Delete Font?</string>
-    <!-- Confirmation dialog. %1$s = display name of the font being deleted. -->
+    <!-- Confirmation dialog. %1$s = display name of the font being deleted. Example: "Are you sure you want to delete 'Merriweather'? This will remove it from all your devices if sync is on." -->
     <string name="dialog_delete_font_desc">Are you sure you want to delete \'%1$s\'? This will remove it from all your devices if sync is on.</string>
     <string name="dialog_delete_fonts">Delete Fonts?</string>
-    <!-- Confirmation dialog. %1$d = number of selected fonts being deleted. -->
+    <!-- Confirmation dialog. %1$d = number of selected fonts being deleted. Example: "Are you sure you want to delete 3 selected fonts? This will remove them from all your devices if sync is on." -->
     <string name="dialog_delete_fonts_desc">Are you sure you want to delete %1$d selected fonts? This will remove them from all your devices if sync is on.</string>
 
     <!-- Feedback -->
@@ -349,7 +350,7 @@
     <string name="device_limit_reached">Device Limit Reached</string>
     <!-- "Episteme Pro" is the product tier name — do not translate "Episteme". -->
     <string name="device_limit_reached_desc">To use Episteme Pro on this device, please remove one of your existing registered devices.</string>
-    <!-- Shown in the device management list. %1$s = a formatted relative date/time string (e.g. "2 days ago"). -->
+    <!-- Shown in the device management list. %1$s = a formatted relative date/time string. Example: "Last seen: 2 days ago". -->
     <string name="last_seen">Last seen: %1$s</string>
     <string name="dialog_destructive_action">Confirm Destructive Action</string>
     <!-- "Google Drive" is a brand name — do not translate. -->
@@ -437,25 +438,25 @@
     <string name="debug_show_device_management" translatable="false">[Debug] Show Device Management</string>
     <!-- Debug-only menu item, not shown to regular users. -->
     <string name="debug_clear_cloud_local_data" translatable="false">[Debug] Clear Cloud &amp; Local Data</string>
-    <!-- Debug overlay showing frames per second. %1$d = integer FPS value. Not shown to regular users. -->
+    <!-- Debug overlay showing frames per second. %1$d = integer FPS value. Not shown to regular users. Example: "FPS: 60". -->
     <string name="debug_fps" translatable="false">FPS: %1$d</string>
     <string name="error_folder_selection_unsupported">Your device doesn\'t support folder selection. You can still import files individually.</string>
     <string name="error_no_file_manager">No file manager found. Please install a file manager app.</string>
     <!-- Email subject line for user feedback. "Episteme Reader" is the app name — do not translate. -->
     <string name="feedback_email_subject" translatable="false">Feedback: Episteme Reader</string>
-    <!-- Banner shown after a file is downloaded from an OPDS catalog. %1$s = the downloaded filename. -->
+    <!-- Banner shown after a file is downloaded from an OPDS catalog. %1$s = the downloaded filename. Example: "Downloaded Dracula.epub". -->
     <string name="banner_downloaded">Downloaded %1$s</string>
-    <!-- Generic compound filter label. %1$s = filter category name; %2$s = filter value (e.g. "Type: PDF"). -->
+    <!-- Generic compound filter label. %1$s = filter category name; %2$s = filter value. Example: "Type: PDF". -->
     <string name="filter_facet">%1$s: %2$s</string>
     <!-- Shown in the folder sync card\'s "Last Sync" field when the folder has never been scanned. -->
     <string name="never">Never</string>
-    <!-- Folder filter chip label. %1$s = folder display name; %2$d = number of books in that folder. -->
+    <!-- Folder filter chip label. %1$s = folder display name; %2$d = number of books in that folder. Example: "Downloads: 12". -->
     <string name="folder_filter_count">%1$s: %2$d</string>
 
     <!-- ViewModel Messages: Banners & Errors -->
-    <!-- %1$d = count of streaming books that were removed when a catalog was deleted. -->
+    <!-- Catalog deletion banner. %1$d = count of streaming books removed with the catalog. Example: "Removed 5 streaming books." -->
     <string name="banner_removed_streaming_books">Removed %1$d streaming books.</string>
-    <!-- %1$s = error reason/message from the system. -->
+    <!-- Font import error. %1$s = error reason/message from the system. Example: "Failed to import font: Unsupported format". -->
     <string name="error_import_font">Failed to import font: %1$s</string>
     <!-- "Text view" is the name of the PDF reflow/text feature in this app. -->
     <string name="banner_text_view_deleted">Text view deleted.</string>
@@ -473,22 +474,22 @@
     <!-- PDF = file format name — do not translate. -->
     <string name="banner_pdf_saved">PDF saved successfully.</string>
     <string name="error_open_file_saving">Failed to open file for saving.</string>
-    <!-- %1$s = error message from the system. PDF = file format name — do not translate. -->
+    <!-- PDF save error. PDF = file format name; keep it as-is. %1$s = error message from the system. Example: "Error saving PDF: Storage permission denied". -->
     <string name="error_saving_pdf">Error saving PDF: %1$s</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="banner_saving_original_pdf">Saving original PDF…</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="banner_original_pdf_saved">Original PDF saved successfully.</string>
-    <!-- Email/share subject line. %1$s = the name of the file being shared. -->
+    <!-- Email/share subject line. %1$s = the name of the file being shared. Example: "Sharing: Dracula.pdf". -->
     <string name="share_subject">Sharing: %1$s</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="share_chooser_title">Share PDF</string>
-    <!-- %1$s = error reason string from the system. -->
+    <!-- Share failure banner. %1$s = error reason string from the system. Example: "Share failed: No app found". -->
     <string name="error_share_failed">Share failed: %1$s</string>
-    <!-- %1$d = the maximum number of folders allowed (currently 3). -->
+    <!-- Folder sync limit error. %1$d = the maximum number of folders allowed. Example: "Limit reached: Maximum 3 folders allowed." -->
     <string name="error_folder_limit_reached">Limit reached: Maximum %1$d folders allowed.</string>
     <string name="error_folder_already_synced">This folder is already synced.</string>
-    <!-- %1$s = the display name or path of the folder that was added. -->
+    <!-- Folder sync success banner. %1$s = the display name or path of the folder that was added. Example: "Folder added: Downloads". -->
     <string name="banner_folder_added">Folder added: %1$s</string>
     <string name="error_access_folder_permissions">Failed to access folder permissions.</string>
     <string name="banner_folder_removed">Folder removed.</string>
@@ -502,7 +503,7 @@
     <string name="banner_folder_sync_data_remove_failed">Local folder sync disabled, but the sync data folder could not be removed.</string>
     <string name="banner_folder_local_sync_enabled">Local folder sync enabled.</string>
     <string name="error_enable_sync_download">Enable sync to download files.</string>
-    <!-- %1$s = the filename that failed to download. -->
+    <!-- Download failure error. %1$s = the filename that failed to download. Example: "Failed to download Dracula.epub." -->
     <string name="error_download_failed">Failed to download %1$s.</string>
     <string name="error_enable_sync_clear_cloud">Enable sync to clear cloud data.</string>
     <string name="error_not_signed_in_clear_cloud">Not signed in, cannot clear cloud data.</string>
@@ -529,13 +530,13 @@
     <string name="error_load_generated_text_view">Failed to load generated text view.</string>
     <!-- "Text view" is the name of the PDF reflow feature in this app. -->
     <string name="error_text_view_generation_failed">Text view generation failed.</string>
-    <!-- FB2 is a file format name — do not translate. %1$s = error message from the system. -->
+    <!-- FB2 is a file format name; keep it as-is. %1$s = error message from the system. Example: "Failed to load FB2: File is corrupt". -->
     <string name="error_load_fb2">Failed to load FB2: %1$s</string>
-    <!-- %1$s = error message from the system. -->
+    <!-- Generic file load error. %1$s = error message from the system. Example: "Failed to load file: Permission denied". -->
     <string name="error_load_file">Failed to load file: %1$s</string>
-    <!-- MOBI is a file format name — do not translate. %1$s = error message from the system. -->
+    <!-- MOBI is a file format name; keep it as-is. %1$s = error message from the system. Example: "Failed to load MOBI: Unsupported compression". -->
     <string name="error_load_mobi">Failed to load MOBI: %1$s</string>
-    <!-- EPUB is a file format name — do not translate. %1$s = error message from the system. -->
+    <!-- EPUB is a file format name; keep it as-is. %1$s = error message from the system. Example: "Failed to load EPUB: Missing container file". -->
     <string name="error_load_epub">Failed to load EPUB: %1$s</string>
     <string name="banner_file_deleted_from_folder">File deleted from folder. Removed from library.</string>
     <string name="error_shelf_exists">A shelf with that name already exists.</string>
@@ -562,7 +563,7 @@
     <string name="ai_thinking">Thinking…</string>
     <string name="content_desc_open_dictionary">Open in Dictionary App</string>
     <string name="ai_no_definition">AI could not provide a definition.</string>
-    <!-- AI feature string. %1$s = the word or phrase the user selected. -->
+    <!-- AI feature status. %1$s = the word or phrase the user selected. Example: "Asking AI about 'metaphor'..." -->
     <string name="ai_asking_about">Asking AI about \'%1$s\'…</string>
 
     <!-- Common.kt: TtsSettingsSheet -->
@@ -589,12 +590,12 @@
     <string name="tts_loading_voices">Loading voices…</string>
     <string name="tts_no_voices">No voices available on this device.</string>
     <string name="tts_specific_voices">Specific Voices</string>
-    <!-- %1$d = total number of TTS voices available on this device. -->
+    <!-- TTS voice list heading. %1$d = total number of TTS voices available on this device. Example: "Available Voices (12)". -->
     <string name="tts_available_voices_count">Available Voices (%1$d)</string>
     <string name="tts_no_voices_for_language">No voices found for this language.</string>
-    <!-- %1$s = the variant label provided by the TTS engine (e.g. "Male", "Female", locale variant string). -->
+    <!-- TTS voice metadata row. %1$s = the variant label provided by the TTS engine, such as "Male" or a locale variant. Example: "Variant: Female". -->
     <string name="tts_voice_variant">Variant: %1$s</string>
-    <!-- Sample sentence spoken aloud to preview a TTS voice. %1$s = voice name from the TTS engine. -->
+    <!-- Sample sentence spoken aloud to preview a TTS voice. %1$s = voice name from the TTS engine. Example: "This is a sample of en-us-x-tpf-local." -->
     <string name="tts_voice_sample_text">This is a sample of %1$s.</string>
 
     <!-- Common.kt: ReaderThemePanel & ThemeBuilderView -->
@@ -667,10 +668,10 @@
     <string name="ai_error_book_content_empty">The book content is empty.</string>
     <string name="ai_error_parse_summary">Failed to parse summary from server response.</string>
     <string name="ai_error_fetch_summary">Could not fetch summary.</string>
-    <!-- %1$d = HTTP or server error code; %2$s = human-readable error message from the server. -->
+    <!-- AI/server error. %1$d = HTTP or server error code; %2$s = human-readable error message from the server. Example: "Error: 500. Server unavailable". -->
     <string name="ai_error_with_code">Error: %1$d. %2$s</string>
     <string name="ai_error_network_server">Network error. Please check connection and server status.</string>
-    <!-- %1$d = chapter number being analyzed. -->
+    <!-- AI chapter-summary progress. %1$d = chapter number being analyzed. Example: "Analyzing Chapter 4..." -->
     <string name="ai_analyzing_chapter">Analyzing Chapter %1$d…</string>
     <string name="ai_reading_position">Reading current position…</string>
     <string name="ai_generating_recap">Generating Recap…</string>
@@ -783,7 +784,7 @@
     <string name="content_desc_faster">Faster</string>
     <string name="content_desc_decrease">Decrease</string>
     <string name="content_desc_increase">Increase</string>
-    <!-- Shown in the PDF reader header. %1$d = current page number; %2$d = total page count. -->
+    <!-- Shown in the PDF reader header. %1$d = current page number; %2$d = total page count. Example: "Page 12 of 240". -->
     <string name="page_of_pages">Page %1$d of %2$d</string>
 
     <!-- EpubReaderDrawer.kt -->
@@ -812,11 +813,12 @@
     <string name="dialog_delete_highlight_desc">Are you sure you want to permanently delete this highlight?</string>
 
     <!-- EpubReaderScreen.kt -->
+    <!-- Toast shown after saving an image from a book. %1$s = saved image filename. Example: "Saved cover.jpg". -->
     <string name="saved_image_message">Saved %1$s</string>
     <string name="error_save_image">Could not save image.</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="banner_original_pdf_not_found">Original PDF not found.</string>
-    <!-- Error state shown in the reader. %1$s = the file path that could not be found. -->
+    <!-- Error state shown in the reader. %1$s = the file path that could not be found. Example: "Error: Book content not found. Path: /books/Dracula.epub". -->
     <string name="error_book_content_not_found">Error: Book content not found. Path: %1$s</string>
     <string name="toast_select_dictionary_first">Please select a dictionary app first.</string>
     <string name="toast_select_translate_first">Please select a translate app first.</string>
@@ -837,13 +839,13 @@
     <string name="banner_wait_for_load">Wait for book to load fully.</string>
     <string name="release_for_previous_chapter">Release for Previous Chapter</string>
     <string name="release_for_next_chapter">Release for Next Chapter</string>
-    <!-- Shown while the user is pulling to navigate to another chapter. %1$d = current pull percentage (0–100). %% is a literal percent sign. -->
+    <!-- Shown while the user is pulling to navigate to another chapter. %1$d = current pull percentage from 0 to 100. %% is a literal percent sign. Example: "Pull further... (45%)". -->
     <string name="pull_further_percent">Pull further… (%1$d%%)</string>
     <string name="chapter">Chapter</string>
     <string name="error_could_not_get_chapter_content">Could not get chapter content.</string>
     <string name="error_could_not_determine_chapter">Could not determine current chapter.</string>
     <string name="error_webview_not_available">WebView not available.</string>
-    <!-- Shown in the chapter navigation overlay. %1$d = current page within the chapter; %2$d = total pages in the chapter. -->
+    <!-- Shown in the chapter navigation overlay. %1$d = current page within the chapter; %2$d = total pages in the chapter. Example: "Page 3/18". -->
     <string name="page_number_of_total">Page %1$d/%2$d</string>
 
     <!-- EpubReaderSettings.kt -->
@@ -888,6 +890,7 @@
     <string name="reader_brightness_system_desc">Follows the device brightness setting.</string>
     <string name="reader_brightness_custom">Custom brightness</string>
     <string name="reader_brightness_custom_desc">Applies while a reader screen is open.</string>
+    <!-- Brightness value label. %1$d = brightness percentage. %% is a literal percent sign. Example: "70%". -->
     <string name="reader_brightness_percent">%1$d%%</string>
 
     <!-- ExternalDictionaryHelper.kt -->
@@ -903,9 +906,9 @@
     <!-- OSS = Open Source Software. -->
     <string name="about_oss_version">Open Source Version</string>
     <string name="about_play_version">Playstore Version</string>
-    <!-- %1$s = version string (e.g. "1.0.41"). -->
+    <!-- About screen version label. %1$s = version string. Example: "Version 1.0.41". -->
     <string name="about_version_name">Version %1$s</string>
-    <!-- %1$s = build code string. -->
+    <!-- About screen build label. %1$s = build code string. Example: "Build 1041". -->
     <string name="about_build_code">Build %1$s</string>
     <!-- "GitHub" is a brand name — do not translate. -->
     <string name="about_github" translatable="false">GitHub</string>
@@ -914,26 +917,26 @@
     <string name="about_privacy_desc">How we handle your data.</string>
     <string name="about_terms_desc">Usage terms and conditions.</string>
     <string name="about_licenses_desc">Open source libraries used.</string>
-    <!-- %1$d = number of books being imported. -->
+    <!-- Import progress banner. %1$d = number of books being imported. Example: "Importing 3 books... They will appear in your Library shortly." -->
     <string name="banner_importing_multiple">Importing %1$d books… They will appear in your Library shortly.</string>
-    <!-- Shared library mutation banner. %1$s = shelf name. -->
+    <!-- Shared library mutation banner. %1$s = shelf name. Example: "Created shelf \"Favorites\"." -->
     <string name="banner_shelf_created">Created shelf &quot;%1$s&quot;.</string>
-    <!-- Shared library mutation banner. %1$s = smart shelf name. -->
+    <!-- Shared library mutation banner. %1$s = smart shelf name. Example: "Created smart shelf \"Unread PDFs\"." -->
     <string name="banner_smart_shelf_created">Created smart shelf &quot;%1$s&quot;.</string>
-    <!-- Shared library mutation banner. %1$s = new shelf name. -->
+    <!-- Shared library mutation banner. %1$s = new shelf name. Example: "Renamed shelf to \"Classics\"." -->
     <string name="banner_shelf_renamed">Renamed shelf to &quot;%1$s&quot;.</string>
-    <!-- Shared library mutation banner. %1$s = shelf name. -->
+    <!-- Shared library mutation banner. %1$s = shelf name. Example: "Deleted shelf \"Old Notes\"." -->
     <string name="banner_shelf_deleted">Deleted shelf &quot;%1$s&quot;.</string>
-    <!-- Shared library mutation banner. %1$s = book title. -->
+    <!-- Shared library mutation banner. %1$s = book title. Example: "Updated \"Dracula\"." -->
     <string name="banner_book_updated">Updated &quot;%1$s&quot;.</string>
     <!-- Shared import result banner shown when selected files already exist in the library. -->
     <string name="banner_duplicate_files_already_in_library">Those files are already in the library.</string>
-    <!-- Folder shelf subtitle that joins already-localized count phrases. %1$s = folder count phrase; %2$s = book count phrase. -->
+    <!-- Folder shelf subtitle that joins already-localized count phrases. %1$s = folder count phrase; %2$s = book count phrase. Example: "2 folders - 12 books". -->
     <string name="folder_subtitle_folder_book_counts">%1$s - %2$s</string>
 
     <!-- General / Dialogs -->
     <string name="dialog_external_link_title">External Link</string>
-    <!-- %1$s = the full URL of the external link the user tapped. -->
+    <!-- External link warning body. %1$s = the full URL of the external link the user tapped. Example: "You clicked on an external link:\n\nhttps://example.com\n\nWhat would you like to do?" -->
     <string name="dialog_external_link_desc">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
     <string name="action_open">Open</string>
     <string name="error_no_browser">No browser found to open the link.</string>
@@ -954,6 +957,7 @@
     <string name="label_note">Note</string>
     <string name="label_comments">Comments</string>
     <string name="label_editing_comment">Editing comment</string>
+    <!-- Reply header for a PDF comment thread. %1$s = author or commenter name. Example: "Replying to Aryan". -->
     <string name="label_replying_to">Replying to %1$s</string>
     <!-- Short label for the edit action in a text-selection popup. -->
     <string name="label_edit">Edit</string>
@@ -978,9 +982,9 @@
     <!-- TTS & AutoScroll Controls -->
     <!-- TTS = Text-to-Speech. -->
     <string name="tts_voice_adjustments">Voice Adjustments</string>
-    <!-- Speed multiplier label. %1$s = speed float value (e.g. "1.5"); the trailing "x" is a speed multiplier suffix. -->
+    <!-- Speed multiplier label. %1$s = speed float value; the trailing "x" is a speed multiplier suffix. Example: "Speed (1.5x)". -->
     <string name="tts_speed_label">Speed (%1$sx)</string>
-    <!-- Pitch multiplier label. %1$s = pitch float value (e.g. "1.0"); the trailing "x" is a multiplier suffix. -->
+    <!-- Pitch multiplier label. %1$s = pitch float value; the trailing "x" is a multiplier suffix. Example: "Pitch (1.0x)". -->
     <string name="tts_pitch_label">Pitch (%1$sx)</string>
     <string name="tts_sample_text">This is how your current voice settings sound.</string>
     <string name="tts_pause_book">Pause Book</string>
@@ -1011,9 +1015,9 @@
     <string name="menu_edit_note">Edit Note</string>
 
     <!-- Page Info -->
-    <!-- Compact page indicator. %1$d = current page; %2$d = total pages. -->
+    <!-- Compact page indicator. %1$d = current page; %2$d = total pages. Example: "3 / 18". -->
     <string name="page_format">%1$d / %2$d</string>
-    <!-- Full page indicator shown in the reader. %1$d = current page; %2$d = total pages. -->
+    <!-- Full page indicator shown in the reader. %1$d = current page; %2$d = total pages. Example: "Page 3 of 18". -->
     <string name="page_of_format">Page %1$d of %2$d</string>
 
     <!-- AnnotationDock -->
@@ -1039,13 +1043,13 @@
     <string name="content_desc_insert_text_box">Insert Text Box</string>
 
     <!-- PdfPageComposable -->
-    <!-- OCR = Optical Character Recognition. %1$s = error reason string. -->
+    <!-- OCR = Optical Character Recognition. %1$s = error reason string. Example: "OCR selection error: No text detected". -->
     <string name="error_ocr_selection">OCR selection error: %1$s</string>
-    <!-- %1$s = error reason string from the selection engine. -->
+    <!-- Selection engine error. %1$s = error reason string from the selection engine. Example: "Selection error: Region is outside page bounds". -->
     <string name="error_selection">Selection error: %1$s</string>
-    <!-- %1$s = error reason string from the rendering engine. -->
+    <!-- Page rendering error. %1$s = error reason string from the rendering engine. Example: "Error processing page: Bitmap allocation failed". -->
     <string name="error_processing_page">Error processing page: %1$s</string>
-    <!-- %1$d = the page number (1-indexed) that could not be rendered. -->
+    <!-- Page rendering error. %1$d = the page number (1-indexed) that could not be rendered. Example: "Unable to display page 7." -->
     <string name="error_unable_to_display_page">Unable to display page %1$d.</string>
 
     <!-- PdfViewerScreen & General Reader -->
@@ -1061,7 +1065,7 @@
     <string name="pen_playground">Pen Playground</string>
     <!-- SVG = Scalable Vector Graphics (file format name — do not translate). -->
     <string name="import_svg">Import SVG</string>
-    <!-- %1$d = number of SVG stroke paths that were successfully imported. -->
+    <!-- SVG import result. %1$d = number of SVG stroke paths that were successfully imported. Example: "Imported 14 SVG strokes!" -->
     <string name="msg_imported_svg_strokes">Imported %1$d SVG strokes!</string>
     <!-- SVG = Scalable Vector Graphics (file format name — do not translate). -->
     <string name="error_import_svg_failed">Failed to import SVG or empty.</string>
@@ -1069,7 +1073,7 @@
     <string name="menu_ocr_language">OCR Language</string>
     <string name="menu_insert_blank_page">Insert Blank Page</string>
     <string name="menu_delete_page">Delete Page</string>
-    <!-- Progress indicator while generating a text/reflow view. %1$d = percentage complete (0–100). %% is a literal percent sign. -->
+    <!-- Progress indicator while generating a text/reflow view. %1$d = percentage complete from 0 to 100. %% is a literal percent sign. Example: "Generating... 50%". -->
     <string name="generating_reflow_progress">Generating… %1$d%%</string>
     <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->
     <string name="action_open_text_view">Open Text View</string>
@@ -1080,17 +1084,17 @@
     <string name="action_print">Print</string>
     <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->
     <string name="generating_text_view">Generating Text View…</string>
-    <!-- %1$d = indexing completion percentage (0–100). -->
+    <!-- PDF search indexing progress. %1$d = indexing completion percentage from 0 to 100. Example: "Indexing pages... 75% done. Search results will update automatically." -->
     <string name="msg_indexing_pages_progress">Indexing pages… %1$d%% done. Search results will update automatically.</string>
-    <!-- %1$d = number of pages that contain at least one search result. The "+" indicates "or more". -->
+    <!-- PDF search summary. %1$d = number of pages that contain at least one search result. The "+" indicates "or more". Example: "Results found on 10+ pages". -->
     <string name="msg_results_found_pages">Results found on %1$d+ pages</string>
-    <!-- Search position indicator. %1$d = current result index; %2$d = total result count. -->
+    <!-- Search position indicator. %1$d = current result index; %2$d = total result count. Example: "Result 2 / 14". -->
     <string name="msg_search_result_index">Result %1$d / %2$d</string>
-    <!-- %1$d = number of pages containing results. The "+" indicates "or more". -->
+    <!-- PDF search page-count label. %1$d = number of pages containing results. The "+" indicates "or more". Example: "10+ Pages". -->
     <string name="msg_search_pages_count">%1$d+ Pages</string>
-    <!-- Overflow menu item in the PDF reader. %1$d = the current page number. -->
+    <!-- Overflow menu item in the PDF reader. %1$d = the current page number. Example: "Summarize Page (Page 12)". -->
     <string name="action_summarize_page">Summarize Page (Page %1$d)</string>
-    <!-- OCR = Optical Character Recognition. %1$s = the language/locale name being downloaded (e.g. "Chinese (Simplified)"). -->
+    <!-- OCR = Optical Character Recognition. %1$s = the language/locale name being downloaded. Example: "Downloading Chinese (Simplified) language pack...". -->
     <string name="msg_downloading_language_pack">Downloading %1$s language pack…</string>
     <!-- OCR = Optical Character Recognition. -->
     <string name="title_select_ocr_language">Select OCR Language</string>
@@ -1100,7 +1104,7 @@
     <string name="desc_ocr_language_change_later">You can change this later in More Options &gt; OCR Language.</string>
     <!-- OCR = Optical Character Recognition. -->
     <string name="title_reindex_document">Re-index Document?</string>
-    <!-- OCR = Optical Character Recognition. %1$s = the name of the new OCR script/language selected by the user. -->
+    <!-- OCR = Optical Character Recognition. %1$s = the name of the new OCR script/language selected by the user. Example: "You are changing the OCR script to Chinese.\n\nTo ensure search accuracy, we need to clear the existing index and re-scan pages that require OCR using this new language.\n\nThis will happen in the background." -->
     <string name="desc_reindex_document_warning">You are changing the OCR script to %1$s.\n\nTo ensure search accuracy, we need to clear the existing index and re-scan pages that require OCR using this new language.\n\nThis will happen in the background.</string>
     <!-- OCR = Optical Character Recognition. Button to confirm re-indexing. -->
     <string name="action_reindex">Re-index</string>
@@ -1110,7 +1114,7 @@
     <string name="error_incorrect_password">Incorrect password</string>
     <string name="content_desc_hide_password">Hide password</string>
     <string name="content_desc_show_password">Show password</string>
-    <!-- Warning dialog shown before navigating to a URL from within a PDF. %1$s = the full destination URL. -->
+    <!-- Warning dialog shown before navigating to a URL from within a PDF. %1$s = the full destination URL. Example: "You are about to navigate to:\nhttps://example.com". -->
     <string name="desc_external_link_warning">You are about to navigate to:\n%1$s</string>
     <string name="action_visit">Visit</string>
     <string name="title_save_to_device">Save to Device</string>
@@ -1126,7 +1130,7 @@
     <string name="msg_no_other_pdfs_found">No other PDFs found in your library.</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="msg_pdf_empty_or_error">PDF is empty or could not be displayed.</string>
-    <!-- %1$d = the page index (1-indexed) where the blank page was inserted. -->
+    <!-- PDF page-management result. %1$d = the page index (1-indexed) where the blank page was inserted. Example: "Page added at 5". -->
     <string name="msg_page_added_at">Page added at %1$d</string>
     <string name="msg_page_deleted">Page deleted</string>
     <string name="msg_extra_page_removed">Extra page removed</string>
@@ -1165,7 +1169,7 @@
     <string name="options_test_panel_ml_detection">Test Panel ML Detection</string>
     <!-- Debug-only menu item that runs local speech bubble detection diagnostics. -->
     <string name="options_test_speech_bubble_ml_detection">Test Speech Bubble ML Detection</string>
-    <!-- Debug-only menu item. %1$d = maximum number of log lines included. -->
+    <!-- Debug-only menu item. %1$d = maximum number of log lines included. Example: "Export Logs (Last 500 lines)". -->
     <string name="options_export_logs_last_lines">Export Logs (Last %1$d lines)</string>
     <string name="dialog_strict_file_filter_title">Enable Strict File Filter</string>
     <!-- Warning shown before enabling stricter Android file picker MIME filtering. File extensions should remain uppercase. -->
@@ -1221,7 +1225,7 @@
     <string name="content_desc_close_search">Close search</string>
     <string name="content_desc_clear_query">Clear query</string>
     <string name="content_desc_search_shelf">Search shelf</string>
-    <!-- Accessibility label. %1$s = shelf name. -->
+    <!-- Accessibility label. %1$s = shelf name. Example: "Favorites shelf cover". -->
     <string name="content_desc_shelf_cover">%1$s shelf cover</string>
     <string name="theme_preserve_image_colors">Preserve Image Colors</string>
     <string name="theme_preserve_image_colors_desc">Keep original image colors when theme changes</string>
@@ -1246,7 +1250,7 @@
     <string name="read_status_unread">Unread</string>
     <string name="read_status_in_progress">In Progress</string>
     <string name="read_status_completed">Completed</string>
-    <!-- Active tag filter chip label. %1$s = tag names or a count, already pluralized by code. -->
+    <!-- Active tag filter chip label. %1$s = tag names or a count, already pluralized by code. Example: "Tags: Fiction, Classics". -->
     <string name="filter_tags">Tags: %1$s</string>
     <string name="section_browse_by_tag">Browse by tag</string>
     <string name="section_tags">Tags</string>
@@ -1257,7 +1261,7 @@
     <string name="tts_notification_channel_name">Text to speech</string>
     <string name="tts_notification_channel_desc">Playback controls for text to speech.</string>
     <string name="tts_notification_preparing">Preparing text to speech</string>
-    <!-- Notification text. %1$s = chapter title. -->
+    <!-- Notification text. %1$s = chapter title. Example: "Preparing: Chapter 4". -->
     <string name="tts_notification_preparing_chapter">Preparing: %1$s</string>
     <string name="tts_active_engine">Active TTS Engine</string>
     <string name="tts_mode_cloud_ai">Cloud AI</string>
@@ -1274,7 +1278,7 @@
     <string name="tts_offline">Offline</string>
     <string name="tts_voice_filter">Voice Filter</string>
     <string name="tts_no_audio_cached_for_voice">No audio cached for this voice.</string>
-    <!-- Button label. %1$s = selected cloud TTS voice identifier. -->
+    <!-- Button label. %1$s = selected cloud TTS voice identifier. Example: "Clear Cache for Kore". -->
     <string name="tts_clear_cache_for_voice">Clear Cache for %1$s</string>
     <string name="tts_voice_sample_generic">This is a voice sample.</string>
 
@@ -1283,17 +1287,17 @@
     <string name="ai_tab_summary">Summary</string>
     <string name="ai_tab_recap">Recap</string>
     <string name="ai_tab_cache">Cache</string>
-    <!-- %1$s = chapter title, lowercased by code. -->
+    <!-- AI summary empty state. %1$s = chapter title, lowercased by code. Example: "No summary for chapter 4 yet." -->
     <string name="ai_no_summary_for_chapter">No summary for %1$s yet.</string>
-    <!-- %1$s = chapter title. -->
+    <!-- AI summary action. %1$s = chapter title. Example: "Generate Summary for Chapter 4". -->
     <string name="ai_generate_summary_for_chapter">Generate Summary for %1$s</string>
     <string name="ai_recap_desc">Get a recap of the story up to your current position.</string>
     <string name="ai_generate_story_recap">Generate Story Recap</string>
     <string name="ai_story_recap">Story Recap</string>
     <string name="ai_cache_hit_free">Cache Hit • Free</string>
-    <!-- %1$d = number of free daily summaries remaining. -->
+    <!-- AI summary status badge. %1$d = number of free daily summaries remaining. Example: "Generated - Free (7/10 left)". -->
     <string name="ai_generated_free_remaining">Generated • Free (%1$d/10 left)</string>
-    <!-- %1$s = credit cost returned by the server. -->
+    <!-- AI summary status badge. %1$s = credit cost returned by the server. Example: "Generated - Cost: 2 credits". -->
     <string name="ai_generated_cost">Generated • Cost: %1$s credits</string>
     <string name="ai_generating_cost_calculating">Generating… • Cost: Calculating</string>
     <string name="ai_output_title">AI Output</string>
@@ -1302,7 +1306,7 @@
     <string name="credits_tab">Credits</string>
     <string name="credits_title">AI &amp; Cloud Credits</string>
     <string name="credits_available">Credits Available</string>
-    <!-- Compact account badge. %1$d = remaining credit count. -->
+    <!-- Compact account badge. %1$d = remaining credit count. Example: "42 Credits". -->
     <string name="credits_count">%1$d Credits</string>
     <string name="credits_estimated_cost_breakdown">Estimated Cost Breakdown</string>
     <string name="credits_cloud_tts_title">Cloud TTS</string>
@@ -1320,14 +1324,15 @@
 
     <!-- PDF and annotation helpers. -->
     <string name="action_translate">Translate</string>
+    <!-- Compact return button text in PDF navigation. %1$d = 1-indexed page number. Example: "Back to Pg 12". -->
     <string name="pdf_back_to_page_short">Back to Pg %1$d</string>
-    <!-- Compact page label used in floating PDF search/navigation controls. %1$d = 1-indexed page number. -->
+    <!-- Compact page label used in floating PDF search/navigation controls. %1$d = 1-indexed page number. Example: "Page 12". -->
     <string name="pdf_page_short">Page %1$d</string>
-    <!-- Floating PDF search/navigation control. %1$d = current result number; %2$d = total result count. -->
+    <!-- Floating PDF search/navigation control. %1$d = current result number; %2$d = total result count. Example: "Result 2 / 14". -->
     <string name="pdf_search_result_position">Result %1$d / %2$d</string>
     <!-- Error shown when the PDF renderer cannot open a document and did not provide a specific error message. -->
     <string name="error_failed_load_pdf">Failed to load PDF.</string>
-    <!-- Progress banner while downloading the optional Bubble Zoom AI model. %1$d = percentage complete (0-100). -->
+    <!-- Progress banner while downloading the optional Bubble Zoom AI model. %1$d = percentage complete from 0 to 100. %% is a literal percent sign. Example: "Downloading Bubble Zoom model... 42%". -->
     <string name="msg_downloading_bubble_zoom_model_progress">Downloading Bubble Zoom model… %1$d%%</string>
     <string name="content_desc_exit_slider_navigation">Exit slider navigation</string>
     <string name="content_desc_jump_back">Jump Back</string>
@@ -1338,7 +1343,7 @@
     <string name="content_desc_toggle_search_highlights">Toggle search highlights</string>
     <string name="content_desc_drag_text_box">Drag to move text box</string>
     <string name="content_desc_no_files_icon">No files icon</string>
-    <!-- Accessibility label. %1$s = visible field label being copied. -->
+    <!-- Accessibility label. %1$s = visible field label being copied. Example: "Copy Title". -->
     <string name="content_desc_copy_value">Copy %1$s</string>
     <string name="content_desc_tag">Tag</string>
     <string name="content_desc_list_item_marker">List item marker</string>
@@ -1363,7 +1368,9 @@
     <!-- ReflowWorker: generated Text View records. "Text View" is the PDF reflow feature name. -->
     <string name="default_document_title">Document</string>
     <string name="generated_author">Generated</string>
+    <!-- Generated display name for a PDF Text View copy. %1$s = original book title. Example: "Dracula (Text View)". -->
     <string name="reflow_display_name_format">%1$s (Text View)</string>
+    <!-- Generated internal title for a reflowed PDF copy. %1$s = original book title. Example: "Dracula (Reflow)". -->
     <string name="reflow_title_format">%1$s (Reflow)</string>
 
     <!-- Shared tag management UI. -->
@@ -1371,16 +1378,16 @@
     <string name="msg_no_tags_assigned">No tags assigned.</string>
     <string name="title_apply_tags">Apply Tags</string>
     <string name="placeholder_search_create_tag">Search or create tag…</string>
-    <!-- Tag creation row. %1$s = tag name typed by the user. -->
+    <!-- Tag creation row. %1$s = tag name typed by the user. Example: "Create \"Research\"". -->
     <string name="action_create_tag">Create \"%1$s\"</string>
 
     <!-- EPUB/Paginated reader controls. -->
     <string name="setting_pull_distance_change_chapter">Pull Distance to Change Chapter</string>
     <string name="label_short">Short</string>
     <string name="label_long">Long</string>
-    <!-- Compact TTS speed label. %1$s = formatted multiplier, e.g. 1.2. -->
+    <!-- Compact TTS speed label. %1$s = formatted multiplier. Example: "Speed: 1.2x". -->
     <string name="tts_speed_short">Speed: %1$sx</string>
-    <!-- Compact TTS pitch label. %1$s = formatted multiplier, e.g. 1.0. -->
+    <!-- Compact TTS pitch label. %1$s = formatted multiplier. Example: "Pitch: 1.0x". -->
     <string name="tts_pitch_short">Pitch: %1$sx</string>
     <string name="content_desc_play_pause">Play/Pause</string>
     <string name="content_desc_reset_speed">Reset Speed</string>
@@ -1393,7 +1400,7 @@
     <!-- PDF toolbar labels. -->
     <string name="content_desc_table_of_contents">Table of Contents</string>
     <string name="content_desc_bookmark">Bookmark</string>
-    <!-- Tooltip/button text. %1$d = 1-indexed page number. -->
+    <!-- Tooltip/button text. %1$d = 1-indexed page number. Example: "Jump Back to Page 12". -->
     <string name="action_jump_back_to_page">Jump Back to Page %1$d</string>
     <string name="desc_return_to_previous_page">Return to previous page</string>
     <string name="action_exit_smart_zoom">Exit Smart Zoom</string>
@@ -1407,7 +1414,7 @@
     <string name="settings">Settings</string>
     <string name="action_edit">Edit</string>
     <string name="action_restore">Restore</string>
-    <!-- %1$s = the selected option label. -->
+    <!-- Accessibility/status label. %1$s = the selected option label. Example: "Dark selected". -->
     <string name="option_selected_format">%1$s selected</string>
     <string name="reader_defaults">Reader defaults</string>
     <!-- Debug-only placeholder, not shown in normal user flows. -->
@@ -1420,15 +1427,15 @@
     <string name="provider_groq" translatable="false">Groq</string>
     <!-- AI = Artificial Intelligence. Keep the acronym "AI" as-is. -->
     <string name="ai_definition_title">AI Definition</string>
-    <!-- %1$d = 1-indexed chapter number. -->
+    <!-- Chapter label. %1$d = 1-indexed chapter number. Example: "Chapter 4". -->
     <string name="chapter_number_format">Chapter %1$d</string>
     <string name="location_generic">Location</string>
     <string name="custom_font_fallback">Custom Font</string>
-    <!-- Raw status/detail format only. %1$d = response code; %2$s = server/system detail. -->
+    <!-- Raw status/detail format only. %1$d = response code; %2$s = server/system detail. Example: "404. Not found". -->
     <string name="error_response_code_with_detail" translatable="false">%1$d. %2$s</string>
-    <!-- %1$s = error detail from the system. -->
+    <!-- Generic error message. %1$s = error detail from the system. Example: "An error occurred: Permission denied". -->
     <string name="error_occurred_format">An error occurred: %1$s</string>
-    <!-- %1$s = error detail from the document loader. -->
+    <!-- Document-load error. %1$s = error detail from the document loader. Example: "Error loading document: File is encrypted". -->
     <string name="error_loading_document_format">Error loading document: %1$s</string>
     <!-- OCR = Optical Character Recognition. Keep the acronym as-is. -->
     <string name="error_no_text_on_page_after_ocr">OCR found no text on this page.</string>
@@ -1440,13 +1447,13 @@
     <!-- AI = Artificial Intelligence; OSS = Open Source Software. Keep both acronyms as-is. -->
     <string name="ai_error_offline_oss">AI features are unavailable in the offline OSS build.</string>
     <string name="ai_error_blocked_safety">Blocked for safety reasons.</string>
-    <!-- AI = Artificial Intelligence. %1$s = feature name such as "Summaries". -->
+    <!-- AI = Artificial Intelligence. %1$s = feature name such as "Summaries". Example: "Choose a model for Summaries in AI key and model settings." -->
     <string name="ai_error_choose_model">Choose a model for %1$s in AI key and model settings.</string>
-    <!-- API = Application Programming Interface. %1$s = provider name such as Gemini or Groq. -->
+    <!-- API = Application Programming Interface. %1$s = provider name such as Gemini or Groq. Example: "Add a Gemini API key in AI key and model settings." -->
     <string name="ai_error_add_provider_key">Add a %1$s API key in AI key and model settings.</string>
     <!-- AI = Artificial Intelligence. -->
     <string name="ai_error_provider_empty_response">The AI provider returned an empty response.</string>
-    <!-- AI = Artificial Intelligence. %1$d = HTTP/status code; %2$s = raw provider error body. -->
+    <!-- AI = Artificial Intelligence. %1$d = HTTP/status code; %2$s = raw provider error body. Example: "AI provider error: 429. Rate limit exceeded". -->
     <string name="ai_error_provider_error">AI provider error: %1$d. %2$s</string>
     <!-- Gemini and Groq are provider names. PDF = file format; keep all as-is. -->
     <string name="ai_error_gemini_required_for_image_summary">This summary needs a Gemini model because the selected Groq models do not support PDF/image input.</string>
@@ -1456,18 +1463,18 @@
     <string name="feedback_error_message_image_limit">Max 5 images allowed per message.</string>
     <!-- 5MB = five megabytes; keep the unit compact. -->
     <string name="feedback_error_images_size_limit">One or more images exceed the 5MB limit.</string>
-    <!-- %1$s = error detail from the feedback backend. -->
+    <!-- Feedback submit error. %1$s = error detail from the feedback backend. Example: "Failed to create ticket: Network timeout". -->
     <string name="feedback_error_create_ticket">Failed to create ticket: %1$s</string>
-    <!-- %1$s = error detail from the feedback backend. -->
+    <!-- Feedback submit error. %1$s = error detail from the feedback backend. Example: "Failed to send: Message is empty". -->
     <string name="feedback_error_send">Failed to send: %1$s</string>
-    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. -->
+    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. Example: "Failed to load feed: Unauthorized". -->
     <string name="opds_error_load_feed">Failed to load feed: %1$s</string>
     <string name="opds_error_empty_response">Empty body</string>
-    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = server message. -->
+    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = server message. Example: "Download failed: File unavailable". -->
     <string name="opds_error_download_failed">Download failed: %1$s</string>
-    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. -->
+    <!-- OPDS = Open Publication Distribution System; keep the acronym as-is. %1$s = error detail. Example: "Download error: Connection reset". -->
     <string name="opds_error_download_error">Download error: %1$s</string>
-    <!-- %1$s = billing debug message from Google Play Billing. -->
+    <!-- Billing error. %1$s = billing debug message from Google Play Billing. Example: "Purchase failed: Service unavailable". -->
     <string name="billing_error_purchase_failed">Purchase failed: %1$s</string>
     <string name="billing_error_connect">Could not connect to billing service.</string>
     <string name="billing_error_products_not_found">Products not found.</string>
@@ -1478,7 +1485,7 @@
     <string name="tts_error_no_text">No text to read.</string>
     <string name="tts_error_starting_playback">Error starting playback.</string>
     <string name="tts_error_load_audio">Failed to load audio.</string>
-    <!-- TTS = Text-to-Speech. %1$s = playback error detail. -->
+    <!-- TTS = Text-to-Speech. %1$s = playback error detail. Example: "Playback error: Audio file missing". -->
     <string name="tts_error_playback">Playback error: %1$s</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="tts_error_cloud_not_configured">Cloud TTS is not configured.</string>
@@ -1505,16 +1512,16 @@
     <string name="ai_settings_summaries_desc">Used for EPUB summaries and PDF page summaries. PDF/image summaries need Gemini.</string>
     <string name="ai_settings_recaps">Recaps</string>
     <string name="ai_settings_recaps_desc">Used for story recap generation.</string>
-    <!-- TTS = Text-to-Speech. Gemini is a provider name. %1$s = exact model identifier; do not translate the inserted value. -->
+    <!-- TTS = Text-to-Speech. Gemini is a provider name. %1$s = exact model identifier; do not translate the inserted value. Example: "Uses the saved Gemini key. Only gemini-2.5-flash-preview-tts is supported for now." -->
     <string name="ai_settings_cloud_tts_desc">Uses the saved Gemini key. Only %1$s is supported for now.</string>
-    <!-- %1$s = provider name, such as Gemini or Groq. -->
+    <!-- Provider key confirmation title. %1$s = provider name, such as Gemini or Groq. Example: "Save Gemini key?" -->
     <string name="dialog_save_provider_key">Save %1$s key?</string>
     <string name="dialog_save_key_desc">After saving, only the first 3 and last 3 characters will be visible. To change it later, replace or delete it.</string>
-    <!-- %1$s = provider name, such as Gemini or Groq. -->
+    <!-- Provider key deletion title. %1$s = provider name, such as Gemini or Groq. Example: "Delete Groq key?" -->
     <string name="dialog_delete_provider_key">Delete %1$s key?</string>
     <string name="dialog_delete_key_desc">Features using this provider will stop working until a new key is saved.</string>
     <string name="ai_settings_no_key_saved">No key saved</string>
-    <!-- %1$s = provider display name. -->
+    <!-- Accessibility label for deleting a provider key. %1$s = provider display name. Example: "Delete Gemini key". -->
     <string name="content_desc_delete_provider_key">Delete %1$s key</string>
     <string name="label_model">Model</string>
     <string name="ai_settings_no_model_selected">No model selected</string>
@@ -1561,7 +1568,7 @@
     <string name="label_editable_metadata">Editable metadata</string>
     <string name="label_display_name">Display name</string>
     <string name="label_name_shown_in_reader">Name shown in Reader</string>
-    <!-- %1$s = original file name. -->
+    <!-- File metadata row. %1$s = original file name. Example: "Original file: Dracula.epub". -->
     <string name="original_file_format">Original file: %1$s</string>
 
     <!-- Toolbar customization. -->
@@ -1644,7 +1651,7 @@
     <string name="desktop_ai_settings_summaries_desc">Used for EPUB summaries and PDF page summaries.</string>
     <string name="desktop_app_name_oss">Episteme oss</string>
     <string name="desktop_author_text">Author text</string>
-    <!-- %1$s = voice/cache label. -->
+    <!-- Desktop cache label. %1$s = voice/cache label. Example: "Cache: Kore". -->
     <string name="desktop_cache_format">Cache: %1$s</string>
     <string name="desktop_cached">Cached</string>
     <string name="desktop_cached_summary">Cached summary</string>
@@ -1663,15 +1670,15 @@
     <string name="desktop_cost_calculating">Cost calculating</string>
     <string name="desktop_create_recap_current_position">Create a recap up to your current position.</string>
     <string name="desktop_create_smart_shelf">Create smart shelf</string>
-    <!-- %1$d = integer credit count. -->
+    <!-- Desktop account/credits label. %1$d = integer credit count. Example: "42 credits available". -->
     <string name="desktop_credits_available_format">%1$d credits available</string>
-    <!-- %1$s = decimal credit cost. -->
+    <!-- Desktop credit cost label. %1$s = decimal credit cost. Example: "2.5 credits". -->
     <string name="desktop_credits_decimal_format">%1$s credits</string>
     <string name="desktop_custom_fonts_desc">Imported fonts for the reader</string>
     <string name="desktop_delete_font">Delete font</string>
-    <!-- %1$s = font display name. -->
+    <!-- Desktop delete-font confirmation. %1$s = font display name. Example: "Delete Merriweather? Books using it will fall back to the default font." -->
     <string name="desktop_delete_font_desc">Delete %1$s? Books using it will fall back to the default font.</string>
-    <!-- %1$s = shelf name. -->
+    <!-- Desktop delete-shelf confirmation. %1$s = shelf name. Example: "Delete \"Favorites\"? Books stay in your library." -->
     <string name="desktop_delete_shelf_desc">Delete \"%1$s\"? Books stay in your library.</string>
     <string name="desktop_delete_summary">Delete summary</string>
     <string name="desktop_disabled">Disabled</string>
@@ -1685,7 +1692,7 @@
     <string name="desktop_folder_path">Folder path</string>
     <string name="desktop_from_here">From here</string>
     <string name="desktop_full_scan">Full scan</string>
-    <!-- %1$d = number of free uses remaining. -->
+    <!-- Desktop AI cost badge. %1$d = number of free uses remaining. Example: "Free, 7 left". -->
     <string name="desktop_free_remaining_format">Free, %1$d left</string>
     <string name="desktop_generate_recap">Generate recap</string>
     <string name="desktop_generate_summary">Generate summary</string>
@@ -1707,13 +1714,13 @@
     <string name="desktop_more_menu">More</string>
     <string name="desktop_no_cached_summaries_book">No cached summaries for this book yet.</string>
     <string name="desktop_no_custom_fonts_desc">Import TTF, OTF, or WOFF2 files to use them in books.</string>
-    <!-- %1$s = search query. -->
+    <!-- Desktop Google Fonts empty state. %1$s = search query. Example: "No fonts found matching \"Roboto\"". -->
     <string name="desktop_no_fonts_matching">No fonts found matching \"%1$s\"</string>
     <string name="desktop_no_google_account_connected">No Google account is connected.</string>
     <string name="desktop_no_summary_cached_section">No summary cached for this section.</string>
     <string name="desktop_offline_oss_reader">Offline desktop reader</string>
     <string name="desktop_open_readers">Open readers</string>
-    <!-- %1$s = book or section title. -->
+    <!-- Desktop loading status. %1$s = book or section title. Example: "Opening Dracula". -->
     <string name="desktop_opening_title">Opening %1$s</string>
     <string name="desktop_opening_your_library">Opening your library</string>
     <string name="desktop_operator">Operator</string>
@@ -1722,10 +1729,10 @@
     <string name="desktop_patreon">Patreon</string>
     <string name="desktop_patreon_desc">Support the project on Patreon.</string>
     <string name="desktop_paused">Paused</string>
-    <!-- %1$s = PDF title. -->
+    <!-- Desktop PDF password dialog body. %1$s = PDF title. Example: "Tax Forms.pdf requires a password before it can be opened." -->
     <string name="desktop_pdf_password_required_desc">%1$s requires a password before it can be opened.</string>
     <string name="desktop_pdf_password_required_or_incorrect">Password is required or incorrect.</string>
-    <!-- %1$s = PDF title. -->
+    <!-- Desktop PDF password retry body. %1$s = PDF title. Example: "That password did not open Tax Forms.pdf. Enter the PDF password and try again." -->
     <string name="desktop_pdf_password_retry_desc">That password did not open %1$s. Enter the PDF password and try again.</string>
     <string name="desktop_percent">Percent</string>
     <string name="desktop_plan">Plan</string>
@@ -1767,10 +1774,10 @@
     <string name="desktop_view">View</string>
     <string name="desktop_voice_cache">Voice cache</string>
     <string name="desktop_webview_preparing">Preparing embedded webview…</string>
-    <!-- %1$d = progress percentage. %% is a literal percent sign. -->
+    <!-- Desktop embedded webview setup progress. %1$d = progress percentage. %% is a literal percent sign. Example: "Preparing bundled embedded webview 40%". -->
     <string name="desktop_webview_preparing_progress">Preparing bundled embedded webview %1$d%%</string>
     <string name="desktop_webview_restart_required">Embedded webview installed. Restart Episteme to finish setup.</string>
-    <!-- %1$s = startup error detail. -->
+    <!-- Desktop embedded webview startup error. %1$s = startup error detail. Example: "Embedded webview could not start: Missing runtime". -->
     <string name="desktop_webview_start_error">Embedded webview could not start: %1$s</string>
     <string name="desktop_working">Working…</string>
     <string name="desktop_workspace">Workspace</string>
@@ -1778,7 +1785,7 @@
     <string name="desktop_add_to_shelf">Add to shelf</string>
     <string name="desktop_create_shelf_first">Create a shelf first, then add selected books to it.</string>
     <string name="desktop_create_theme">Create theme</string>
-    <!-- %1$s = comma-separated existing tag names. -->
+    <!-- Desktop tag editor helper text. %1$s = comma-separated existing tag names. Example: "Existing: Fiction, Classics". -->
     <string name="desktop_existing_tags_format">Existing: %1$s</string>
     <string name="desktop_external_link_desc">You clicked an external link.</string>
     <string name="desktop_edit_epub_metadata">Edit EPUB metadata</string>
@@ -1812,16 +1819,16 @@
     <string name="desktop_finished">Finished</string>
     <string name="desktop_fountain_pen">Fountain pen</string>
     <string name="desktop_hide_search_results">Hide search results</string>
-    <!-- %1$d = highlighter palette slot number. -->
+    <!-- Desktop highlighter color accessibility label. %1$d = highlighter palette slot number. Example: "Highlight color 2". -->
     <string name="desktop_highlight_color_format">Highlight color %1$d</string>
     <string name="desktop_highlighter_palette">Highlighter palette</string>
     <string name="desktop_interaction">Interaction</string>
-    <!-- %1$d = indexed page count; %2$d = total page count. -->
+    <!-- Desktop PDF search indexing status. %1$d = indexed page count; %2$d = total page count. Example: "Indexing 12/240 pages". -->
     <string name="desktop_indexing_pages_format">Indexing %1$d/%2$d pages</string>
     <string name="desktop_markup">Markup</string>
-    <!-- %1$d = number of search matches. -->
+    <!-- Desktop PDF search result count. %1$d = number of search matches. Example: "14 matches". -->
     <string name="desktop_matches_format">%1$d matches</string>
-    <!-- %1$d = number of search matches found while indexing is still running. -->
+    <!-- Desktop PDF search result count while indexing is still running. %1$d = number of search matches found so far. Example: "14 matches so far". -->
     <string name="desktop_matches_so_far_format">%1$d matches so far</string>
     <string name="desktop_next_page">Next page</string>
     <string name="desktop_next_search_result">Next search result</string>
@@ -1844,21 +1851,21 @@
     <string name="desktop_pdf_action_failed">PDF action failed</string>
     <string name="desktop_pdf_action_failed_desc">The PDF action could not be completed.</string>
     <string name="desktop_pdf_comment">PDF comment</string>
-    <!-- %1$d = 1-indexed page number. -->
+    <!-- Desktop compact page label. %1$d = 1-indexed page number. Example: "p. 12". -->
     <string name="desktop_pdf_compact_page_number">p. %1$d</string>
-    <!-- %1$d = 1-indexed page number. -->
+    <!-- Desktop PDF page accessibility label. %1$d = 1-indexed page number. Example: "PDF page 12". -->
     <string name="desktop_pdf_page_content_desc">PDF page %1$d</string>
-    <!-- %1$d = 1-indexed page number; %2$s = comment author. -->
+    <!-- Desktop PDF comment location/author label. %1$d = 1-indexed page number; %2$s = comment author. Example: "Page 12 - Aryan". -->
     <string name="desktop_pdf_page_author_format">Page %1$d - %2$s</string>
-    <!-- %1$s = page number or page range; %2$d = total page count. -->
+    <!-- Desktop PDF single-page progress label. %1$s = page number or page range; %2$d = total page count. Example: "Page 12 of 240". -->
     <string name="desktop_pdf_page_of_count">Page %1$s of %2$d</string>
-    <!-- %1$s = page range; %2$d = total page count. -->
+    <!-- Desktop PDF spread progress label. %1$s = page range; %2$d = total page count. Example: "Pages 12-13 of 240". -->
     <string name="desktop_pdf_pages_of_count">Pages %1$s of %2$d</string>
     <string name="desktop_pdf_saved">PDF saved</string>
     <string name="desktop_pdf_tools">PDF tools</string>
     <string name="desktop_pencil">Pencil</string>
     <string name="desktop_preparing_selection">Preparing selection</string>
-    <!-- %1$s = read scope, such as page or chapter. -->
+    <!-- Desktop read-aloud preparation status. %1$s = read scope, such as page or chapter. Example: "Preparing chapter". -->
     <string name="desktop_preparing_scope_format">Preparing %1$s</string>
     <string name="desktop_previous_page">Previous page</string>
     <string name="desktop_previous_search_result">Previous search result</string>
@@ -1870,12 +1877,12 @@
     <string name="desktop_ai_not_configured_desc">Desktop AI is not configured for this build.</string>
     <string name="desktop_remove_gap_between_pages_desc">Applies to vertical reading mode.</string>
     <string name="desktop_round_highlighter">Round highlighter</string>
-    <!-- %1$s = saved file path. -->
+    <!-- Desktop save result. %1$s = saved file path. Example: "Saved to C:\\Books\\Dracula.pdf". -->
     <string name="desktop_saved_to_path_format">Saved to %1$s</string>
     <string name="desktop_scroll">Scroll</string>
     <string name="desktop_search_in_pdf">Search in PDF</string>
     <string name="desktop_select_text">Select text</string>
-    <!-- %1$s = localized annotation type. -->
+    <!-- Desktop annotation selection status. %1$s = localized annotation type. Example: "Selected highlight". -->
     <string name="desktop_selected_annotation_format">Selected %1$s</string>
     <string name="desktop_show_search_results">Show search results</string>
     <string name="desktop_sign_in_required_generic_feature_desc">Sign in with Google to use this feature on desktop.</string>
@@ -1886,7 +1893,7 @@
     <string name="desktop_text_note">Text note</string>
     <string name="desktop_text_note_lowercase">text note</string>
     <string name="desktop_text_style">Text style</string>
-    <!-- %1$s = stroke thickness percentage. -->
+    <!-- Desktop annotation tool label. %1$s = stroke thickness percentage. Example: "Thickness 75%". -->
     <string name="desktop_thickness_format">Thickness %1$s</string>
     <string name="desktop_toc">TOC</string>
     <string name="desktop_type_to_search_pdf">Type to search this PDF</string>
@@ -1910,7 +1917,7 @@
     <string name="desktop_book_badge_folder">Folder</string>
     <string name="desktop_browse">Browse</string>
     <string name="desktop_categories">Categories</string>
-    <!-- %1$d = 1-indexed chapter number. -->
+    <!-- Desktop compact chapter label. %1$d = 1-indexed chapter number. Example: "Ch. 4". -->
     <string name="desktop_chapter_short_format">Ch. %1$d</string>
     <string name="desktop_chapter_turns">Chapter Turns</string>
     <string name="desktop_choose_font">Choose font</string>
@@ -1925,7 +1932,7 @@
     <string name="desktop_cover_view">Covers</string>
     <string name="desktop_custom_colors">Custom colors</string>
     <string name="desktop_custom_theme_preview">Custom theme preview</string>
-    <!-- %1$s = setting label. -->
+    <!-- Desktop accessibility label for decrement controls. %1$s = setting label. Example: "Decrease font size". -->
     <string name="desktop_decrease_format">Decrease %1$s</string>
     <string name="desktop_define_page">Define page</string>
     <string name="desktop_delete_highlight_desc">This removes the highlight and its note.</string>
@@ -1942,9 +1949,9 @@
     <string name="desktop_fixed_layout_appearance">Fixed-layout appearance</string>
     <string name="desktop_folder_empty">Folder is empty</string>
     <string name="desktop_folder_empty_desc">No supported files or subfolders are available here.</string>
-    <!-- Desktop folder shelf subtitle that joins already-localized count phrases. %1$s = folder count phrase; %2$s = file count phrase. -->
+    <!-- Desktop folder shelf subtitle that joins already-localized count phrases. %1$s = folder count phrase; %2$s = file count phrase. Example: "2 folders, 12 files". -->
     <string name="desktop_folder_subtitle_folder_file_counts">%1$s, %2$s</string>
-    <!-- %1$s = first label; %2$s = second label. -->
+    <!-- Desktop two-part label. %1$s = first label; %2$s = second label. Example: "PDF - Page 12". -->
     <string name="desktop_label_pair_format">%1$s - %2$s</string>
     <string name="desktop_hide_filters">Hide filters</string>
     <string name="desktop_hide_reader_tools">Hide reader tools</string>
@@ -1953,9 +1960,9 @@
     <string name="desktop_import_books">Import books</string>
     <string name="desktop_import_folder">Import folder</string>
     <string name="desktop_imported_fonts">Imported fonts</string>
-    <!-- Desktop import banner that joins two complete status sentences. %1$s = imported-count sentence; %2$s = skipped-count sentence. -->
+    <!-- Desktop import banner that joins two complete status sentences. %1$s = imported-count sentence; %2$s = skipped-count sentence. Example: "Imported 3 files. Skipped 1 file." -->
     <string name="desktop_import_result_pair">%1$s %2$s</string>
-    <!-- %1$s = setting label. -->
+    <!-- Desktop accessibility label for increment controls. %1$s = setting label. Example: "Increase font size". -->
     <string name="desktop_increase_format">Increase %1$s</string>
     <string name="desktop_jump_history">Jump history</string>
     <string name="desktop_layout_spacing">Layout and Spacing</string>
@@ -1963,13 +1970,13 @@
     <string name="desktop_library_subtitle">Browse your collection</string>
     <!-- Desktop primary navigation shortcut for bring-your-own-key AI configuration. -->
     <string name="desktop_ai_keys">AI keys</string>
-    <!-- Desktop library tab label with count. %1$d = number of smart shelves. Keep as a full tab phrase, not a reusable noun. -->
+    <!-- Desktop library tab label with count. %1$d = number of smart shelves. Keep as a full tab phrase, not a reusable noun. Example: "Smart 4". -->
     <string name="desktop_library_tab_smart_shelves_count">Smart %1$d</string>
-    <!-- Desktop library tab label with count. %1$d = number of unread books. Keep as a full tab phrase. -->
+    <!-- Desktop library tab label with count. %1$d = number of unread books. Keep as a full tab phrase. Example: "Unread 12". -->
     <string name="desktop_library_tab_unread_count">Unread %1$d</string>
-    <!-- Desktop library tab label with count. %1$d = number of in-progress books. Keep as a full tab phrase. -->
+    <!-- Desktop library tab label with count. %1$d = number of in-progress books. Keep as a full tab phrase. Example: "In progress 3". -->
     <string name="desktop_library_tab_in_progress_count">In progress %1$d</string>
-    <!-- Desktop library tab label with count. %1$d = number of completed books. Keep as a full tab phrase. -->
+    <!-- Desktop library tab label with count. %1$d = number of completed books. Keep as a full tab phrase. Example: "Complete 9". -->
     <string name="desktop_library_tab_completed_count">Complete %1$d</string>
     <string name="desktop_list_view">List</string>
     <string name="desktop_navigation">Navigation</string>
@@ -1988,7 +1995,7 @@
     <!-- Desktop import result banner shown when every selected file is unsupported. -->
     <string name="desktop_no_supported_files_imported">No supported files were imported.</string>
     <string name="desktop_opds_catalog">Catalog</string>
-    <!-- %1$s = catalog title. -->
+    <!-- Desktop OPDS catalog deletion body. %1$s = catalog title. Example: "Delete \"Project Gutenberg\"? Streamed books from this catalog may stop opening if credentials change later." -->
     <string name="desktop_opds_delete_catalog_desc">Delete &quot;%1$s&quot;? Streamed books from this catalog may stop opening if credentials change later.</string>
     <string name="desktop_opds_no_catalogs">No catalogs</string>
     <string name="desktop_opds_no_catalogs_desc">Add an OPDS catalog to browse remote books.</string>
@@ -2006,12 +2013,12 @@
     <string name="desktop_pin">Pin</string>
     <string name="desktop_reader_managed_pdf_tools">Reader-managed PDF tools</string>
     <string name="desktop_reader_managed_pdf_tools_desc">Auto-scroll, OCR, annotation defaults, and PDF-only tool visibility are managed inside the active PDF reader.</string>
-    <!-- %1$s = page mode; %2$s = page or spread label; %3$d = total pages; %4$d = progress percentage. -->
+    <!-- Desktop reader page info. %1$s = page mode; %2$s = page or spread label; %3$d = total pages; %4$d = progress percentage. Example: "Page 12 of 240 (5%)". -->
     <string name="desktop_reader_page_info_format">%1$s %2$s of %3$d (%4$d%%)</string>
     <string name="desktop_reader_toolbar_managed_in_reader">Reader toolbar defaults are managed from the reader on this platform.</string>
     <string name="desktop_reader_tools">Reader tools</string>
     <string name="desktop_save_image">Save image</string>
-    <!-- %1$s = current search query. -->
+    <!-- Desktop active search filter chip. %1$s = current search query. Example: "Search: hobbit". -->
     <string name="desktop_search_filter_format">Search: %1$s</string>
     <string name="desktop_search_in_reader">Search in reader</string>
     <string name="desktop_search_settings">Search settings</string>
@@ -2045,6 +2052,6 @@
     <string name="toolbar_visible">Visible</string>
     <string name="tts_replacements_replace_only_spoken">Replace only what is spoken</string>
     <string name="tts_replacements_replace_only_spoken_desc">Reader text, highlights, and locations stay unchanged.</string>
-    <!-- %1$s = replacement source; %2$s = spoken replacement. -->
+    <!-- TTS replacement summary. %1$s = replacement source; %2$s = spoken replacement. Example: "Dr. -> Doctor". -->
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
 </resources>

@@ -1,203 +1,204 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Shown on book cards and in various dialogs. %1$d = number of books. -->
+    <!-- Full book count phrase shown on book cards and in dialogs. %1$d = number of books. Example: "3 books". -->
     <plurals name="book_count">
         <item quantity="one">%1$d book</item>
         <item quantity="other">%1$d books</item>
     </plurals>
 
-    <!-- Word-only plural (no number prefix) used in sentences. Example: "remove 3 books from shelf". -->
+    <!-- Word-only plural with no number prefix, used inside longer sentences where code supplies the number separately. Example sentence: "Remove 3 books from shelf." -->
     <plurals name="book_word">
         <item quantity="one">book</item>
         <item quantity="other">books</item>
     </plurals>
 
-    <!-- Shown when deleting multiple shelves. %1$d = number of shelves. -->
+    <!-- Full shelf count phrase shown when deleting multiple shelves. %1$d = number of shelves. Example: "3 shelves". -->
     <plurals name="shelf_count">
         <item quantity="one">%1$d shelf</item>
         <item quantity="other">%1$d shelves</item>
     </plurals>
 
-    <!-- Shown in the search results summary bar. %1$d = total number of results found. -->
+    <!-- Shown in the search results summary bar. %1$d = total number of results found. Example: "12 results found". -->
     <plurals name="search_results_count">
         <item quantity="one">%1$d result found</item>
         <item quantity="other">%1$d results found</item>
     </plurals>
 
-    <!-- Shown in the PDF search results summary bar. %1$d = total number of matches found. -->
+    <!-- Shown in the PDF search results summary bar. %1$d = total number of matches found. Example: "12 matches found". -->
     <plurals name="search_matches_count">
         <item quantity="one">%1$d match found</item>
         <item quantity="other">%1$d matches found</item>
     </plurals>
 
+    <!-- Dialog title for permanent deletion. Chooses singular/plural based on the selected file count. Example: "Delete Files Permanently". -->
     <plurals name="dialog_delete_permanently">
         <item quantity="one">Delete File Permanently</item>
         <item quantity="other">Delete Files Permanently</item>
     </plurals>
 
-    <!-- %1$d = number of selected files to permanently delete. -->
+    <!-- Permanent-delete confirmation body. %1$d = number of selected files to permanently delete. Example: "Do you want to permanently delete 3 selected files from your device? This action cannot be undone." -->
     <plurals name="dialog_permanently_delete_desc">
         <item quantity="one">Do you want to permanently delete %1$d selected file from your device? This action cannot be undone.</item>
         <item quantity="other">Do you want to permanently delete %1$d selected files from your device? This action cannot be undone.</item>
     </plurals>
 
-    <!-- %1$d = number of selected files to remove from the recents list. -->
+    <!-- Remove-recents confirmation body. %1$d = number of selected files to remove from the recents list. Example: "Do you want to remove 3 selected files from the recent files list? It will reappear if you open it again from the library." -->
     <plurals name="dialog_remove_recents_desc">
         <item quantity="one">Do you want to remove %1$d selected file from the recent files list? It will reappear if you open it again from the library.</item>
         <item quantity="other">Do you want to remove %1$d selected files from the recent files list? It will reappear if you open it again from the library.</item>
     </plurals>
 
-    <!-- Confirmation dialog. %1$d = count of books; %2$s = shelf name. -->
+    <!-- Remove-from-shelf confirmation body. %1$d = count of books; %2$s = shelf name. Example: "Are you sure you want to remove 3 books from the 'Favorites' shelf? The books will remain in your library and appear under Unshelved." -->
     <plurals name="dialog_remove_from_shelf_desc">
         <item quantity="one">Are you sure you want to remove %1$d book from the \'%2$s\' shelf? The book will remain in your library and appear under Unshelved.</item>
         <item quantity="other">Are you sure you want to remove %1$d books from the \'%2$s\' shelf? The books will remain in your library and appear under Unshelved.</item>
     </plurals>
 
-    <!-- %1$d = number of books removed from the library. -->
+    <!-- Library mutation banner. %1$d = number of books removed from the library. Example: "3 books removed from library." -->
     <plurals name="banner_books_removed_library">
         <item quantity="one">%1$d book removed from library.</item>
         <item quantity="other">%1$d books removed from library.</item>
     </plurals>
 
-    <!-- Android bulk import progress banner. %1$d = number of selected books being imported. -->
+    <!-- Android bulk import progress banner. %1$d = number of selected books being imported. Example: "Importing 3 books... They will appear in your Library shortly." -->
     <plurals name="banner_importing_books_count">
         <item quantity="one">Importing %1$d book… It will appear in your Library shortly.</item>
         <item quantity="other">Importing %1$d books… They will appear in your Library shortly.</item>
     </plurals>
 
-    <!-- Android bulk import result banner. %1$d = number of books imported into the Library tab. -->
+    <!-- Android bulk import result banner. %1$d = number of books imported into the Library tab. Example: "Imported 3 books. You can find them in the Library tab." -->
     <plurals name="banner_books_imported_library_tab">
         <item quantity="one">Imported %1$d book. You can find it in the Library tab.</item>
         <item quantity="other">Imported %1$d books. You can find them in the Library tab.</item>
     </plurals>
 
-    <!-- Shared library mutation banner. %1$d = number of selected books added to a shelf. -->
+    <!-- Shared library mutation banner. %1$d = number of selected books added to a shelf. Example: "3 books added to shelf." -->
     <plurals name="banner_books_added_to_shelf">
         <item quantity="one">%1$d book added to shelf.</item>
         <item quantity="other">%1$d books added to shelf.</item>
     </plurals>
 
-    <!-- Shared library mutation banner. %1$d = number of selected books; %2$s = tag name. -->
+    <!-- Shared library mutation banner. %1$d = number of selected books; %2$s = tag name. Example: "3 books tagged with \"Fiction\"." -->
     <plurals name="banner_books_tagged_with_tag">
         <item quantity="one">%1$d book tagged with &quot;%2$s&quot;.</item>
         <item quantity="other">%1$d books tagged with &quot;%2$s&quot;.</item>
     </plurals>
 
-    <!-- Shared library mutation banner. %1$s = folder name; %2$d = number of books removed with the folder. -->
+    <!-- Shared library mutation banner. %1$s = folder name; %2$d = number of books removed with the folder. Example: "Removed folder \"Downloads\" and 3 books from the app." -->
     <plurals name="banner_folder_removed_with_book_count">
         <item quantity="one">Removed folder &quot;%1$s&quot; and %2$d book from the app.</item>
         <item quantity="other">Removed folder &quot;%1$s&quot; and %2$d books from the app.</item>
     </plurals>
 
-    <!-- Word count for folders shown in shelf subtitles. %1$d = number of folders. -->
+    <!-- Folder count phrase shown in shelf subtitles. %1$d = number of folders. Example: "2 folders". -->
     <plurals name="folder_count">
         <item quantity="one">%1$d folder</item>
         <item quantity="other">%1$d folders</item>
     </plurals>
 
-    <!-- File count label. %1$d = number of files. Use a full count phrase, not a reusable standalone noun. -->
+    <!-- File count label. %1$d = number of files. Use a full count phrase, not a reusable standalone noun. Example: "12 files". -->
     <plurals name="file_count">
         <item quantity="one">%1$d file</item>
         <item quantity="other">%1$d files</item>
     </plurals>
 
-    <!-- Desktop drag-and-drop overlay title. %1$d = number of importable files currently dragged over the app. -->
+    <!-- Desktop drag-and-drop overlay title. %1$d = number of importable files currently dragged over the app. Example: "Drop to import 3 files". -->
     <plurals name="desktop_drop_import_file_count">
         <item quantity="one">Drop to import %1$d file</item>
         <item quantity="other">Drop to import %1$d files</item>
     </plurals>
 
-    <!-- Desktop drag-and-drop overlay detail. %1$d = number of unsupported dragged files that will not be imported. -->
+    <!-- Desktop drag-and-drop overlay detail. %1$d = number of unsupported dragged files that will not be imported. Example: "2 unsupported files will be skipped." -->
     <plurals name="desktop_unsupported_import_file_count">
         <item quantity="one">%1$d unsupported file will be skipped.</item>
         <item quantity="other">%1$d unsupported files will be skipped.</item>
     </plurals>
 
-    <!-- Desktop import progress banner. %1$d = number of files being imported. -->
+    <!-- Desktop import progress banner. %1$d = number of files being imported. Example: "Importing 3 files...". -->
     <plurals name="desktop_importing_file_count">
         <item quantity="one">Importing %1$d file…</item>
         <item quantity="other">Importing %1$d files…</item>
     </plurals>
 
-    <!-- Desktop import result banner sentence. %1$d = number of files successfully imported. -->
+    <!-- Desktop import result banner sentence. %1$d = number of files successfully imported. Example: "Imported 3 files." -->
     <plurals name="desktop_imported_file_count">
         <item quantity="one">Imported %1$d file.</item>
         <item quantity="other">Imported %1$d files.</item>
     </plurals>
 
-    <!-- Legacy desktop import model message. %1$d = number of files imported before reader support is available. -->
+    <!-- Legacy desktop import model message. %1$d = number of files imported before reader support is available. Example: "Imported 3 files. Reader support comes later." -->
     <plurals name="desktop_imported_file_count_reader_support_later">
         <item quantity="one">Imported %1$d file. Reader support comes later.</item>
         <item quantity="other">Imported %1$d files. Reader support comes later.</item>
     </plurals>
 
-    <!-- Desktop import result banner sentence. %1$d = number of files that could not be imported. -->
+    <!-- Desktop import result banner sentence. %1$d = number of files that could not be imported. Example: "Could not import 3 files." -->
     <plurals name="desktop_import_failed_file_count">
         <item quantity="one">Could not import %1$d file.</item>
         <item quantity="other">Could not import %1$d files.</item>
     </plurals>
 
-    <!-- Desktop import result banner sentence. %1$d = number of files skipped during import. -->
+    <!-- Desktop import result banner sentence. %1$d = number of files skipped during import. Example: "Skipped 3 files." -->
     <plurals name="desktop_skipped_file_count">
         <item quantity="one">Skipped %1$d file.</item>
         <item quantity="other">Skipped %1$d files.</item>
     </plurals>
 
-    <!-- Desktop remove-folder confirmation body. %1$s = folder name; %2$d = number of books from that folder. -->
+    <!-- Desktop remove-folder confirmation body. %1$s = folder name; %2$d = number of books from that folder. Example: "Remove \"Downloads\" and its 3 books from the app? Files on disk will not be deleted." -->
     <plurals name="desktop_remove_folder_desc_with_book_count">
         <item quantity="one">Remove "%1$s" and its %2$d book from the app? Files on disk will not be deleted.</item>
         <item quantity="other">Remove "%1$s" and its %2$d books from the app? Files on disk will not be deleted.</item>
     </plurals>
 
-    <!-- Desktop folder-sync result banner. %1$d = number of linked folders whose sync failed. -->
+    <!-- Desktop folder-sync result banner. %1$d = number of linked folders whose sync failed. Example: "Folder sync failed for 2 folders." -->
     <plurals name="desktop_folder_sync_failed_folder_count">
         <item quantity="one">Folder sync failed for %1$d folder.</item>
         <item quantity="other">Folder sync failed for %1$d folders.</item>
     </plurals>
 
-    <!-- Desktop folder-sync result banner. %1$d = number of linked folders skipped after a partial sync. -->
+    <!-- Desktop folder-sync result banner. %1$d = number of linked folders skipped after a partial sync. Example: "Folder sync finished with 2 folders skipped." -->
     <plurals name="desktop_folder_sync_skipped_folder_count">
         <item quantity="one">Folder sync finished with %1$d folder skipped.</item>
         <item quantity="other">Folder sync finished with %1$d folders skipped.</item>
     </plurals>
 
-    <!-- Desktop OPDS catalog removal banner. %1$d = number of streamed OPDS books removed with the catalog. -->
+    <!-- Desktop OPDS catalog removal banner. OPDS is a protocol name; keep it as-is. %1$d = number of streamed OPDS books removed with the catalog. Example: "Removed 3 streamed OPDS books from that catalog." -->
     <plurals name="desktop_opds_removed_stream_book_count">
         <item quantity="one">Removed %1$d streamed OPDS book from that catalog.</item>
         <item quantity="other">Removed %1$d streamed OPDS books from that catalog.</item>
     </plurals>
 
-    <!-- Word count for tags shown in filter chips. %1$d = number of tags. -->
+    <!-- Tag count phrase shown in filter chips. %1$d = number of tags. Example: "3 tags". -->
     <plurals name="tag_count">
         <item quantity="one">%1$d tag</item>
         <item quantity="other">%1$d tags</item>
     </plurals>
 
-    <!-- Desktop library tab label with count. %1$d = number of visible books in the tab. -->
+    <!-- Desktop library tab label with count. %1$d = number of visible books in the tab. Example: "All Books 12". -->
     <plurals name="desktop_library_tab_books_count">
         <item quantity="one">All Books %1$d</item>
         <item quantity="other">All Books %1$d</item>
     </plurals>
 
-    <!-- Desktop library tab label with count. %1$d = number of manual/series shelf groups. -->
+    <!-- Desktop library tab label with count. %1$d = number of manual/series shelf groups. Example: "Shelves 4". -->
     <plurals name="desktop_library_tab_shelves_count">
         <item quantity="one">Shelves %1$d</item>
         <item quantity="other">Shelves %1$d</item>
     </plurals>
 
-    <!-- Desktop library tab label with count. %1$d = number of tag groups. -->
+    <!-- Desktop library tab label with count. %1$d = number of tag groups. Example: "Tags 6". -->
     <plurals name="desktop_library_tab_tags_count">
         <item quantity="one">Tags %1$d</item>
         <item quantity="other">Tags %1$d</item>
     </plurals>
 
-    <!-- Desktop library tab label with count. %1$d = number of source folder groups. -->
+    <!-- Desktop library tab label with count. %1$d = number of source folder groups. Example: "Folders 2". -->
     <plurals name="desktop_library_tab_folders_count">
         <item quantity="one">Folders %1$d</item>
         <item quantity="other">Folders %1$d</item>
     </plurals>
 
-    <!-- Parenthetical cache chunk count in TTS cache entries. %1$d = number of cached audio chunks. -->
+    <!-- Parenthetical cache chunk count in TTS cache entries. %1$d = number of cached audio chunks. Example: "(12 chunks)". -->
     <plurals name="tts_cache_chunk_count_parenthetical">
         <item quantity="one">(%1$d chunk)</item>
         <item quantity="other">(%1$d chunks)</item>
