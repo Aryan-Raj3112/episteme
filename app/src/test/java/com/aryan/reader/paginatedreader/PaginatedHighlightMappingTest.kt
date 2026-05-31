@@ -41,7 +41,7 @@ class PaginatedHighlightMappingTest {
     }
 
     @Test
-    fun `same path split block outside stored offsets is ignored`() {
+    fun `same path split uses cfi offsets as local to block`() {
         val block = paragraph(
             text = "repeat",
             cfi = "/4/2",
@@ -49,6 +49,21 @@ class PaginatedHighlightMappingTest {
         )
         val highlight = highlight(
             cfi = "/4/2:0|/4/2:6",
+            text = "repeat"
+        )
+
+        assertEquals(0 until 6, getHighlightOffsetsInBlock(block, highlight))
+    }
+
+    @Test
+    fun `same path split block outside stored offsets is ignored`() {
+        val block = paragraph(
+            text = "repeat",
+            cfi = "/4/2",
+            startOffset = 20
+        )
+        val highlight = highlight(
+            cfi = "/4/2:40|/4/2:46",
             text = "repeat"
         )
 
@@ -93,6 +108,91 @@ class PaginatedHighlightMappingTest {
     }
 
     @Test
+    fun `locator offsets prevent cfi fallback from painting unrelated duplicate block`() {
+        val block = paragraph(
+            text = "alpha beta gamma",
+            cfi = "/4/4",
+            startOffset = 300
+        )
+        val highlight = highlight(
+            cfi = "/4/2:6|/4/2:10",
+            text = "beta",
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                startOffset = 206,
+                endOffset = 210,
+                cfi = "/4/2:6|/4/2:10",
+                textQuote = "beta"
+            )
+        )
+
+        assertNull(getHighlightOffsetsInBlock(block, highlight))
+    }
+
+    @Test
+    fun `block local locator offsets do not paint sibling blocks with overlapping local ranges`() {
+        val highlight = highlight(
+            cfi = "/4/4/6:124|/4/4/6:248",
+            text = "selected text",
+            locator = ReaderLocator(
+                chapterIndex = 8,
+                pageIndex = 49,
+                startOffset = 124,
+                endOffset = 248,
+                blockIndex = 1,
+                charOffset = 124,
+                textQuote = "selected text",
+                cfi = "/4/4/6:124|/4/4/6:248"
+            )
+        )
+        val selectedBlock = paragraph(
+            text = "x".repeat(260),
+            cfi = "/4/4/6",
+            startOffset = 0,
+            blockIndex = 1
+        )
+        val siblingBlock = paragraph(
+            text = "x".repeat(684),
+            cfi = "/4/4/8",
+            startOffset = 0,
+            blockIndex = 2
+        )
+
+        assertEquals(124 until 248, getHighlightOffsetsInBlock(selectedBlock, highlight))
+        assertNull(getHighlightOffsetsInBlock(siblingBlock, highlight))
+    }
+
+    @Test
+    fun `source cfi local offsets map within nonzero source block`() {
+        val block = paragraph(
+            text = "alpha beta gamma",
+            cfi = "/4/2",
+            startOffset = 200
+        )
+        val highlight = highlight(
+            cfi = "/4/2:6|/4/2:10",
+            text = "beta"
+        )
+
+        assertEquals(6 until 10, getHighlightOffsetsInBlock(block, highlight))
+    }
+
+    @Test
+    fun `legacy absolute cfi offsets remain supported for synced highlights`() {
+        val block = paragraph(
+            text = "alpha beta gamma",
+            cfi = "/4/2",
+            startOffset = 200
+        )
+        val highlight = highlight(
+            cfi = "/4/2:206|/4/2:210",
+            text = "beta"
+        )
+
+        assertEquals(6 until 10, getHighlightOffsetsInBlock(block, highlight))
+    }
+
+    @Test
     fun `paginated page highlights are scoped to page chapter`() {
         val chapterFourHighlight = highlight(
             cfi = "/4/10:11|/4/12:79",
@@ -124,14 +224,15 @@ class PaginatedHighlightMappingTest {
     private fun paragraph(
         text: String,
         cfi: String?,
-        startOffset: Int
+        startOffset: Int,
+        blockIndex: Int = startOffset
     ): ParagraphBlock {
         return ParagraphBlock(
             content = AnnotatedString(text),
             cfi = cfi,
             startCharOffsetInSource = startOffset,
             endCharOffsetInSource = startOffset + text.length,
-            blockIndex = startOffset
+            blockIndex = blockIndex
         )
     }
 

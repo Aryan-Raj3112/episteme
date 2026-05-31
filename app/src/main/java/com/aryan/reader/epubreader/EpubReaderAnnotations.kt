@@ -72,6 +72,7 @@ import androidx.core.text.HtmlCompat
 import com.aryan.reader.R
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.shared.EpubAnnotationSerializer
+import com.aryan.reader.shared.ReaderLocator
 
 private const val BOOKMARK_PREFS_NAME = "epub_reader_bookmarks"
 
@@ -156,14 +157,20 @@ fun processAndAddHighlight(
     newText: String,
     newColor: HighlightColor,
     chapterIndex: Int,
-    currentList: MutableList<UserHighlight>
+    currentList: MutableList<UserHighlight>,
+    locator: ReaderLocator = ReaderLocator.fromLegacy(
+        chapterIndex = chapterIndex,
+        cfi = newCfi,
+        textQuote = newText
+    )
 ): String {
     return EpubAnnotationSerializer.processAndAddHighlight(
         newCfi = newCfi,
         newText = newText,
         newColor = newColor,
         chapterIndex = chapterIndex,
-        currentList = currentList
+        currentList = currentList,
+        locator = locator
     )
 }
 

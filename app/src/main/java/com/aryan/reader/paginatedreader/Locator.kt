@@ -221,17 +221,33 @@ class LocatorConverter(
             return@withContext null
         }
 
-        val (baseCfiPath, charOffset) = cfi.split(':').let {
-            it[0] to (it.getOrNull(1)?.toIntOrNull() ?: 0)
+        val firstCfiPoint = cfi.substringBefore('|')
+        val cfiOffsetSeparator = firstCfiPoint.lastIndexOf(':')
+        val baseCfiPath = if (cfiOffsetSeparator > 0) {
+            firstCfiPoint.substring(0, cfiOffsetSeparator)
+        } else {
+            firstCfiPoint
+        }
+        val charOffset = if (cfiOffsetSeparator > 0 && cfiOffsetSeparator < firstCfiPoint.lastIndex) {
+            firstCfiPoint.substring(cfiOffsetSeparator + 1).toIntOrNull() ?: 0
+        } else {
+            0
         }
 
         val bestMatch = findBestMatchingBlock(allBlocks, baseCfiPath)
 
         if (bestMatch != null) {
+            val absoluteCharOffset = when (bestMatch) {
+                is SemanticTextBlock -> {
+                    val localOffset = charOffset.coerceIn(0, bestMatch.text.length)
+                    bestMatch.startCharOffsetInSource + localOffset
+                }
+                else -> charOffset.coerceAtLeast(0)
+            }
             val locator = Locator(
                 chapterIndex = chapterIndex,
                 blockIndex = bestMatch.blockIndex,
-                charOffset = charOffset
+                charOffset = absoluteCharOffset
             )
             Timber.tag("POS_DIAG").d("getLocatorFromCfi: Successfully resolved to $locator")
             locator
@@ -350,8 +366,20 @@ class LocatorConverter(
 
         val foundBlock = findBlockByBlockIndex(blocks, locator.blockIndex)
         val resultCfi = foundBlock?.cfi?.let { cfi ->
-            if (locator.charOffset > 0) {
-                "$cfi:${locator.charOffset}"
+            val localOffset = when (foundBlock) {
+                is SemanticTextBlock -> {
+                    val start = foundBlock.startCharOffsetInSource
+                    val end = start + foundBlock.text.length
+                    if (locator.charOffset in start..end) {
+                        locator.charOffset - start
+                    } else {
+                        locator.charOffset
+                    }.coerceIn(0, foundBlock.text.length)
+                }
+                else -> locator.charOffset.coerceAtLeast(0)
+            }
+            if (localOffset > 0) {
+                "$cfi:$localOffset"
             } else {
                 cfi
             }
@@ -416,7 +444,19 @@ class LocatorConverter(
         fun traverse(blocks: List<SemanticBlock>): Boolean {
             for (block in blocks) {
                 if (block.blockIndex == locator.blockIndex) {
-                    offset += locator.charOffset
+                    val absoluteOffset = when (block) {
+                        is SemanticTextBlock -> {
+                            val start = block.startCharOffsetInSource
+                            val end = start + block.text.length
+                            locator.charOffset.takeIf { (start > 0 || offset == 0) && it in start..end }
+                        }
+                        else -> null
+                    }
+                    if (absoluteOffset != null) {
+                        offset = absoluteOffset
+                    } else {
+                        offset += locator.charOffset
+                    }
                     return true
                 }
 

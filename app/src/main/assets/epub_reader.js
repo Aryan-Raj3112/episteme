@@ -2924,6 +2924,29 @@
     };
 
     const HL_LOG_TAG = "HIGHLIGHT_DEBUG";
+    const HL_RENDER_LOG_TAG = "AndroidHighlightRenderDiag";
+
+    function hlRenderPreview(value, maxLength) {
+        if (value === undefined || value === null) return "";
+        var text = String(value).replace(/\s+/g, " ");
+        var max = maxLength || 100;
+        return text.length > max ? text.substring(0, max) : text;
+    }
+
+    function hlRenderLocatorLabel(locator) {
+        locator = locator || {};
+        return "locatorChapter=" + (locator.chapterIndex === undefined || locator.chapterIndex === null ? "null" : locator.chapterIndex) +
+            " locatorPage=" + (locator.pageIndex === undefined || locator.pageIndex === null ? "null" : locator.pageIndex) +
+            " locatorOffsets=" + (locator.startOffset === undefined || locator.startOffset === null ? "null" : locator.startOffset) +
+            ".." + (locator.endOffset === undefined || locator.endOffset === null ? "null" : locator.endOffset) +
+            " locatorBlock=" + (locator.blockIndex === undefined || locator.blockIndex === null ? "null" : locator.blockIndex) +
+            " locatorChar=" + (locator.charOffset === undefined || locator.charOffset === null ? "null" : locator.charOffset) +
+            " locatorCfi=" + hlRenderPreview(locator.cfi || "", 120);
+    }
+
+    function hlRenderLog(message) {
+        console.log(HL_RENDER_LOG_TAG + ": " + message);
+    }
 
     window.HighlightBridgeHelper = {
         updateHighlightStyle: function (cfi, newColorClass, colorId) {
@@ -3280,11 +3303,13 @@
             try {
                 var highlights = JSON.parse(jsonArrayString);
                 var self = this;
+                hlRenderLog("webview_restore_start count=" + highlights.length);
 
                 highlights.forEach(function (h) {
                     self.applyHighlightObject(h);
                 });
             } catch (e) {
+                hlRenderLog("webview_restore_error error=" + hlRenderPreview(e && e.message ? e.message : e, 160));
                 console.log(
                     `$ {
                     HL_LOG_TAG
@@ -3297,6 +3322,13 @@
 
         applyHighlightObject: function (highlight) {
             if (!highlight) return;
+            hlRenderLog(
+                "webview_apply_object id=" + (highlight.id || "") +
+                " cfi=" + hlRenderPreview(highlight.cfi || "", 120) +
+                " textLen=" + String(highlight.text || "").length +
+                " text='" + hlRenderPreview(highlight.text || "", 80) + "' " +
+                hlRenderLocatorLabel(highlight.locator || {})
+            );
             this.applyHighlight(highlight.cfi, highlight.text, highlight.cssClass, highlight.locator || null);
         },
 
@@ -3328,7 +3360,13 @@
         rangeFromTextOffsets: function (root, startOffset, endOffset) {
             var start = parseInt(startOffset, 10);
             var end = parseInt(endOffset, 10);
-            if (!root || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+            if (!root || !isFinite(start) || !isFinite(end) || end <= start) {
+                hlRenderLog(
+                    "webview_range_offsets_skip reason=invalid_offsets start=" + startOffset +
+                    " end=" + endOffset + " hasRoot=" + !!root
+                );
+                return null;
+            }
 
             var nodes = this.highlightTextNodes(root);
             var cursor = 0;
@@ -3352,11 +3390,25 @@
                 cursor = next;
             }
 
-            if (!startNode || !endNode) return null;
+            if (!startNode || !endNode) {
+                hlRenderLog(
+                    "webview_range_offsets_skip reason=missing_boundary start=" + start +
+                    " end=" + end + " nodes=" + nodes.length + " textCursor=" + cursor
+                );
+                return null;
+            }
             var range = document.createRange();
             range.setStart(startNode, startInNode);
             range.setEnd(endNode, endInNode);
-            return range.collapsed ? null : range;
+            if (range.collapsed) {
+                hlRenderLog("webview_range_offsets_skip reason=collapsed start=" + start + " end=" + end);
+                return null;
+            }
+            hlRenderLog(
+                "webview_range_offsets_result start=" + start + " end=" + end +
+                " text='" + hlRenderPreview(range.toString(), 80) + "'"
+            );
+            return range;
         },
 
         rangeMatchesText: function (range, text) {
@@ -3368,10 +3420,16 @@
         },
 
         rangeFromVisibleTextSearch: function (text, locator) {
-            if (!text) return null;
+            if (!text) {
+                hlRenderLog("webview_text_search_skip reason=empty_text " + hlRenderLocatorLabel(locator));
+                return null;
+            }
             var root = this.highlightTextRoot();
             var nodes = this.highlightTextNodes(root);
-            if (!nodes.length) return null;
+            if (!nodes.length) {
+                hlRenderLog("webview_text_search_skip reason=no_nodes " + hlRenderLocatorLabel(locator));
+                return null;
+            }
 
             var fullText = nodes.map(function (node) { return node.nodeValue || ""; }).join("");
             var expected = String(text);
@@ -3398,30 +3456,69 @@
                     index = fullText.indexOf(partial, index + 1);
                 }
             }
-            if (!candidates.length) return null;
+            if (!candidates.length) {
+                hlRenderLog(
+                    "webview_text_search_skip reason=no_candidates textLen=" + expected.length +
+                    " text='" + hlRenderPreview(expected, 80) + "' " + hlRenderLocatorLabel(locator)
+                );
+                return null;
+            }
 
             var preferred = locator && locator.startOffset !== undefined && locator.startOffset !== null
                 ? parseInt(locator.startOffset, 10)
                 : candidates[0];
-            if (!Number.isFinite(preferred)) preferred = candidates[0];
+            if (!isFinite(preferred)) preferred = candidates[0];
             var best = candidates.reduce(function (currentBest, candidate) {
                 return Math.abs(candidate - preferred) < Math.abs(currentBest - preferred) ? candidate : currentBest;
             }, candidates[0]);
+            hlRenderLog(
+                "webview_text_search_candidate count=" + candidates.length +
+                " preferred=" + preferred + " best=" + best +
+                " text='" + hlRenderPreview(expected, 80) + "' " + hlRenderLocatorLabel(locator)
+            );
             return this.rangeFromTextOffsets(root, best, best + expected.length);
         },
 
         rangeFromLocator: function (locator, text) {
-            if (!locator) return null;
+            if (!locator) {
+                hlRenderLog("webview_locator_skip reason=missing_locator");
+                return null;
+            }
+            if (locator.cfi && String(locator.cfi).charAt(0) === "/") {
+                hlRenderLog(
+                    "webview_locator_skip reason=structural_cfi_prefers_cfi " +
+                    hlRenderLocatorLabel(locator)
+                );
+                return null;
+            }
             var root = this.highlightTextRoot();
             var range = this.rangeFromTextOffsets(root, locator.startOffset, locator.endOffset);
-            if (range && this.rangeMatchesText(range, text)) return range;
-            return this.rangeFromVisibleTextSearch(text || locator.textQuote || "", locator);
+            if (range && this.rangeMatchesText(range, text)) {
+                hlRenderLog(
+                    "webview_locator_result matched=true text='" + hlRenderPreview(range.toString(), 80) + "' " +
+                    hlRenderLocatorLabel(locator)
+                );
+                return range;
+            }
+            hlRenderLog(
+                "webview_locator_skip reason=" + (range ? "text_mismatch" : "range_missing") +
+                " rangeText='" + hlRenderPreview(range ? range.toString() : "", 80) + "' " +
+                "expected='" + hlRenderPreview(text || "", 80) + "' " + hlRenderLocatorLabel(locator)
+            );
+            return null;
         },
 
         rangeFromCfi: function (cfi, text) {
-            if (!cfi || cfi.indexOf("desktop:") === 0) return null;
-            const location = window.getNodeAndOffsetFromCfi(cfi);
-            if (!location || !location.node) return null;
+            if (!cfi || cfi.indexOf("desktop:") === 0) {
+                hlRenderLog("webview_cfi_skip reason=unsupported cfi=" + hlRenderPreview(cfi || "", 120));
+                return null;
+            }
+            var sourceCfi = String(cfi).split("|")[0];
+            const location = window.getNodeAndOffsetFromCfi(sourceCfi);
+            if (!location || !location.node) {
+                hlRenderLog("webview_cfi_skip reason=missing_location cfi=" + hlRenderPreview(cfi, 120));
+                return null;
+            }
 
             let startNode = location.node;
             let startOffset = location.offset;
@@ -3452,23 +3549,40 @@
                 const substring = nodeVal.substring(startOffset, startOffset + text.length);
 
                 if (substring !== text && substring.trim() !== text.trim()) {
+                    hlRenderLog(
+                        "webview_cfi_text_mismatch cfi=" + hlRenderPreview(cfi, 120) +
+                        " startOffset=" + startOffset +
+                        " actual='" + hlRenderPreview(substring, 80) + "'" +
+                        " expected='" + hlRenderPreview(text, 80) + "'"
+                    );
                     console.log("HIGHLIGHT_DEBUG: Text mismatch at CFI. Searching nearby.");
                     const foundIndex = nodeVal.indexOf(text);
 
                     if (foundIndex !== -1) {
+                        hlRenderLog(
+                            "webview_cfi_text_adjust reason=full_match oldStartOffset=" + startOffset +
+                            " newStartOffset=" + foundIndex + " cfi=" + hlRenderPreview(cfi, 120)
+                        );
                         startOffset = foundIndex;
                     } else {
                         const partial = text.substring(0, Math.min(text.length, 20));
                         const partialIndex = nodeVal.indexOf(partial);
 
                         if (partialIndex !== -1) {
+                            hlRenderLog(
+                                "webview_cfi_text_adjust reason=partial_match oldStartOffset=" + startOffset +
+                                " newStartOffset=" + partialIndex + " cfi=" + hlRenderPreview(cfi, 120)
+                            );
                             startOffset = partialIndex;
                         }
                     }
                 }
             }
 
-            if (!startNode) return null;
+            if (!startNode) {
+                hlRenderLog("webview_cfi_skip reason=missing_start_node cfi=" + hlRenderPreview(cfi, 120));
+                return null;
+            }
 
             const range = document.createRange();
 
@@ -3498,9 +3612,20 @@
                 }
             }
 
-            if (!endNode) return null;
+            if (!endNode) {
+                hlRenderLog("webview_cfi_skip reason=missing_end_node cfi=" + hlRenderPreview(cfi, 120));
+                return null;
+            }
             range.setEnd(endNode, endOffset);
-            return range.collapsed ? null : range;
+            if (range.collapsed) {
+                hlRenderLog("webview_cfi_skip reason=collapsed cfi=" + hlRenderPreview(cfi, 120));
+                return null;
+            }
+            hlRenderLog(
+                "webview_cfi_result cfi=" + hlRenderPreview(cfi, 120) +
+                " text='" + hlRenderPreview(range.toString(), 80) + "'"
+            );
+            return range;
         },
 
         applyHighlight: function (cfi, text, cssClass, locator) {
@@ -3514,15 +3639,57 @@
                         break;
                     }
                 }
-                if (alreadyApplied) return;
+                if (alreadyApplied) {
+                    hlRenderLog(
+                        "webview_apply_skip reason=already_applied cfi=" + hlRenderPreview(cfi || "", 120) +
+                        " textLen=" + String(text || "").length + " " + hlRenderLocatorLabel(locator)
+                    );
+                    return;
+                }
 
-                var range = this.rangeFromLocator(locator, text) ||
-                    this.rangeFromCfi(cfi, text || "") ||
-                    this.rangeFromVisibleTextSearch(text || "", locator);
-                if (!range) return;
+                var hasPreciseLocator = locator &&
+                    locator.startOffset !== undefined && locator.startOffset !== null &&
+                    locator.endOffset !== undefined && locator.endOffset !== null &&
+                    parseInt(locator.endOffset, 10) > parseInt(locator.startOffset, 10);
+                hlRenderLog(
+                    "webview_apply_start cfi=" + hlRenderPreview(cfi || "", 120) +
+                    " textLen=" + String(text || "").length +
+                    " cssClass=" + cssClass +
+                    " hasPreciseLocator=" + !!hasPreciseLocator + " " +
+                    hlRenderLocatorLabel(locator)
+                );
+                var rangeSource = "locator";
+                var sourceCfi = (locator && locator.cfi) || cfi;
+                var hasSourceCfi = sourceCfi && String(sourceCfi).charAt(0) === "/";
+                var range = hasSourceCfi ? null : this.rangeFromLocator(locator, text);
+                if (!range && hasSourceCfi) {
+                    rangeSource = "cfi";
+                    range = this.rangeFromCfi(sourceCfi, text || "");
+                }
+                if (!range) {
+                    rangeSource = "locator";
+                    range = this.rangeFromLocator(locator, text);
+                }
+                if (!range && !hasPreciseLocator && !hasSourceCfi) {
+                    rangeSource = "text_search";
+                    range = this.rangeFromVisibleTextSearch(text || "", locator);
+                }
+                if (!range) {
+                    hlRenderLog(
+                        "webview_apply_skip reason=no_range cfi=" + hlRenderPreview(cfi || "", 120) +
+                        " hasPreciseLocator=" + !!hasPreciseLocator + " " + hlRenderLocatorLabel(locator)
+                    );
+                    return;
+                }
                 var normalizedRange = this.normalizeRangeBoundaries(range);
                 this.highlightRangeSafe(normalizedRange, cssClass, cfi);
+                hlRenderLog(
+                    "webview_apply_result applied=true cfi=" + hlRenderPreview(cfi || "", 120) +
+                    " source=" + rangeSource +
+                    " renderedText='" + hlRenderPreview(normalizedRange.toString(), 80) + "'"
+                );
             } catch (e) {
+                hlRenderLog("webview_apply_error error=" + hlRenderPreview(e && e.message ? e.message : e, 160));
                 console.log(e);
             }
         },

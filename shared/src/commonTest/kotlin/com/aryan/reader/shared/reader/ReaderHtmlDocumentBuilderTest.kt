@@ -127,6 +127,10 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("startOffset >= pageEnd || endOffset <= pageStart"))
         assertTrue(html.contains("normalizedRangeForText(searchRoot, expectedNormalized, false)"))
         assertTrue(html.contains("locator.textQuote || highlight.text"))
+        assertTrue(html.contains("var sourceCfiBases = readerCfiBases(sourceCfi);"))
+        assertTrue(html.contains("return readerHostMatchesCfi(host, sourceCfiBases);"))
+        assertTrue(html.contains("if (cfiOffsets) {"))
+        assertTrue(html.contains("if (hasPreciseOffsets) return;"))
     }
 
     @Test
@@ -225,6 +229,109 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("data-reader-page-index=\"3\""))
         assertTrue(html.contains("readerPaginationLayoutLog"))
         assertTrue(html.contains("EpistemeEpubPagination"))
+    }
+
+    @Test
+    fun `page document scopes android locator highlights to one page in a spread`() {
+        val pageText = "prefix  target suffix"
+        val book = semanticHighlightBook(
+            leftText = pageText,
+            rightText = pageText
+        )
+        val left = ReaderPage(
+            pageIndex = 0,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = pageText,
+            startOffset = 100,
+            endOffset = 100 + pageText.length,
+            semanticBlocks = listOf(
+                SemanticParagraph(pageText, emptyList(), CssStyle(), null, "/4/2", startCharOffsetInSource = 100, blockIndex = 42)
+            )
+        )
+        val right = ReaderPage(
+            pageIndex = 1,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = pageText,
+            startOffset = 200,
+            endOffset = 200 + pageText.length,
+            semanticBlocks = listOf(
+                SemanticParagraph(pageText, emptyList(), CssStyle(), null, "/4/4", startCharOffsetInSource = 200, blockIndex = 43)
+            )
+        )
+        val highlight = UserHighlight(
+            id = "highlight-android",
+            cfi = "android-locator:0:42:108",
+            text = "target",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0,
+            locator = ReaderLocator.fromLegacy(
+                chapterIndex = 0,
+                cfi = "android-locator:0:42:108",
+                textQuote = "target"
+            )
+        )
+
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = book,
+            page = left,
+            visiblePages = listOf(left, right),
+            settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE),
+            highlights = listOf(highlight)
+        )
+
+        assertEquals(1, Regex("data-reader-highlight-id=\"highlight-android\"").findAll(html).count())
+        assertTrue(html.contains("""data-reader-page-index="0""""))
+        assertTrue(html.contains("""data-reader-page-index="1""""))
+    }
+
+    @Test
+    fun `page document scopes source cfi text fallback highlights to cfi page`() {
+        val pageText = "prefix  target suffix"
+        val book = semanticHighlightBook(
+            leftText = pageText,
+            rightText = pageText
+        )
+        val left = ReaderPage(
+            pageIndex = 0,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = pageText,
+            startOffset = 100,
+            endOffset = 100 + pageText.length,
+            semanticBlocks = listOf(
+                SemanticParagraph(pageText, emptyList(), CssStyle(), null, "/4/2", startCharOffsetInSource = 100, blockIndex = 42)
+            )
+        )
+        val right = ReaderPage(
+            pageIndex = 1,
+            chapterIndex = 0,
+            chapterTitle = "One",
+            text = pageText,
+            startOffset = 200,
+            endOffset = 200 + pageText.length,
+            semanticBlocks = listOf(
+                SemanticParagraph(pageText, emptyList(), CssStyle(), null, "/4/4", startCharOffsetInSource = 200, blockIndex = 43)
+            )
+        )
+        val highlight = UserHighlight(
+            id = "highlight-cfi",
+            cfi = "/4/2:8|/4/2:14",
+            text = "target",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0
+        )
+
+        val html = ReaderHtmlDocumentBuilder.pageDocument(
+            book = book,
+            page = left,
+            visiblePages = listOf(left, right),
+            settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE),
+            highlights = listOf(highlight)
+        )
+
+        assertEquals(1, Regex("data-reader-highlight-id=\"highlight-cfi\"").findAll(html).count())
     }
 
     @Test
@@ -779,6 +886,8 @@ class ReaderHtmlDocumentBuilderTest {
 
         assertTrue(html.contains("function readerHostsForLocator(chapterIndex, startOffset, endOffset)"))
         assertTrue(html.contains("function readerHostForLocator(chapterIndex, startOffset, endOffset)"))
+        assertTrue(html.contains("function readerHostElementForCfiPoint(chapterIndex, cfiPoint)"))
+        assertTrue(html.contains("var hosts = Array.prototype.slice.call(document.querySelectorAll(chapterSelector));"))
         assertTrue(html.contains("var targetChapters = readerHostsForLocator(chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("var chapter = readerHostForLocator(chapterIndex, startOffset, endOffset);"))
         assertTrue(html.contains("data-reader-active-page-index"))
@@ -1111,6 +1220,25 @@ class ReaderHtmlDocumentBuilderTest {
                     id = "one",
                     title = "One",
                     plainText = text
+                )
+            )
+        )
+    }
+
+    private fun semanticHighlightBook(leftText: String, rightText: String): SharedEpubBook {
+        return SharedEpubBook(
+            id = "book",
+            fileName = "book.epub",
+            title = "Book",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "one",
+                    title = "One",
+                    plainText = "$leftText\n\n$rightText",
+                    semanticBlocks = listOf(
+                        SemanticParagraph(leftText, emptyList(), CssStyle(), null, "/4/2", startCharOffsetInSource = 100, blockIndex = 42),
+                        SemanticParagraph(rightText, emptyList(), CssStyle(), null, "/4/4", startCharOffsetInSource = 200, blockIndex = 43)
+                    )
                 )
             )
         )

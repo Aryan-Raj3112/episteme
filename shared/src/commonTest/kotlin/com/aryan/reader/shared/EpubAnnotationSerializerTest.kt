@@ -184,4 +184,18 @@ class EpubAnnotationSerializerTest {
         assertEquals(42, androidLocator.blockIndex)
         assertEquals(128, androidLocator.charOffset)
     }
+
+    @Test
+    fun `android locator with quote hydrates absolute text range for synced highlights`() {
+        val locator = ReaderLocator.fromLegacy(
+            cfi = "android-locator:3:42:128",
+            textQuote = "marked"
+        )
+
+        assertEquals(3, locator.chapterIndex)
+        assertEquals(42, locator.blockIndex)
+        assertEquals(128, locator.charOffset)
+        assertEquals(128, locator.startOffset)
+        assertEquals(134, locator.endOffset)
+    }
 }

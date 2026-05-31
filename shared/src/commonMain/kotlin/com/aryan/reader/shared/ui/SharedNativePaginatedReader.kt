@@ -2114,7 +2114,105 @@ private fun List<UserHighlight>.visibleInPage(page: ReaderPage): List<UserHighli
             cfi = highlight.cfi,
             textQuote = highlight.text
         )
-        (locator.chapterIndex ?: highlight.chapterIndex) == page.chapterIndex
+        (locator.chapterIndex ?: highlight.chapterIndex) == page.chapterIndex &&
+            page.containsNativeHighlightLocator(locator, highlight.cfi)
+    }
+}
+
+private fun ReaderPage.containsNativeHighlightLocator(locator: ReaderLocator, fallbackCfi: String): Boolean {
+    if (containsNativeBlockLocator(locator)) return true
+    if (containsNativeSourceCfiLocator(locator, fallbackCfi)) return true
+    if (locator.hasTextRange) {
+        if (locator.hasSharedNativeStructuralScope(fallbackCfi)) return false
+        val start = locator.startOffset ?: return false
+        val end = locator.endOffset ?: start
+        return if (start == end) {
+            containsNativeCollapsedOffset(start)
+        } else {
+            start < endOffset && end > startOffset
+        }
+    }
+    locator.pageIndex?.let { return it == pageIndex }
+    val prefix = "desktop:${chapterIndex}:"
+    val desktopPageIndex = fallbackCfi
+        .takeIf { it.startsWith(prefix) }
+        ?.removePrefix(prefix)
+        ?.substringBefore(':')
+        ?.toIntOrNull()
+    return desktopPageIndex != null && desktopPageIndex >= 0 && desktopPageIndex == pageIndex
+}
+
+private fun ReaderPage.containsNativeCollapsedOffset(offset: Int): Boolean {
+    return if (startOffset == endOffset) {
+        offset == startOffset
+    } else {
+        offset >= startOffset && offset < endOffset
+    }
+}
+
+private fun ReaderPage.containsNativeBlockLocator(locator: ReaderLocator): Boolean {
+    val blockIndex = locator.blockIndex ?: return false
+    val blocks = semanticBlocks.flattenNativeSemanticBlocks()
+    if (blocks.isEmpty()) return false
+    val matchingBlocks = blocks.filter { it.blockIndex == blockIndex }
+    if (matchingBlocks.isEmpty()) return false
+    val charOffset = locator.charOffset ?: return true
+    if (!containsNativeCollapsedOffset(charOffset)) return false
+    return matchingBlocks.filterIsInstance<SemanticTextBlock>().any { block ->
+        val start = block.startCharOffsetInSource
+        val end = start + block.text.length
+        charOffset in start until end || (block.text.isEmpty() && charOffset == start)
+    }
+}
+
+private fun ReaderPage.containsNativeSourceCfiLocator(locator: ReaderLocator, fallbackCfi: String): Boolean {
+    val cfi = (locator.cfi?.takeIf { it.isNotBlank() } ?: fallbackCfi)
+        .takeIf { it.startsWith("/") || it.contains("|/") }
+        ?: return false
+    val blocks = semanticBlocks.flattenNativeSemanticBlocks().filterIsInstance<SemanticTextBlock>()
+    if (blocks.isEmpty()) return false
+    val parts = cfi.split('|').mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+    val startPoint = parts.firstOrNull() ?: return false
+    val endPoint = parts.lastOrNull() ?: startPoint
+    val quoteLength = locator.textQuote?.length ?: 0
+    return blocks.any { block ->
+        val blockPath = block.cfi?.substringBefore(':')?.takeIf { it.startsWith("/") } ?: return@any false
+        val startMatches = sharedNativeCfiPathsEquivalent(startPoint.path, blockPath)
+        val endMatches = sharedNativeCfiPathsEquivalent(endPoint.path, blockPath)
+        val isIntermediate = parts.size > 1 &&
+            !startMatches &&
+            !endMatches &&
+            sharedNativeCfiPathStrictlyBetween(blockPath, startPoint.path, endPoint.path)
+        if (!startMatches && !endMatches && !isIntermediate) return@any false
+        val blockStart = block.startCharOffsetInSource
+        val blockEnd = blockStart + block.text.length
+        val rangeStart = when {
+            startMatches -> sharedNativeCfiOffsetToAbsolute(startPoint.offset, blockStart, block.text.length)
+            isIntermediate || endMatches -> blockStart
+            else -> blockStart
+        }
+        val rangeEnd = when {
+            endMatches && parts.size > 1 -> sharedNativeCfiOffsetToAbsolute(endPoint.offset, blockStart, block.text.length)
+            startMatches && parts.size == 1 && quoteLength > 0 ->
+                sharedNativeCfiOffsetToAbsolute(startPoint.offset, blockStart, block.text.length) + quoteLength
+            startMatches && parts.size == 1 -> sharedNativeCfiOffsetToAbsolute(startPoint.offset, blockStart, block.text.length)
+            isIntermediate -> blockEnd
+            else -> blockEnd
+        }
+        if (rangeStart == rangeEnd) {
+            containsNativeCollapsedOffset(rangeStart)
+        } else {
+            minOf(rangeStart, rangeEnd) < endOffset && maxOf(rangeStart, rangeEnd) > startOffset
+        }
+    }
+}
+
+private fun sharedNativeCfiOffsetToAbsolute(offset: Int, blockStart: Int, textLength: Int): Int {
+    val blockEnd = blockStart + textLength
+    return when {
+        offset in 0..textLength -> blockStart + offset
+        offset in blockStart..blockEnd -> offset
+        else -> blockStart + offset.coerceIn(0, textLength)
     }
 }
 
@@ -2169,6 +2267,8 @@ private fun AnnotatedString.Builder.applyHighlightToTextRange(
 
     val locatorRange = sharedNativeLocatorHighlightRangeInBlock(
         highlight = highlight,
+        blockCfi = blockCfi,
+        blockIndex = blockIndex,
         textStartOffset = textStartOffset,
         textLength = textLength,
         text = text
@@ -2182,12 +2282,17 @@ private fun AnnotatedString.Builder.applyHighlightToTextRange(
     val cfiRange = sharedNativeHighlightRangeInBlock(
         highlight = highlight,
         blockCfi = blockCfi,
+        textStartOffset = textStartOffset,
         textLength = textLength,
         text = text
     )
     if (cfiRange != null) {
         logResult("cfi_or_text", cfiRange)
         applyRange(cfiRange)
+        return
+    }
+    if (highlight.locator.hasTextRange) {
+        logResult("locator_offsets_miss", null)
         return
     }
     logResult("no_match", null)
@@ -2247,23 +2352,41 @@ private fun logNativeHighlightMapResult(
 
 private fun sharedNativeLocatorHighlightRangeInBlock(
     highlight: UserHighlight,
+    blockCfi: String?,
+    blockIndex: Int?,
     textStartOffset: Int,
     textLength: Int,
     text: String?
 ): SharedNativeReaderTextRange? {
+    if (highlight.hasSharedNativeMultipartCfiRange()) return null
+    val locatorBlockIndex = highlight.locator.blockIndex
+    val blockMatchesLocator = locatorBlockIndex != null && locatorBlockIndex == blockIndex
+    val cfiMatchesBlock = highlight.sharedNativeCfiTouchesBlock(blockCfi)
+    val hasStructuralScope = locatorBlockIndex != null || highlight.sharedNativeSourceCfi().startsWith("/")
+    if (hasStructuralScope && !blockMatchesLocator && !cfiMatchesBlock) return null
     val start = highlight.locator.startOffset ?: return null
     val end = highlight.locator.endOffset ?: return null
     val rangeStart = minOf(start, end)
     val rangeEnd = maxOf(start, end)
     val textEndOffset = textStartOffset + textLength
-    if (rangeEnd <= textStartOffset || rangeStart >= textEndOffset) return null
-    val localStart = (rangeStart - textStartOffset).coerceIn(0, textLength)
-    val localEnd = (rangeEnd - textStartOffset).coerceIn(localStart, textLength)
-    val locatorRange = if (localStart < localEnd) {
-        SharedNativeReaderTextRange(localStart, localEnd)
+    val locatorRange = if (hasStructuralScope) {
+        val localStart = sharedNativeScopedOffsetToLocalOrNull(rangeStart, textStartOffset, textLength)
+        val localEnd = sharedNativeScopedOffsetToLocalOrNull(rangeEnd, textStartOffset, textLength)
+        if (localStart != null && localEnd != null && localStart < localEnd) {
+            SharedNativeReaderTextRange(localStart, localEnd)
+        } else {
+            null
+        }
     } else {
-        null
+        if (rangeEnd <= textStartOffset || rangeStart >= textEndOffset) {
+            null
+        } else {
+            val localStart = (rangeStart - textStartOffset).coerceIn(0, textLength)
+            val localEnd = (rangeEnd - textStartOffset).coerceIn(localStart, textLength)
+            if (localStart < localEnd) SharedNativeReaderTextRange(localStart, localEnd) else null
+        }
     }
+    if (locatorRange == null && highlight.sharedNativeSourceCfi().startsWith("/")) return null
     val quoteRange = text
         ?.let { blockText ->
             sharedNativeHighlightTextRangeInBlock(
@@ -2281,6 +2404,19 @@ private fun sharedNativeLocatorHighlightRangeInBlock(
         return quoteRange
     }
     return locatorRange ?: quoteRange
+}
+
+private fun sharedNativeScopedOffsetToLocalOrNull(
+    offset: Int,
+    textStartOffset: Int,
+    textLength: Int
+): Int? {
+    val textEndOffset = textStartOffset + textLength
+    return when {
+        offset in 0..textLength -> offset
+        offset in textStartOffset..textEndOffset -> offset - textStartOffset
+        else -> null
+    }
 }
 
 private fun sharedNativeBlockLocatorHighlightRangeInBlock(
@@ -2317,6 +2453,32 @@ private fun sharedNativeBlockLocatorHighlightRangeInBlock(
         ?: return null
     val localEnd = (localStart + fallbackLength).coerceIn(localStart, textLength)
     return if (localStart < localEnd) SharedNativeReaderTextRange(localStart, localEnd) else null
+}
+
+private fun ReaderLocator.hasSharedNativeStructuralScope(fallbackCfi: String): Boolean {
+    val sourceCfi = cfi?.takeIf { it.isNotBlank() } ?: fallbackCfi
+    return blockIndex != null || sourceCfi.startsWith("/")
+}
+
+private fun UserHighlight.sharedNativeSourceCfi(): String {
+    return locator.cfi?.takeIf { it.isNotBlank() } ?: cfi
+}
+
+private fun UserHighlight.hasSharedNativeMultipartCfiRange(): Boolean {
+    val parts = sharedNativeSourceCfi()
+        .split('|')
+        .mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+    if (parts.size < 2) return false
+    val start = parts.first().path
+    return parts.drop(1).any { !sharedNativeCfiPathsEquivalent(start, it.path) }
+}
+
+private fun UserHighlight.sharedNativeCfiTouchesBlock(blockCfi: String?): Boolean {
+    val blockPath = blockCfi?.takeIf { it.startsWith("/") } ?: return false
+    return sharedNativeSourceCfi()
+        .split('|')
+        .mapNotNull { it.sharedNativeCfiPointOrNull(allowMissingOffset = true) }
+        .any { sharedNativeCfiPathsEquivalent(it.path, blockPath) }
 }
 
 private fun SharedNativeReaderTextRange.matchesSharedNativeHighlightText(
@@ -2432,16 +2594,21 @@ internal fun sharedNativeHighlightRangeForBlock(
     )?.let { return it }
     sharedNativeLocatorHighlightRangeInBlock(
         highlight = highlight,
+        blockCfi = blockCfi,
+        blockIndex = blockIndex,
         textStartOffset = textStartOffset,
         textLength = textLength,
         text = text
     )?.let { return it }
-    return sharedNativeHighlightRangeInBlock(
+    sharedNativeHighlightRangeInBlock(
         highlight = highlight,
         blockCfi = blockCfi,
+        textStartOffset = textStartOffset,
         textLength = textLength,
         text = text
-    )
+    )?.let { return it }
+    if (highlight.locator.hasTextRange) return null
+    return null
 }
 
 internal fun sharedNativeVisibleHighlightsForPage(
@@ -2902,10 +3069,11 @@ private data class SharedNativeCfiPoint(
 private fun sharedNativeHighlightRangeInBlock(
     highlight: UserHighlight,
     blockCfi: String?,
+    textStartOffset: Int,
     textLength: Int,
     text: String?
 ): SharedNativeReaderTextRange? {
-    val cfi = highlight.cfi.takeIf { it.contains('|') || it.startsWith("/") } ?: return null
+    val cfi = highlight.sharedNativeSourceCfi().takeIf { it.contains('|') || it.startsWith("/") } ?: return null
     val blockPath = blockCfi?.takeIf { it.startsWith("/") } ?: return null
     val parts = cfi.split('|')
     val start = parts.firstOrNull()?.sharedNativeCfiPointOrNull() ?: return null
@@ -2917,8 +3085,16 @@ private fun sharedNativeHighlightRangeInBlock(
         sharedNativeCfiPathStrictlyBetween(blockPath, start.path, end.path)
     if (!startMatches && !endMatches && !isIntermediate) return null
 
-    var localStart = if (startMatches) start.offset else 0
-    var localEnd = if (endMatches) end.offset else textLength
+    var localStart = if (startMatches) {
+        sharedNativeCfiOffsetToLocal(start.offset, textStartOffset, textLength)
+    } else {
+        0
+    }
+    var localEnd = if (endMatches) {
+        sharedNativeCfiOffsetToLocal(end.offset, textStartOffset, textLength)
+    } else {
+        textLength
+    }
     if (startMatches && endMatches && localEnd < localStart) {
         localStart = localEnd.also { localEnd = localStart }
     }
@@ -2948,15 +3124,27 @@ private fun sharedNativeHighlightRangeInBlock(
     return cfiRange ?: quoteRange
 }
 
-private fun String.sharedNativeCfiPointOrNull(): SharedNativeCfiPoint? {
+private fun sharedNativeCfiOffsetToLocal(offset: Int, textStartOffset: Int, textLength: Int): Int {
+    return when {
+        offset in 0..textLength -> offset
+        offset in textStartOffset..(textStartOffset + textLength) -> offset - textStartOffset
+        else -> offset
+    }
+}
+
+private fun String.sharedNativeCfiPointOrNull(allowMissingOffset: Boolean = false): SharedNativeCfiPoint? {
     val separator = lastIndexOf(':')
-    if (separator <= 0 || separator == lastIndex) return null
+    if (separator <= 0 || separator == lastIndex) {
+        if (!allowMissingOffset) return null
+        return SharedNativeCfiPoint(takeIf { it.startsWith("/") } ?: return null, 0)
+    }
     val path = substring(0, separator).takeIf { it.startsWith("/") } ?: return null
     val offset = substring(separator + 1).toIntOrNull() ?: return null
     return SharedNativeCfiPoint(path, offset)
 }
 
 private fun sharedNativeCfiPathsEquivalent(first: String, second: String): Boolean {
+    if (first == second || first.startsWith("$second/") || second.startsWith("$first/")) return true
     val firstParts = first.split('/').filter { it.isNotEmpty() }
     val secondParts = second.split('/').filter { it.isNotEmpty() }
     if (firstParts == secondParts) return true

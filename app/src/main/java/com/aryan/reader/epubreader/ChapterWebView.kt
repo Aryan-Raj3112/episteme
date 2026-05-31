@@ -100,6 +100,7 @@ import java.io.InputStreamReader
 
 private const val TAG_LINK_NAV = "LINK_NAV"
 private const val TAG_VERTICAL_JITTER = "EpubVerticalJitter"
+private const val TAG_ANDROID_HIGHLIGHT_RENDER_DIAG = "AndroidHighlightRenderDiag"
 private val READER_WEB_VIEW_JS_INTERFACES = arrayOf(
     "PageInfoReporter",
     "ProgressReporter",
@@ -737,6 +738,11 @@ fun ChapterWebView(
                                         Timber.d(
                                             "JS -> ${message.substringAfter("HIGHLIGHT_DEBUG: ")}"
                                         )
+                                    }
+
+                                    message.startsWith("$TAG_ANDROID_HIGHLIGHT_RENDER_DIAG:") -> {
+                                        Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG)
+                                            .d("JS -> ${message.substringAfter("$TAG_ANDROID_HIGHLIGHT_RENDER_DIAG: ")}")
                                     }
 
                                     message.startsWith("ReaderFontDiagnosis") -> {

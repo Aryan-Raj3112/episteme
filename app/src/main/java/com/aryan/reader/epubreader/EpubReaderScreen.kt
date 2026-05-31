@@ -4493,15 +4493,20 @@ fun EpubReaderHost(
                                     userHighlights = userHighlights.filter { highlight ->
                                         highlight.chapterIndex in (currentChapterIndex - 1)..(currentChapterIndex + 1)
                                     },
-                                    onHighlightCreated = { cfi, text, colorId ->
-                                        val chapterIndex = currentChapterIndex
+                                    onHighlightCreated = { cfi, text, colorId, locator ->
+                                        val chapterIndex = locator.chapterIndex ?: currentChapterIndex
                                         val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
                                         val finalCfi = processAndAddHighlight(
                                             newCfi = cfi,
                                             newText = text,
                                             newColor = color,
                                             chapterIndex = chapterIndex,
-                                            currentList = userHighlights
+                                            currentList = userHighlights,
+                                            locator = locator.withFallbacks(
+                                                chapterIndex = chapterIndex,
+                                                cfi = cfi,
+                                                textQuote = text
+                                            )
                                         )
                                         if (pendingNoteForNewHighlight) {
                                             pendingNoteForNewHighlight = false
@@ -5667,8 +5672,8 @@ fun EpubReaderHost(
                                     val currentChapter = currentChapterInPaginatedMode ?: return@filter false
                                     highlight.chapterIndex in (currentChapter - 1)..(currentChapter + 1)
                                 },
-                                onHighlightCreated = { cfi, text, colorId ->
-                                    val chapterIndex = currentChapterInPaginatedMode ?: 0
+                                onHighlightCreated = { cfi, text, colorId, locator ->
+                                    val chapterIndex = locator.chapterIndex ?: currentChapterInPaginatedMode ?: 0
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "persist_request cfi=$cfi colorId=$colorId chapter=$chapterIndex " +
                                             "existingCount=${userHighlights.size} textLen=${text.length} " +
@@ -5681,7 +5686,12 @@ fun EpubReaderHost(
                                         newText = text,
                                         newColor = color,
                                         chapterIndex = chapterIndex,
-                                        currentList = userHighlights
+                                        currentList = userHighlights,
+                                        locator = locator.withFallbacks(
+                                            chapterIndex = chapterIndex,
+                                            cfi = cfi,
+                                            textQuote = text
+                                        )
                                     )
                                     val savedHighlight = userHighlights.find {
                                         it.chapterIndex == chapterIndex && it.cfi == finalCfi

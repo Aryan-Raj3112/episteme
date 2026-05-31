@@ -119,14 +119,25 @@ data class ReaderLocator(
             val parsedAndroidChapterIndex = androidLocatorParts.getOrNull(1)?.toIntOrNull()
             val parsedBlockIndex = androidLocatorParts.getOrNull(2)?.toIntOrNull()
             val parsedCharOffset = androidLocatorParts.getOrNull(3)?.toIntOrNull()
+                ?.takeIf { it >= 0 }
+            val parsedAndroidEndOffset = parsedCharOffset
+                ?.let { start -> textQuote?.takeIf { it.isNotBlank() }?.let { start + it.length } }
             val hasOffsetRange = desktopParts.size == 4 &&
                 possibleStartOffset != null &&
                 possibleEndOffset != null &&
                 possibleStartOffset >= 0 &&
                 possibleEndOffset >= possibleStartOffset &&
                 possibleEndOffset - possibleStartOffset <= 100_000
-            val parsedStartOffset = if (hasOffsetRange) possibleStartOffset else null
-            val parsedEndOffset = if (hasOffsetRange) possibleEndOffset else null
+            val parsedStartOffset = when {
+                hasOffsetRange -> possibleStartOffset
+                parsedBlockIndex != null && parsedAndroidEndOffset != null -> parsedCharOffset
+                else -> null
+            }
+            val parsedEndOffset = when {
+                hasOffsetRange -> possibleEndOffset
+                parsedBlockIndex != null -> parsedAndroidEndOffset
+                else -> null
+            }
             val parsedPageIndex = when {
                 pageIndex != null -> pageIndex
                 desktopParts.size == 3 || desktopParts.size >= 5 || (desktopParts.size == 4 && !hasOffsetRange) ->

@@ -1008,6 +1008,43 @@ object ReaderHtmlDocumentBuilder {
                     var hosts = readerHostsForLocator(chapterIndex, startOffset, endOffset);
                     return hosts.length ? hosts[0] : null;
                   }
+                  function readerBlockElementsForLocator(chapterIndex, blockIndex) {
+                    var parsedBlock = parseInt(blockIndex, 10);
+                    if (!Number.isFinite(parsedBlock)) return [];
+                    var chapterSelector = '[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]';
+                    var chapters = Array.prototype.slice.call(document.querySelectorAll(chapterSelector));
+                    var blockSelector = '[data-reader-block-index="' + selectorValue(parsedBlock) + '"]';
+                    return chapters.reduce(function (elements, chapter) {
+                      return elements.concat(Array.prototype.slice.call(chapter.querySelectorAll(blockSelector)));
+                    }, []);
+                  }
+                  function readerElementForBlockLocator(chapterIndex, blockIndex, charOffset) {
+                    var elements = readerBlockElementsForLocator(chapterIndex, blockIndex);
+                    if (!elements.length) return null;
+                    var parsedChar = parseInt(charOffset, 10);
+                    if (!Number.isFinite(parsedChar)) return elements[0];
+                    var fallback = null;
+                    for (var i = 0; i < elements.length; i++) {
+                      var element = elements[i];
+                      if (!fallback) fallback = element;
+                      var textStart = numberAttribute(element, 'data-reader-text-start', null);
+                      var textEnd = numberAttribute(element, 'data-reader-text-end', null);
+                      if (textStart === null || textEnd === null) continue;
+                      var host = element.closest ? element.closest('[data-reader-chapter-index]') : null;
+                      var pageStart = host ? numberAttribute(host, 'data-reader-page-start', null) : null;
+                      var pageEnd = host ? numberAttribute(host, 'data-reader-page-end', null) : null;
+                      if (pageStart !== null && pageEnd !== null && !((parsedChar >= pageStart && parsedChar < pageEnd) || (pageStart === pageEnd && parsedChar === pageStart))) continue;
+                      if ((parsedChar >= textStart && parsedChar < textEnd) || (textStart === textEnd && parsedChar === textStart)) {
+                        return element;
+                      }
+                    }
+                    return fallback;
+                  }
+                  function readerHostForBlockLocator(chapterIndex, blockIndex, charOffset) {
+                    var element = readerElementForBlockLocator(chapterIndex, blockIndex, charOffset);
+                    if (!element) return null;
+                    return element.closest ? element.closest('[data-reader-chapter-index]') : null;
+                  }
                   function readerLocatorTrace(locator) {
                     locator = locator || {};
                     return 'chapter=' + (locator.chapterIndex === undefined || locator.chapterIndex === null ? 'null' : locator.chapterIndex) +
@@ -2940,8 +2977,9 @@ object ReaderHtmlDocumentBuilder {
                     }
                     function textHostForOffset(offset, preferEnd) {
                       if (sourceCfi) {
+                        var sourceCfiBases = readerCfiBases(sourceCfi);
                         var cfiHosts = hosts.filter(function (host) {
-                          return host.getAttribute && host.getAttribute('data-reader-cfi') === sourceCfi;
+                          return readerHostMatchesCfi(host, sourceCfiBases);
                         });
                         var cfiBest = null;
                         var cfiBestSpan = Number.MAX_SAFE_INTEGER;
@@ -3115,6 +3153,31 @@ object ReaderHtmlDocumentBuilder {
                   function readerCfiPointBase(cfiPoint) {
                     return String(cfiPoint || '').split(':')[0];
                   }
+                  function readerCfiBases(sourceCfi) {
+                    var stable = stableReaderCfi(sourceCfi);
+                    if (!stable) return [];
+                    var seen = {};
+                    return String(stable).split('|').map(function (part) {
+                      return readerCfiPointBase(part);
+                    }).filter(function (base) {
+                      if (!base || base.charAt(0) !== '/' || seen[base]) return false;
+                      seen[base] = true;
+                      return true;
+                    });
+                  }
+                  function readerHostMatchesCfi(host, cfiBases) {
+                    if (!host || !host.getAttribute || !cfiBases || !cfiBases.length) return false;
+                    return cfiBases.indexOf(host.getAttribute('data-reader-cfi')) >= 0;
+                  }
+                  function readerElementForSourceCfi(root, sourceCfi) {
+                    if (!root || !root.querySelector) return null;
+                    var bases = readerCfiBases(sourceCfi);
+                    for (var i = 0; i < bases.length; i++) {
+                      var element = root.querySelector('[data-reader-cfi="' + selectorValue(bases[i]) + '"]');
+                      if (element) return element;
+                    }
+                    return null;
+                  }
                   function readerCfiPointLocalOffset(cfiPoint) {
                     var parts = String(cfiPoint || '').split(':');
                     if (parts.length < 2) return 0;
@@ -3124,7 +3187,8 @@ object ReaderHtmlDocumentBuilder {
                   function readerHostElementForCfiPoint(chapterIndex, cfiPoint) {
                     var baseCfi = readerCfiPointBase(cfiPoint);
                     if (!baseCfi || baseCfi.charAt(0) !== '/') return null;
-                    var hosts = readerHostsForLocator(chapterIndex, null, null);
+                    var chapterSelector = '[data-reader-chapter-index="' + selectorValue(chapterIndex) + '"]';
+                    var hosts = Array.prototype.slice.call(document.querySelectorAll(chapterSelector));
                     for (var i = 0; i < hosts.length; i++) {
                       var content = hosts[i].querySelector('.reader-content') || hosts[i];
                       var cfiHost = content.querySelector('[data-reader-cfi="' + selectorValue(baseCfi) + '"]');
@@ -3161,6 +3225,7 @@ object ReaderHtmlDocumentBuilder {
                     var endOffset = locator.endOffset;
                     var sourceCfi = locator.cfi || highlight.cfi;
                     var expectedText = locator.textQuote || highlight.text || '';
+                    var sourceCfiIsStructural = sourceCfi && String(sourceCfi).charAt(0) === '/';
                     readerDesktopHighlightMapLog(
                       'web_apply_start id=' + (highlight.id || '') +
                       ' chapter=' + chapterIndex +
@@ -3172,20 +3237,41 @@ object ReaderHtmlDocumentBuilder {
                       ' cfi=' + readerTtsPreview(sourceCfi, 160)
                     );
                     var cfiOffsets = readerOffsetsForSourceCfi(chapterIndex, sourceCfi, expectedText);
-                    if (cfiOffsets && (startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset)) {
+                    if (cfiOffsets) {
                       startOffset = cfiOffsets.startOffset;
                       endOffset = cfiOffsets.endOffset;
                       readerDesktopHighlightMapLog(
                         'web_apply_cfi_offsets id=' + (highlight.id || '') +
                         ' offsets=' + startOffset + '..' + endOffset
                       );
+                    } else if (sourceCfiIsStructural) {
+                      readerDesktopHighlightMapLog(
+                        'web_apply_cfi_offsets_missing id=' + (highlight.id || '') +
+                        ' cfi=' + readerTtsPreview(sourceCfi, 160)
+                      );
+                      startOffset = null;
+                      endOffset = null;
                     }
+                    if (startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) {
+                      var blockChar = parseInt(locator.charOffset, 10);
+                      if (Number.isFinite(blockChar) && expectedText) {
+                        startOffset = blockChar;
+                        endOffset = blockChar + String(expectedText).length;
+                        readerDesktopHighlightMapLog(
+                          'web_apply_block_offsets id=' + (highlight.id || '') +
+                          ' offsets=' + startOffset + '..' + endOffset +
+                          ' block=' + locator.blockIndex
+                        );
+                      }
+                    }
+                    var hasPreciseOffsets = !(chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset);
                     if (chapterIndex === undefined || chapterIndex === null || startOffset === undefined || startOffset === null || endOffset === undefined || endOffset === null || endOffset <= startOffset) {
                       readerDesktopHighlightMapLog(
                         'web_apply_fallback_request id=' + (highlight.id || '') +
                         ' reason=invalid_offsets chapter=' + chapterIndex +
                         ' offsets=' + startOffset + '..' + endOffset
                       );
+                      if (sourceCfiIsStructural) return;
                       applyHighlightTextFallback(highlight);
                       return;
                     }
@@ -3196,6 +3282,7 @@ object ReaderHtmlDocumentBuilder {
                         ' reason=no_target_chapters chapter=' + chapterIndex +
                         ' offsets=' + startOffset + '..' + endOffset
                       );
+                      if (hasPreciseOffsets) return;
                       applyHighlightTextFallback(highlight);
                       return;
                     }
@@ -3226,7 +3313,7 @@ object ReaderHtmlDocumentBuilder {
                         var content = chapter ? (chapter.querySelector('.reader-content') || chapter) : null;
                         var searchRoot = content;
                         if (content && sourceCfi) {
-                          searchRoot = content.querySelector('[data-reader-cfi="' + selectorValue(sourceCfi) + '"]') || content;
+                          searchRoot = readerElementForSourceCfi(content, sourceCfi) || content;
                         }
                         if (content && searchRoot === content) {
                           var hosts = Array.prototype.slice.call(content.querySelectorAll('[data-reader-text-start][data-reader-text-end]'));
@@ -3288,6 +3375,7 @@ object ReaderHtmlDocumentBuilder {
                         ' reason=no_segments_applied chapter=' + chapterIndex +
                         ' offsets=' + startOffset + '..' + endOffset
                       );
+                      if (hasPreciseOffsets) return;
                       applyHighlightTextFallback(highlight);
                     }
                   }
@@ -3297,9 +3385,12 @@ object ReaderHtmlDocumentBuilder {
                     if (chapterIndex === undefined || chapterIndex === null) chapterIndex = highlight.chapterIndex;
                     var expectedText = readerTtsNormalized(locator.textQuote || highlight.text || '');
                     if (!expectedText) return false;
-                    var root = chapterIndex === undefined || chapterIndex === null
+                    var blockElement = chapterIndex === undefined || chapterIndex === null
+                      ? null
+                      : readerElementForBlockLocator(chapterIndex, locator.blockIndex, locator.charOffset);
+                    var root = blockElement || (chapterIndex === undefined || chapterIndex === null
                       ? document.body
-                      : readerHostForLocator(chapterIndex, locator.startOffset, locator.endOffset);
+                      : readerHostForLocator(chapterIndex, locator.startOffset, locator.endOffset));
                     if (!root) root = document.body;
                     var content = root.querySelector ? (root.querySelector('.reader-content') || root) : root;
                     var sourceCfi = locator.cfi || highlight.cfi;
@@ -3432,7 +3523,7 @@ object ReaderHtmlDocumentBuilder {
                       var content = chapter ? (chapter.querySelector('.reader-content') || chapter) : null;
                       var searchRoot = content;
                       if (content && sourceCfi) {
-                        searchRoot = content.querySelector('[data-reader-cfi="' + selectorValue(sourceCfi) + '"]') || content;
+                        searchRoot = readerElementForSourceCfi(content, sourceCfi) || content;
                       }
                       var textRange = normalizedRangeForText(searchRoot, expectedNormalized, true);
                       if (textRange && !textRange.collapsed) {
@@ -4486,9 +4577,10 @@ object ReaderHtmlDocumentBuilder {
         contentEndOffset: Int
     ): String {
         val rangedHighlights = highlights
-            .mapNotNull { it.toRenderHighlight(contentStartOffset, contentEndOffset) }
+            .mapNotNull { it.toRenderHighlight(this, contentStartOffset, contentEndOffset) }
             .distinctBy { "${it.absoluteStart}:${it.absoluteEnd}:${it.id}" }
             .sortedWith(compareByDescending<RenderedHighlight> { it.relativeStart }.thenByDescending { it.relativeEnd })
+        val rangedHighlightIds = rangedHighlights.map { it.id }.toSet()
 
         val rangedHtml = rangedHighlights.fold(this) { html, highlight ->
             val htmlRange = html.htmlRangeForHighlight(highlight) ?: return@fold html
@@ -4502,6 +4594,7 @@ object ReaderHtmlDocumentBuilder {
         }
 
         return highlights
+            .filterNot { it.id in rangedHighlightIds }
             .filterNot { it.locator.withFallbacks(chapterIndex = it.chapterIndex, cfi = it.cfi, textQuote = it.text).hasTextRange }
             .fold(rangedHtml) { html, highlight ->
                 val text = highlight.text.trim().takeIf { it.isNotBlank() } ?: return@fold html
@@ -4640,6 +4733,41 @@ object ReaderHtmlDocumentBuilder {
         }.firstOrNull()
     }
 
+    private fun String.findTextBlockRangeByCfi(cfiPath: String): HtmlTextBlockRange? {
+        return findTextBlockRangeByAttribute("data-reader-cfi", cfiPath)
+    }
+
+    private fun String.findTextBlockRangeByBlockIndex(blockIndex: Int): HtmlTextBlockRange? {
+        return findTextBlockRangeByAttribute("data-reader-block-index", blockIndex.toString())
+    }
+
+    private fun String.findTextBlockRangeByAttribute(attributeName: String, attributeValue: String): HtmlTextBlockRange? {
+        return textBlockStartPattern.findAll(this).mapNotNull { match ->
+            val openingTag = substring(match.range.first, match.range.last + 1)
+            if (openingTag.htmlAttributeValue(attributeName) != attributeValue) return@mapNotNull null
+            val tagName = match.groupValues[1]
+            val blockStart = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+            val blockEnd = match.groupValues[3].toIntOrNull() ?: return@mapNotNull null
+            val contentStart = match.range.last + 1
+            val closingTag = "</$tagName>"
+            val contentEnd = indexOf(closingTag, startIndex = contentStart, ignoreCase = true)
+            if (contentEnd < contentStart) return@mapNotNull null
+            HtmlTextBlockRange(
+                startOffset = blockStart,
+                endOffset = blockEnd,
+                contentStartIndex = contentStart,
+                contentEndIndex = contentEnd
+            )
+        }.firstOrNull()
+    }
+
+    private fun String.htmlAttributeValue(attributeName: String): String? {
+        return Regex("""\b${Regex.escape(attributeName)}="([^"]*)"""")
+            .find(this)
+            ?.groupValues
+            ?.getOrNull(1)
+    }
+
     private fun String.htmlIndexForTextOffset(
         targetOffset: Int,
         startIndex: Int = 0,
@@ -4682,18 +4810,54 @@ object ReaderHtmlDocumentBuilder {
         return if (textOffset == targetOffset) boundaryAfterText ?: startIndex else null
     }
 
-    private fun UserHighlight.toRenderHighlight(contentStartOffset: Int, contentEndOffset: Int): RenderedHighlight? {
+    private fun UserHighlight.toRenderHighlight(
+        html: String,
+        contentStartOffset: Int,
+        contentEndOffset: Int
+    ): RenderedHighlight? {
         val normalizedLocator = locator.withFallbacks(chapterIndex = chapterIndex, cfi = cfi, textQuote = text)
+        val sourceCfi = normalizedLocator.cfi ?: cfi
+        html.absoluteRangeForSourceCfi(sourceCfi, normalizedLocator.textQuote ?: text)
+            ?.toRenderedHighlight(
+                source = this,
+                cfi = sourceCfi,
+                contentStartOffset = contentStartOffset,
+                contentEndOffset = contentEndOffset
+            )
+            ?.let { return it }
+        html.absoluteRangeForBlockLocator(normalizedLocator, normalizedLocator.textQuote ?: text)
+            ?.toRenderedHighlight(
+                source = this,
+                cfi = sourceCfi,
+                contentStartOffset = contentStartOffset,
+                contentEndOffset = contentEndOffset
+            )
+            ?.let { return it }
         val start = normalizedLocator.startOffset ?: return null
         val end = normalizedLocator.endOffset ?: start
+        if (end < start) return null
+        return HtmlAbsoluteTextRange(start, end).toRenderedHighlight(
+            source = this,
+            cfi = sourceCfi,
+            contentStartOffset = contentStartOffset,
+            contentEndOffset = contentEndOffset
+        )
+    }
+
+    private fun HtmlAbsoluteTextRange.toRenderedHighlight(
+        source: UserHighlight,
+        cfi: String,
+        contentStartOffset: Int,
+        contentEndOffset: Int
+    ): RenderedHighlight? {
         if (end < start) return null
         val boundedStart = start.coerceAtLeast(contentStartOffset)
         val boundedEnd = end.coerceAtMost(contentEndOffset)
         if (boundedEnd <= boundedStart) return null
         return RenderedHighlight(
-            id = id,
-            cfi = normalizedLocator.cfi ?: cfi,
-            color = color,
+            id = source.id,
+            cfi = cfi,
+            color = source.color,
             absoluteStart = boundedStart,
             absoluteEnd = boundedEnd,
             relativeStart = boundedStart - contentStartOffset,
@@ -4701,27 +4865,224 @@ object ReaderHtmlDocumentBuilder {
         )
     }
 
+    private fun String.absoluteRangeForSourceCfi(cfi: String?, quote: String): HtmlAbsoluteTextRange? {
+        val points = cfi
+            ?.takeIf { it.startsWith("/") || it.contains("|/") }
+            ?.split('|')
+            ?.mapNotNull { it.toHtmlSourceCfiPointOrNull() }
+            ?: return null
+        val startPoint = points.firstOrNull() ?: return null
+        val endPoint = points.lastOrNull() ?: startPoint
+        val startBlock = findTextBlockRangeByCfi(startPoint.path) ?: return null
+        val endBlock = findTextBlockRangeByCfi(endPoint.path) ?: startBlock
+        val start = startBlock.htmlCfiOffsetToAbsolute(startPoint.offset)
+        var end = endBlock.htmlCfiOffsetToAbsolute(endPoint.offset)
+        if (end == start && quote.isNotBlank()) {
+            end = start + quote.length
+        }
+        return if (end > start) HtmlAbsoluteTextRange(start, end) else null
+    }
+
+    private fun String.absoluteRangeForBlockLocator(locator: ReaderLocator, quote: String): HtmlAbsoluteTextRange? {
+        val blockIndex = locator.blockIndex ?: return null
+        val block = findTextBlockRangeByBlockIndex(blockIndex) ?: return null
+        val blockLength = block.endOffset - block.startOffset
+        val startOffset = locator.startOffset ?: locator.charOffset ?: return null
+        val rawEnd = locator.endOffset
+            ?: quote.takeIf { it.isNotBlank() }?.let { startOffset + it.length }
+            ?: return null
+        val start = block.htmlScopedOffsetToAbsoluteOrNull(startOffset, blockLength) ?: return null
+        val end = block.htmlScopedOffsetToAbsoluteOrNull(rawEnd, blockLength) ?: return null
+        return if (end > start) HtmlAbsoluteTextRange(start, end) else null
+    }
+
+    private fun HtmlTextBlockRange.htmlCfiOffsetToAbsolute(offset: Int): Int {
+        val blockLength = endOffset - startOffset
+        return when {
+            offset in 0..blockLength -> startOffset + offset
+            offset in startOffset..endOffset -> offset
+            else -> startOffset + offset.coerceIn(0, blockLength)
+        }
+    }
+
+    private fun HtmlTextBlockRange.htmlScopedOffsetToAbsoluteOrNull(offset: Int, blockLength: Int): Int? {
+        return when {
+            offset in 0..blockLength -> startOffset + offset
+            offset in startOffset..endOffset -> offset
+            else -> null
+        }
+    }
+
     private fun UserHighlight.belongsToPage(page: ReaderPage): Boolean {
         val normalizedLocator = locator.withFallbacks(chapterIndex = chapterIndex, cfi = cfi, textQuote = text)
         val locatorChapterIndex = normalizedLocator.chapterIndex ?: chapterIndex
         if (locatorChapterIndex != page.chapterIndex) return false
-        if (normalizedLocator.hasTextRange) {
-            val start = normalizedLocator.startOffset ?: return false
-            val end = normalizedLocator.endOffset ?: start
+        return page.containsHighlightLocator(normalizedLocator, cfi)
+    }
+
+    private fun ReaderPage.containsHighlightLocator(locator: ReaderLocator, fallbackCfi: String): Boolean {
+        if (containsBlockLocator(locator)) return true
+        if (containsSourceCfiLocator(locator, fallbackCfi)) return true
+        if (locator.hasTextRange) {
+            if (locator.hasHtmlStructuralScope(fallbackCfi)) return false
+            val start = locator.startOffset ?: return false
+            val end = locator.endOffset ?: start
             return if (start == end) {
-                start in page.startOffset..page.endOffset
+                start in startOffset..endOffset
             } else {
-                start < page.endOffset && end > page.startOffset
+                start < endOffset && end > startOffset
             }
         }
-        normalizedLocator.pageIndex?.let { return it == page.pageIndex }
-        val prefix = "desktop:${page.chapterIndex}:"
-        val desktopPageIndex = cfi
+        locator.pageIndex?.let { return it == pageIndex }
+        val prefix = "desktop:${chapterIndex}:"
+        val desktopPageIndex = fallbackCfi
             .takeIf { it.startsWith(prefix) }
             ?.removePrefix(prefix)
             ?.substringBefore(':')
             ?.toIntOrNull()
-        return desktopPageIndex == null || desktopPageIndex < 0 || desktopPageIndex == page.pageIndex
+        return desktopPageIndex != null && desktopPageIndex >= 0 && desktopPageIndex == pageIndex
+    }
+
+    private fun ReaderLocator.hasHtmlStructuralScope(fallbackCfi: String): Boolean {
+        val sourceCfi = cfi?.takeIf { it.isNotBlank() } ?: fallbackCfi
+        return blockIndex != null || sourceCfi.startsWith("/")
+    }
+
+    private fun ReaderPage.containsBlockLocator(locator: ReaderLocator): Boolean {
+        val blockIndex = locator.blockIndex ?: return false
+        val blocks = semanticBlocks.flattenHtmlSemanticBlocks()
+        if (blocks.isEmpty()) return false
+        val matchingBlocks = blocks.filter { it.blockIndex == blockIndex }
+        if (matchingBlocks.isEmpty()) return false
+        val charOffset = locator.charOffset ?: return true
+        val offsetFallsOnPage = if (startOffset == endOffset) {
+            charOffset == startOffset
+        } else {
+            charOffset >= startOffset && charOffset < endOffset
+        }
+        if (!offsetFallsOnPage) return false
+        return matchingBlocks.filterIsInstance<SemanticTextBlock>().any { block ->
+            val start = block.startCharOffsetInSource
+            val end = start + block.text.length
+            charOffset in start until end || (block.text.isEmpty() && charOffset == start)
+        }
+    }
+
+    private fun ReaderPage.containsSourceCfiLocator(locator: ReaderLocator, fallbackCfi: String): Boolean {
+        val cfi = (locator.cfi?.takeIf { it.isNotBlank() } ?: fallbackCfi)
+            .takeIf { it.startsWith("/") || it.contains("|/") }
+            ?: return false
+        val blocks = semanticBlocks.flattenHtmlSemanticBlocks().filterIsInstance<SemanticTextBlock>()
+        if (blocks.isEmpty()) return false
+        val parts = cfi.split('|').mapNotNull { it.toHtmlSourceCfiPointOrNull() }
+        val startPoint = parts.firstOrNull() ?: return false
+        val endPoint = parts.lastOrNull() ?: startPoint
+        val quoteLength = locator.textQuote?.length ?: 0
+        return blocks.any { block ->
+            val blockPath = block.cfi?.substringBefore(':')?.takeIf { it.startsWith("/") } ?: return@any false
+            val startMatches = htmlSourceCfiPathsEquivalent(startPoint.path, blockPath)
+            val endMatches = htmlSourceCfiPathsEquivalent(endPoint.path, blockPath)
+            val isIntermediate = parts.size > 1 &&
+                !startMatches &&
+                !endMatches &&
+                htmlSourceCfiPathStrictlyBetween(blockPath, startPoint.path, endPoint.path)
+            if (!startMatches && !endMatches && !isIntermediate) return@any false
+            val blockStart = block.startCharOffsetInSource
+            val blockEnd = blockStart + block.text.length
+            val rangeStart = when {
+                startMatches -> htmlSourceCfiOffsetToAbsolute(startPoint.offset, blockStart, block.text.length)
+                isIntermediate || endMatches -> blockStart
+                else -> blockStart
+            }
+            val rangeEnd = when {
+                endMatches && parts.size > 1 -> htmlSourceCfiOffsetToAbsolute(endPoint.offset, blockStart, block.text.length)
+                startMatches && parts.size == 1 && quoteLength > 0 ->
+                    htmlSourceCfiOffsetToAbsolute(startPoint.offset, blockStart, block.text.length) + quoteLength
+                startMatches && parts.size == 1 -> htmlSourceCfiOffsetToAbsolute(startPoint.offset, blockStart, block.text.length)
+                isIntermediate -> blockEnd
+                else -> blockEnd
+            }
+            if (rangeStart == rangeEnd) {
+                rangeStart in startOffset..endOffset
+            } else {
+                minOf(rangeStart, rangeEnd) < endOffset && maxOf(rangeStart, rangeEnd) > startOffset
+            }
+        }
+    }
+
+    private fun htmlSourceCfiOffsetToAbsolute(offset: Int, blockStart: Int, textLength: Int): Int {
+        val blockEnd = blockStart + textLength
+        return when {
+            offset in 0..textLength -> blockStart + offset
+            offset in blockStart..blockEnd -> offset
+            else -> blockStart + offset.coerceIn(0, textLength)
+        }
+    }
+
+    private data class HtmlSourceCfiPoint(
+        val path: String,
+        val offset: Int
+    )
+
+    private fun String.toHtmlSourceCfiPointOrNull(): HtmlSourceCfiPoint? {
+        val value = trim()
+        if (!value.startsWith("/")) return null
+        val separator = value.lastIndexOf(':')
+        return if (separator > 0 && separator < value.lastIndex) {
+            HtmlSourceCfiPoint(value.substring(0, separator), value.substring(separator + 1).toIntOrNull() ?: 0)
+        } else {
+            HtmlSourceCfiPoint(value, 0)
+        }
+    }
+
+    private fun htmlSourceCfiPathsEquivalent(first: String, second: String): Boolean {
+        if (first == second || first.startsWith("$second/") || second.startsWith("$first/")) return true
+        val firstParts = first.split('/').filter { it.isNotEmpty() }
+        val secondParts = second.split('/').filter { it.isNotEmpty() }
+        if (firstParts == secondParts) return true
+        return firstParts.size == secondParts.size &&
+            firstParts.isNotEmpty() &&
+            firstParts.drop(1) == secondParts.drop(1)
+    }
+
+    private fun htmlSourceCfiPathStrictlyBetween(candidate: String, start: String, end: String): Boolean {
+        val candidateParts = candidate.htmlSourceCfiNumericPathParts() ?: return false
+        val startParts = start.htmlSourceCfiNumericPathParts() ?: return false
+        val endParts = end.htmlSourceCfiNumericPathParts() ?: return false
+        return htmlSourceCfiComparePathParts(candidateParts, startParts) > 0 &&
+            htmlSourceCfiComparePathParts(candidateParts, endParts) < 0
+    }
+
+    private fun String.htmlSourceCfiNumericPathParts(): List<Int>? {
+        val parts = split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        return parts.map { it.toIntOrNull() ?: return null }
+    }
+
+    private fun htmlSourceCfiComparePathParts(first: List<Int>, second: List<Int>): Int {
+        val length = minOf(first.size, second.size)
+        for (index in 0 until length) {
+            val comparison = first[index].compareTo(second[index])
+            if (comparison != 0) return comparison
+        }
+        return first.size.compareTo(second.size)
+    }
+
+    private fun List<SemanticBlock>.flattenHtmlSemanticBlocks(): List<SemanticBlock> {
+        return flatMap { it.flattenHtmlSemanticBlock() }
+    }
+
+    private fun SemanticBlock.flattenHtmlSemanticBlock(): List<SemanticBlock> {
+        return when (this) {
+            is SemanticList -> listOf(this) + items
+            is SemanticTable -> listOf(this) + rows.flatMap { row -> row.flatMap { cell -> cell.content.flattenHtmlSemanticBlocks() } }
+            is SemanticFlexContainer -> listOf(this) + children.flattenHtmlSemanticBlocks()
+            is SemanticWrappingBlock -> listOf(this, floatedImage) + paragraphsToWrap
+            is SemanticImage,
+            is SemanticMath,
+            is SemanticSpacer,
+            is SemanticTextBlock -> listOf(this)
+        }
     }
 
     private val UserHighlight.locatedChapterIndex: Int
@@ -4782,6 +5143,11 @@ object ReaderHtmlDocumentBuilder {
         val endOffset: Int,
         val contentStartIndex: Int,
         val contentEndIndex: Int
+    )
+
+    private data class HtmlAbsoluteTextRange(
+        val start: Int,
+        val end: Int
     )
 
     private val textBlockStartPattern = Regex(

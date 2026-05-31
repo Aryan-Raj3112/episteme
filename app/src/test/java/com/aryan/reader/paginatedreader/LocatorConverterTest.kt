@@ -44,6 +44,31 @@ class LocatorConverterTest {
     }
 
     @Test
+    fun `cfi local offsets become absolute locators and serialize back locally`() = runTest {
+        val converter = converterFor(
+            listOf(paragraph("Offset paragraph", blockIndex = 2, cfi = "/4/2/6", offset = 100))
+        )
+        val book = book()
+
+        val locator = converter.getLocatorFromCfi(book, chapterIndex = 0, cfi = "/4/2/6:7")
+        val cfi = locator?.let { converter.getCfiFromLocator(book, it) }
+
+        assertEquals(Locator(chapterIndex = 0, blockIndex = 2, charOffset = 107), locator)
+        assertEquals("/4/2/6:7", cfi)
+    }
+
+    @Test
+    fun `multipart cfi uses first point local offset when resolving locator`() = runTest {
+        val converter = converterFor(
+            listOf(paragraph("Offset paragraph", blockIndex = 2, cfi = "/4/2/6", offset = 100))
+        )
+
+        val locator = converter.getLocatorFromCfi(book(), chapterIndex = 0, cfi = "/4/2/6:7|/4/2/6:12")
+
+        assertEquals(Locator(chapterIndex = 0, blockIndex = 2, charOffset = 107), locator)
+    }
+
+    @Test
     fun `zero estimate semantic cache remains usable`() = runTest {
         val converter = converterFor(semanticBlocks(), estimatedPageCount = 0)
 

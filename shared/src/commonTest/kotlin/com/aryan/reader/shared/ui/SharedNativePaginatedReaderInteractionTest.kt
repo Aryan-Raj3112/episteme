@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.ui
 
+import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
@@ -87,7 +89,7 @@ class SharedNativePaginatedReaderInteractionTest {
     }
 
     @Test
-    fun `native paginated keeps same chapter cfi highlights available for block mapping`() {
+    fun `native paginated keeps cfi highlights visible only on anchored page`() {
         val highlight = UserHighlight(
             id = "highlight-1",
             cfi = "/4/2:3|/4/2:8",
@@ -101,12 +103,44 @@ class SharedNativePaginatedReaderInteractionTest {
             chapterTitle = "Chapter",
             text = "alpha beta",
             startOffset = 100,
-            endOffset = 110
+            endOffset = 110,
+            semanticBlocks = listOf(
+                SemanticParagraph(
+                    text = "alpha beta",
+                    spans = emptyList(),
+                    style = CssStyle(),
+                    elementId = null,
+                    cfi = "/4/2",
+                    startCharOffsetInSource = 100,
+                    blockIndex = 7
+                )
+            )
+        )
+        val unrelatedPage = ReaderPage(
+            pageIndex = 21,
+            chapterIndex = 2,
+            chapterTitle = "Chapter",
+            text = "alpha beta",
+            startOffset = 200,
+            endOffset = 210,
+            semanticBlocks = listOf(
+                SemanticParagraph(
+                    text = "alpha beta",
+                    spans = emptyList(),
+                    style = CssStyle(),
+                    elementId = null,
+                    cfi = "/4/4",
+                    startCharOffsetInSource = 200,
+                    blockIndex = 8
+                )
+            )
         )
 
         val visible = sharedNativeVisibleHighlightsForPage(listOf(highlight), page)
+        val unrelatedVisible = sharedNativeVisibleHighlightsForPage(listOf(highlight), unrelatedPage)
 
         assertEquals(listOf(highlight), visible)
+        assertEquals(emptyList(), unrelatedVisible)
     }
 
     @Test
@@ -136,6 +170,78 @@ class SharedNativePaginatedReaderInteractionTest {
 
         assertEquals(8, range?.start)
         assertEquals(14, range?.end)
+    }
+
+    @Test
+    fun `native highlight mapping can use source cfi when locator offsets miss block range`() {
+        val highlight = UserHighlight(
+            id = "highlight-1",
+            cfi = "/4/2:8|/4/2:14",
+            text = "target",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0,
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                startOffset = 108,
+                endOffset = 114,
+                textQuote = "target",
+                cfi = "/4/2:8|/4/2:14"
+            )
+        )
+
+        val range = sharedNativeHighlightRangeForBlock(
+            highlight = highlight,
+            blockCfi = "/4/2",
+            textStartOffset = 300,
+            textLength = "prefix  target suffix".length,
+            text = "prefix  target suffix"
+        )
+
+        assertEquals(8, range?.start)
+        assertEquals(14, range?.end)
+    }
+
+    @Test
+    fun `native highlight mapping ignores block local offsets on sibling cfi blocks`() {
+        val highlight = UserHighlight(
+            id = "highlight-1",
+            cfi = "/4/2:8|/4/2:14",
+            text = "target",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0,
+            locator = ReaderLocator(
+                chapterIndex = 0,
+                startOffset = 8,
+                endOffset = 14,
+                blockIndex = 42,
+                charOffset = 8,
+                textQuote = "target",
+                cfi = "/4/2:8|/4/2:14"
+            )
+        )
+
+        val selectedRange = sharedNativeHighlightRangeForBlock(
+            highlight = highlight,
+            blockCfi = "/4/2",
+            blockIndex = 42,
+            blockCharOffset = 0,
+            textStartOffset = 0,
+            textLength = "prefix  target suffix".length,
+            text = "prefix  target suffix"
+        )
+        val siblingRange = sharedNativeHighlightRangeForBlock(
+            highlight = highlight,
+            blockCfi = "/4/4",
+            blockIndex = 43,
+            blockCharOffset = 0,
+            textStartOffset = 0,
+            textLength = "prefix  target suffix".length,
+            text = "prefix  target suffix"
+        )
+
+        assertEquals(8, selectedRange?.start)
+        assertEquals(14, selectedRange?.end)
+        assertNull(siblingRange)
     }
 
     @Test
@@ -194,6 +300,50 @@ class SharedNativePaginatedReaderInteractionTest {
             blockIndex = 42,
             blockCharOffset = 100,
             textStartOffset = 0,
+            textLength = "prefix  target suffix".length,
+            text = "prefix  target suffix"
+        )
+
+        assertEquals(8, range?.start)
+        assertEquals(14, range?.end)
+    }
+
+    @Test
+    fun `native highlight mapping treats source cfi offsets as block local`() {
+        val highlight = UserHighlight(
+            id = "highlight-1",
+            cfi = "/4/2:8|/4/2:14",
+            text = "target",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0
+        )
+
+        val range = sharedNativeHighlightRangeForBlock(
+            highlight = highlight,
+            blockCfi = "/4/2",
+            textStartOffset = 100,
+            textLength = "prefix  target suffix".length,
+            text = "prefix  target suffix"
+        )
+
+        assertEquals(8, range?.start)
+        assertEquals(14, range?.end)
+    }
+
+    @Test
+    fun `native highlight mapping still accepts legacy absolute cfi offsets`() {
+        val highlight = UserHighlight(
+            id = "highlight-1",
+            cfi = "/4/2:108|/4/2:114",
+            text = "target",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0
+        )
+
+        val range = sharedNativeHighlightRangeForBlock(
+            highlight = highlight,
+            blockCfi = "/4/2",
+            textStartOffset = 100,
             textLength = "prefix  target suffix".length,
             text = "prefix  target suffix"
         )
