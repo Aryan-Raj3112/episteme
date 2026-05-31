@@ -176,7 +176,18 @@ fun SharedHomeScreen(
     showActiveTabs: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val model = state.toNonReaderHomeLayoutModel()
+    val model = remember(
+        state.recentBooks,
+        state.openTabs,
+        state.openTabIds,
+        state.activeTabBookId,
+        state.isTabsEnabled,
+        state.pinnedHomeBookIds,
+        state.selectedBookIds,
+        state.rawLibraryBooks
+    ) {
+        state.toNonReaderHomeLayoutModel()
+    }
     NonReaderScreenScaffold(
         title = readerString("nav_home", "Home"),
         subtitle = readerString("desktop_home_subtitle", "Continue reading and recent books"),
@@ -335,7 +346,15 @@ fun SharedLibraryScreen(
     useImportEmptyStateWhenLibraryEmpty: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val organization = state.toNonReaderLibraryOrganizationModel()
+    val organization = remember(
+        state.rawLibraryBooks,
+        state.shelves,
+        state.allTags,
+        state.syncedFolders,
+        state.libraryFilters
+    ) {
+        state.toNonReaderLibraryOrganizationModel()
+    }
     val activeLibraryTab = selectedTab.visibleLibraryTab(platform)
     var showFilters by remember { mutableStateOf(false) }
     var viewMode by remember { mutableStateOf(BookViewMode.COVERS) }
@@ -1170,6 +1189,26 @@ private fun LibraryContent(
     modifier: Modifier = Modifier
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val shelvesById = remember(state.shelves) { state.shelves.associateBy { it.id } }
+        val visibleBooks = remember(state.libraryBooks, selectedTab, platform) {
+            state.booksForNonReaderLibraryTab(selectedTab, platform)
+        }
+        val tagShelves = remember(state.shelves) {
+            state.shelves.filter { it.type == ShelfType.TAG && it.bookCount > 0 }
+        }
+        val browseShelves = remember(state.shelves) {
+            state.shelves.filter {
+                it.type != ShelfType.FOLDER &&
+                    it.type != ShelfType.TAG &&
+                    it.type != ShelfType.SMART
+            }
+        }
+        val smartShelves = remember(state.shelves) {
+            state.shelves.filter { it.type == ShelfType.SMART }
+        }
+        val rootFolderShelves = remember(state.shelves) {
+            state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null }
+        }
         if (showFilters) {
             LibraryFilterPanel(
                 state = state,
@@ -1185,7 +1224,7 @@ private fun LibraryContent(
             NonReaderLibraryTab.UNREAD,
             NonReaderLibraryTab.IN_PROGRESS,
             NonReaderLibraryTab.COMPLETED -> {
-                val books = state.booksForNonReaderLibraryTab(selectedTab, platform)
+                val books = visibleBooks
                 if (books.isEmpty()) {
                     if (state.rawLibraryBooks.isEmpty() && useImportEmptyStateWhenLibraryEmpty) {
                         LibraryImportEmptyState(
@@ -1226,7 +1265,6 @@ private fun LibraryContent(
             }
 
             NonReaderLibraryTab.SHELVES -> {
-                val tagShelves = state.shelves.filter { it.type == ShelfType.TAG && it.bookCount > 0 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     BrowseByTagRow(
                         tagShelves = tagShelves,
@@ -1245,7 +1283,7 @@ private fun LibraryContent(
                         }
                     )
                     ShelfCollection(
-                        shelves = state.shelves.filter { it.type != ShelfType.FOLDER && it.type != ShelfType.TAG && it.type != ShelfType.SMART },
+                        shelves = browseShelves,
                         selectedBookIds = state.selectedBookIds,
                         pinnedBookIds = state.pinnedLibraryBookIds,
                         onOpenBook = onOpenBook,
@@ -1264,7 +1302,7 @@ private fun LibraryContent(
             }
 
             NonReaderLibraryTab.SMART_SHELVES -> ShelfCollection(
-                shelves = state.shelves.filter { it.type == ShelfType.SMART },
+                shelves = smartShelves,
                 selectedBookIds = state.selectedBookIds,
                 pinnedBookIds = state.pinnedLibraryBookIds,
                 onOpenBook = onOpenBook,
@@ -1280,7 +1318,7 @@ private fun LibraryContent(
             )
 
             NonReaderLibraryTab.TAGS -> ShelfCollection(
-                shelves = state.shelves.filter { it.type == ShelfType.TAG && it.bookCount > 0 },
+                shelves = tagShelves,
                 selectedBookIds = state.selectedBookIds,
                 pinnedBookIds = state.pinnedLibraryBookIds,
                 onOpenBook = onOpenBook,
@@ -1295,12 +1333,12 @@ private fun LibraryContent(
 
             NonReaderLibraryTab.FOLDERS -> {
                 val currentFolder = state.viewingShelfId
-                    ?.let { id -> state.shelves.firstOrNull { it.id == id && it.type == ShelfType.FOLDER } }
+                    ?.let { id -> shelvesById[id]?.takeIf { it.type == ShelfType.FOLDER } }
                 if (currentFolder != null) {
                     FolderShelfDetail(
                         shelf = currentFolder,
                         childShelves = currentFolder.childShelfIds.mapNotNull { childId ->
-                            state.shelves.firstOrNull { it.id == childId }
+                            shelvesById[childId]
                         },
                         selectedBookIds = state.selectedBookIds,
                         pinnedBookIds = state.pinnedLibraryBookIds,
@@ -1322,7 +1360,7 @@ private fun LibraryContent(
                             )
                         }
                         ShelfCollection(
-                            shelves = state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null },
+                            shelves = rootFolderShelves,
                             selectedBookIds = state.selectedBookIds,
                             pinnedBookIds = state.pinnedLibraryBookIds,
                             onOpenBook = onOpenBook,

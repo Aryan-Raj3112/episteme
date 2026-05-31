@@ -6,6 +6,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import java.io.File
+import java.nio.file.Files
 
 class DesktopStartupTest {
     @Test
@@ -109,5 +111,22 @@ class DesktopStartupTest {
 
         assertEquals("Folder sync failed for 1 folder.", completed.bannerMessage?.message)
         assertTrue(completed.bannerMessage?.isError == true)
+    }
+
+    @Test
+    fun `desktop account profile store restores cached profile for matching user`() {
+        val directory = Files.createTempDirectory("episteme-account-profile-test").toFile()
+        try {
+            val store = DesktopAccountProfileStore(File(directory, "account_profile.properties"))
+            store.save("user-1", DesktopAccountProfile(isProUser = true, credits = 42, fetchedAtEpochMillis = 123L))
+
+            assertEquals(
+                DesktopAccountProfile(isProUser = true, credits = 42, fetchedAtEpochMillis = 123L),
+                store.load("user-1")
+            )
+            assertNull(store.load("user-2"))
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 }

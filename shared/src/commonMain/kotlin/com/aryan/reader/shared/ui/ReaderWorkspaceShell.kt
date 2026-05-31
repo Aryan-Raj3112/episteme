@@ -767,8 +767,8 @@ internal fun readerWorkspaceShouldRestoreFocusAfterPanelClose(
     return closingPanelOpen && !otherPanelOpen
 }
 
-private const val ReaderWorkspaceChromeAnimationMillis = 220
-private const val ReaderWorkspaceDetachedChromeEnterDelayMillis = 16L
+private const val ReaderWorkspaceChromeAnimationMillis = 140
+private const val ReaderWorkspaceDetachedChromeEnterDelayMillis = 0L
 
 @Composable
 private fun ReaderWorkspaceDetachedChromeLayer(
@@ -782,7 +782,9 @@ private fun ReaderWorkspaceDetachedChromeLayer(
     LaunchedEffect(targetVisible) {
         if (targetVisible) {
             renderLayer = true
-            delay(ReaderWorkspaceDetachedChromeEnterDelayMillis)
+            if (ReaderWorkspaceDetachedChromeEnterDelayMillis > 0L) {
+                delay(ReaderWorkspaceDetachedChromeEnterDelayMillis)
+            }
             layerVisible = true
         } else {
             layerVisible = false

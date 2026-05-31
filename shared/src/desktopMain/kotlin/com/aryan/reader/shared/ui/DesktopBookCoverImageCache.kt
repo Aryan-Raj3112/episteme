@@ -6,11 +6,12 @@ import org.jetbrains.skia.Image as SkiaImage
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.File
+import java.util.concurrent.Semaphore
 import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 
 internal object DesktopBookCoverImageCache {
-    private const val MaxEntries = 96
+    private const val MaxEntries = 160
     private const val MaxCoverDimensionPx = 512
 
     private data class Entry(
@@ -20,36 +21,40 @@ internal object DesktopBookCoverImageCache {
     )
 
     private val entries = LinkedHashMap<String, Entry>(MaxEntries, 0.75f, true)
+    private val decodeSlots = Semaphore(2)
 
     fun peek(path: String): ImageBitmap? {
+        return synchronized(entries) {
+            entries[File(path).absolutePath]?.bitmap
+        }
+    }
+
+    fun load(path: String): ImageBitmap? {
         val file = File(path)
         if (!file.isFile) return null
         val key = file.absolutePath
         val length = file.length()
         val lastModified = file.lastModified()
-        return synchronized(entries) {
+        synchronized(entries) {
             val entry = entries[key]
             if (entry != null && entry.length == length && entry.lastModified == lastModified) {
-                entry.bitmap
-            } else {
-                entries.remove(key)
-                null
+                return entry.bitmap
             }
+            entries.remove(key)
         }
-    }
-
-    fun load(path: String): ImageBitmap? {
-        peek(path)?.let { return it }
-        val file = File(path)
-        if (!file.isFile) return null
-        val bitmap = decodeCover(file) ?: return null
+        decodeSlots.acquireUninterruptibly()
+        val bitmap = try {
+            decodeCover(file)
+        } finally {
+            decodeSlots.release()
+        } ?: return null
         val entry = Entry(
-            length = file.length(),
-            lastModified = file.lastModified(),
+            length = length,
+            lastModified = lastModified,
             bitmap = bitmap
         )
         synchronized(entries) {
-            entries[file.absolutePath] = entry
+            entries[key] = entry
             trimToMaxEntries()
         }
         return bitmap

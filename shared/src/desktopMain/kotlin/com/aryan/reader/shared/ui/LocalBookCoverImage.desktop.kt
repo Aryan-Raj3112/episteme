@@ -23,10 +23,11 @@ internal actual fun LocalBookCoverImage(
     }
 
     LaunchedEffect(path) {
-        if (bitmap == null) {
-            bitmap = withContext(Dispatchers.IO) {
-                DesktopBookCoverImageCache.load(path)
-            }
+        val loaded = withContext(Dispatchers.IO) {
+            DesktopBookCoverImageCache.load(path)
+        }
+        if (loaded != null && loaded != bitmap) {
+            bitmap = loaded
         }
     }
 

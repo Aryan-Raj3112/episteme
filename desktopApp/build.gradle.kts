@@ -435,7 +435,7 @@ fun normalizeDesktopPackageArchitecture(osArch: String): String {
     }
 }
 
-val desktopVersionName = "1.0.0"
+val desktopVersionName = "1.0.1"
 val desktopFlavor = providers.gradleProperty("desktopFlavor")
     .orElse("standard")
     .map(::normalizeDesktopFlavor)
