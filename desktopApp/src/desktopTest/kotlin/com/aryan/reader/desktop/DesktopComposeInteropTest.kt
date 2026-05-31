@@ -7,7 +7,7 @@ class DesktopComposeInteropTest {
     @Test
     fun `desktop enables Compose interop blending before app startup`() {
         withSystemProperty(ComposeInteropBlendingProperty, null) {
-            configureComposeSwingInterop()
+            configureComposeSwingInterop(nonNativeWebViewPlatform)
 
             assertEquals(ComposeInteropBlendingEnabled, System.getProperty(ComposeInteropBlendingProperty))
         }
@@ -16,7 +16,7 @@ class DesktopComposeInteropTest {
     @Test
     fun `desktop treats blank Compose interop blending value as unset`() {
         withSystemProperty(ComposeInteropBlendingProperty, " ") {
-            configureComposeSwingInterop()
+            configureComposeSwingInterop(nonNativeWebViewPlatform)
 
             assertEquals(ComposeInteropBlendingEnabled, System.getProperty(ComposeInteropBlendingProperty))
         }
@@ -25,7 +25,7 @@ class DesktopComposeInteropTest {
     @Test
     fun `desktop preserves explicit Compose interop blending override`() {
         withSystemProperty(ComposeInteropBlendingProperty, "false") {
-            configureComposeSwingInterop()
+            configureComposeSwingInterop(nonNativeWebViewPlatform)
 
             assertEquals("false", System.getProperty(ComposeInteropBlendingProperty))
         }
@@ -51,5 +51,12 @@ class DesktopComposeInteropTest {
                 System.setProperty(key, previous)
             }
         }
+    }
+
+    private companion object {
+        val nonNativeWebViewPlatform = DesktopPlatform(
+            os = DesktopOperatingSystem.OTHER,
+            architecture = DesktopArchitecture.X64
+        )
     }
 }

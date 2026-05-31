@@ -132,7 +132,7 @@ private fun xdgBase(
 ): File {
     return env(envName)
         ?.takeIf { it.isNotBlank() }
+        ?.takeIf { it.startsWith("/") }
         ?.let(::File)
-        ?.takeIf { it.isAbsolute }
         ?: File(userHome, fallbackRelativePath)
 }

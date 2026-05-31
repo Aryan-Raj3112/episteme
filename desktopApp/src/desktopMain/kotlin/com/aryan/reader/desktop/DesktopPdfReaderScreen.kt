@@ -1314,24 +1314,21 @@ internal fun PdfReaderScreen(
                     "right=${bounds.right.formatLogFloat()} bottom=${bounds.bottom.formatLogFloat()}"
             )
         }
-        dispatchPdf(
-            SharedPdfReaderAction.AnnotationAdded(
-                SharedPdfAnnotation(
-                    id = "highlight_${now}",
-                    pageIndex = pageIndex,
-                    kind = PdfAnnotationKind.HIGHLIGHT,
-                    tool = PdfInkTool.HIGHLIGHTER,
-                    bounds = highlightBounds.firstOrNull(),
-                    boundsList = highlightBounds,
-                    text = selection.text,
-                    colorArgb = SharedPdfHighlighterPalette(listOf(colorArgb)).sanitized().colors.first(),
-                    rangeStartIndex = selection.startIndex,
-                    rangeEndIndex = selection.endIndex,
-                    createdAt = now
-                )
-            )
+        val annotation = SharedPdfAnnotation(
+            id = "highlight_${now}",
+            pageIndex = pageIndex,
+            kind = PdfAnnotationKind.HIGHLIGHT,
+            tool = PdfInkTool.HIGHLIGHTER,
+            bounds = highlightBounds.firstOrNull(),
+            boundsList = highlightBounds,
+            text = selection.text,
+            colorArgb = SharedPdfHighlighterPalette(listOf(colorArgb)).sanitized().colors.first(),
+            rangeStartIndex = selection.startIndex,
+            rangeEndIndex = selection.endIndex,
+            createdAt = now
         )
-        dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+        pdfState = pdfState.withDesktopPdfTextSelectionHighlightAdded(annotation, zoomSpec)
+        clearPdfInteractionState()
     }
 
     fun clearSelection() {
@@ -1865,6 +1862,19 @@ internal fun PdfReaderScreen(
     fun selectEmbeddedAnnotation(annotation: SharedPdfEmbeddedAnnotation?) {
         selectedEmbeddedAnnotationId = annotation?.id
         annotation?.let { goToPage(it.pageIndex, recordJump = true) }
+    }
+
+    fun dismissSelectedTextHighlightSheet() {
+        clearPdfInteractionState()
+        pdfState = pdfState.withDesktopPdfTextHighlightSheetDismissed(zoomSpec)
+        requestPdfReaderFocusRestore()
+    }
+
+    fun deleteSelectedTextHighlight(annotation: SharedPdfAnnotation) {
+        clearPdfInteractionState()
+        pdfState = pdfState.withDesktopPdfTextHighlightSheetDismissed(zoomSpec)
+        dispatchPdf(SharedPdfReaderAction.AnnotationDeleted(annotation.id))
+        requestPdfReaderFocusRestore()
     }
 
     fun goToSearchResult(targetIndex: Int) {
@@ -3522,23 +3532,23 @@ internal fun PdfReaderScreen(
             selectedTextHighlight != null -> {
                 DesktopReaderBottomSheet(
                     title = selectedTextHighlight.desktopSheetTitle(),
-                    onDismiss = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) }
+                    onDismiss = ::dismissSelectedTextHighlightSheet
                 ) {
                     DesktopPdfAnnotationEditor(
                         annotation = selectedTextHighlight,
                         onUpdate = ::updateAnnotation,
-                        onDelete = { deleteAnnotation(selectedTextHighlight.id) },
-                        onClose = { dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null)) },
+                        onDelete = { deleteSelectedTextHighlight(selectedTextHighlight) },
+                        onClose = ::dismissSelectedTextHighlightSheet,
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(selectedTextHighlight.text))
-                            dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                            dismissSelectedTextHighlightSheet()
                         },
                         showSearch = featurePolicy.externalLookup,
                         highlighterPalette = pdfHighlighterColors,
                         onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
                         onSearch = {
                             openPdfExternalLookup(ReaderExternalLookupAction.SEARCH, selectedTextHighlight.text)
-                            dispatchPdf(SharedPdfReaderAction.AnnotationSelected(null))
+                            dismissSelectedTextHighlightSheet()
                         }
                     )
                 }

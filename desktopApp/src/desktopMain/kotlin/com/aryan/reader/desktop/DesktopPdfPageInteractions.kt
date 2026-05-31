@@ -9,9 +9,13 @@ import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.PdfSelectionGeometry
 import com.aryan.reader.shared.pdf.PdfTextCharBounds
+import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
+import com.aryan.reader.shared.pdf.SharedPdfReaderAction
+import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfTextDraft
+import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
 
@@ -23,6 +27,31 @@ internal val SharedPdfAnnotation.isDesktopTextSelectionHighlight: Boolean
         text.isNotBlank() &&
         rangeStartIndex != null &&
         rangeEndIndex != null
+
+internal fun SharedPdfReaderState.withDesktopPdfTextSelectionHighlightAdded(
+    annotation: SharedPdfAnnotation,
+    zoomSpec: PdfZoomSpec = PdfZoomSpec()
+): SharedPdfReaderState {
+    var next = reduce(SharedPdfReaderAction.AnnotationAdded(annotation), zoomSpec)
+    if (annotation.isDesktopTextSelectionHighlight) {
+        next = next.reduce(SharedPdfReaderAction.AnnotationSelected(null), zoomSpec)
+        if (next.isTextSelectionMode) {
+            next = next.reduce(SharedPdfReaderAction.TextSelectionModeChanged(false), zoomSpec)
+        }
+    }
+    return next
+}
+
+internal fun SharedPdfReaderState.withDesktopPdfTextHighlightSheetDismissed(
+    zoomSpec: PdfZoomSpec = PdfZoomSpec()
+): SharedPdfReaderState {
+    val selected = annotations.firstOrNull { it.id == selectedAnnotationId }
+    var next = reduce(SharedPdfReaderAction.AnnotationSelected(null), zoomSpec)
+    if (selected?.isDesktopTextSelectionHighlight == true && next.isTextSelectionMode) {
+        next = next.reduce(SharedPdfReaderAction.TextSelectionModeChanged(false), zoomSpec)
+    }
+    return next
+}
 
 internal fun List<PdfPagePoint>.withDesktopPdfDragPoint(
     point: Offset,

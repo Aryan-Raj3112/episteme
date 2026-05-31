@@ -435,6 +435,81 @@ fun normalizeDesktopPackageArchitecture(osArch: String): String {
     }
 }
 
+fun desktopDefaultPackageFormats(osName: String = System.getProperty("os.name")): String {
+    return when (desktopOsId(osName)) {
+        "windows" -> "msi"
+        "linux" -> "deb,rpm"
+        "macos" -> "dmg"
+        else -> ""
+    }
+}
+
+fun desktopTargetFormatForId(format: String): TargetFormat {
+    return when (format.lowercase()) {
+        "exe" -> TargetFormat.Exe
+        "msi" -> TargetFormat.Msi
+        "deb" -> TargetFormat.Deb
+        "rpm" -> TargetFormat.Rpm
+        "dmg" -> TargetFormat.Dmg
+        "pkg" -> TargetFormat.Pkg
+        else -> throw GradleException(
+            "Unsupported desktopPackageFormats entry '$format'. " +
+                "Use one or more of: msi, exe, deb, rpm, dmg, pkg."
+        )
+    }
+}
+
+fun desktopPackageFormatId(format: TargetFormat): String {
+    return when (format) {
+        TargetFormat.Exe -> "exe"
+        TargetFormat.Msi -> "msi"
+        TargetFormat.Deb -> "deb"
+        TargetFormat.Rpm -> "rpm"
+        TargetFormat.Dmg -> "dmg"
+        TargetFormat.Pkg -> "pkg"
+        else -> format.name.lowercase()
+    }
+}
+
+fun desktopPackageFormatSupportedOnHost(
+    format: TargetFormat,
+    osName: String = System.getProperty("os.name")
+): Boolean {
+    return when (desktopOsId(osName)) {
+        "windows" -> format == TargetFormat.Msi || format == TargetFormat.Exe
+        "linux" -> format == TargetFormat.Deb || format == TargetFormat.Rpm
+        "macos" -> format == TargetFormat.Dmg || format == TargetFormat.Pkg
+        else -> false
+    }
+}
+
+fun normalizeDesktopPackageFormats(
+    rawFormats: String,
+    osName: String = System.getProperty("os.name")
+): List<TargetFormat> {
+    val formats = rawFormats
+        .split(',', ';', ' ', '\n', '\t')
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .map(::desktopTargetFormatForId)
+        .distinct()
+    if (formats.isEmpty()) {
+        throw GradleException(
+            "desktopPackageFormats resolved to no package formats for ${desktopOsId(osName)}. " +
+                "Set -PdesktopPackageFormats=msi on Windows or -PdesktopPackageFormats=deb,rpm on Linux."
+        )
+    }
+    val unsupported = formats.filterNot { desktopPackageFormatSupportedOnHost(it, osName) }
+    if (unsupported.isNotEmpty()) {
+        throw GradleException(
+            "desktopPackageFormats=${formats.joinToString(",") { desktopPackageFormatId(it) }} does not match " +
+                "the current packaging host ${desktopOsId(osName)}. Unsupported here: " +
+                unsupported.joinToString(",") { desktopPackageFormatId(it) } + "."
+        )
+    }
+    return formats
+}
+
 val desktopVersionName = "1.0.1"
 val desktopFlavor = providers.gradleProperty("desktopFlavor")
     .orElse("standard")
@@ -463,6 +538,12 @@ val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan")
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
 val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
+val desktopPackageTargetFormats = providers.gradleProperty("desktopPackageFormats")
+    .orElse(desktopDefaultPackageFormats(desktopOsName))
+    .map { normalizeDesktopPackageFormats(it, desktopOsName) }
+    .get()
+val desktopNativePackageSupportedHost = desktopOsId(desktopOsName) in setOf("windows", "linux") &&
+    desktopArchId(desktopOsArch) == "x64"
 val desktopReleaseProguardEnabled = providers.gradleProperty("desktopReleaseProguard")
     .map { it.equals("true", ignoreCase = true) }
     .orElse(false)
@@ -493,6 +574,16 @@ val desktopCloudConfig = mapOf(
     "GOOGLE_OAUTH_CLIENT_ID" to desktopConfigValue("DESKTOP_GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID", "DEFAULT_WEB_CLIENT_ID"),
     "GOOGLE_OAUTH_CLIENT_SECRET" to desktopConfigValue("DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_WEB_CLIENT_SECRET", "DEFAULT_WEB_CLIENT_SECRET")
 )
+val desktopAllowUnconfiguredStandardServices = providers.gradleProperty("desktopAllowUnconfiguredStandardServices")
+    .map { it.equals("true", ignoreCase = true) }
+    .orElse(false)
+    .get()
+val desktopMissingStandardServiceConfig = if (isOssOfflineDesktop || desktopAllowUnconfiguredStandardServices) {
+    emptyList()
+} else {
+    listOf("FIREBASE_WEB_API_KEY", "GOOGLE_OAUTH_CLIENT_ID")
+        .filter { key -> desktopCloudConfig[key].isNullOrBlank() }
+}
 val bundledPdfiumDir = layout.projectDirectory.dir(
     "../third_party/pdfium/${desktopPdfiumDirectoryName(desktopOsName, desktopOsArch)}"
 )
@@ -610,7 +701,7 @@ compose.desktop {
         }
 
         nativeDistributions {
-            targetFormats(TargetFormat.Exe, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm)
+            targetFormats(*desktopPackageTargetFormats.toTypedArray())
             modules(
                 "java.datatransfer",
                 "java.desktop",
@@ -727,6 +818,23 @@ tasks.matching {
         "runReleaseDistributable"
     )
 }.configureEach {
+    doFirst {
+        if (!desktopNativePackageSupportedHost) {
+            throw GradleException(
+                "Desktop native packaging is currently release-supported only on Windows x64 and Linux x64. " +
+                    "Current host: ${desktopOsId(desktopOsName)} ${desktopArchId(desktopOsArch)}."
+            )
+        }
+        if (desktopMissingStandardServiceConfig.isNotEmpty()) {
+            throw GradleException(
+                "Standard desktop packages require account/sync service config. Missing: " +
+                    desktopMissingStandardServiceConfig.joinToString(", ") + ". " +
+                    "Set DESKTOP_FIREBASE_WEB_API_KEY and DESKTOP_GOOGLE_OAUTH_CLIENT_ID, " +
+                    "use -PdesktopFlavor=oss for the offline build, or set " +
+                    "-PdesktopAllowUnconfiguredStandardServices=true for a local non-GA package."
+            )
+        }
+    }
     dependsOn(prepareBundledDesktopResources)
     inputs.dir(generatedDesktopResourcesDir)
         .withPropertyName("bundledDesktopResources")

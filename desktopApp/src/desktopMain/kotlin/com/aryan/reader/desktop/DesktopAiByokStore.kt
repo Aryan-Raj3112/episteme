@@ -13,6 +13,7 @@ import com.sun.jna.win32.StdCallLibrary
 import java.io.File
 import java.util.Base64
 import java.util.Properties
+import java.util.concurrent.TimeUnit
 
 private const val WINDOWS_CRED_TYPE_GENERIC = 1
 private const val WINDOWS_CRED_PERSIST_LOCAL_MACHINE = 2
@@ -101,9 +102,7 @@ internal class DesktopAiByokStore(
             setProperty("ttsSpeakerId", sanitized.ttsSpeakerId)
         }
         settingsFile.parentFile?.mkdirs()
-        settingsFile.outputStream().use { output ->
-            properties.store(output, "Episteme desktop AI keys and models")
-        }
+        settingsFile.storePropertiesAtomically(properties, "Episteme desktop AI keys and models")
         logDesktopTts(
             "settings_save_complete geminiProtected=${properties.getProperty(GeminiKey, "").isNotBlank()} " +
                 "groqProtected=${properties.getProperty(GroqKey, "").isNotBlank()}"
@@ -173,10 +172,10 @@ internal interface DesktopSecretCodec {
     companion object {
         fun platform(): DesktopSecretCodec {
             val osName = System.getProperty("os.name").orEmpty()
-            val codec = if (osName.startsWith("Windows", ignoreCase = true)) {
-                WindowsSecretCodec
-            } else {
-                UnavailableDesktopSecretCodec
+            val codec = when {
+                osName.startsWith("Windows", ignoreCase = true) -> WindowsSecretCodec
+                osName.contains("Linux", ignoreCase = true) -> LinuxSecretToolCodec()
+                else -> UnavailableDesktopSecretCodec
             }
             logDesktopTts("settings_platform os=\"${osName.desktopTtsPreview()}\" codec=${codec.name}")
             return codec
@@ -191,6 +190,160 @@ private object UnavailableDesktopSecretCodec : DesktopSecretCodec {
         throw IllegalStateException("Secure key storage is unavailable on this operating system.")
     }
     override fun unprotect(value: String): String = ""
+}
+
+internal data class DesktopSecretCommandResult(
+    val exitCode: Int,
+    val stdout: String,
+    val stderr: String
+) {
+    val isSuccess: Boolean get() = exitCode == 0
+    val errorSummary: String
+        get() = stderr.ifBlank { stdout }.desktopTtsPreview(240).ifBlank { "exit code $exitCode" }
+}
+
+internal interface DesktopSecretCommandRunner {
+    fun isExecutableAvailable(command: String): Boolean
+    fun run(command: List<String>, input: String? = null, timeoutMillis: Long = 5_000L): DesktopSecretCommandResult
+}
+
+private object DesktopProcessSecretCommandRunner : DesktopSecretCommandRunner {
+    override fun isExecutableAvailable(command: String): Boolean {
+        val path = System.getenv("PATH").orEmpty()
+        return path.split(File.pathSeparator)
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .any { directory ->
+                File(directory, command).let { it.isFile && it.canExecute() }
+            }
+    }
+
+    override fun run(command: List<String>, input: String?, timeoutMillis: Long): DesktopSecretCommandResult {
+        require(command.isNotEmpty()) { "Secret command cannot be empty." }
+        val process = ProcessBuilder(command).start()
+        input?.let { value ->
+            process.outputStream.use { output ->
+                output.write(value.toByteArray(Charsets.UTF_8))
+            }
+        } ?: process.outputStream.close()
+
+        val completed = process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
+        if (!completed) {
+            process.destroyForcibly()
+            throw IllegalStateException("Timed out waiting for ${command.first()} secure storage command.")
+        }
+        return DesktopSecretCommandResult(
+            exitCode = process.exitValue(),
+            stdout = process.inputStream.readBytes().toString(Charsets.UTF_8),
+            stderr = process.errorStream.readBytes().toString(Charsets.UTF_8)
+        )
+    }
+}
+
+internal class LinuxSecretToolCodec(
+    private val commandRunner: DesktopSecretCommandRunner = DesktopProcessSecretCommandRunner
+) : DesktopSecretCodec {
+    override val name: String = "linux-secret-tool"
+
+    override val isAvailable: Boolean by lazy {
+        val available = commandRunner.isExecutableAvailable(SecretToolCommand) &&
+            runCatching {
+                commandRunner.run(listOf(SecretToolCommand, "--help"), timeoutMillis = 3_000L).isSuccess
+            }.getOrDefault(false)
+        logDesktopTts("settings_linux_secret_tool_available available=$available")
+        available
+    }
+
+    override fun protect(value: String): String {
+        return protect("secret", value)
+    }
+
+    override fun unprotect(value: String): String {
+        return unprotect("secret", value)
+    }
+
+    override fun protect(keyName: String, value: String): String {
+        if (!isAvailable) {
+            throw IllegalStateException(
+                "Linux Secret Service is unavailable. Install libsecret-tools and make sure a desktop keyring is running."
+            )
+        }
+        val key = linuxSecretKey(keyName)
+        logDesktopTts("settings_linux_secret_tool_write_start key=$keyName valueChars=${value.length}")
+        val result = commandRunner.run(
+            command = listOf(
+                SecretToolCommand,
+                "store",
+                "--label",
+                "Episteme $keyName",
+                SecretToolApplicationAttribute,
+                SecretToolApplicationValue,
+                SecretToolKeyAttribute,
+                key
+            ),
+            input = value,
+            timeoutMillis = 15_000L
+        )
+        logDesktopTts("settings_linux_secret_tool_write_result key=$keyName exit=${result.exitCode}")
+        if (!result.isSuccess) {
+            throw IllegalStateException("Linux Secret Service write failed: ${result.errorSummary}")
+        }
+        return Prefix + key
+    }
+
+    override fun unprotect(keyName: String, value: String): String {
+        if (!isAvailable) return ""
+        val key = value.removePrefix(Prefix).takeIf { value.startsWith(Prefix) } ?: linuxSecretKey(keyName)
+        logDesktopTts("settings_linux_secret_tool_read_start key=$keyName")
+        val result = commandRunner.run(
+            command = listOf(
+                SecretToolCommand,
+                "lookup",
+                SecretToolApplicationAttribute,
+                SecretToolApplicationValue,
+                SecretToolKeyAttribute,
+                key
+            ),
+            timeoutMillis = 8_000L
+        )
+        logDesktopTts("settings_linux_secret_tool_read_result key=$keyName exit=${result.exitCode} chars=${result.stdout.length}")
+        if (!result.isSuccess) {
+            throw IllegalStateException("Linux Secret Service read failed: ${result.errorSummary}")
+        }
+        return result.stdout.trimEnd('\r', '\n')
+    }
+
+    override fun delete(keyName: String) {
+        val key = linuxSecretKey(keyName)
+        runCatching {
+            commandRunner.run(
+                command = listOf(
+                    SecretToolCommand,
+                    "clear",
+                    SecretToolApplicationAttribute,
+                    SecretToolApplicationValue,
+                    SecretToolKeyAttribute,
+                    key
+                ),
+                timeoutMillis = 8_000L
+            )
+        }.onFailure { error ->
+            logDesktopTts("settings_linux_secret_tool_delete_failed key=$keyName error=\"${error.desktopTtsSummary()}\"")
+        }
+    }
+
+    private fun linuxSecretKey(keyName: String): String {
+        return "Episteme.Reader.$keyName"
+    }
+
+    private companion object {
+        const val Prefix = "secret-tool:"
+        const val SecretToolCommand = "secret-tool"
+        const val SecretToolApplicationAttribute = "application"
+        const val SecretToolApplicationValue = "Episteme.Reader"
+        const val SecretToolKeyAttribute = "key"
+    }
 }
 
 private object WindowsSecretCodec : DesktopSecretCodec {

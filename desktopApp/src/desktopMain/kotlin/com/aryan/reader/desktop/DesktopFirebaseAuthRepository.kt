@@ -68,7 +68,7 @@ internal class DesktopFirebaseAuthRepository(
             googleAccessTokenExpiresAtEpochMillis = googleTokens.expiresAtEpochMillis
         )
         session = nextSession
-        store.save(nextSession)
+        persistSession(nextSession)
         return nextSession
     }
 
@@ -86,24 +86,30 @@ internal class DesktopFirebaseAuthRepository(
         val current = session ?: store.load()?.also { session = it } ?: return null
         if (current.isGoogleAccessTokenFresh) return current.googleAccessToken
         if (current.googleRefreshToken.isBlank()) return null
-        return runCatching {
+        val refreshed = runCatching {
             refreshGoogleAccessToken(current)
-        }.onSuccess { refreshed ->
-            session = refreshed
-            store.save(refreshed)
-        }.getOrNull()?.googleAccessToken
+        }.getOrNull() ?: return null
+        session = refreshed
+        persistSession(refreshed)
+        return refreshed.googleAccessToken
     }
 
     private suspend fun refreshSessionIfNeeded(current: DesktopAuthSession): DesktopAuthSession? {
         if (current.isFresh) return current
-        return runCatching {
+        val refreshed = runCatching {
             refreshFirebaseSession(current)
-        }.onSuccess { refreshed ->
-            session = refreshed
-            store.save(refreshed)
         }.onFailure {
             signOut()
-        }.getOrNull()
+        }.getOrNull() ?: return null
+        session = refreshed
+        persistSession(refreshed)
+        return refreshed
+    }
+
+    private suspend fun persistSession(session: DesktopAuthSession) {
+        withContext(Dispatchers.IO) {
+            store.save(session)
+        }
     }
 
     private suspend fun requestGoogleOAuthCode(openUrl: (String) -> Unit): DesktopOAuthCode = withContext(Dispatchers.IO) {
@@ -364,24 +370,19 @@ internal class DesktopAuthStore(
     }
 
     fun save(session: DesktopAuthSession) {
+        val protectedRefreshToken = protectRequired(RefreshTokenKey, session.refreshToken)
+        val protectedGoogleRefreshToken = session.googleRefreshToken
+            .takeIf { it.isNotBlank() }
+            ?.let { protectRequired(GoogleRefreshTokenKey, it) }
         val properties = Properties().apply {
             setProperty("uid", session.user.uid)
             setProperty("displayName", session.user.displayName.orEmpty())
             setProperty("photoUrl", session.user.photoUrl.orEmpty())
             setProperty("email", session.user.email.orEmpty())
-            runCatching { secretCodec.protect(RefreshTokenKey, session.refreshToken) }
-                .getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { setProperty(RefreshTokenKey, it) }
-            runCatching { secretCodec.protect(GoogleRefreshTokenKey, session.googleRefreshToken) }
-                .getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?.let { setProperty(GoogleRefreshTokenKey, it) }
+            setProperty(RefreshTokenKey, protectedRefreshToken)
+            protectedGoogleRefreshToken?.let { setProperty(GoogleRefreshTokenKey, it) }
         }
-        settingsFile.parentFile?.mkdirs()
-        settingsFile.outputStream().use { output ->
-            properties.store(output, "Episteme desktop account")
-        }
+        settingsFile.storePropertiesAtomically(properties, "Episteme desktop account")
     }
 
     fun clear() {
@@ -393,6 +394,17 @@ internal class DesktopAuthStore(
     private companion object {
         const val RefreshTokenKey = "firebaseRefreshTokenProtected"
         const val GoogleRefreshTokenKey = "googleRefreshTokenProtected"
+    }
+
+    private fun protectRequired(keyName: String, value: String): String {
+        if (value.isBlank()) {
+            throw IllegalArgumentException("Cannot save a desktop account without a refresh token.")
+        }
+        val protectedValue = secretCodec.protect(keyName, value)
+        if (protectedValue.isBlank()) {
+            throw IllegalStateException("Desktop secure key storage returned an empty value for $keyName.")
+        }
+        return protectedValue
     }
 }
 

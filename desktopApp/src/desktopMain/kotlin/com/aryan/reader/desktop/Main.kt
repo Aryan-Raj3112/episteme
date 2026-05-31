@@ -478,6 +478,40 @@ internal fun EpistemeDesktopApp(
         persistSnapshot(projected, persistDebounceMillis = persistDebounceMillis)
     }
 
+    fun flushDesktopPersistenceBeforeDispose(
+        projected: SharedReaderScreenState,
+        records: List<ShelfRecord>,
+        refs: List<BookShelfRef>,
+        fonts: List<CustomFontItem>
+    ) {
+        pendingLibraryPersistJob.getAndSet(null)?.cancel()
+        runCatching {
+            libraryDatabase.save(
+                projected.toDesktopLibrarySnapshot(
+                    shelfRecords = records,
+                    shelfRefs = refs,
+                    customFonts = fonts
+                )
+            )
+        }
+
+        val pendingSidecarBookIds = desktopBookSidecarSaveJobs.keys.toList()
+        if (pendingSidecarBookIds.isEmpty()) return
+
+        desktopBookSidecarSaveJobs.values.forEach { it.cancel() }
+        desktopBookSidecarSaveJobs.clear()
+        val booksById = projected.rawLibraryBooks.associateBy { it.id }
+        pendingSidecarBookIds
+            .mapNotNull(booksById::get)
+            .filter { book ->
+                val sourceFolder = book.sourceFolder ?: return@filter false
+                projected.syncedFolders.firstOrNull { it.uriString == sourceFolder }?.localSyncEnabled ?: true
+            }
+            .forEach { book ->
+                runCatching { DesktopLocalFolderSync.saveBookSidecars(book) }
+            }
+    }
+
     fun DesktopReaderWindowState.cancelReaderWork() {
         when (val content = content) {
             DesktopReaderWindowContent.Opening,
@@ -3705,8 +3739,18 @@ internal fun EpistemeDesktopApp(
     }
 
     val latestReaderWindows by rememberUpdatedState(readerWindows)
+    val latestStateForDispose by rememberUpdatedState(state)
+    val latestShelfRecordsForDispose by rememberUpdatedState(shelfRecords)
+    val latestShelfRefsForDispose by rememberUpdatedState(shelfRefs)
+    val latestCustomFontsForDispose by rememberUpdatedState(customFonts)
     DisposableEffect(Unit) {
         onDispose {
+            flushDesktopPersistenceBeforeDispose(
+                projected = latestStateForDispose,
+                records = latestShelfRecordsForDispose,
+                refs = latestShelfRefsForDispose,
+                fonts = latestCustomFontsForDispose
+            )
             latestReaderWindows.forEach { it.closeReaderResources() }
         }
     }
