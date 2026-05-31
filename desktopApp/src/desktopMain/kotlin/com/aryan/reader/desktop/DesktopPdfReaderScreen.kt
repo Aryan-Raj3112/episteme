@@ -143,6 +143,7 @@ import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedPdfEmbeddedHitTest
 import com.aryan.reader.shared.ui.sharedPdfHitTest
 import com.aryan.reader.shared.ui.toSharedPdfPoint
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -237,11 +238,15 @@ internal fun PdfReaderScreen(
     val zoomAnchorJob = remember(documentHandleId) { AtomicReference<Job?>(null) }
     val zoomCommitJob = remember(documentHandleId) { AtomicReference<Job?>(null) }
     var pdfZoomPreview by remember(documentHandleId) { mutableStateOf<DesktopPdfZoomPreview?>(null) }
+    var pdfZoomSettleSequence by remember(documentHandleId) { mutableIntStateOf(0) }
     var activeTextDraft by remember(documentHandleId) { mutableStateOf<SharedPdfTextDraft?>(null) }
     var textStyleConfig by remember(documentHandleId) { mutableStateOf(SharedPdfTextStyleConfig()) }
     var pageCanvasSize by remember(documentHandleId) { mutableStateOf(IntSize.Zero) }
     var pdfZoomViewportRootOffset by remember(documentHandleId) { mutableStateOf(Offset.Zero) }
+    var pdfZoomViewportSize by remember(documentHandleId) { mutableStateOf(IntSize.Zero) }
     var paginatedPageRootOffset by remember(documentHandleId) { mutableStateOf(Offset.Zero) }
+    val paginatedPageRootOffsets = remember(documentHandleId) { mutableStateMapOf<Int, Offset>() }
+    val paginatedPageCanvasSizes = remember(documentHandleId) { mutableStateMapOf<Int, IntSize>() }
     val verticalPageRootOffsets = remember(documentHandleId) { mutableStateMapOf<Int, Offset>() }
     val paginatedRenderCache = remember(documentHandleId) { mutableStateMapOf<Int, DesktopPdfCachedPageRender>() }
     var activeStroke by remember(documentHandleId, pdfState.pageIndex) { mutableStateOf<List<PdfPagePoint>>(emptyList()) }
@@ -620,6 +625,20 @@ internal fun PdfReaderScreen(
         }
     }
 
+    LaunchedEffect(documentHandleId, displayMode) {
+        if (!DesktopDiagnosticsEnabled) return@LaunchedEffect
+        snapshotFlow {
+            "mode=$displayMode page=${currentPdfPageIndex + 1} scale=${currentPdfScale.formatLogFloat()} " +
+                "preview=${pdfZoomPreview != null} h=${pageHorizontalScrollState.value} " +
+                "v=${pageVerticalScrollState.value} list=${verticalListState.firstVisibleItemIndex}:" +
+                verticalListState.firstVisibleItemScrollOffset
+        }
+            .distinctUntilChanged()
+            .collect { summary ->
+                logPdfZoomSettle { "scroll_state seq=$pdfZoomSettleSequence $summary" }
+            }
+    }
+
     fun verticalZoomAnchorItem(anchor: Offset) = verticalListState.layoutInfo.visibleItemsInfo
         .firstOrNull { item ->
             anchor.y >= item.offset.toFloat() && anchor.y <= (item.offset + item.size).toFloat()
@@ -632,19 +651,61 @@ internal fun PdfReaderScreen(
             }
         }
 
-    LaunchedEffect(scale, displayMode, pageIndex) {
+    fun paginatedZoomPageRoot(page: Int?): Offset? {
+        if (page == null) return null
+        return paginatedPageRootOffsets[page]
+            ?: paginatedPageRootOffset.takeIf { page == currentPdfPageIndex }
+    }
+
+    fun paginatedZoomAnchorPageIndex(anchor: Offset?): Int {
+        val activePageIndex = currentPdfPageIndex
+        if (!isPdfTwoPageSpread) return activePageIndex
+        val rootOffsets = paginatedPageRootOffsets.toMutableMap()
+        paginatedSpreadPageIndices.firstOrNull()?.let { firstSpreadPage ->
+            rootOffsets.putIfAbsent(firstSpreadPage, paginatedPageRootOffset)
+        }
+        val pageSizes = paginatedPageCanvasSizes.toMutableMap()
+        if (pageCanvasSize.width > 0 && pageCanvasSize.height > 0) {
+            pageSizes.putIfAbsent(activePageIndex, pageCanvasSize)
+        }
+        return desktopPdfSpreadZoomAnchorPageIndex(
+            viewportRootOffset = pdfZoomViewportRootOffset,
+            anchor = anchor,
+            visiblePageIndices = paginatedVisiblePageIndices,
+            pageRootOffsets = rootOffsets,
+            pageSizes = pageSizes,
+            fallbackPageIndex = activePageIndex
+        )
+    }
+
+    LaunchedEffect(scale, displayMode, pageIndex, isPdfTwoPageSpread, paginatedSpreadPageIndices) {
         val preview = pdfZoomPreview ?: return@LaunchedEffect
+        val paginationPreviewPageVisible = if (isPdfTwoPageSpread) {
+            preview.pageIndex in paginatedSpreadPageIndices
+        } else {
+            preview.pageIndex == pageIndex
+        }
         if (
             preview.displayMode != displayMode ||
-            (preview.pageIndex != pageIndex && displayMode == PdfDisplayMode.PAGINATION) ||
-            abs(preview.baseZoom - scale) > 0.0001f
+            (!paginationPreviewPageVisible && displayMode == PdfDisplayMode.PAGINATION) ||
+            !desktopPdfZoomPreviewMatchesScale(preview, scale)
         ) {
+            logPdfZoomSettle {
+                "preview_cancel seq=$pdfZoomSettleSequence reason=state_mismatch mode=$displayMode " +
+                    "page=${pageIndex + 1} scale=${scale.formatLogFloat()} previewMode=${preview.displayMode} " +
+                    "previewPage=${preview.pageIndex?.plus(1) ?: "none"} base=${preview.baseZoom.formatLogFloat()} " +
+                    "zoom=${preview.zoom.formatLogFloat()}"
+            }
             pdfZoomPreview = null
             zoomCommitJob.getAndSet(null)?.cancel()
         }
     }
 
     fun applyAnchoredPdfZoom(oldZoom: Float, newZoom: Float, anchor: Offset?) {
+        if (pdfZoomSettleSequence == 0) {
+            pdfZoomSettleSequence = 1
+        }
+        val settleSequence = pdfZoomSettleSequence
         val activePageIndex = currentPdfPageIndex
         val activeDisplayMode = currentPdfDisplayMode
         logPdfZoomPerf {
@@ -654,9 +715,27 @@ internal fun PdfReaderScreen(
                 "renderScale=${renderedPageScale?.formatLogFloat() ?: "none"} " +
                 "renderJobActive=${renderJob?.isActive == true}"
         }
-        pdfZoomPreview = null
-        val viewportRootOffsetAtZoomStart = pdfZoomViewportRootOffset
-        val pageRootOffsetAtZoomStart = paginatedPageRootOffset
+        val committedPreview = pdfZoomPreview
+        val viewportRootOffsetAtZoomStart = committedPreview?.viewportRootOffset ?: pdfZoomViewportRootOffset
+        val committedPreviewPageIndex = committedPreview?.pageIndex ?: activePageIndex
+        val pageRootOffsetAtZoomStart = committedPreview?.pageRootOffset
+            ?: paginatedZoomPageRoot(committedPreviewPageIndex)
+            ?: paginatedPageRootOffset
+        val pageRootOffsetAtCommitStart = paginatedZoomPageRoot(committedPreviewPageIndex)
+            ?: paginatedPageRootOffset
+        logPdfZoomSettle {
+            "commit_start seq=$settleSequence mode=$activeDisplayMode page=${activePageIndex + 1} " +
+                "old=${oldZoom.formatLogFloat()} new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} " +
+                "preview=${committedPreview != null} previewPage=${committedPreview?.pageIndex?.plus(1) ?: "none"} " +
+                "previewBase=${committedPreview?.baseZoom?.formatLogFloat() ?: "none"} " +
+                "previewZoom=${committedPreview?.zoom?.formatLogFloat() ?: "none"} " +
+                "viewportStart=${viewportRootOffsetAtZoomStart.formatLogOffset()} " +
+                "pageStart=${pageRootOffsetAtZoomStart.formatLogOffset()} " +
+                "pageNow=${pageRootOffsetAtCommitStart.formatLogOffset()} h=${pageHorizontalScrollState.value} " +
+                "v=${pageVerticalScrollState.value} list=${verticalListState.firstVisibleItemIndex}:" +
+                "${verticalListState.firstVisibleItemScrollOffset} renderPage=${renderedPageIndex?.plus(1) ?: "none"} " +
+                "renderScale=${renderedPageScale?.formatLogFloat() ?: "none"} renderJob=${renderJob?.isActive == true}"
+        }
         val targetHorizontalScroll = anchor?.let {
             desktopPdfAnchoredScrollTarget(pageHorizontalScrollState.value, it.x, oldZoom, newZoom)
         }
@@ -672,38 +751,115 @@ internal fun PdfReaderScreen(
                         oldZoom = oldZoom,
                         newZoom = newZoom
                     )
-                    val pageRootOffset = verticalPageRootOffsets[item.index]
+                    val pageRootOffset = if (committedPreview?.pageIndex == item.index) {
+                        committedPreview.pageRootOffset
+                    } else {
+                        verticalPageRootOffsets[item.index]
+                    }
                     Triple(item.index, fallbackOffset, pageRootOffset)
                 }
         } else {
             null
         }
+        logPdfZoomSettle {
+            "commit_targets seq=$settleSequence mode=$activeDisplayMode targetH=${targetHorizontalScroll ?: "none"} " +
+                "targetV=${targetVerticalScroll ?: "none"} targetItem=${targetVerticalItem?.first?.plus(1) ?: "none"} " +
+                "targetItemOffset=${targetVerticalItem?.second ?: "none"} targetItemRoot=${targetVerticalItem?.third.formatLogOffset()}"
+        }
+        var committedPreviewForClear = committedPreview
+        committedPreview?.let { preview ->
+            val previewWithCommitTargets = preview.copy(
+                commitTargetHorizontalScroll = targetHorizontalScroll,
+                commitTargetVerticalScroll = targetVerticalScroll.takeIf {
+                    activeDisplayMode == PdfDisplayMode.PAGINATION
+                }
+            )
+            if (pdfZoomPreview == preview) {
+                pdfZoomPreview = previewWithCommitTargets
+                committedPreviewForClear = previewWithCommitTargets
+                logPdfZoomSettle {
+                    "preview_commit_targets seq=$settleSequence targetH=${targetHorizontalScroll ?: "none"} " +
+                        "targetV=${targetVerticalScroll ?: "none"}"
+                }
+            }
+        }
         dispatchPdf(SharedPdfReaderAction.ZoomChanged(newZoom))
+        fun clearCommittedPreview() {
+            val matchesCommittedPreview = pdfZoomPreview == committedPreviewForClear
+            logPdfZoomSettle {
+                "preview_clear seq=$settleSequence match=$matchesCommittedPreview " +
+                    "current=${pdfZoomPreview != null} committed=${committedPreview != null}"
+            }
+            if (matchesCommittedPreview) {
+                pdfZoomPreview = null
+            }
+        }
+        logPdfZoomSettle {
+            "zoom_dispatched seq=$settleSequence new=${newZoom.formatLogFloat()} h=${pageHorizontalScrollState.value} " +
+                "v=${pageVerticalScrollState.value} list=${verticalListState.firstVisibleItemIndex}:" +
+                verticalListState.firstVisibleItemScrollOffset
+        }
         if (anchor != null) {
-            val nextAnchorJob = pdfScope.launch {
-                withFrameNanos { }
+            zoomAnchorJob.getAndSet(null)?.cancel()
+            val nextAnchorJob = pdfScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 when (activeDisplayMode) {
                     PdfDisplayMode.PAGINATION -> {
-                        suspend fun correctPageAnchor() {
+                        if (targetHorizontalScroll != null || targetVerticalScroll != null) {
+                            val beforeH = pageHorizontalScrollState.value
+                            val beforeV = pageVerticalScrollState.value
+                            targetHorizontalScroll?.let { pageHorizontalScrollState.scrollTo(it) }
+                            targetVerticalScroll?.let { pageVerticalScrollState.scrollTo(it) }
+                            logPdfZoomSettle {
+                                "anchor_pre_scroll seq=$settleSequence mode=pagination beforeH=$beforeH beforeV=$beforeV " +
+                                    "targetH=${targetHorizontalScroll ?: "none"} targetV=${targetVerticalScroll ?: "none"} " +
+                                    "afterH=${pageHorizontalScrollState.value} afterV=${pageVerticalScrollState.value} " +
+                                    "maxH=${pageHorizontalScrollState.maxValue} maxV=${pageVerticalScrollState.maxValue}"
+                            }
+                        }
+                        withFrameNanos { }
+                        suspend fun correctPageAnchor(pass: Int) {
+                            val beforeH = pageHorizontalScrollState.value
+                            val beforeV = pageVerticalScrollState.value
+                            val currentRoot = paginatedZoomPageRoot(committedPreviewPageIndex)
+                                ?: paginatedPageRootOffset
                             val pageDelta = desktopPdfAnchoredPageScrollDelta(
                                 viewportRootOffset = viewportRootOffsetAtZoomStart,
                                 oldPageRootOffset = pageRootOffsetAtZoomStart,
-                                currentPageRootOffset = paginatedPageRootOffset,
+                                currentPageRootOffset = currentRoot,
                                 anchor = anchor,
                                 oldZoom = oldZoom,
                                 newZoom = newZoom
                             )
-                            if (pageDelta != null) {
-                                if (abs(pageDelta.x) > 1) {
+                            val reachableDelta = pageDelta?.let {
+                                desktopPdfReachableScrollDelta(
+                                    requestedDelta = it,
+                                    scrollBounds = DesktopPdfZoomScrollBounds(
+                                        currentHorizontalScroll = pageHorizontalScrollState.value,
+                                        maxHorizontalScroll = pageHorizontalScrollState.maxValue,
+                                        currentVerticalScroll = pageVerticalScrollState.value,
+                                        maxVerticalScroll = pageVerticalScrollState.maxValue
+                                    )
+                                )
+                            }
+                            logPdfZoomSettle {
+                                "anchor_pass seq=$settleSequence pass=$pass mode=pagination beforeH=$beforeH " +
+                                    "beforeV=$beforeV delta=${pageDelta.formatLogIntOffset()} " +
+                                    "reachable=${reachableDelta.formatLogIntOffset()} " +
+                                    "maxH=${pageHorizontalScrollState.maxValue} maxV=${pageVerticalScrollState.maxValue} " +
+                                    "rootStart=${pageRootOffsetAtZoomStart.formatLogOffset()} " +
+                                    "rootNow=${currentRoot.formatLogOffset()} viewport=${viewportRootOffsetAtZoomStart.formatLogOffset()}"
+                            }
+                            if (reachableDelta != null) {
+                                if (abs(reachableDelta.x) > 1) {
                                     pageHorizontalScrollState.scrollTo(
-                                        (pageHorizontalScrollState.value + pageDelta.x).coerceAtLeast(
+                                        (pageHorizontalScrollState.value + reachableDelta.x).coerceAtLeast(
                                             0
                                         )
                                     )
                                 }
-                                if (abs(pageDelta.y) > 1) {
+                                if (abs(reachableDelta.y) > 1) {
                                     pageVerticalScrollState.scrollTo(
-                                        (pageVerticalScrollState.value + pageDelta.y).coerceAtLeast(
+                                        (pageVerticalScrollState.value + reachableDelta.y).coerceAtLeast(
                                             0
                                         )
                                     )
@@ -712,14 +868,23 @@ internal fun PdfReaderScreen(
                                 pageHorizontalScrollState.scrollTo(targetHorizontalScroll)
                                 pageVerticalScrollState.scrollTo(targetVerticalScroll)
                             }
+                            logPdfZoomSettle {
+                                "anchor_pass_end seq=$settleSequence pass=$pass mode=pagination afterH=${pageHorizontalScrollState.value} " +
+                                    "afterV=${pageVerticalScrollState.value} delta=${pageDelta.formatLogIntOffset()} " +
+                                    "reachable=${reachableDelta.formatLogIntOffset()}"
+                            }
                         }
-                        correctPageAnchor()
+                        correctPageAnchor(pass = 1)
                         withFrameNanos { }
-                        correctPageAnchor()
+                        correctPageAnchor(pass = 2)
                     }
 
                     PdfDisplayMode.VERTICAL_SCROLL -> {
-                        suspend fun correctVerticalAnchor() {
+                        withFrameNanos { }
+                        suspend fun correctVerticalAnchor(pass: Int) {
+                            val beforeH = pageHorizontalScrollState.value
+                            val beforeItem = verticalListState.firstVisibleItemIndex
+                            val beforeItemOffset = verticalListState.firstVisibleItemScrollOffset
                             val oldPageRootOffset = targetVerticalItem?.third
                             val currentPageRootOffset =
                                 targetVerticalItem?.first?.let { verticalPageRootOffsets[it] }
@@ -736,6 +901,14 @@ internal fun PdfReaderScreen(
                                 } else {
                                     null
                                 }
+                            logPdfZoomSettle {
+                                "anchor_pass seq=$settleSequence pass=$pass mode=vertical beforeH=$beforeH " +
+                                    "beforeList=$beforeItem:$beforeItemOffset delta=${pageDelta.formatLogIntOffset()} " +
+                                    "targetItem=${targetVerticalItem?.first?.plus(1) ?: "none"} " +
+                                    "oldRoot=${oldPageRootOffset.formatLogOffset()} " +
+                                    "currentRoot=${currentPageRootOffset.formatLogOffset()} " +
+                                    "viewport=${viewportRootOffsetAtZoomStart.formatLogOffset()}"
+                            }
                             if (pageDelta != null) {
                                 if (abs(pageDelta.x) > 1) {
                                     pageHorizontalScrollState.scrollTo(
@@ -753,12 +926,29 @@ internal fun PdfReaderScreen(
                                     verticalListState.scrollToItem(itemIndex, scrollOffset)
                                 }
                             }
+                            logPdfZoomSettle {
+                                "anchor_pass_end seq=$settleSequence pass=$pass mode=vertical afterH=${pageHorizontalScrollState.value} " +
+                                    "afterList=${verticalListState.firstVisibleItemIndex}:${verticalListState.firstVisibleItemScrollOffset} " +
+                                    "delta=${pageDelta.formatLogIntOffset()}"
+                            }
                         }
-                        correctVerticalAnchor()
+                        correctVerticalAnchor(pass = 1)
                         withFrameNanos { }
-                        correctVerticalAnchor()
+                        correctVerticalAnchor(pass = 2)
                     }
                 }
+                clearCommittedPreview()
+            }
+            zoomAnchorJob.set(nextAnchorJob)
+        } else {
+            val nextAnchorJob = pdfScope.launch {
+                withFrameNanos { }
+                logPdfZoomSettle {
+                    "anchor_skip seq=$settleSequence reason=no_anchor mode=$activeDisplayMode h=${pageHorizontalScrollState.value} " +
+                        "v=${pageVerticalScrollState.value} list=${verticalListState.firstVisibleItemIndex}:" +
+                        verticalListState.firstVisibleItemScrollOffset
+                }
+                clearCommittedPreview()
             }
             zoomAnchorJob.getAndSet(nextAnchorJob)?.cancel()
         }
@@ -775,27 +965,57 @@ internal fun PdfReaderScreen(
                 "renderScale=${renderedPageScale?.formatLogFloat() ?: "none"} " +
                 "renderJobActive=${renderJob?.isActive == true} cacheKeys=${paginatedRenderCache.keys.sorted().map { it + 1 }}"
         }
-        val existingPreview = pdfZoomPreview
+        val previewPageIndex = when (activeDisplayMode) {
+            PdfDisplayMode.PAGINATION -> paginatedZoomAnchorPageIndex(anchor)
+            PdfDisplayMode.VERTICAL_SCROLL -> anchor?.let(::verticalZoomAnchorItem)?.index ?: activePageIndex
+        }
+        val existingPreview = pdfZoomPreview?.takeIf {
+            it.displayMode == activeDisplayMode &&
+                it.pageIndex == previewPageIndex &&
+                it.baseZoom.isFinite() &&
+                it.baseZoom > 0f &&
+                abs(it.baseZoom - activeScale) <= 0.0001f
+        }
+        if (existingPreview == null) {
+            pdfZoomSettleSequence += 1
+        }
+        val settleSequence = pdfZoomSettleSequence
         val baseZoom = existingPreview
-            ?.takeIf { it.displayMode == activeDisplayMode && it.baseZoom.isFinite() && it.baseZoom > 0f }
             ?.baseZoom
             ?: oldZoom.takeIf { it.isFinite() && it > 0f }
             ?: activeScale
-        val previewPageIndex = when (activeDisplayMode) {
-            PdfDisplayMode.PAGINATION -> activePageIndex
-            PdfDisplayMode.VERTICAL_SCROLL -> anchor?.let(::verticalZoomAnchorItem)?.index ?: activePageIndex
+        val previewPageRootOffset = existingPreview?.pageRootOffset ?: when (activeDisplayMode) {
+            PdfDisplayMode.PAGINATION -> paginatedZoomPageRoot(previewPageIndex)
+            PdfDisplayMode.VERTICAL_SCROLL -> verticalPageRootOffsets[previewPageIndex]
         }
         pdfZoomPreview = DesktopPdfZoomPreview(
             baseZoom = baseZoom,
             zoom = newZoom,
             anchor = anchor,
             displayMode = activeDisplayMode,
-            pageIndex = previewPageIndex
+            pageIndex = previewPageIndex,
+            viewportRootOffset = existingPreview?.viewportRootOffset ?: pdfZoomViewportRootOffset,
+            pageRootOffset = previewPageRootOffset,
+            diagnosticSequence = settleSequence
         )
+        logPdfZoomSettle {
+            "preview_update seq=$settleSequence mode=$activeDisplayMode page=${activePageIndex + 1} " +
+                "previewPage=${previewPageIndex + 1} oldEvent=${oldZoom.formatLogFloat()} " +
+                "activeScale=${activeScale.formatLogFloat()} base=${baseZoom.formatLogFloat()} " +
+                "new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} existing=${existingPreview != null} " +
+                "viewport=${pdfZoomViewportRootOffset.formatLogOffset()} pageRoot=${previewPageRootOffset.formatLogOffset()} " +
+                "h=${pageHorizontalScrollState.value} v=${pageVerticalScrollState.value} " +
+                "list=${verticalListState.firstVisibleItemIndex}:${verticalListState.firstVisibleItemScrollOffset} " +
+                "renderPage=${renderedPageIndex?.plus(1) ?: "none"} renderScale=${renderedPageScale?.formatLogFloat() ?: "none"}"
+        }
         val nextCommitJob = pdfScope.launch {
             delay(DesktopPdfZoomCommitDebounceMillis)
             val preview = pdfZoomPreview ?: return@launch
-            pdfZoomPreview = null
+            logPdfZoomSettle {
+                "commit_debounce_fire seq=$settleSequence base=${preview.baseZoom.formatLogFloat()} " +
+                    "zoom=${preview.zoom.formatLogFloat()} page=${preview.pageIndex?.plus(1) ?: "none"} " +
+                    "anchor=${preview.anchor.formatLogOffset()}"
+            }
             applyAnchoredPdfZoom(preview.baseZoom, preview.zoom, preview.anchor)
         }
         zoomCommitJob.getAndSet(nextCommitJob)?.cancel()
@@ -809,6 +1029,9 @@ internal fun PdfReaderScreen(
     }
 
     fun cancelPendingPdfZoomPreview() {
+        logPdfZoomSettle {
+            "preview_cancel seq=$pdfZoomSettleSequence reason=explicit pending=${pdfZoomPreview != null}"
+        }
         pdfZoomPreview = null
         zoomCommitJob.getAndSet(null)?.cancel()
     }
@@ -823,6 +1046,11 @@ internal fun PdfReaderScreen(
         evictedPages.forEach { paginatedRenderCache.remove(it) }
         logPdfZoomPerf {
             "cache_put page=${page + 1} scale=${renderScale.formatLogFloat()} " +
+                "bitmap=${render.width}x${render.height} current=${activePageIndex + 1} " +
+                "keys=${paginatedRenderCache.keys.sorted().map { it + 1 }} evicted=${evictedPages.map { it + 1 }}"
+        }
+        logPdfZoomSettle {
+            "cache_put seq=$pdfZoomSettleSequence page=${page + 1} scale=${renderScale.formatLogFloat()} " +
                 "bitmap=${render.width}x${render.height} current=${activePageIndex + 1} " +
                 "keys=${paginatedRenderCache.keys.sorted().map { it + 1 }} evicted=${evictedPages.map { it + 1 }}"
         }
@@ -2030,11 +2258,22 @@ internal fun PdfReaderScreen(
                 "searchIndexing=$isSearchIndexing indexed=$indexedSearchPageCount/${document.pageCount} " +
                 "cacheKeys=${paginatedRenderCache.keys.sorted().map { it + 1 }}"
         }
+        logPdfZoomSettle {
+            "render_effect seq=$pdfZoomSettleSequence page=${pageIndex + 1} scale=${scale.formatLogFloat()} " +
+                "existingPage=${renderedPageIndex?.plus(1) ?: "none"} " +
+                "existingScale=${renderedPageScale?.formatLogFloat() ?: "none"} " +
+                "preview=${pdfZoomPreview != null} h=${pageHorizontalScrollState.value} v=${pageVerticalScrollState.value} " +
+                "pageRoot=${paginatedPageRootOffset.formatLogOffset()} canvas=${pageCanvasSize.formatLogSize()}"
+        }
         if (renderedPageIndex != pageIndex) {
             paginatedRenderCache[pageIndex]?.let { cached ->
                 logPdfZoomPerf {
                     "cache_hit page=${pageIndex + 1} scale=${cached.scale.formatLogFloat()} " +
                         "bitmap=${cached.render.width}x${cached.render.height}"
+                }
+                logPdfZoomSettle {
+                    "cache_hit seq=$pdfZoomSettleSequence page=${pageIndex + 1} " +
+                        "scale=${cached.scale.formatLogFloat()} bitmap=${cached.render.width}x${cached.render.height}"
                 }
                 renderedPage = cached.render
                 renderedPageIndex = pageIndex
@@ -2043,18 +2282,19 @@ internal fun PdfReaderScreen(
                 isRendering = false
             }
         }
-        val hasPageRender = renderedPage != null && renderedPageIndex == pageIndex
-        val hasFallbackRender = renderedPage != null && renderedPageIndex != null
+        val hasPageRender = renderedPage != null && desktopPdfRenderBelongsToPage(renderedPageIndex, pageIndex)
         if (!hasPageRender) {
             logPdfZoomPerf {
-                "cache_miss page=${pageIndex + 1}; fallback=${renderedPageIndex?.let { it + 1 } ?: "none"}"
+                "cache_miss page=${pageIndex + 1}; stale=${renderedPageIndex?.let { it + 1 } ?: "none"}"
             }
-            if (!hasFallbackRender) {
-                renderedPage = null
-                renderedPageIndex = null
-                renderedPageScale = null
+            logPdfZoomSettle {
+                "cache_miss seq=$pdfZoomSettleSequence page=${pageIndex + 1} " +
+                    "stale=${renderedPageIndex?.plus(1) ?: "none"}"
             }
-            isRendering = !hasFallbackRender
+            renderedPage = null
+            renderedPageIndex = null
+            renderedPageScale = null
+            isRendering = true
         }
         renderJob = launch {
             val pageSize = document.pageSizes.getOrNull(pageIndex)
@@ -2081,12 +2321,22 @@ internal fun PdfReaderScreen(
                     "safeScale=${safeScale.formatLogFloat()} firstScale=${firstRenderScale.formatLogFloat()} " +
                     "hasRender=$hasPageRender opening=$isOpeningRender"
             }
+            logPdfZoomSettle {
+                "render_plan seq=$pdfZoomSettleSequence page=${pageIndex + 1} requestedScale=${scale.formatLogFloat()} " +
+                    "safeScale=${safeScale.formatLogFloat()} firstScale=${firstRenderScale.formatLogFloat()} " +
+                    "hasRender=$hasPageRender opening=$isOpeningRender existingScale=${renderedPageScale?.formatLogFloat() ?: "none"}"
+            }
 
             suspend fun renderAt(renderScale: Float, delayMillis: Long, showSpinner: Boolean): Boolean {
                 logPdfZoomPerf {
                     "render_scheduled page=${pageIndex + 1} renderScale=${renderScale.formatLogFloat()} " +
                         "requestedScale=${scale.formatLogFloat()} delayMs=$delayMillis showSpinner=$showSpinner " +
                         "hasPageRender=$hasPageRender"
+                }
+                logPdfZoomSettle {
+                    "render_scheduled seq=$pdfZoomSettleSequence page=${pageIndex + 1} " +
+                        "renderScale=${renderScale.formatLogFloat()} requestedScale=${scale.formatLogFloat()} " +
+                        "delayMs=$delayMillis showSpinner=$showSpinner preview=${pdfZoomPreview != null}"
                 }
                 delay(delayMillis)
                 if (showSpinner) {
@@ -2108,6 +2358,12 @@ internal fun PdfReaderScreen(
                             "elapsedMs=$elapsedMs currentPage=${currentPdfPageIndex + 1} " +
                             "currentScale=${currentPdfScale.formatLogFloat()} mode=$currentPdfDisplayMode"
                     }
+                    logPdfZoomSettle {
+                        "render_stale seq=$pdfZoomSettleSequence page=${pageIndex + 1} " +
+                            "renderScale=${renderScale.formatLogFloat()} elapsedMs=$elapsedMs " +
+                            "currentPage=${currentPdfPageIndex + 1} currentScale=${currentPdfScale.formatLogFloat()} " +
+                            "mode=$currentPdfDisplayMode"
+                    }
                     return false
                 }
                 result.getOrNull()?.let { render ->
@@ -2126,6 +2382,13 @@ internal fun PdfReaderScreen(
                     "render_end page=${pageIndex + 1} renderScale=${renderScale.formatLogFloat()} " +
                         "requestedScale=${scale.formatLogFloat()} elapsedMs=$elapsedMs success=${result.isSuccess} " +
                         "error=${result.exceptionOrNull()?.message?.logPreview() ?: "none"}"
+                }
+                logPdfZoomSettle {
+                    "render_end seq=$pdfZoomSettleSequence page=${pageIndex + 1} " +
+                        "renderScale=${renderScale.formatLogFloat()} requestedScale=${scale.formatLogFloat()} " +
+                        "elapsedMs=$elapsedMs success=${result.isSuccess} bitmap=${renderedPage?.width ?: 0}x${renderedPage?.height ?: 0} " +
+                        "h=${pageHorizontalScrollState.value} v=${pageVerticalScrollState.value} " +
+                        "pageRoot=${paginatedPageRootOffset.formatLogOffset()} canvas=${pageCanvasSize.formatLogSize()}"
                 }
                 renderedPage?.let { render ->
                     logPdfSelection(
@@ -2194,14 +2457,18 @@ internal fun PdfReaderScreen(
 
             val existingScale = renderedPageScale
             val needsFirstRender = !hasPageRender ||
-                existingScale == null ||
-                abs(existingScale - firstRenderScale) > DesktopPdfRenderScaleTolerance
+                desktopPdfRenderScaleNeedsUpgrade(existingScale, firstRenderScale)
             if (needsFirstRender) {
                 renderAt(
                     renderScale = firstRenderScale,
                     delayMillis = if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L,
-                    showSpinner = !hasPageRender && !hasFallbackRender
+                    showSpinner = !hasPageRender
                 )
+            } else {
+                logPdfZoomSettle {
+                    "render_skip seq=$pdfZoomSettleSequence page=${pageIndex + 1} reason=no_scale_upgrade " +
+                        "existingScale=${existingScale?.formatLogFloat() ?: "none"} firstScale=${firstRenderScale.formatLogFloat()}"
+                }
             }
             delay(DesktopPdfPaginationPrefetchDelayMillis)
             if (currentPdfPageIndex == pageIndex && currentPdfScale == scale &&
@@ -2582,10 +2849,19 @@ internal fun PdfReaderScreen(
             )
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(verticalViewportBackground, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
-                    .onGloballyPositioned { coordinates ->
-                        pdfZoomViewportRootOffset = coordinates.positionInRoot()
+                            .fillMaxSize()
+                            .background(verticalViewportBackground, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
+                            .onSizeChanged { size -> pdfZoomViewportSize = size }
+                            .onGloballyPositioned { coordinates ->
+                        val rootOffset = coordinates.positionInRoot()
+                        if (rootOffset != pdfZoomViewportRootOffset) {
+                            logPdfZoomSettle {
+                                "viewport_layout seq=$pdfZoomSettleSequence mode=vertical " +
+                                    "prev=${pdfZoomViewportRootOffset.formatLogOffset()} next=${rootOffset.formatLogOffset()} " +
+                                    "scale=${scale.formatLogFloat()} preview=${pdfZoomPreview != null}"
+                            }
+                        }
+                        pdfZoomViewportRootOffset = rootOffset
                     }
                     .desktopPdfZoomGestures(
                         currentZoom = scale,
@@ -2603,6 +2879,9 @@ internal fun PdfReaderScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         items((0 until document.pageCount).toList(), key = { it }) { verticalPageIndex ->
+                            val verticalZoomPreview = pdfZoomPreview?.takeIf {
+                                it.displayMode == PdfDisplayMode.VERTICAL_SCROLL
+                            }
                             DesktopVerticalPdfPage(
                                 document = document,
                                 pageIndex = verticalPageIndex,
@@ -2630,8 +2909,16 @@ internal fun PdfReaderScreen(
                                 externalLookupAvailable = featurePolicy.externalLookup,
                                 themeStyle = pdfThemeStyle,
                                 shouldRender = verticalPageIndex in verticalRenderWindow,
-                                zoomPreview = pdfZoomPreview?.takeIf {
-                                    it.displayMode == PdfDisplayMode.VERTICAL_SCROLL
+                                zoomPreview = verticalZoomPreview,
+                                zoomPreviewAnchorPageRootOffset = verticalZoomPreview
+                                    ?.pageIndex
+                                    ?.let { verticalPageRootOffsets[it] },
+                                zoomPreviewScrollBounds = verticalZoomPreview?.let {
+                                    desktopPdfZoomScrollBoundsWithCommitTargets(
+                                        preview = it,
+                                        currentHorizontalScroll = pageHorizontalScrollState.value,
+                                        maxHorizontalScroll = pageHorizontalScrollState.maxValue
+                                    )
                                 },
                                 zoomViewportRootOffset = pdfZoomViewportRootOffset,
                                 showPageNumberOverlay = pdfReaderSettings.pdfPageNumberOverlayVisible,
@@ -2665,6 +2952,16 @@ internal fun PdfReaderScreen(
                                     }
                                 },
                                 onPagePositioned = { page, offset ->
+                                    val previousOffset = verticalPageRootOffsets[page]
+                                    if (previousOffset != offset) {
+                                        logPdfZoomSettle {
+                                            "page_layout seq=$pdfZoomSettleSequence mode=vertical page=${page + 1} " +
+                                                "prevRoot=${previousOffset.formatLogOffset()} nextRoot=${offset.formatLogOffset()} " +
+                                                "scale=${scale.formatLogFloat()} preview=${verticalZoomPreview != null} " +
+                                                "h=${pageHorizontalScrollState.value} list=${verticalListState.firstVisibleItemIndex}:" +
+                                                verticalListState.firstVisibleItemScrollOffset
+                                        }
+                                    }
                                     verticalPageRootOffsets[page] = offset
                                 }
                             )
@@ -2689,8 +2986,17 @@ internal fun PdfReaderScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
+                            .onSizeChanged { size -> pdfZoomViewportSize = size }
                             .onGloballyPositioned { coordinates ->
-                                pdfZoomViewportRootOffset = coordinates.positionInRoot()
+                                val rootOffset = coordinates.positionInRoot()
+                                if (rootOffset != pdfZoomViewportRootOffset) {
+                                    logPdfZoomSettle {
+                                        "viewport_layout seq=$pdfZoomSettleSequence mode=spread " +
+                                            "prev=${pdfZoomViewportRootOffset.formatLogOffset()} next=${rootOffset.formatLogOffset()} " +
+                                            "scale=${scale.formatLogFloat()} preview=${pdfZoomPreview != null}"
+                                    }
+                                }
+                                pdfZoomViewportRootOffset = rootOffset
                             }
                             .desktopPdfZoomGestures(
                                 currentZoom = scale,
@@ -2707,6 +3013,21 @@ internal fun PdfReaderScreen(
                             verticalAlignment = Alignment.Top
                         ) {
                             paginatedVisiblePageIndices.forEach { spreadPageIndex ->
+                                val spreadZoomPreview = pdfZoomPreview?.takeIf {
+                                    it.displayMode == PdfDisplayMode.PAGINATION
+                                }
+                                val spreadZoomAnchorPageRootOffset = spreadZoomPreview
+                                    ?.pageIndex
+                                    ?.let(::paginatedZoomPageRoot)
+                                val spreadZoomScrollBounds = spreadZoomPreview?.let {
+                                    desktopPdfZoomScrollBoundsWithCommitTargets(
+                                        preview = it,
+                                        currentHorizontalScroll = pageHorizontalScrollState.value,
+                                        maxHorizontalScroll = pageHorizontalScrollState.maxValue,
+                                        currentVerticalScroll = pageVerticalScrollState.value,
+                                        maxVerticalScroll = pageVerticalScrollState.maxValue
+                                    )
+                                }
                                 DesktopVerticalPdfPage(
                                     document = document,
                                     pageIndex = spreadPageIndex,
@@ -2734,9 +3055,9 @@ internal fun PdfReaderScreen(
                                     externalLookupAvailable = featurePolicy.externalLookup,
                                     themeStyle = pdfThemeStyle,
                                     shouldRender = true,
-                                    zoomPreview = pdfZoomPreview?.takeIf {
-                                        it.displayMode == PdfDisplayMode.PAGINATION
-                                    },
+                                    zoomPreview = spreadZoomPreview,
+                                    zoomPreviewAnchorPageRootOffset = spreadZoomAnchorPageRootOffset,
+                                    zoomPreviewScrollBounds = spreadZoomScrollBounds,
                                     zoomViewportRootOffset = pdfZoomViewportRootOffset,
                                     showPageNumberOverlay = pdfReaderSettings.pdfPageNumberOverlayVisible,
                                     onSelectPage = {
@@ -2769,8 +3090,21 @@ internal fun PdfReaderScreen(
                                             pageVerticalScrollState.scrollBy(-delta.y)
                                         }
                                     },
+                                    onPageSizeChanged = { page, size ->
+                                        paginatedPageCanvasSizes[page] = size
+                                    },
                                     onPagePositioned = { page, offset ->
+                                        paginatedPageRootOffsets[page] = offset
                                         if (page == paginatedSpreadPageIndices.firstOrNull()) {
+                                            if (offset != paginatedPageRootOffset) {
+                                                logPdfZoomSettle {
+                                                    "page_layout seq=$pdfZoomSettleSequence mode=spread page=${page + 1} " +
+                                                        "prevRoot=${paginatedPageRootOffset.formatLogOffset()} " +
+                                                        "nextRoot=${offset.formatLogOffset()} scale=${scale.formatLogFloat()} " +
+                                                        "preview=${spreadZoomPreview != null} h=${pageHorizontalScrollState.value} " +
+                                                        "v=${pageVerticalScrollState.value}"
+                                                }
+                                            }
                                             paginatedPageRootOffset = offset
                                         }
                                     }
@@ -2788,8 +3122,17 @@ internal fun PdfReaderScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
+                        .onSizeChanged { size -> pdfZoomViewportSize = size }
                         .onGloballyPositioned { coordinates ->
-                            pdfZoomViewportRootOffset = coordinates.positionInRoot()
+                            val rootOffset = coordinates.positionInRoot()
+                            if (rootOffset != pdfZoomViewportRootOffset) {
+                                logPdfZoomSettle {
+                                    "viewport_layout seq=$pdfZoomSettleSequence mode=pagination " +
+                                        "prev=${pdfZoomViewportRootOffset.formatLogOffset()} next=${rootOffset.formatLogOffset()} " +
+                                        "scale=${scale.formatLogFloat()} preview=${pdfZoomPreview != null}"
+                                }
+                            }
+                            pdfZoomViewportRootOffset = rootOffset
                         }
                         .desktopPdfZoomGestures(
                             currentZoom = scale,
@@ -2801,7 +3144,11 @@ internal fun PdfReaderScreen(
                         .padding(24.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    val paginatedPageDisplay = renderedPageIndex?.let { displayPageIndex ->
+                    val paginatedPageDisplay = renderedPageIndex
+                        ?.takeIf { displayPageIndex ->
+                            renderedPage != null && desktopPdfRenderBelongsToPage(displayPageIndex, pageIndex)
+                        }
+                        ?.let { displayPageIndex ->
                         renderedPage?.let { render ->
                             DesktopPdfPaginatedPageDisplay(
                                 pageIndex = displayPageIndex,
@@ -2816,13 +3163,17 @@ internal fun PdfReaderScreen(
                     )
                     paginatedPageDisplay != null -> {
                         Crossfade(
-                            targetState = paginatedPageDisplay,
+                            targetState = paginatedPageDisplay.pageIndex,
                             animationSpec = tween(DesktopPdfPaginationPageTurnAnimationMillis),
                             label = "DesktopPdfPaginatedPage"
-                        ) { pageDisplay ->
-                        val displayPageIsCurrent = pageDisplay.pageIndex == currentPdfPageIndex
-                        val pageIndex = pageDisplay.pageIndex
-                        val currentPageRender = pageDisplay.render
+                        ) { displayPageIndex ->
+                        val displayPageIsCurrent = displayPageIndex == currentPdfPageIndex
+                        val pageIndex = displayPageIndex
+                        val currentPageRender = if (displayPageIndex == paginatedPageDisplay.pageIndex) {
+                            paginatedPageDisplay.render
+                        } else {
+                            paginatedRenderCache[displayPageIndex]?.render ?: paginatedPageDisplay.render
+                        }
                         val pageSize = document.pageSizes.getOrNull(pageIndex)
                         if (pageSize == null) {
                             Text(readerString("desktop_failed_render_page", "Failed to render page."), color = MaterialTheme.colorScheme.error)
@@ -2831,6 +3182,10 @@ internal fun PdfReaderScreen(
                         val pageDisplayScale = zoomSpec.clamp(scale)
                         val pageWidthDp = with(density) { (pageSize.width * pageDisplayScale).toDp() }
                         val pageHeightDp = with(density) { (pageSize.height * pageDisplayScale).toDp() }
+                        val predictedPageCanvasSize = IntSize(
+                            width = (pageSize.width * pageDisplayScale).roundToInt().coerceAtLeast(1),
+                            height = (pageSize.height * pageDisplayScale).roundToInt().coerceAtLeast(1)
+                        )
                         val pageRenderScale = currentPageRender.width / pageSize.width
                         val pageAnnotations = remember(annotations, pageIndex, pageCanvasSize) {
                             annotations
@@ -2912,14 +3267,41 @@ internal fun PdfReaderScreen(
                             it.displayMode == PdfDisplayMode.PAGINATION &&
                                 it.pageIndex == pageIndex
                         }
+                        val pageLayoutPrediction = pageZoomPreview?.let {
+                            desktopPdfSinglePageLayoutPrediction(
+                                viewportRootOffset = pdfZoomViewportRootOffset,
+                                viewportSize = pdfZoomViewportSize,
+                                pageCanvasSize = predictedPageCanvasSize,
+                                horizontalScroll = pageHorizontalScrollState.value,
+                                verticalScroll = pageVerticalScrollState.value,
+                                paddingPx = with(density) { 24.dp.toPx() }
+                            )
+                        }
                         Box(
                             modifier = Modifier
                                 .size(pageWidthDp, pageHeightDp)
                                 .onGloballyPositioned { coordinates ->
-                                    paginatedPageRootOffset = coordinates.positionInRoot()
+                                    val rootOffset = coordinates.positionInRoot()
+                                    if (rootOffset != paginatedPageRootOffset) {
+                                        logPdfZoomSettle {
+                                            "page_layout seq=$pdfZoomSettleSequence mode=pagination page=${pageIndex + 1} " +
+                                                "prevRoot=${paginatedPageRootOffset.formatLogOffset()} " +
+                                                "nextRoot=${rootOffset.formatLogOffset()} scale=${scale.formatLogFloat()} " +
+                                                "preview=${pageZoomPreview != null} h=${pageHorizontalScrollState.value} " +
+                                                "v=${pageVerticalScrollState.value} canvas=${pageCanvasSize.formatLogSize()}"
+                                        }
+                                    }
+                                    paginatedPageRootOffset = rootOffset
+                                    paginatedPageRootOffsets[pageIndex] = rootOffset
                                 }
                                 .onSizeChanged { size ->
                                     if (pageCanvasSize != size) {
+                                        logPdfZoomSettle {
+                                            "page_size seq=$pdfZoomSettleSequence mode=pagination page=${pageIndex + 1} " +
+                                                "prev=${pageCanvasSize.formatLogSize()} next=${size.formatLogSize()} " +
+                                                "scale=${scale.formatLogFloat()} preview=${pageZoomPreview != null} " +
+                                                "bitmap=${currentPageRender.width}x${currentPageRender.height}"
+                                        }
                                         logPdfSelection(
                                             "layout page=${pageIndex + 1} " +
                                                 "canvas=${size.formatLogSize()} bitmap=${currentPageRender.width}x${currentPageRender.height} " +
@@ -2928,13 +3310,25 @@ internal fun PdfReaderScreen(
                                         )
                                     }
                                     pageCanvasSize = size
+                                    paginatedPageCanvasSizes[pageIndex] = size
                                 }
                                 .desktopPdfZoomPreviewLayer(
                                     preview = pageZoomPreview,
                                     currentZoom = scale,
                                     viewportRootOffset = pdfZoomViewportRootOffset,
                                     pageRootOffset = paginatedPageRootOffset,
-                                    pageCanvasSize = pageCanvasSize
+                                    pageCanvasSize = pageCanvasSize,
+                                    commitPageRootOffset = pageLayoutPrediction?.rootOffset,
+                                    scrollBounds = pageZoomPreview?.let {
+                                        DesktopPdfZoomScrollBounds(
+                                            currentHorizontalScroll = pageHorizontalScrollState.value,
+                                            maxHorizontalScroll = pageLayoutPrediction?.maxHorizontalScroll
+                                                ?: pageHorizontalScrollState.maxValue,
+                                            currentVerticalScroll = pageVerticalScrollState.value,
+                                            maxVerticalScroll = pageLayoutPrediction?.maxVerticalScroll
+                                                ?: pageVerticalScrollState.maxValue
+                                        )
+                                    }
                                 )
                                 .background(pdfThemeStyle.pageBackgroundColor, RoundedCornerShape(2.dp))
                                 .pointerInput(

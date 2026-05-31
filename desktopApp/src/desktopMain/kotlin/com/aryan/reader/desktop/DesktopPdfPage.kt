@@ -71,11 +71,6 @@ import kotlinx.coroutines.withContext
 
 private const val DesktopVerticalPdfPageTurnAnimationMillis = 140
 
-private data class DesktopVerticalPdfPageDisplay(
-    val pageIndex: Int,
-    val render: DesktopPdfPageRender
-)
-
 @Composable
 internal fun DesktopVerticalPdfPage(
     document: DesktopPdfDocument,
@@ -105,6 +100,8 @@ internal fun DesktopVerticalPdfPage(
     themeStyle: DesktopPdfThemeStyle,
     shouldRender: Boolean,
     zoomPreview: DesktopPdfZoomPreview?,
+    zoomPreviewAnchorPageRootOffset: Offset? = null,
+    zoomPreviewScrollBounds: DesktopPdfZoomScrollBounds? = null,
     zoomViewportRootOffset: Offset,
     showPageNumberOverlay: Boolean = true,
     onSelectPage: (Int) -> Unit,
@@ -125,12 +122,14 @@ internal fun DesktopVerticalPdfPage(
     onTextDraftChanged: (String, IntSize) -> Unit,
     onTextDraftBoundsChanged: (PdfPageBounds) -> Unit,
     onPan: (Offset) -> Unit,
+    onPageSizeChanged: (Int, IntSize) -> Unit = { _, _ -> },
     onPagePositioned: (Int, Offset) -> Unit
 ) {
     val documentHandleId = document.handleId
     val density = LocalDensity.current
     var renderedPage by remember(documentHandleId) { mutableStateOf<DesktopPdfPageRender?>(null) }
     var renderedPageIndex by remember(documentHandleId) { mutableStateOf<Int?>(null) }
+    var renderedPageScale by remember(documentHandleId) { mutableStateOf<Float?>(null) }
     var renderError by remember(documentHandleId) { mutableStateOf<String?>(null) }
     var isRendering by remember(documentHandleId) { mutableStateOf(true) }
     var pageCanvasSize by remember(documentHandleId, pageIndex) { mutableStateOf(IntSize.Zero) }
@@ -166,41 +165,73 @@ internal fun DesktopVerticalPdfPage(
 
     LaunchedEffect(documentHandleId, pageIndex, scale, shouldRender) {
         if (!shouldRender) {
+            logPdfZoomSettle {
+                "item_render_skip page=${pageIndex + 1} reason=outside_window scale=${scale.formatLogFloat()}"
+            }
             renderedPage = null
             renderedPageIndex = null
+            renderedPageScale = null
             renderError = null
             isRendering = false
             clearInteractionState()
             return@LaunchedEffect
         }
-        val hasPageRender = renderedPage != null && renderedPageIndex == pageIndex
-        val hasFallbackRender = renderedPage != null && renderedPageIndex != null
+        val hasPageRender = renderedPage != null && desktopPdfRenderBelongsToPage(renderedPageIndex, pageIndex)
+        logPdfZoomSettle {
+            "item_render_effect page=${pageIndex + 1} scale=${scale.formatLogFloat()} shouldRender=$shouldRender " +
+                "hasRender=$hasPageRender renderedPage=${renderedPageIndex?.plus(1) ?: "none"} " +
+                "renderScale=${renderedPageScale?.formatLogFloat() ?: "none"}"
+        }
         if (!hasPageRender) {
-            isRendering = !hasFallbackRender
+            renderedPage = null
+            renderedPageIndex = null
+            renderedPageScale = null
+            isRendering = true
         }
         renderError = null
         val pageSize = document.pageSizes.getOrNull(pageIndex)
         if (pageSize == null) {
             renderedPage = null
             renderedPageIndex = null
+            renderedPageScale = null
             renderError = failedRenderMessage
             isRendering = false
             return@LaunchedEffect
         }
-        delay(if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L)
-        isRendering = !hasFallbackRender || hasPageRender
         val safeScale = zoomSpec.safeRenderScale(pageSize.width, pageSize.height, scale)
+        if (hasPageRender && !desktopPdfRenderScaleNeedsUpgrade(renderedPageScale, safeScale)) {
+            logPdfZoomSettle {
+                "item_render_skip page=${pageIndex + 1} reason=no_scale_upgrade " +
+                    "safeScale=${safeScale.formatLogFloat()} existingScale=${renderedPageScale?.formatLogFloat() ?: "none"}"
+            }
+            isRendering = false
+            return@LaunchedEffect
+        }
+        logPdfZoomSettle {
+            "item_render_scheduled page=${pageIndex + 1} safeScale=${safeScale.formatLogFloat()} " +
+                "delayMs=${if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L} hasRender=$hasPageRender"
+        }
+        delay(if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L)
+        isRendering = true
+        val renderStartedAt = System.currentTimeMillis()
         val result = withContext(Dispatchers.IO) {
             runCatching { DesktopPdfium.renderPage(document, pageIndex, safeScale) }
         }
+        val renderElapsedMs = System.currentTimeMillis() - renderStartedAt
         result.getOrNull()?.let {
             renderedPage = it
             renderedPageIndex = pageIndex
+            renderedPageScale = safeScale
         }
-        val renderedCurrentPage = renderedPage != null && renderedPageIndex == pageIndex
+        val renderedCurrentPage = renderedPage != null && desktopPdfRenderBelongsToPage(renderedPageIndex, pageIndex)
         renderError = result.exceptionOrNull()?.message
             ?: if (!renderedCurrentPage && renderedPage == null) failedRenderMessage else null
         isRendering = false
+        logPdfZoomSettle {
+            "item_render_end page=${pageIndex + 1} safeScale=${safeScale.formatLogFloat()} " +
+                "elapsedMs=$renderElapsedMs success=${result.isSuccess} bitmap=${renderedPage?.width ?: 0}x${renderedPage?.height ?: 0} " +
+                "canvas=${pageCanvasSize.formatLogSize()} root=${pageRootOffset.formatLogOffset()}"
+        }
     }
 
     LaunchedEffect(isTextSelectionMode) {
@@ -243,15 +274,34 @@ internal fun DesktopVerticalPdfPage(
                 .size(placeholderWidthDp, placeholderHeightDp)
                 .onGloballyPositioned { coordinates ->
                     val rootOffset = coordinates.positionInRoot()
+                    if (rootOffset != pageRootOffset) {
+                        logPdfZoomSettle {
+                            "item_layout page=${pageIndex + 1} prevRoot=${pageRootOffset.formatLogOffset()} " +
+                                "nextRoot=${rootOffset.formatLogOffset()} scale=${scale.formatLogFloat()} " +
+                                "preview=${zoomPreview != null} canvas=${pageCanvasSize.formatLogSize()}"
+                        }
+                    }
                     pageRootOffset = rootOffset
                     onPagePositioned(pageIndex, rootOffset)
                 }
-                .onSizeChanged { pageCanvasSize = it }
+                .onSizeChanged { size ->
+                    if (pageCanvasSize != size) {
+                        logPdfZoomSettle {
+                            "item_size page=${pageIndex + 1} prev=${pageCanvasSize.formatLogSize()} " +
+                                "next=${size.formatLogSize()} scale=${scale.formatLogFloat()} " +
+                                "preview=${zoomPreview != null} renderScale=${pageRenderScale.formatLogFloat()}"
+                        }
+                    }
+                    pageCanvasSize = size
+                    onPageSizeChanged(pageIndex, size)
+                }
                 .desktopPdfDocumentZoomPreviewLayer(
                     preview = zoomPreview,
                     currentZoom = scale,
                     viewportRootOffset = zoomViewportRootOffset,
-                    pageRootOffset = pageRootOffset
+                    pageRootOffset = pageRootOffset,
+                    anchorPageRootOffset = zoomPreviewAnchorPageRootOffset,
+                    scrollBounds = zoomPreviewScrollBounds
                 )
                 .background(themeStyle.pageBackgroundColor, RoundedCornerShape(2.dp))
                 .pointerInput(
@@ -671,14 +721,14 @@ internal fun DesktopVerticalPdfPage(
                     renderError ?: readerString("desktop_failed_render_page", "Failed to render page."),
                     color = MaterialTheme.colorScheme.error
                 )
-                renderedPage != null && renderedPageIndex != null -> {
+                renderedPage != null && desktopPdfRenderBelongsToPage(renderedPageIndex, pageIndex) -> {
+                    val currentRenderedPageIndex = renderedPageIndex!!
                     Crossfade(
-                        targetState = DesktopVerticalPdfPageDisplay(renderedPageIndex!!, renderedPage!!),
+                        targetState = currentRenderedPageIndex,
                         animationSpec = tween(DesktopVerticalPdfPageTurnAnimationMillis),
                         label = "DesktopVerticalPdfPage"
-                    ) { pageDisplay ->
-                    val pageIndex = pageDisplay.pageIndex
-                    val pageRender = pageDisplay.render
+                    ) { pageIndex ->
+                    val pageRender = renderedPage!!
                     val pageEmbeddedAnnotations = remember(document.embeddedAnnotations, pageIndex) {
                         document.embeddedAnnotations.filter { it.pageIndex == pageIndex }
                     }

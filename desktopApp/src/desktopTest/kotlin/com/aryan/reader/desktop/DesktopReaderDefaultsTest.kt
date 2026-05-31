@@ -15,6 +15,7 @@ import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DesktopReaderDefaultsTest {
@@ -148,6 +149,210 @@ class DesktopReaderDefaultsTest {
             0.75f,
             desktopPdfPaginationFirstRenderScale(requestedScale = 0.75f, hasPageRender = false)
         )
+    }
+
+    @Test
+    fun `desktop pdf only displays renders for the requested page`() {
+        assertTrue(desktopPdfRenderBelongsToPage(renderedPageIndex = 0, requestedPageIndex = 0))
+        assertFalse(desktopPdfRenderBelongsToPage(renderedPageIndex = null, requestedPageIndex = 0))
+        assertFalse(desktopPdfRenderBelongsToPage(renderedPageIndex = 1, requestedPageIndex = 0))
+    }
+
+    @Test
+    fun `desktop pdf render scale rerenders only for missing or lower quality renders`() {
+        assertTrue(desktopPdfRenderScaleNeedsUpgrade(renderedScale = null, requestedScale = 1f))
+        assertTrue(desktopPdfRenderScaleNeedsUpgrade(renderedScale = 1f, requestedScale = 1.02f))
+        assertTrue(desktopPdfRenderScaleNeedsUpgrade(renderedScale = Float.NaN, requestedScale = 1f))
+        assertFalse(desktopPdfRenderScaleNeedsUpgrade(renderedScale = 1f, requestedScale = 1.005f))
+        assertFalse(desktopPdfRenderScaleNeedsUpgrade(renderedScale = 2f, requestedScale = 1f))
+        assertFalse(desktopPdfRenderScaleNeedsUpgrade(renderedScale = 1f, requestedScale = Float.NaN))
+    }
+
+    @Test
+    fun `desktop pdf spread zoom anchors to page under cursor`() {
+        val visiblePages = listOf(199, 200)
+        val pageRoots = mapOf(
+            199 to Offset(424f, 30f),
+            200 to Offset(972f, 30f)
+        )
+        val pageSizes = mapOf(
+            199 to IntSize(525, 693),
+            200 to IntSize(525, 693)
+        )
+
+        assertEquals(
+            200,
+            desktopPdfSpreadZoomAnchorPageIndex(
+                viewportRootOffset = Offset.Zero,
+                anchor = Offset(1048.75f, 465f),
+                visiblePageIndices = visiblePages,
+                pageRootOffsets = pageRoots,
+                pageSizes = pageSizes,
+                fallbackPageIndex = 199
+            )
+        )
+        assertEquals(
+            199,
+            desktopPdfSpreadZoomAnchorPageIndex(
+                viewportRootOffset = Offset.Zero,
+                anchor = Offset(500f, 465f),
+                visiblePageIndices = visiblePages,
+                pageRootOffsets = pageRoots,
+                pageSizes = pageSizes,
+                fallbackPageIndex = 199
+            )
+        )
+        assertEquals(
+            199,
+            desktopPdfSpreadZoomAnchorPageIndex(
+                viewportRootOffset = Offset.Zero,
+                anchor = null,
+                visiblePageIndices = visiblePages,
+                pageRootOffsets = pageRoots,
+                pageSizes = pageSizes,
+                fallbackPageIndex = 199
+            )
+        )
+    }
+
+    @Test
+    fun `desktop pdf zoom preview bridges committed anchored zoom`() {
+        val preview = DesktopPdfZoomPreview(
+            baseZoom = 1f,
+            zoom = 2f,
+            anchor = Offset(100f, 100f),
+            displayMode = PdfDisplayMode.PAGINATION,
+            pageIndex = 0,
+            viewportRootOffset = Offset.Zero,
+            pageRootOffset = Offset.Zero
+        )
+
+        assertTrue(desktopPdfZoomPreviewMatchesScale(preview, 1f))
+        assertTrue(desktopPdfZoomPreviewMatchesScale(preview, 2f))
+        assertFalse(desktopPdfZoomPreviewMatchesScale(preview, 1.5f))
+        assertEquals(
+            Offset(-100f, -100f),
+            desktopPdfZoomCommitPreviewTranslation(
+                viewportRootOffset = Offset.Zero,
+                oldPageRootOffset = Offset.Zero,
+                currentAnchorPageRootOffset = Offset.Zero,
+                anchor = Offset(100f, 100f),
+                oldZoom = 1f,
+                newZoom = 2f,
+                currentZoom = 2f
+            )
+        )
+        assertEquals(
+            Offset.Zero,
+            desktopPdfZoomCommitPreviewTranslation(
+                viewportRootOffset = Offset.Zero,
+                oldPageRootOffset = Offset.Zero,
+                currentAnchorPageRootOffset = Offset(-100f, -100f),
+                anchor = Offset(100f, 100f),
+                oldZoom = 1f,
+                newZoom = 2f,
+                currentZoom = 2f
+            )
+        )
+        assertEquals(
+            null,
+            desktopPdfZoomCommitPreviewTranslation(
+                viewportRootOffset = Offset.Zero,
+                oldPageRootOffset = Offset.Zero,
+                currentAnchorPageRootOffset = Offset.Zero,
+                anchor = Offset(100f, 100f),
+                oldZoom = 1f,
+                newZoom = 2f,
+                currentZoom = 1f
+            )
+        )
+        assertEquals(0, desktopPdfReachableScrollDelta(currentScroll = 0, maxScroll = 0, requestedDelta = 100))
+        assertEquals(0, desktopPdfReachableScrollDelta(currentScroll = 0, maxScroll = 200, requestedDelta = -40))
+        assertEquals(-40, desktopPdfReachableScrollDelta(currentScroll = 80, maxScroll = 200, requestedDelta = -40))
+        assertEquals(
+            Offset.Zero,
+            desktopPdfZoomCommitPreviewTranslation(
+                viewportRootOffset = Offset.Zero,
+                oldPageRootOffset = Offset.Zero,
+                currentAnchorPageRootOffset = Offset.Zero,
+                anchor = Offset(100f, 100f),
+                oldZoom = 1f,
+                newZoom = 2f,
+                currentZoom = 2f,
+                scrollBounds = DesktopPdfZoomScrollBounds(
+                    currentHorizontalScroll = 0,
+                    maxHorizontalScroll = 0,
+                    currentVerticalScroll = 0,
+                    maxVerticalScroll = 0
+                )
+            )
+        )
+        assertEquals(
+            Offset(-50f, -25f),
+            desktopPdfZoomCommitPreviewTranslation(
+                viewportRootOffset = Offset.Zero,
+                oldPageRootOffset = Offset.Zero,
+                currentAnchorPageRootOffset = Offset.Zero,
+                anchor = Offset(100f, 100f),
+                oldZoom = 1f,
+                newZoom = 2f,
+                currentZoom = 2f,
+                scrollBounds = DesktopPdfZoomScrollBounds(
+                    currentHorizontalScroll = 0,
+                    maxHorizontalScroll = 50,
+                    currentVerticalScroll = 0,
+                    maxVerticalScroll = 25
+                )
+            )
+        )
+        val pendingCommitBounds = desktopPdfZoomScrollBoundsWithCommitTargets(
+            preview = preview.copy(
+                commitTargetHorizontalScroll = 300,
+                commitTargetVerticalScroll = 300
+            ),
+            currentHorizontalScroll = 0,
+            maxHorizontalScroll = 0,
+            currentVerticalScroll = 0,
+            maxVerticalScroll = 0
+        )
+        assertEquals(300, pendingCommitBounds.maxHorizontalScroll)
+        assertEquals(300, pendingCommitBounds.maxVerticalScroll)
+        assertEquals(
+            Offset(-100f, -100f),
+            desktopPdfZoomCommitPreviewTranslation(
+                viewportRootOffset = Offset.Zero,
+                oldPageRootOffset = Offset.Zero,
+                currentAnchorPageRootOffset = Offset.Zero,
+                anchor = Offset(100f, 100f),
+                oldZoom = 1f,
+                newZoom = 2f,
+                currentZoom = 2f,
+                scrollBounds = pendingCommitBounds
+            )
+        )
+        val fittingPagePrediction = desktopPdfSinglePageLayoutPrediction(
+            viewportRootOffset = Offset.Zero,
+            viewportSize = IntSize(1920, 991),
+            pageCanvasSize = IntSize(1216, 1605),
+            horizontalScroll = 0,
+            verticalScroll = 0,
+            paddingPx = 30f
+        ) ?: error("Expected fitting page prediction")
+        assertEquals(Offset(352f, 30f), fittingPagePrediction.rootOffset)
+        assertEquals(0, fittingPagePrediction.maxHorizontalScroll)
+        assertEquals(674, fittingPagePrediction.maxVerticalScroll)
+
+        val oversizedPagePrediction = desktopPdfSinglePageLayoutPrediction(
+            viewportRootOffset = Offset.Zero,
+            viewportSize = IntSize(1920, 991),
+            pageCanvasSize = IntSize(2498, 3298),
+            horizontalScroll = 409,
+            verticalScroll = 1122,
+            paddingPx = 30f
+        ) ?: error("Expected oversized page prediction")
+        assertEquals(Offset(-379f, -1092f), oversizedPagePrediction.rootOffset)
+        assertEquals(638, oversizedPagePrediction.maxHorizontalScroll)
+        assertEquals(2367, oversizedPagePrediction.maxVerticalScroll)
     }
 
     @Test

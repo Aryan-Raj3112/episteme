@@ -347,7 +347,7 @@ private fun DesktopPdfTextChar.toPdfTextCharBounds(): PdfTextCharBounds {
 }
 
 internal const val DesktopPdfSelectionPreviewThrottleMillis = 32L
-internal const val DesktopPdfZoomCommitDebounceMillis = 180L
+internal const val DesktopPdfZoomCommitDebounceMillis = 260L
 internal const val DesktopPdfZoomRenderDebounceMillis = 300L
 internal const val DesktopPdfViewportPersistDebounceMillis = 300L
 internal const val DesktopPdfPaginationPrefetchDelayMillis = 450L

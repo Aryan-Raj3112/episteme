@@ -1,10 +1,12 @@
 package com.aryan.reader.desktop
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.aryan.reader.shared.ReaderLocator
 
 private const val PdfZoomPerfLogTag = "EpistemePdfZoomPerf"
+private const val PdfZoomSettleLogTag = "EpistemePdfZoomSettle"
 private const val PdfLinkLogTag = "EpistemePdfLink"
 private const val EpubLinkLogTag = "EpistemeEpubLink"
 private const val EpubPaginationLogTag = "EpistemeEpubPagination"
@@ -28,6 +30,14 @@ internal fun logPdfZoomPerf(message: String) {
 
 internal fun logPdfZoomPerf(message: () -> String) {
     logDesktopDiagnostic(PdfZoomPerfLogTag, message)
+}
+
+internal fun logPdfZoomSettle(message: String) {
+    logDesktopDiagnostic(PdfZoomSettleLogTag) { message }
+}
+
+internal fun logPdfZoomSettle(message: () -> String) {
+    logDesktopDiagnostic(PdfZoomSettleLogTag, message)
 }
 
 internal fun logPdfLink(message: String) {
@@ -97,6 +107,11 @@ internal fun Float.formatLogFloat(): String {
 internal fun Offset?.formatLogOffset(): String {
     if (this == null) return "none"
     return "${x.formatLogFloat()},${y.formatLogFloat()}"
+}
+
+internal fun IntOffset?.formatLogIntOffset(): String {
+    if (this == null) return "none"
+    return "${this.x},${this.y}"
 }
 
 internal fun IntSize.formatLogSize(): String {
