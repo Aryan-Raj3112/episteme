@@ -154,6 +154,19 @@
                 <data android:mimeType="application/x-cb7" />
             </intent-filter>
 
+            <!-- CBT known MIME types -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-cbt" />
+                <data android:mimeType="application/vnd.comicbook+tar" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/tar" />
+            </intent-filter>
+
             <!-- DOCX -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

@@ -64,6 +64,7 @@ class DesktopReaderDefaultsTest {
         assertEquals(DesktopReaderSettingsEngine.TEXT, FileType.DOCX.desktopReaderSettingsEngine())
         assertEquals(DesktopReaderSettingsEngine.PDF, FileType.PDF.desktopReaderSettingsEngine())
         assertEquals(DesktopReaderSettingsEngine.PDF, FileType.CBZ.desktopReaderSettingsEngine())
+        assertEquals(DesktopReaderSettingsEngine.PDF, FileType.CBT.desktopReaderSettingsEngine())
         assertEquals(DesktopReaderSettingsEngine.PDF, FileType.PPTX.desktopReaderSettingsEngine())
     }
 

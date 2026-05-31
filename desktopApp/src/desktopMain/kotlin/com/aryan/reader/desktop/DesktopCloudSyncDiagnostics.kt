@@ -1,6 +1,8 @@
 package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.SharedFileCapabilities
 
 internal const val DesktopCloudSyncLogTag = "EpistemeCloudSync"
 
@@ -55,13 +57,7 @@ internal fun BookItem.hasSameCloudReaderPosition(other: BookItem): Boolean {
 }
 
 private fun com.aryan.reader.shared.FileType.usesCloudLocatorForDiagnostics(): Boolean {
-    return this !in setOf(
-        com.aryan.reader.shared.FileType.PDF,
-        com.aryan.reader.shared.FileType.PPTX,
-        com.aryan.reader.shared.FileType.CBZ,
-        com.aryan.reader.shared.FileType.CBR,
-        com.aryan.reader.shared.FileType.CB7
-    )
+    return this != FileType.PDF && this != FileType.PPTX && !SharedFileCapabilities.isComicArchive(this)
 }
 
 private fun String?.cloudSyncPreview(maxLength: Int = 80): String {

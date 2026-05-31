@@ -1,6 +1,7 @@
 package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.sun.jna.Library
@@ -8,8 +9,9 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
-import java.awt.Font
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import java.awt.Color
+import java.awt.Font
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
@@ -24,7 +26,7 @@ import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 
 internal object DesktopComicArchive {
-    private val comicTypes = setOf(FileType.CBZ, FileType.CBR, FileType.CB7)
+    private val comicTypes = SharedFileCapabilities.comicArchiveTypes
     private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "bmp", "gif")
 
     fun canLoad(type: FileType): Boolean = type in comicTypes
@@ -36,6 +38,7 @@ internal object DesktopComicArchive {
             FileType.CBZ -> loadZip(file)
             FileType.CBR -> loadRar(file)
             FileType.CB7 -> loadSevenZ(file)
+            FileType.CBT -> loadTar(file)
             else -> error("${type.name} is not a comic archive type.")
         }
     }
@@ -160,6 +163,31 @@ internal object DesktopComicArchive {
                         "Command: ${commandError.shortMessage()}"
                 )
             }
+    }
+
+    private fun loadTar(file: File): DesktopComicDocument {
+        val tempDir = Files.createTempDirectory("reader-comic-").toFile()
+        return try {
+            val extracted = mutableListOf<ExtractedComicPage>()
+            TarArchiveInputStream(file.inputStream().buffered()).use { archive ->
+                var entry = archive.nextEntry
+                while (entry != null) {
+                    val name = entry.name.orEmpty()
+                    if (!entry.isDirectory && name.isComicImageName()) {
+                        val target = File(tempDir, "page_${extracted.size}.${name.imageExtension()}")
+                        target.outputStream().use { output ->
+                            archive.copyTo(output)
+                        }
+                        extracted += ExtractedComicPage(name = name, file = target)
+                    }
+                    entry = archive.nextEntry
+                }
+            }
+            documentFromExtracted(file, extracted, tempDir)
+        } catch (throwable: Throwable) {
+            runCatching { tempDir.deleteRecursively() }
+            throw throwable
+        }
     }
 
     private fun loadWithArchiveCommand(file: File): DesktopComicDocument {

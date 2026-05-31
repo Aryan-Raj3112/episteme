@@ -96,6 +96,7 @@ object SharedOpdsDownloadNamer {
             "CBZ" -> ".cbz"
             "CBR" -> ".cbr"
             "CB7" -> ".cb7"
+            "CBT" -> ".cbt"
             "MD" -> ".md"
             "HTML" -> ".html"
             "TXT" -> ".txt"

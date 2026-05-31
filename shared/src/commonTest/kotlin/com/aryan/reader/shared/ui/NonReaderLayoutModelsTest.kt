@@ -87,7 +87,7 @@ class NonReaderLayoutModelsTest {
         assertTrue(FileType.PPTX in groupedTypes)
         assertTrue(
             nonReaderLibraryFileTypeGroups()
-                .any { it.title == "Comics" && FileType.CBR in it.fileTypes && FileType.CB7 in it.fileTypes }
+                .any { it.title == "Comics" && FileType.CBR in it.fileTypes && FileType.CB7 in it.fileTypes && FileType.CBT in it.fileTypes }
         )
     }
 

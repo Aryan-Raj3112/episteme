@@ -4003,7 +4003,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         coverPath = recentFilesRepository.saveCoverToCache(coverBitmap, uri)
                     }
                 }
-            } else if (uri.scheme != "opds-pse" && (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7)) {
+            } else if (uri.scheme != "opds-pse" && type in COMIC_ARCHIVE_FILE_TYPES) {
                 if (coverPath == null) {
                     var cacheFile: File? = null
                     try {
@@ -4033,7 +4033,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                         archiveDoc.close()
                     } catch (e: Exception) {
-                        Timber.e(e, "Error generating CBZ cover")
+                        Timber.e(e, "Error generating comic archive cover")
                     } finally {
                         try {
                             if (cacheFile?.exists() == true) {

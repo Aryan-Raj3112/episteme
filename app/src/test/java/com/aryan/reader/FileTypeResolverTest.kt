@@ -34,8 +34,10 @@ class FileTypeResolverTest {
         assertEquals(FileType.TXT, resolveFileTypeFromMetadata("notes", "text/plain"))
         assertEquals(FileType.HTML, resolveFileTypeFromMetadata("payload", "application/json"))
         assertEquals(FileType.CBZ, resolveFileTypeFromMetadata("comic.cbz", "application/zip"))
+        assertEquals(FileType.CBT, resolveFileTypeFromMetadata("comic.cbt", "application/x-tar"))
         assertEquals(FileType.FB2, resolveFileTypeFromMetadata("book.fb2.zip", "application/zip"))
         assertNull(resolveFileTypeFromMetadata("archive.zip", "application/zip"))
+        assertNull(resolveFileTypeFromMetadata("archive.tar", "application/x-tar"))
     }
 
     @Test
@@ -56,6 +58,7 @@ class FileTypeResolverTest {
     fun `plain txt remains txt when inner extension is unsupported`() {
         assertEquals(FileType.TXT, resolveFileTypeFromName("notes.txt"))
         assertEquals(FileType.PPTX, resolveFileTypeFromName("deck.pptx"))
+        assertEquals(FileType.CBT, resolveFileTypeFromName("comic.cbt"))
         assertEquals(FileType.TXT, resolveFileTypeFromName("archive.unknown.txt"))
         assertNull(resolveFileTypeFromName("archive.zip"))
     }

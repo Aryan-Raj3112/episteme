@@ -757,7 +757,7 @@ private fun DesktopCloudBookMetadata.remotePdfViewport(
 }
 
 private fun FileType.usesCloudLocatorMetadata(): Boolean {
-    return this !in setOf(FileType.PDF, FileType.PPTX, FileType.CBZ, FileType.CBR, FileType.CB7)
+    return this != FileType.PDF && this != FileType.PPTX && !SharedFileCapabilities.isComicArchive(this)
 }
 
 internal fun CustomFontItem.toDesktopCloudFontMetadata(): DesktopCloudFontMetadata {

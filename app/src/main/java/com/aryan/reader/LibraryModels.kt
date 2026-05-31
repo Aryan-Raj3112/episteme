@@ -16,6 +16,7 @@ typealias ShelfType = com.aryan.reader.shared.ShelfType
 
 internal val ANDROID_READABLE_FILE_TYPES = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID)
 internal val ANDROID_SYNCABLE_FILE_TYPES = SharedFileCapabilities.syncableTypesFor(ReaderPlatform.ANDROID)
+internal val COMIC_ARCHIVE_FILE_TYPES = SharedFileCapabilities.comicArchiveTypes
 internal val PDF_VIEWER_FILE_TYPES = com.aryan.reader.shared.PDF_VIEWER_FILE_TYPES
 internal val EPUB_READER_FILE_TYPES = com.aryan.reader.shared.EPUB_READER_FILE_TYPES
 

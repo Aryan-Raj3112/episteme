@@ -123,6 +123,14 @@ class SharedOpdsCatalogsTest {
                 urlPathSegment = null
             )
         )
+        assertEquals(
+            ".cbt",
+            SharedOpdsDownloadNamer.resolveExtension(
+                acquisition = OpdsAcquisition("https://example.org/download", "application/vnd.comicbook+tar"),
+                contentDisposition = null,
+                urlPathSegment = null
+            )
+        )
     }
 
     @Test

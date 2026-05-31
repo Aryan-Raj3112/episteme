@@ -2604,7 +2604,7 @@ private fun fileTypeColor(type: FileType): Color {
         FileType.PDF -> Color(0xFF9C4146)
         FileType.EPUB, FileType.MOBI -> Color(0xFF006C4C)
         FileType.DOCX, FileType.ODT, FileType.FODT, FileType.PPTX -> Color(0xFF0F52BA)
-        FileType.CBZ, FileType.CBR, FileType.CB7 -> Color(0xFF705D49)
+        FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT -> Color(0xFF705D49)
         else -> Color(0xFF5D6B82)
     }
 }

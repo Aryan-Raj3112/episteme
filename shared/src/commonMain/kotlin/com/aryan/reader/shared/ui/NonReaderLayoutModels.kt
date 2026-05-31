@@ -215,7 +215,7 @@ private val LibraryFileTypeGroupTemplates = listOf(
     NonReaderLibraryFileTypeGroup(
         titleKey = "desktop_file_type_group_comics",
         titleFallback = "Comics",
-        fileTypes = listOf(FileType.CBZ, FileType.CBR, FileType.CB7)
+        fileTypes = listOf(FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT)
     )
 )
 

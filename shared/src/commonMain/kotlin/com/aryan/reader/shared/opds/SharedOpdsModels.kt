@@ -47,10 +47,18 @@ data class OpdsAcquisition(
                 mimeType.contains("x-mobipocket-ebook", ignoreCase = true) -> "MOBI"
             mimeType.contains("fictionbook", ignoreCase = true) ||
                 mimeType.contains("fb2", ignoreCase = true) -> "FB2"
-            mimeType.contains("cbz", ignoreCase = true) ||
-                mimeType.contains("comicbook", ignoreCase = true) -> "CBZ"
+            mimeType.contains("cbt", ignoreCase = true) ||
+                mimeType.contains("comicbook+tar", ignoreCase = true) ||
+                mimeType.contains("x-tar", ignoreCase = true) ||
+                mimeType.equals("application/tar", ignoreCase = true) -> "CBT"
             mimeType.contains("cbr", ignoreCase = true) ||
+                mimeType.contains("comicbook-rar", ignoreCase = true) ||
                 mimeType.contains("rar", ignoreCase = true) -> "CBR"
+            mimeType.contains("cb7", ignoreCase = true) ||
+                mimeType.contains("7z", ignoreCase = true) -> "CB7"
+            mimeType.contains("cbz", ignoreCase = true) ||
+                mimeType.contains("comicbook+zip", ignoreCase = true) ||
+                mimeType.contains("comicbook", ignoreCase = true) -> "CBZ"
             mimeType.contains("txt", ignoreCase = true) ||
                 mimeType.contains("text/plain", ignoreCase = true) -> "TXT"
             else -> mimeType.substringAfterLast("/").uppercase()
@@ -63,7 +71,7 @@ data class OpdsAcquisition(
             "PPTX" -> 4
             "MOBI" -> 3
             "FB2", "MD", "HTML" -> 2
-            "CBZ", "CBR", "CB7" -> 1
+            "CBZ", "CBR", "CB7", "CBT" -> 1
             "TXT" -> 0
             else -> -1
         }

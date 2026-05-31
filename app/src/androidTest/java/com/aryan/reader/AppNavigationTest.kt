@@ -26,6 +26,7 @@ class AppNavigationTest {
             FileType.CBZ,
             FileType.CBR,
             FileType.CB7,
+            FileType.CBT,
             FileType.PPTX
         ).associateWith { it.readerSurfaceOnAndroid() }
 
@@ -34,6 +35,7 @@ class AppNavigationTest {
             FileType.CBZ, ReaderFeatureSurface.PDF_VIEWER,
             FileType.CBR, ReaderFeatureSurface.PDF_VIEWER,
             FileType.CB7, ReaderFeatureSurface.PDF_VIEWER,
+            FileType.CBT, ReaderFeatureSurface.PDF_VIEWER,
             FileType.PPTX, ReaderFeatureSurface.PDF_VIEWER
         )
     }

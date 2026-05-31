@@ -89,6 +89,10 @@ object SharedFileCapabilities {
         "application/x-rar-compressed",
         "application/x-cb7",
         "application/x-7z-compressed",
+        "application/vnd.comicbook+tar",
+        "application/x-cbt",
+        "application/x-tar",
+        "application/tar",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/vnd.oasis.opendocument.text",
@@ -167,6 +171,13 @@ object SharedFileCapabilities {
             desktopSurface = ReaderFeatureSurface.PDF_VIEWER
         ),
         FileTypeCapability(
+            type = FileType.CBT,
+            displayName = "CBT",
+            extensions = setOf("cbt"),
+            androidSurface = ReaderFeatureSurface.PDF_VIEWER,
+            desktopSurface = ReaderFeatureSurface.PDF_VIEWER
+        ),
+        FileTypeCapability(
             type = FileType.DOCX,
             displayName = "DOCX",
             extensions = setOf("docx"),
@@ -211,11 +222,13 @@ object SharedFileCapabilities {
         FileType.CBZ to "application/zip",
         FileType.CBR to "application/zip",
         FileType.CB7 to "application/zip",
+        FileType.CBT to "application/x-tar",
         FileType.DOCX to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         FileType.PPTX to "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         FileType.ODT to "application/vnd.oasis.opendocument.text",
         FileType.FODT to "application/x-vnd.oasis.opendocument.text-flat-xml"
     )
+    val comicArchiveTypes: Set<FileType> = setOf(FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT)
     val knownFileTypes: Set<FileType> = all.mapTo(mutableSetOf()) { it.type }
 
     fun capabilityFor(type: FileType): FileTypeCapability? {
@@ -232,6 +245,10 @@ object SharedFileCapabilities {
 
     fun mimeTypeFor(type: FileType): String? {
         return mimeTypesByType[type]
+    }
+
+    fun isComicArchive(type: FileType): Boolean {
+        return type in comicArchiveTypes
     }
 
     fun fileTypeForName(fileName: String): FileType {
@@ -266,6 +283,9 @@ object SharedFileCapabilities {
             }
             "application/x-cb7", "application/x-7z-compressed" -> {
                 if (fileName?.endsWith(".cb7", ignoreCase = true) == true) FileType.CB7 else null
+            }
+            "application/vnd.comicbook+tar", "application/x-cbt", "application/x-tar", "application/tar" -> {
+                if (fileName?.endsWith(".cbt", ignoreCase = true) == true) FileType.CBT else null
             }
             "application/pdf" -> FileType.PDF
             "application/epub+zip" -> FileType.EPUB

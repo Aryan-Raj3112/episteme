@@ -186,6 +186,25 @@ class DesktopCloudSyncMappingTest {
     }
 
     @Test
+    fun `comic metadata upload ignores stale text locator page`() {
+        val book = BookItem(
+            id = "book-1",
+            path = "C:/books/Book.cbt",
+            type = FileType.CBT,
+            displayName = "Book.cbt",
+            timestamp = 1_000L,
+            lastPageIndex = 42,
+            progressPercentage = 33.125f,
+            readerPosition = ReaderLocator(pageIndex = 12)
+        )
+
+        val metadata = book.toDesktopCloudBookMetadata(hasAnnotations = false)
+
+        assertEquals(42, metadata.lastPage)
+        assertNull(metadata.lastPositionCfi)
+    }
+
+    @Test
     fun `remote metadata without annotation json preserves existing desktop annotations`() {
         val existingBookmark = ReaderBookmark(
             id = "bookmark-1",

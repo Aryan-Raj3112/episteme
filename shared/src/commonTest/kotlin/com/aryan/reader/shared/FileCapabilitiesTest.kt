@@ -34,6 +34,7 @@ class FileCapabilitiesTest {
             SharedFileCapabilities.mimeTypeFor(FileType.PPTX)
         )
         assertTrue("application/pdf" in SharedFileCapabilities.androidFilePickerMimeTypes)
+        assertTrue("application/x-tar" in SharedFileCapabilities.androidFilePickerMimeTypes)
         assertTrue("text/x-kotlin" in SharedFileCapabilities.androidFilePickerMimeTypes)
         assertFalse("*/*" in SharedFileCapabilities.androidFilePickerMimeTypes)
         assertEquals(
@@ -48,6 +49,7 @@ class FileCapabilitiesTest {
                 FileType.CBZ,
                 FileType.CBR,
                 FileType.CB7,
+                FileType.CBT,
                 FileType.DOCX,
                 FileType.PPTX,
                 FileType.ODT,
@@ -85,14 +87,16 @@ class FileCapabilitiesTest {
         )
         assertEquals(
             ReaderFeatureSurface.PDF_VIEWER,
-            SharedFileCapabilities.surfaceFor(FileType.CBR, ReaderPlatform.DESKTOP)
+            SharedFileCapabilities.surfaceFor(FileType.CBT, ReaderPlatform.DESKTOP)
         )
         assertEquals(
             ReaderFeatureSurface.EPUB_READER,
             SharedFileCapabilities.surfaceFor(FileType.MD, ReaderPlatform.ANDROID)
         )
         assertTrue(SharedFileCapabilities.canOpen(FileType.CBZ, ReaderPlatform.ANDROID))
-        assertTrue(SharedFileCapabilities.canOpen(FileType.CBZ, ReaderPlatform.DESKTOP))
+        assertTrue(SharedFileCapabilities.canOpen(FileType.CBT, ReaderPlatform.ANDROID))
+        assertTrue(SharedFileCapabilities.canOpen(FileType.CBT, ReaderPlatform.DESKTOP))
+        assertTrue(SharedFileCapabilities.isComicArchive(FileType.CBT))
     }
 
     @Test
@@ -102,6 +106,7 @@ class FileCapabilitiesTest {
         assertEquals(FileType.HTML, "chapter.xhtml".toFileType())
         assertEquals(FileType.MOBI, SharedFileCapabilities.fileTypeForName("book.azw3"))
         assertEquals(FileType.FB2, SharedFileCapabilities.fileTypeForName("book.fb2.zip"))
+        assertEquals(FileType.CBT, SharedFileCapabilities.fileTypeForName("comic.cbt"))
         assertEquals(FileType.PPTX, SharedFileCapabilities.fileTypeForName("slides.pptx"))
         assertEquals(FileType.HTML, SharedFileCapabilities.fileTypeForName("payload.json.txt"))
         assertEquals(FileType.EPUB, SharedFileCapabilities.fileTypeForName("book.epub.txt"))
@@ -124,8 +129,10 @@ class FileCapabilitiesTest {
         )
         assertEquals(FileType.HTML, SharedFileCapabilities.resolveFileTypeForMetadata("payload", "application/json"))
         assertEquals(FileType.CBZ, SharedFileCapabilities.resolveFileTypeForMetadata("comic.cbz", "application/zip"))
+        assertEquals(FileType.CBT, SharedFileCapabilities.resolveFileTypeForMetadata("comic.cbt", "application/x-tar"))
         assertEquals(FileType.FB2, SharedFileCapabilities.resolveFileTypeForMetadata("book.fb2.zip", "application/zip"))
         assertNull(SharedFileCapabilities.resolveFileTypeForMetadata("archive.zip", "application/zip"))
+        assertNull(SharedFileCapabilities.resolveFileTypeForMetadata("archive.tar", "application/x-tar"))
     }
 
     @Test

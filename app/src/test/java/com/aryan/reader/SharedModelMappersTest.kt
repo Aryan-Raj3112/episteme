@@ -176,6 +176,7 @@ class SharedModelMappersTest {
         assertEquals(filters, filters.toSharedLibraryFilters().toAndroidLibraryFilters())
         assertEquals(folder, folder.toSharedSyncedFolder().toAndroidSyncedFolder())
         assertTrue(FileType.PPTX in PDF_VIEWER_FILE_TYPES)
+        assertTrue(FileType.CBT in PDF_VIEWER_FILE_TYPES)
         assertEquals(ReaderFeatureSurface.PDF_VIEWER, FileType.PPTX.readerSurfaceOnAndroid())
         assertFalse(FileType.UNKNOWN in ANDROID_READABLE_FILE_TYPES)
         assertFalse(FileType.UNKNOWN in ANDROID_SYNCABLE_FILE_TYPES)

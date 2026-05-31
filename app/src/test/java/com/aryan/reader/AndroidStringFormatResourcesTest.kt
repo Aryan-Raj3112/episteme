@@ -11,6 +11,22 @@ import org.junit.Test
 class AndroidStringFormatResourcesTest {
 
     @Test
+    fun `vietnamese strings cover translatable base resources`() {
+        val resDirectory = findResDirectory()
+        val baseNames = readResourceNames(
+            stringsFile = File(resDirectory, "values/strings.xml"),
+            includeNonTranslatable = false
+        )
+        val vietnameseNames = readResourceNames(File(resDirectory, "values-vi/strings.xml"))
+        val missingNames = baseNames.filterNot { it in vietnameseNames }
+
+        assertTrue(
+            "Missing Vietnamese strings:\n${missingNames.joinToString(separator = "\n")}",
+            missingNames.isEmpty()
+        )
+    }
+
+    @Test
     fun `localized formatted strings use valid formatter syntax`() {
         val resDirectory = findResDirectory()
         val baseStrings = readStringResources(File(resDirectory, "values/strings.xml"))
@@ -46,6 +62,28 @@ class AndroidStringFormatResourcesTest {
             File("src/main/res"),
             File("app/src/main/res")
         ).first { it.isDirectory }
+    }
+
+    private fun readResourceNames(
+        stringsFile: File,
+        includeNonTranslatable: Boolean = true
+    ): List<String> {
+        val document = DocumentBuilderFactory.newInstance()
+            .newDocumentBuilder()
+            .parse(stringsFile)
+        val nodes = document.documentElement.childNodes
+
+        return buildList {
+            for (index in 0 until nodes.length) {
+                val node = nodes.item(index)
+                val attributes = node.attributes ?: continue
+                val name = attributes.getNamedItem("name")?.nodeValue ?: continue
+                val translatable = attributes.getNamedItem("translatable")?.nodeValue
+                if (includeNonTranslatable || translatable != "false") {
+                    add(name)
+                }
+            }
+        }
     }
 
     private fun readStringResources(stringsFile: File): Map<String, String> {

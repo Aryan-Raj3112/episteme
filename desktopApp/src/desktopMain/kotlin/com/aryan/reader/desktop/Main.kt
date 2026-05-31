@@ -146,6 +146,11 @@ private data class DesktopFeatureNotice(
     val action: DesktopFeatureNoticeAction? = null
 )
 
+private data class DesktopFeatureNoticeState(
+    val notice: DesktopFeatureNotice,
+    val placement: DesktopFeatureNoticePlacement
+)
+
 private data class DesktopCloudSyncCredentials(
     val userId: String,
     val idToken: String,
@@ -348,7 +353,7 @@ internal fun EpistemeDesktopApp(
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
     var showDesktopLanguageDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
-    var desktopFeatureNotice by remember { mutableStateOf<DesktopFeatureNotice?>(null) }
+    var desktopFeatureNoticeState by remember { mutableStateOf<DesktopFeatureNoticeState?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
@@ -371,6 +376,20 @@ internal fun EpistemeDesktopApp(
     }
     var savedReaderWindowState by remember {
         mutableStateOf(readerWindowStateStore.load()?.toPersistableReaderWindowSnapshot())
+    }
+
+    fun showDesktopFeatureNotice(
+        notice: DesktopFeatureNotice,
+        readerWindowId: String? = null
+    ) {
+        desktopFeatureNoticeState = DesktopFeatureNoticeState(
+            notice = notice,
+            placement = desktopFeatureNoticePlacement(readerWindowId)
+        )
+    }
+
+    fun dismissDesktopFeatureNotice() {
+        desktopFeatureNoticeState = null
     }
 
     fun projectState(
@@ -1050,6 +1069,9 @@ internal fun EpistemeDesktopApp(
             "close_window_begin windowId=${closing.id.logPreview(80)} bookId=${closing.bookId.logPreview(80)} " +
                 "content=${closing.readerCloseContentLabel()} fullscreen=${closing.fullscreen} shouldStopTts=$shouldStopTts"
         )
+        if (desktopFeatureNoticeState?.placement?.readerWindowId == windowId) {
+            dismissDesktopFeatureNotice()
+        }
         markReaderBooksClosing(closingBookIds)
         closing.cancelReaderWork()
         readerWindows = readerWindows.withoutDesktopReaderWindow(windowId)
@@ -1068,10 +1090,15 @@ internal fun EpistemeDesktopApp(
         if (bookIds.isEmpty()) return
         val closing = readerWindows.filter { it.bookId in bookIds }
         val closingBookIds = closing.mapTo(mutableSetOf()) { it.bookId }
+        val closingWindowIds = closing.mapTo(mutableSetOf()) { it.id }
         val shouldStopTts = closing.any { window ->
             (window.content as? DesktopReaderWindowContent.Text)?.extrasState?.cloudTts?.let {
                 it.isLoading || it.isPlaying || it.isPaused
             } == true
+        }
+        val targetNoticeWindowId = desktopFeatureNoticeState?.placement?.readerWindowId
+        if (targetNoticeWindowId != null && targetNoticeWindowId in closingWindowIds) {
+            dismissDesktopFeatureNotice()
         }
         markReaderBooksClosing(closingBookIds)
         closing.forEach { it.cancelReaderWork() }
@@ -1101,6 +1128,9 @@ internal fun EpistemeDesktopApp(
         markReaderBooksClosing(closingBookIds)
         readerWindows.forEach { it.cancelReaderWork() }
         readerWindows = emptyList()
+        if (desktopFeatureNoticeState?.placement?.readerWindowId != null) {
+            dismissDesktopFeatureNotice()
+        }
         updateState(state.reduce(AppAction.AllTabsClosed))
         if (shouldStopTts) {
             scope.launch { desktopTtsAdapter.stop() }
@@ -1431,7 +1461,7 @@ internal fun EpistemeDesktopApp(
             }
         }
         desktopFeatureNoticeForReaderAi(ReaderAiFeature.SUMMARIZE, text)?.let { notice ->
-            desktopFeatureNotice = notice
+            showDesktopFeatureNotice(notice, readerWindowId = windowId)
             return
         }
         updateTextReaderWindow(windowId) { it.copy(isSummaryLoading = true, summaryResult = null) }
@@ -1473,7 +1503,7 @@ internal fun EpistemeDesktopApp(
                     isSummaryLoading = false
                 )
             }
-            desktopFeatureNoticeForError(result.error)?.let { desktopFeatureNotice = it }
+            desktopFeatureNoticeForError(result.error)?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
         }
     }
 
@@ -1485,7 +1515,7 @@ internal fun EpistemeDesktopApp(
             return
         }
         desktopFeatureNoticeForReaderAi(ReaderAiFeature.RECAP, currentText)?.let { notice ->
-            desktopFeatureNotice = notice
+            showDesktopFeatureNotice(notice, readerWindowId = windowId)
             return
         }
         val book = content.session.reader.book
@@ -1517,7 +1547,7 @@ internal fun EpistemeDesktopApp(
                     pastSummaries += generated
                 }
                 if (summary.error != null) {
-                    desktopFeatureNoticeForError(summary.error)?.let { desktopFeatureNotice = it }
+                    desktopFeatureNoticeForError(summary.error)?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
                 }
                 delay(500)
             }
@@ -1542,7 +1572,7 @@ internal fun EpistemeDesktopApp(
                     recapProgressMessage = null
                 )
             }
-            desktopFeatureNoticeForError(recap.error)?.let { desktopFeatureNotice = it }
+            desktopFeatureNoticeForError(recap.error)?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
         }
     }
 
@@ -1565,7 +1595,7 @@ internal fun EpistemeDesktopApp(
         if (normalizedText.isBlank()) return
         if (!effectiveAiSettings().areReaderAiFeaturesAvailable) return
         desktopFeatureNoticeForReaderAi(feature, normalizedText)?.let { notice ->
-            desktopFeatureNotice = notice
+            showDesktopFeatureNotice(notice, readerWindowId = windowId)
             return
         }
         val aiResultRequestId = content.readerAiResultRequestId + 1
@@ -1676,7 +1706,7 @@ internal fun EpistemeDesktopApp(
             )
             val latest = textReaderWindowContent(windowId)
             if (latest != null && isReaderAiResultVisible(latest, aiResultRequestId)) {
-                desktopFeatureNoticeForError(result.second)?.let { desktopFeatureNotice = it }
+                desktopFeatureNoticeForError(result.second)?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
             }
         }
     }
@@ -1755,7 +1785,7 @@ internal fun EpistemeDesktopApp(
         progress: Float,
         session: ReaderSessionState?
     ): Boolean {
-        val savedPage = if (type in setOf(FileType.PDF, FileType.PPTX, FileType.CBZ, FileType.CBR, FileType.CB7)) {
+        val savedPage = if (type == FileType.PDF || type == FileType.PPTX || SharedFileCapabilities.isComicArchive(type)) {
             lastPageIndex
         } else {
             readerPosition?.pageIndex ?: lastPageIndex
@@ -2091,7 +2121,7 @@ internal fun EpistemeDesktopApp(
         }
         if (!desktopTtsAdapter.isAvailable) {
             logDesktopTts("reader_sequence_blocked reason=adapter_unavailable")
-            desktopFeatureNoticeForCloudTts()?.let { desktopFeatureNotice = it }
+            desktopFeatureNoticeForCloudTts()?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
             updateTextReaderWindow(windowId) { latest ->
                 latest.copy(
                     extrasState = latest.extrasState.copy(
@@ -2227,7 +2257,7 @@ internal fun EpistemeDesktopApp(
                             )
                         )
                     } else {
-                        desktopFeatureNoticeForError(error.message)?.let { desktopFeatureNotice = it }
+                        desktopFeatureNoticeForError(error.message)?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
                         latest.copy(
                             ttsJob = null,
                             extrasState = latest.extrasState.copy(
@@ -2321,7 +2351,7 @@ internal fun EpistemeDesktopApp(
         }
         if (!desktopTtsAdapter.isAvailable) {
             logDesktopTts("reader_toggle_blocked reason=adapter_unavailable")
-            desktopFeatureNoticeForCloudTts()?.let { desktopFeatureNotice = it }
+            desktopFeatureNoticeForCloudTts()?.let { showDesktopFeatureNotice(it, readerWindowId = windowId) }
             updateTextReaderWindow(windowId) { latest ->
                 latest.copy(
                     extrasState = latest.extrasState.copy(
@@ -2956,6 +2986,33 @@ internal fun EpistemeDesktopApp(
             selectedTab = SharedAppTab.LIBRARY
         } else {
             selectedTab = nextTab
+        }
+    }
+
+    fun focusDesktopAppWindow() {
+        val ownerWindow = (window as? java.awt.Window)
+            ?: window?.let { javax.swing.SwingUtilities.getWindowAncestor(it) }
+            ?: return
+        EventQueue.invokeLater {
+            if (!ownerWindow.isDisplayable || !ownerWindow.isShowing) return@invokeLater
+            if (ownerWindow is java.awt.Frame && ownerWindow.extendedState and java.awt.Frame.ICONIFIED != 0) {
+                ownerWindow.extendedState = ownerWindow.extendedState and java.awt.Frame.ICONIFIED.inv()
+            }
+            ownerWindow.toFront()
+            ownerWindow.requestFocus()
+            ownerWindow.requestFocusInWindow()
+        }
+    }
+
+    fun confirmDesktopFeatureNotice(notice: DesktopFeatureNotice) {
+        dismissDesktopFeatureNotice()
+        when (notice.action) {
+            DesktopFeatureNoticeAction.SIGN_IN -> signInDesktopAccount()
+            DesktopFeatureNoticeAction.OPEN_PRO -> {
+                selectAppTab(SharedAppTab.PRO)
+                focusDesktopAppWindow()
+            }
+            null -> Unit
         }
     }
 
@@ -4180,18 +4237,20 @@ internal fun EpistemeDesktopApp(
                                         cloudTtsControlsAvailable = desktopCloudTtsControlsAvailable,
                                         onReaderAiEntitlementRequired = { feature, text ->
                                             desktopFeatureNoticeForReaderAi(feature, text)?.let { notice ->
-                                                desktopFeatureNotice = notice
+                                                showDesktopFeatureNotice(notice, readerWindowId = readerWindow.id)
                                                 true
                                             } ?: false
                                         },
                                         onCloudTtsEntitlementRequired = {
                                             desktopFeatureNoticeForCloudTts()?.let { notice ->
-                                                desktopFeatureNotice = notice
+                                                showDesktopFeatureNotice(notice, readerWindowId = readerWindow.id)
                                                 true
                                             } ?: false
                                         },
                                         onPaidFeatureError = { errorMessage ->
-                                            desktopFeatureNoticeForError(errorMessage)?.let { desktopFeatureNotice = it }
+                                            desktopFeatureNoticeForError(errorMessage)?.let {
+                                                showDesktopFeatureNotice(it, readerWindowId = readerWindow.id)
+                                            }
                                         },
                                         hasReflowFile = activePdfHasReflowFile,
                                         isReflowingThisBook = activePdfBook.id in reflowingPdfBookIds,
@@ -4384,6 +4443,15 @@ internal fun EpistemeDesktopApp(
                                     }
                                 }
                             }
+                                desktopFeatureNoticeState
+                                    ?.takeIf { it.placement.rendersInReaderWindow(readerWindow.id) }
+                                    ?.let { noticeState ->
+                                        DesktopFeatureNoticeDialog(
+                                            notice = noticeState.notice,
+                                            onDismiss = ::dismissDesktopFeatureNotice,
+                                            onConfirm = { confirmDesktopFeatureNotice(noticeState.notice) }
+                                        )
+                                    }
                             }
                         }
                     }
@@ -4391,36 +4459,15 @@ internal fun EpistemeDesktopApp(
             }
         }
 
-        desktopFeatureNotice?.let { notice ->
-            AlertDialog(
-                onDismissRequest = { desktopFeatureNotice = null },
-                title = { Text(readerString(notice.titleKey, notice.titleFallback)) },
-                text = { Text(readerString(notice.messageKey, notice.messageFallback)) },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            desktopFeatureNotice = null
-                            when (notice.action) {
-                                DesktopFeatureNoticeAction.SIGN_IN -> signInDesktopAccount()
-                                DesktopFeatureNoticeAction.OPEN_PRO -> selectAppTab(SharedAppTab.PRO)
-                                null -> Unit
-                            }
-                        }
-                    ) {
-                        Text(readerString(notice.confirmKey, notice.confirmFallback))
-                    }
-                },
-                dismissButton = if (notice.action != null) {
-                    {
-                        TextButton(onClick = { desktopFeatureNotice = null }) {
-                            Text(readerString("action_not_now", "Not now"))
-                        }
-                    }
-                } else {
-                    null
-                }
-            )
-        }
+        desktopFeatureNoticeState
+            ?.takeIf { it.placement.rendersInMainWindow() }
+            ?.let { noticeState ->
+                DesktopFeatureNoticeDialog(
+                    notice = noticeState.notice,
+                    onDismiss = ::dismissDesktopFeatureNotice,
+                    onConfirm = { confirmDesktopFeatureNotice(noticeState.notice) }
+                )
+            }
 
         if (showAiByokSettingsDialog && desktopAiKeySettingsAvailable) {
             DesktopAiByokSettingsDialog(
@@ -4606,6 +4653,33 @@ internal fun EpistemeDesktopApp(
         }
         }
     }
+}
+
+@Composable
+private fun DesktopFeatureNoticeDialog(
+    notice: DesktopFeatureNotice,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(readerString(notice.titleKey, notice.titleFallback)) },
+        text = { Text(readerString(notice.messageKey, notice.messageFallback)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(readerString(notice.confirmKey, notice.confirmFallback))
+            }
+        },
+        dismissButton = if (notice.action != null) {
+            {
+                TextButton(onClick = onDismiss) {
+                    Text(readerString("action_not_now", "Not now"))
+                }
+            }
+        } else {
+            null
+        }
+    )
 }
 
 private fun desktopSignInRequiredNotice(

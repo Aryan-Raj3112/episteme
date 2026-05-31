@@ -12,6 +12,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.net.Uri
 import android.os.Build
+import com.aryan.reader.COMIC_ARCHIVE_FILE_TYPES
 import com.aryan.reader.FileType
 import com.aryan.reader.R
 import com.aryan.reader.pptx.PptxDocumentWrapper
@@ -106,7 +107,7 @@ object DocumentFactory {
                 throw e
             }
             PptxDocumentWrapper(cacheFile, deleteOnClose = true)
-        } else if (type == FileType.CBZ || type == FileType.CBR || type == FileType.CB7) {
+        } else if (type in COMIC_ARCHIVE_FILE_TYPES) {
             val cacheFile = File(context.cacheDir, "temp_comic_${System.currentTimeMillis()}.${type.name.lowercase()}")
             withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)?.use { input ->
@@ -534,7 +535,7 @@ class PdfTextPageWrapper(
     }
 }
 
-// ================= CBZ, CBR, CB7 IMPLEMENTATION =================
+// ================= CBZ, CBR, CB7, CBT IMPLEMENTATION =================
 
 class DummyTextPage : ReaderTextPage {
     override suspend fun textPageCountChars() = 0

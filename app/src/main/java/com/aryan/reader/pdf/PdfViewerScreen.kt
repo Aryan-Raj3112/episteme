@@ -214,6 +214,7 @@ import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.AiFeature
 import com.aryan.reader.AiHubBottomSheet
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.COMIC_ARCHIVE_FILE_TYPES
 import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
@@ -452,7 +453,7 @@ fun PdfViewerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val effectivePdfUri = uiState.selectedPdfUri ?: pdfUri
     val effectiveFileType = uiState.selectedFileType ?: FileType.PDF
-    val isComicFile = effectiveFileType == FileType.CBZ || effectiveFileType == FileType.CBR || effectiveFileType == FileType.CB7
+    val isComicFile = effectiveFileType in COMIC_ARCHIVE_FILE_TYPES
 
     var showNewTabSheet by remember { mutableStateOf(false) }
     var showFileInfoDialog by remember { mutableStateOf(false) }

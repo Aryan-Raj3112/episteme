@@ -99,6 +99,19 @@ class AppLanguageOptionsTest {
         assertEquals("true", autoStoreLocales!!.androidAttribute("value"))
     }
 
+    @Test
+    fun `android manifest exposes cbt comic archive mime types`() {
+        val mimeTypes = readAndroidManifest()
+            .getElementsByTagName("data")
+            .asElements()
+            .mapNotNull { it.androidAttribute("mimeType") }
+
+        assertTrue("application/x-cbt" in mimeTypes)
+        assertTrue("application/vnd.comicbook+tar" in mimeTypes)
+        assertTrue("application/x-tar" in mimeTypes)
+        assertTrue("application/tar" in mimeTypes)
+    }
+
     private fun readLocaleConfigTags(): List<String> {
         val localeConfig = listOf(
             File("src/main/res/xml/locales_config.xml"),

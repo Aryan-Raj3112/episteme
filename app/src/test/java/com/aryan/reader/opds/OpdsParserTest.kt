@@ -193,7 +193,8 @@ class OpdsParserTest {
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             ),
             OpdsAcquisition("epub", "application/epub+zip"),
-            OpdsAcquisition("unknown", "application/octet-stream")
+            OpdsAcquisition("unknown", "application/octet-stream"),
+            OpdsAcquisition("cbt", "application/vnd.comicbook+tar")
         )
         val entry = OpdsEntry(
             id = "id",
@@ -208,6 +209,7 @@ class OpdsParserTest {
         assertEquals("PPTX", acquisitions[2].formatName)
         assertEquals("TXT", acquisitions[0].formatName)
         assertEquals("OCTET-STREAM", acquisitions[4].formatName)
+        assertEquals("CBT", acquisitions[5].formatName)
         assertEquals(acquisitions[3], entry.bestAcquisition)
     }
 }

@@ -380,6 +380,7 @@ class SharedLibraryProjectorTest {
         assertEquals(FileType.PDF, "REPORT.PDF".toFileType())
         assertEquals(FileType.HTML, "page.htm".toFileType())
         assertEquals(FileType.CBZ, "comic.cbz".toFileType())
+        assertEquals(FileType.CBT, "comic.cbt".toFileType())
         assertEquals(FileType.UNKNOWN, "archive.zip".toFileType())
     }
 

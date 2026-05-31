@@ -5,7 +5,7 @@ import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderSettings
 
 enum class FileType {
-    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, DOCX, ODT, FODT, PPTX, UNKNOWN
+    PDF, EPUB, MOBI, MD, TXT, HTML, FB2, CBZ, CBR, CB7, CBT, DOCX, ODT, FODT, PPTX, UNKNOWN
 }
 
 val PDF_VIEWER_FILE_TYPES: Set<FileType>
