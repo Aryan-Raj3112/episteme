@@ -116,7 +116,7 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
             if (wwwAuth.startsWith("Digest", ignoreCase = true)) {
                 val realm = extractParam(wwwAuth, "realm") ?: ""
                 val nonce = extractParam(wwwAuth, "nonce") ?: ""
-                val qop = extractParam(wwwAuth, "qop")
+                val qop = selectAuthQop(extractParam(wwwAuth, "qop"))
                 val opaque = extractParam(wwwAuth, "opaque")
 
                 cnonceCount++
@@ -160,6 +160,13 @@ class OpdsRepository(context: Context) : SharedOpdsRepository {
         private fun extractParam(header: String, param: String): String? {
             val match = Regex("$param=\"([^\"]+)\"").find(header) ?: Regex("$param=([^,\\s]+)").find(header)
             return match?.groupValues?.get(1)
+        }
+
+        private fun selectAuthQop(value: String?): String? {
+            return value
+                ?.split(',')
+                ?.map { it.trim().trim('"') }
+                ?.firstOrNull { it.equals("auth", ignoreCase = true) }
         }
 
         private fun md5(input: String): String {

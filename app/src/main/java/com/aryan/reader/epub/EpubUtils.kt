@@ -23,15 +23,46 @@ import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.w3c.dom.Node
 import org.w3c.dom.NodeList
+import java.io.File
 import java.io.InputStream
+import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 
 fun parseXMLFile(inputSteam: InputStream): Document? =
-    DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(inputSteam)
+    secureDocumentBuilderFactory().newDocumentBuilder().parse(inputSteam)
 
 fun parseXMLFile(byteArray: ByteArray): Document? = parseXMLFile(byteArray.inputStream())
 
 fun String.asFileName(): String = this.replace("/", "_")
+
+internal fun secureDocumentBuilderFactory(): DocumentBuilderFactory {
+    return DocumentBuilderFactory.newInstance().apply {
+        isNamespaceAware = false
+        setFeatureSafely(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+        setFeatureSafely("http://apache.org/xml/features/disallow-doctype-decl", true)
+        setFeatureSafely("http://xml.org/sax/features/external-general-entities", false)
+        setFeatureSafely("http://xml.org/sax/features/external-parameter-entities", false)
+        setFeatureSafely("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+        runCatching { isXIncludeAware = false }
+        runCatching { isExpandEntityReferences = false }
+    }
+}
+
+private fun DocumentBuilderFactory.setFeatureSafely(name: String, value: Boolean) {
+    runCatching { setFeature(name, value) }
+}
+
+internal fun safeFileInRoot(root: File, childPath: String): File? {
+    val rootFile = runCatching { root.canonicalFile }.getOrNull() ?: return null
+    val targetFile = runCatching { File(rootFile, childPath).canonicalFile }.getOrNull() ?: return null
+    return targetFile.takeIf { it.isInsideOrSame(rootFile) }
+}
+
+internal fun File.isInsideOrSame(root: File): Boolean {
+    val rootPath = runCatching { root.canonicalFile.path }.getOrNull() ?: return false
+    val targetPath = runCatching { canonicalFile.path }.getOrNull() ?: return false
+    return targetPath == rootPath || targetPath.startsWith(rootPath + File.separator)
+}
 
 fun Document.selectFirstTag(tag: String): Node? = getElementsByTagName(tag).item(0)
 fun Node.selectFirstChildTag(tag: String) = childElements.find { it.tagName == tag }
@@ -39,6 +70,6 @@ fun Node.selectChildTag(tag: String) = childElements.filter { it.tagName == tag 
 fun Node.getAttributeValue(attribute: String): String? =
     attributes?.getNamedItem(attribute)?.textContent
 
-val NodeList.elements get() = (0..length).asSequence().mapNotNull { item(it) as? Element }
+val NodeList.elements get() = (0 until length).asSequence().mapNotNull { item(it) as? Element }
 val Node.childElements get() = childNodes.elements
 

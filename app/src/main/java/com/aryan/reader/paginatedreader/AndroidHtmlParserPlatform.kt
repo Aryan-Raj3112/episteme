@@ -2,6 +2,7 @@ package com.aryan.reader.paginatedreader
 
 import android.graphics.BitmapFactory
 import androidx.compose.ui.text.font.FontFamily
+import com.aryan.reader.epub.safeFileInRoot
 import java.io.File
 import java.net.URLDecoder
 import java.nio.file.Paths
@@ -16,12 +17,14 @@ object AndroidHtmlResourceResolver : HtmlResourceResolver {
         }
         val parentPath = File(chapterAbsPath).parent ?: ""
         val relativePath = Paths.get(parentPath, decodedSrc).normalize().toString()
-        val fromRelativeFile = File(extractionBasePath, relativePath)
 
         return try {
+            val extractionRoot = File(extractionBasePath)
+            val fromRelativeFile = safeFileInRoot(extractionRoot, relativePath)
+            val fromRootFile = safeFileInRoot(extractionRoot, decodedSrc)
             when {
-                fromRelativeFile.exists() -> fromRelativeFile.canonicalFile.absolutePath
-                File(extractionBasePath, decodedSrc).exists() -> File(extractionBasePath, decodedSrc).canonicalFile.absolutePath
+                fromRelativeFile?.exists() == true -> fromRelativeFile.absolutePath
+                fromRootFile?.exists() == true -> fromRootFile.absolutePath
                 else -> null
             }
         } catch (_: Exception) {

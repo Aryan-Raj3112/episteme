@@ -184,9 +184,13 @@ class OdtParser(private val context: Context) {
                             "Thumbnails/thumbnail.png" -> coverBytes = zis.readBytes()
                             else -> {
                                 if (entry.name !in ignoredFiles) {
-                                    val extractedFile = File(extractionDir, entry.name)
-                                    extractedFile.parentFile?.mkdirs()
-                                    FileOutputStream(extractedFile).use { out -> zis.copyTo(out) }
+                                    val extractedFile = safeFileInRoot(extractionDir, entry.name)
+                                    if (extractedFile != null) {
+                                        extractedFile.parentFile?.mkdirs()
+                                        FileOutputStream(extractedFile).use { out -> zis.copyTo(out) }
+                                    } else {
+                                        Timber.w("Skipping unsafe ODT entry outside extraction root: ${entry.name}")
+                                    }
                                 }
                             }
                         }
@@ -371,10 +375,18 @@ class OdtParser(private val context: Context) {
                                     if (isFlat) {
                                         try {
                                             val bytes = Base64.decode(base64Builder.toString(), Base64.DEFAULT)
-                                            val imgName = currentImageHref?.substringAfterLast("/") ?: "${UUID.randomUUID()}.png"
-                                            val imgFile = File(extractionDir, imgName)
-                                            FileOutputStream(imgFile).use { it.write(bytes) }
-                                            currentChapterHtml.append("<img src=\"${imgName}\" />")
+                                            val imgName = currentImageHref
+                                                ?.substringAfterLast("/")
+                                                ?.substringAfterLast("\\")
+                                                ?.takeIf { it.isNotBlank() }
+                                                ?: "${UUID.randomUUID()}.png"
+                                            val imgFile = safeFileInRoot(extractionDir, imgName)
+                                            if (imgFile != null) {
+                                                FileOutputStream(imgFile).use { it.write(bytes) }
+                                                currentChapterHtml.append("<img src=\"${imgName}\" />")
+                                            } else {
+                                                Timber.w("Skipping unsafe FODT image path: $imgName")
+                                            }
                                         } catch (e: Exception) {
                                             Timber.e(e, "Failed to decode FODT image")
                                         }

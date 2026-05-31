@@ -35,12 +35,12 @@ class ReaderTtsFileCacheManager(
         val chapterDir = chapterDir(bookTitle, chapterTitle)
         if (!chapterDir.exists()) chapterDir.mkdirs()
         val hashParams = hash(text + speakerId + "CLOUD")
-        val safeSpeaker = sanitize(speakerId)
+        val safeSpeaker = sanitizeFileToken(speakerId)
         return File(chapterDir, "cached_chunk_${safeSpeaker}_$hashParams.wav")
     }
 
     fun getBookCacheDir(bookTitle: String): File {
-        return File(baseDir, sanitize(bookTitle.take(50)))
+        return File(baseDir, safeCacheSegment(bookTitle, "book"))
     }
 
     fun getChapterCaches(bookTitle: String, speakerFilter: String? = null): List<ReaderTtsChapterCacheInfo> {
@@ -100,15 +100,18 @@ class ReaderTtsFileCacheManager(
     }
 
     fun deleteSpecificFiles(filePaths: List<String>, chapterDirectoryPath: String) {
-        filePaths.forEach { path -> File(path).delete() }
         val chapterDir = File(chapterDirectoryPath)
-        if (chapterDir.listFiles()?.isEmpty() == true) {
+        if (!chapterDir.isInsideBaseDir()) return
+        filePaths.forEach { path ->
+            File(path).takeIf { it.isInside(chapterDir) }?.delete()
+        }
+        if (chapterDir.listFiles()?.isEmpty() == true && chapterDir.isInsideBaseDir()) {
             chapterDir.deleteRecursively()
         }
     }
 
     fun clearBookCache(bookTitle: String) {
-        getBookCacheDir(bookTitle).deleteRecursively()
+        getBookCacheDir(bookTitle).takeIf { it.isInsideBaseDir() }?.deleteRecursively()
     }
 
     fun clearBookCacheForSpeaker(bookTitle: String, speakerId: String) {
@@ -118,7 +121,7 @@ class ReaderTtsFileCacheManager(
     }
 
     private fun chapterDir(bookTitle: String, chapterTitle: String?): File {
-        return File(getBookCacheDir(bookTitle), sanitize((chapterTitle ?: "Unknown_Chapter").take(50)))
+        return File(getBookCacheDir(bookTitle), safeCacheSegment(chapterTitle ?: "Unknown_Chapter", "chapter"))
     }
 
     private fun File.matchesSpeaker(speakerFilter: String?): Boolean {
@@ -132,8 +135,31 @@ class ReaderTtsFileCacheManager(
         return withoutPrefix.substringBeforeLast('_').takeIf { it.isNotBlank() }
     }
 
-    private fun sanitize(name: String): String {
-        return name.replace(Regex("[^a-zA-Z0-9.-]"), "_")
+    private fun safeCacheSegment(name: String, fallback: String): String {
+        val normalized = name.trim().takeIf { it.isNotBlank() } ?: fallback
+        val slug = normalized
+            .replace(Regex("[^a-zA-Z0-9_-]+"), "_")
+            .trim('_', '-')
+            .ifBlank { fallback }
+            .take(48)
+        return "${slug}_${hash(normalized).take(16)}"
+    }
+
+    private fun sanitizeFileToken(name: String): String {
+        return name
+            .replace(Regex("[^a-zA-Z0-9._-]+"), "_")
+            .trim('.', '_', '-')
+            .ifBlank { "default" }
+    }
+
+    private fun File.isInsideBaseDir(): Boolean {
+        return isInside(baseDir)
+    }
+
+    private fun File.isInside(root: File): Boolean {
+        val rootPath = runCatching { root.canonicalFile.path }.getOrNull() ?: return false
+        val targetPath = runCatching { canonicalFile.path }.getOrNull() ?: return false
+        return targetPath != rootPath && targetPath.startsWith(rootPath + File.separator)
     }
 
     private fun hash(input: String): String {

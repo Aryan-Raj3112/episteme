@@ -1619,19 +1619,28 @@ object SharedJvmBookLoader {
             val raw = src.trim().takeIf { it.isNotBlank() } ?: return null
             if (raw.startsWith("data:", ignoreCase = true)) return raw
             if (raw.startsWith("http://", ignoreCase = true) || raw.startsWith("https://", ignoreCase = true)) return raw
-            if (raw.startsWith("file:", ignoreCase = true)) return raw
+            if (raw.startsWith("file:", ignoreCase = true)) return null
 
             val clean = raw.substringBefore('#').substringBefore('?').takeIf { it.isNotBlank() } ?: return null
             val decoded = runCatching { URLDecoder.decode(clean, Charsets.UTF_8.name()) }.getOrDefault(clean)
-            val direct = File(decoded)
-            if (direct.isAbsolute && direct.isFile) return direct.toURI().toString()
+            val chapterFile = chapterAbsPath.trim().takeIf { it.isNotBlank() }?.let { path ->
+                val file = File(path)
+                if (file.isAbsolute) file else null
+            }
+            val extractionRoot = extractionBasePath
+                .trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { runCatching { File(it).canonicalFile }.getOrNull() }
+                ?: chapterFile
+                    ?.parentFile
+                    ?.let { runCatching { it.canonicalFile }.getOrNull() }
+                ?: return null
 
-            val chapterFile = chapterAbsPath.trim().takeIf { it.isNotBlank() }?.let(::File)
-            val chapterRelative = chapterFile?.parentFile?.let { File(it, decoded) }
-            if (chapterRelative?.isFile == true) return chapterRelative.toURI().toString()
+            val resolvedChapterFile = chapterFile ?: File(extractionRoot, chapterAbsPath)
+            val chapterRelative = resolvedChapterFile.parentFile?.let { File(it, decoded) }
+            fileInsideRootOrNull(extractionRoot, chapterRelative)?.let { return it.absolutePath }
 
-            val extractionRelative = extractionBasePath.trim().takeIf { it.isNotBlank() }?.let { File(it, decoded) }
-            if (extractionRelative?.isFile == true) return extractionRelative.toURI().toString()
+            fileInsideRootOrNull(extractionRoot, File(extractionRoot, decoded))?.let { return it.absolutePath }
 
             return null
         }
@@ -1668,6 +1677,15 @@ object SharedJvmBookLoader {
                 startsWith("file:", ignoreCase = true) -> runCatching { File(URI(this)) }.getOrNull()
                 else -> File(this)
             }
+        }
+
+        private fun fileInsideRootOrNull(root: File, candidate: File?): File? {
+            val file = candidate ?: return null
+            val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return null
+            val rootPath = root.path
+            val targetPath = canonical.path
+            val insideRoot = targetPath == rootPath || targetPath.startsWith(rootPath + File.separator)
+            return canonical.takeIf { insideRoot && it.isFile }
         }
     }
 

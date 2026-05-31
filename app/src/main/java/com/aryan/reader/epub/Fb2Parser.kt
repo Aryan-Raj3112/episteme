@@ -12,6 +12,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 
 class Fb2Parser(private val context: Context) {
@@ -210,7 +211,12 @@ class Fb2Parser(private val context: Context) {
                                     if (!inBody) {
                                         if (coverImageId == null) coverImageId = id
                                     } else {
-                                        currentChapterHtml.append("<img src=\"$id\" />")
+                                        val safeImageName = safeResourceFileName(id)
+                                        if (safeImageName != null) {
+                                            currentChapterHtml.append("<img src=\"$safeImageName\" />")
+                                        } else {
+                                            Timber.w("Skipping unsafe FB2 image reference: $id")
+                                        }
                                     }
                                 }
                             }
@@ -220,12 +226,23 @@ class Fb2Parser(private val context: Context) {
                                     val base64Data = parser.nextText()
                                     try {
                                         val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                                        val safeId = safeResourceFileName(id)
                                         if (parseContent) {
-                                            val imgFile = File(extractionDir, id)
-                                            FileOutputStream(imgFile).use { it.write(bytes) }
+                                            if (safeId != null) {
+                                                val imgFile = safeFileInRoot(extractionDir, safeId)
+                                                if (imgFile != null) {
+                                                    FileOutputStream(imgFile).use { it.write(bytes) }
+                                                } else {
+                                                    Timber.w("Skipping unsafe FB2 binary path: $id")
+                                                }
+                                            } else {
+                                                Timber.w("Skipping unsafe FB2 binary id: $id")
+                                            }
                                         }
 
-                                        images.add(EpubImage(absPath = id))
+                                        if (safeId != null) {
+                                            images.add(EpubImage(absPath = safeId))
+                                        }
 
                                         if (id == coverImageId || (coverImageId == null && id.contains("cover", ignoreCase = true))) {
                                             coverBytes = bytes
@@ -325,5 +342,31 @@ class Fb2Parser(private val context: Context) {
                 Timber.e(e, "Error closing FB2 stream")
             }
         }
+    }
+
+    private fun safeResourceFileName(id: String): String? {
+        val rawName = id.substringAfterLast('/').substringAfterLast('\\').trim()
+        if (rawName.isBlank() || rawName == "." || rawName == "..") return null
+
+        val extension = rawName.substringAfterLast('.', missingDelimiterValue = "")
+            .takeIf { it.isNotBlank() && it.length <= 12 }
+            ?.replace(Regex("[^A-Za-z0-9]"), "")
+            .orEmpty()
+        val baseName = rawName.substringBeforeLast('.', rawName)
+            .replace(Regex("[^A-Za-z0-9._-]+"), "_")
+            .trim('.', '_', '-')
+            .ifBlank { "image" }
+            .take(48)
+        val suffix = sha256Hex(id).take(12)
+        return if (extension.isBlank()) {
+            "${baseName}_$suffix"
+        } else {
+            "${baseName}_$suffix.$extension"
+        }
+    }
+
+    private fun sha256Hex(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
     }
 }

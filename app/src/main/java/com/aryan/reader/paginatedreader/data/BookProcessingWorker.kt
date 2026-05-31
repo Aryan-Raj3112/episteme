@@ -38,6 +38,7 @@ import androidx.work.WorkerParameters
 import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.epubContentFilePath
 import com.aryan.reader.paginatedreader.CssParser
+import com.aryan.reader.paginatedreader.AndroidHtmlResourceResolver
 import com.aryan.reader.paginatedreader.FontFaceInfo
 import com.aryan.reader.paginatedreader.MathMLRenderer
 import com.aryan.reader.paginatedreader.OptimizedCssRules
@@ -61,7 +62,6 @@ import kotlinx.serialization.protobuf.ProtoNumber
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.io.File
-import java.net.URLDecoder
 import kotlin.math.abs
 import kotlin.coroutines.coroutineContext
 
@@ -153,7 +153,6 @@ class BookProcessingWorker(
         Timber.i("Starting pre-scan to calculate image dimensions...")
         for (chapter in chapters) {
             val document = Jsoup.parse(chapter.htmlContent)
-            val chapterParentPath = File(chapter.absPath).parent ?: ""
 
             // Find all image tags (both <img> and <svg><image>)
             document.select("img, image").forEach { element ->
@@ -161,14 +160,10 @@ class BookProcessingWorker(
                 val src = element.attr(srcAttr).ifBlank { element.attr("xlink:href") }
 
                 if (src.isNotBlank()) {
-                    val decodedSrc = try {
-                        URLDecoder.decode(src, "UTF-8")
-                    } catch (_: Exception) {
-                        src
-                    }
-
-                    val imageFile = File(File(extractionBasePath, chapterParentPath), decodedSrc).canonicalFile
-                    val imagePath = imageFile.absolutePath
+                    val imagePath = AndroidHtmlResourceResolver
+                        .resolvePath(chapter.absPath, extractionBasePath, src)
+                        ?: return@forEach
+                    val imageFile = File(imagePath)
 
                     // If not already cached, read dimensions from disk
                     if (imageFile.exists() && !dimensionsCache.containsKey(imagePath)) {

@@ -103,6 +103,24 @@ class OpdsRepositoryTest {
     }
 
     @Test
+    fun `digest authenticator selects auth from qop list`() {
+        val request = Request.Builder()
+            .url("https://example.org/catalog/feed")
+            .build()
+        val response = responseFor(
+            request,
+            "Digest realm=\"realm\", nonce=\"abc\", qop=\"auth,auth-int\""
+        )
+
+        val authenticated = OpdsRepository.OpdsAuthenticator("user", "pass")
+            .authenticate(null, response)
+        val header = authenticated?.header("Authorization").orEmpty()
+
+        assertTrue(header.contains("qop=auth"))
+        assertTrue(!header.contains("auth,auth-int"))
+    }
+
+    @Test
     fun `authenticator ignores unsupported challenge`() {
         val request = Request.Builder().url("https://example.org/feed").build()
 

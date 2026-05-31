@@ -15,8 +15,8 @@ import timber.log.Timber
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.zip.ZipInputStream
-import javax.xml.parsers.DocumentBuilderFactory
 
 data class CalibreBundleResult(
     val internalBookUri: Uri,
@@ -89,7 +89,7 @@ object CalibreBundleExtractor {
 
             if (tempBookFile != null && opfData != null && extractedType != null) {
                 val finalBookFile = bookImporter.createBookFile("$bookId.$ext")
-                tempBookFile!!.renameTo(finalBookFile)
+                moveExtractedBook(tempBookFile!!, finalBookFile)
 
                 var coverPath: String? = null
                 if (coverBytes != null) {
@@ -106,7 +106,7 @@ object CalibreBundleExtractor {
                 var seriesIndex: Double? = null
 
                 try {
-                    val factory = DocumentBuilderFactory.newInstance()
+                    val factory = secureDocumentBuilderFactory()
                     val builder = factory.newDocumentBuilder()
                     val document = builder.parse(ByteArrayInputStream(opfData!!.toByteArray(Charsets.UTF_8)))
                     val metadataNodes = document.getElementsByTagName("metadata")
@@ -159,8 +159,25 @@ object CalibreBundleExtractor {
         } catch (e: Exception) {
             Timber.e(e, "Failed to process zip bundle")
         } finally {
-            tempBookFile?.delete() // Cleanup if parsing failed midway
+            tempBookFile?.takeIf { it.exists() }?.delete()
         }
         return@withContext null
+    }
+
+    private fun moveExtractedBook(tempBookFile: File, finalBookFile: File) {
+        finalBookFile.parentFile?.mkdirs()
+        if (finalBookFile.exists() && !finalBookFile.delete()) {
+            throw IOException("Could not replace existing book file: ${finalBookFile.absolutePath}")
+        }
+        if (tempBookFile.renameTo(finalBookFile)) return
+
+        tempBookFile.inputStream().use { input ->
+            FileOutputStream(finalBookFile).use { output ->
+                input.copyTo(output)
+            }
+        }
+        if (!finalBookFile.isFile) {
+            throw IOException("Could not move extracted book to: ${finalBookFile.absolutePath}")
+        }
     }
 }
