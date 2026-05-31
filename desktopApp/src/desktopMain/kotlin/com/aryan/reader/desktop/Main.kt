@@ -690,27 +690,32 @@ internal fun EpistemeDesktopApp(
         runCatching {
             desktopAccountProfileRepository.fetchProfile(session.user.uid, token)
         }.onSuccess { profile ->
-            val nextSyncEnabled = state.isSyncEnabled && profile.isProUser
-            if (!nextSyncEnabled && state.isSyncEnabled) {
-                saveDesktopCloudSyncSettings(syncEnabled = false)
-            }
-            updateState(
-                state.copy(
-                    currentUser = session.user,
-                    isProUser = profile.isProUser,
-                    credits = profile.credits,
-                    isSyncEnabled = nextSyncEnabled
+            if (desktopAuthRepository.currentSession()?.user?.uid == session.user.uid) {
+                desktopAccountProfileRepository.saveFetchedProfile(session.user.uid, profile)
+                val nextSyncEnabled = state.isSyncEnabled && profile.isProUser
+                if (!nextSyncEnabled && state.isSyncEnabled) {
+                    saveDesktopCloudSyncSettings(syncEnabled = false)
+                }
+                updateState(
+                    state.copy(
+                        currentUser = session.user,
+                        isProUser = profile.isProUser,
+                        credits = profile.credits,
+                        isSyncEnabled = nextSyncEnabled
+                    )
                 )
-            )
-            accountStatusMessage = if (profile.isProUser) {
-                "Account checked. Pro is unlocked."
-            } else {
-                "Account checked. Pro is not unlocked."
+                accountStatusMessage = if (profile.isProUser) {
+                    "Account checked. Pro is unlocked."
+                } else {
+                    "Account checked. Pro is not unlocked."
+                }
+                if (showBanner) updateState(state.withBanner("Account status refreshed."))
             }
-            if (showBanner) updateState(state.withBanner("Account status refreshed."))
         }.onFailure { error ->
-            accountStatusMessage = error.message ?: "Could not check account status."
-            if (showBanner) updateState(state.withBanner(accountStatusMessage.orEmpty(), isError = true))
+            if (desktopAuthRepository.currentSession()?.user?.uid == session.user.uid) {
+                accountStatusMessage = error.message ?: "Could not check account status."
+                if (showBanner) updateState(state.withBanner(accountStatusMessage.orEmpty(), isError = true))
+            }
         }
         desktopAccountProfileRefreshCompleted = true
     }

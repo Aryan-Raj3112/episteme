@@ -207,11 +207,22 @@ internal data class DesktopPdfZoomScrollBounds(
     val maxVerticalScroll: Int? = null
 )
 
+internal interface DesktopPdfLayoutScrollPrediction {
+    val maxHorizontalScroll: Int
+    val maxVerticalScroll: Int
+}
+
 internal data class DesktopPdfSinglePageLayoutPrediction(
     val rootOffset: Offset,
-    val maxHorizontalScroll: Int,
-    val maxVerticalScroll: Int
-)
+    override val maxHorizontalScroll: Int,
+    override val maxVerticalScroll: Int
+) : DesktopPdfLayoutScrollPrediction
+
+internal data class DesktopPdfSpreadLayoutPrediction(
+    val pageRootOffsets: Map<Int, Offset>,
+    override val maxHorizontalScroll: Int,
+    override val maxVerticalScroll: Int
+) : DesktopPdfLayoutScrollPrediction
 
 internal data class DesktopPdfCachedPageRender(
     val render: DesktopPdfPageRender,
@@ -309,6 +320,60 @@ internal fun desktopPdfSinglePageLayoutPrediction(
             x = viewportRootOffset.x + pageX,
             y = viewportRootOffset.y + pageY
         ),
+        maxHorizontalScroll = maxHorizontalScroll,
+        maxVerticalScroll = maxVerticalScroll
+    )
+}
+
+internal fun desktopPdfSpreadLayoutPrediction(
+    viewportRootOffset: Offset,
+    viewportSize: IntSize,
+    visiblePageIndices: List<Int>,
+    pageCanvasSizes: Map<Int, IntSize>,
+    horizontalScroll: Int,
+    verticalScroll: Int,
+    paddingPx: Float,
+    pageGapPx: Float
+): DesktopPdfSpreadLayoutPrediction? {
+    if (viewportSize.width <= 0 || viewportSize.height <= 0) return null
+    if (visiblePageIndices.isEmpty()) return null
+    if (!viewportRootOffset.x.isFinite() || !viewportRootOffset.y.isFinite()) return null
+    if (!paddingPx.isFinite() || paddingPx < 0f) return null
+    if (!pageGapPx.isFinite() || pageGapPx < 0f) return null
+    val pageSizes = visiblePageIndices.map { pageIndex ->
+        val pageSize = pageCanvasSizes[pageIndex] ?: return null
+        if (pageSize.width <= 0 || pageSize.height <= 0) return null
+        pageSize
+    }
+    val viewportWidth = viewportSize.width.toFloat()
+    val viewportHeight = viewportSize.height.toFloat()
+    val rowWidth = pageSizes.sumOf { it.width }.toFloat() +
+        (pageGapPx * (pageSizes.size - 1).coerceAtLeast(0))
+    val rowHeight = pageSizes.maxOf { it.height }.toFloat()
+    val contentWidth = (viewportWidth - paddingPx * 2f).coerceAtLeast(0f)
+    val maxHorizontalScroll = (rowWidth + paddingPx * 2f - viewportWidth)
+        .roundToInt()
+        .coerceAtLeast(0)
+    val maxVerticalScroll = (rowHeight + paddingPx * 2f - viewportHeight)
+        .roundToInt()
+        .coerceAtLeast(0)
+    val safeHorizontalScroll = horizontalScroll.coerceIn(0, maxHorizontalScroll)
+    val safeVerticalScroll = verticalScroll.coerceIn(0, maxVerticalScroll)
+    val rowX = if (rowWidth <= contentWidth) {
+        ((viewportWidth - rowWidth) / 2f) - safeHorizontalScroll.toFloat()
+    } else {
+        paddingPx - safeHorizontalScroll.toFloat()
+    }
+    val rowY = paddingPx - safeVerticalScroll.toFloat()
+    var pageX = viewportRootOffset.x + rowX
+    val pageY = viewportRootOffset.y + rowY
+    val roots = visiblePageIndices.mapIndexed { index, pageIndex ->
+        val root = Offset(pageX, pageY)
+        pageX += pageSizes[index].width.toFloat() + pageGapPx
+        pageIndex to root
+    }.toMap()
+    return DesktopPdfSpreadLayoutPrediction(
+        pageRootOffsets = roots,
         maxHorizontalScroll = maxHorizontalScroll,
         maxVerticalScroll = maxVerticalScroll
     )

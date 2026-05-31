@@ -101,6 +101,42 @@ class DesktopReaderDefaultsTest {
     }
 
     @Test
+    fun `desktop pdf initial page is normalized before paginated spread display`() {
+        val spreadSettings = ReaderSettings(
+            readingMode = ReaderReadingMode.PAGINATED,
+            pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE
+        )
+
+        assertEquals(
+            2,
+            desktopPdfInitialPageIndex(
+                requestedPageIndex = 3,
+                pageCount = 10,
+                displayMode = PdfDisplayMode.PAGINATION,
+                settings = spreadSettings
+            )
+        )
+        assertEquals(
+            3,
+            desktopPdfInitialPageIndex(
+                requestedPageIndex = 3,
+                pageCount = 10,
+                displayMode = PdfDisplayMode.VERTICAL_SCROLL,
+                settings = spreadSettings
+            )
+        )
+        assertEquals(
+            3,
+            desktopPdfInitialPageIndex(
+                requestedPageIndex = 3,
+                pageCount = 10,
+                displayMode = PdfDisplayMode.PAGINATION,
+                settings = spreadSettings.copy(pageSpreadMode = ReaderPageSpreadMode.SINGLE)
+            )
+        )
+    }
+
+    @Test
     fun `desktop pdf zoom allows deeper page magnification`() {
         val sharedDefaultMax = PdfZoomSpec().max
         val letterPageScale = DesktopPdfZoomSpec.safeRenderScale(
@@ -213,6 +249,43 @@ class DesktopReaderDefaultsTest {
                 fallbackPageIndex = 199
             )
         )
+        val fittedSpread = desktopPdfSpreadLayoutPrediction(
+            viewportRootOffset = Offset.Zero,
+            viewportSize = IntSize(1920, 991),
+            visiblePageIndices = visiblePages,
+            pageCanvasSizes = mapOf(
+                199 to IntSize(667, 881),
+                200 to IntSize(667, 881)
+            ),
+            horizontalScroll = 0,
+            verticalScroll = 112,
+            paddingPx = 30f,
+            pageGapPx = 22.5f
+        ) ?: error("Expected fitted spread prediction")
+        assertEquals(0, fittedSpread.maxHorizontalScroll)
+        assertEquals(0, fittedSpread.maxVerticalScroll)
+        assertEquals(282f, fittedSpread.pageRootOffsets[199]?.x ?: -1f, 0.5f)
+        assertEquals(972f, fittedSpread.pageRootOffsets[200]?.x ?: -1f, 0.5f)
+        assertEquals(30f, fittedSpread.pageRootOffsets[200]?.y ?: -1f, 0.0001f)
+
+        val scrollableSpread = desktopPdfSpreadLayoutPrediction(
+            viewportRootOffset = Offset.Zero,
+            viewportSize = IntSize(1920, 991),
+            visiblePageIndices = visiblePages,
+            pageCanvasSizes = mapOf(
+                199 to IntSize(1371, 1810),
+                200 to IntSize(1371, 1810)
+            ),
+            horizontalScroll = 696,
+            verticalScroll = 575,
+            paddingPx = 30f,
+            pageGapPx = 22.5f
+        ) ?: error("Expected scrollable spread prediction")
+        assertEquals(905, scrollableSpread.maxHorizontalScroll)
+        assertEquals(879, scrollableSpread.maxVerticalScroll)
+        assertEquals(-666f, scrollableSpread.pageRootOffsets[199]?.x ?: 0f, 0.5f)
+        assertEquals(728f, scrollableSpread.pageRootOffsets[200]?.x ?: 0f, 0.5f)
+        assertEquals(-545f, scrollableSpread.pageRootOffsets[200]?.y ?: 0f, 0.0001f)
     }
 
     @Test

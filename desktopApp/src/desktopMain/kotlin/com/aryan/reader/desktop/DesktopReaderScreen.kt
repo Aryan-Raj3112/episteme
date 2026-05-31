@@ -206,9 +206,10 @@ internal fun DesktopReaderScreen(
         currentPages = session.reader.pages,
         measuredPages = warmMeasuredPaginationPages
     )
-    val paginatedLayoutReady = session.reader.settings.readingMode != ReaderReadingMode.PAGINATED ||
-        measuredPaginationPagesApplied ||
-        warmMeasuredPaginationPagesApplied
+    val paginatedLayoutReady = desktopPaginatedLayoutReadyForDisplay(
+        readingMode = session.reader.settings.readingMode,
+        measuredPagesApplied = measuredPaginationPagesApplied
+    )
     val latestSession by rememberUpdatedState(session)
     val latestOnSessionChange by rememberUpdatedState(onSessionChange)
     var externalLinkDialogUrl by remember { mutableStateOf<String?>(null) }
@@ -228,7 +229,7 @@ internal fun DesktopReaderScreen(
         onDismiss = { externalLinkDialogUrl = null }
     )
 
-    fun handleReaderFullscreenAwtKeyEvent(event: AwtKeyEvent): Boolean {
+    fun handleReaderAwtKeyEvent(event: AwtKeyEvent): Boolean {
         val currentSession = latestSession
         val action = event.desktopReaderKeyNavigationOrNull(
             fullscreen = isFullscreen,
@@ -243,6 +244,17 @@ internal fun DesktopReaderScreen(
             latestOnSessionChange(nextSession)
         }
         return true
+    }
+
+    fun handleReaderFullscreenAwtKeyEvent(event: AwtKeyEvent): Boolean {
+        if (latestSession.isSearchActive) {
+            if (event.id == AwtKeyEvent.KEY_PRESSED && isFullscreen && event.keyCode == AwtKeyEvent.VK_ESCAPE) {
+                setReaderFullscreen(false)
+                return true
+            }
+            return false
+        }
+        return handleReaderAwtKeyEvent(event)
     }
 
     fun handleReaderGlobalShortcutAwtKeyEvent(event: AwtKeyEvent): Boolean {
@@ -261,6 +273,13 @@ internal fun DesktopReaderScreen(
         enabled = externalLinkDialogUrl == null,
         allowChromeModalWindows = true,
         onKeyPressed = { event -> handleReaderGlobalShortcutAwtKeyEvent(event) }
+    )
+
+    DesktopReaderKeyDispatcherEffect(
+        enabled = externalLinkDialogUrl == null && !session.isSearchActive,
+        allowPanelModalWindows = true,
+        dispatchWhenOwnerWindowActive = false,
+        onKeyPressed = { event -> handleReaderAwtKeyEvent(event) }
     )
 
     DesktopReaderFullscreenKeyEffect(

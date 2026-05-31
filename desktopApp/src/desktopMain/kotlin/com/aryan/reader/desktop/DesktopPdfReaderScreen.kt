@@ -166,6 +166,20 @@ private data class DesktopPdfPaginatedPageDisplay(
     val render: DesktopPdfPageRender
 )
 
+internal fun desktopPdfInitialPageIndex(
+    requestedPageIndex: Int,
+    pageCount: Int,
+    displayMode: PdfDisplayMode,
+    settings: ReaderSettings
+): Int {
+    val clampedPageIndex = requestedPageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+    return if (displayMode == PdfDisplayMode.PAGINATION) {
+        PdfSpreadLayout.normalizePageIndex(clampedPageIndex, pageCount, settings)
+    } else {
+        clampedPageIndex
+    }
+}
+
 @Composable
 internal fun PdfReaderScreen(
     document: DesktopPdfDocument,
@@ -208,11 +222,40 @@ internal fun PdfReaderScreen(
         return stringResolver.string(name, fallback, *args)
     }
     val zoomSpec = remember { DesktopPdfZoomSpec }
-    val restoredInitialViewport = remember(documentHandleId, initialViewport) {
-        initialViewport?.sanitized(document.pageCount, zoomSpec)
-    }
     val initialDesktopPdfReaderSettings = remember(documentHandleId, initialReaderSettings) {
         initialReaderSettings.toDesktopPdfReaderSettings()
+    }
+    val initialPdfDisplayMode = initialDesktopPdfReaderSettings.toDesktopPdfDisplayMode()
+    val restoredInitialViewport = remember(
+        documentHandleId,
+        initialViewport,
+        initialDesktopPdfReaderSettings,
+        initialPdfDisplayMode
+    ) {
+        initialViewport?.sanitized(document.pageCount, zoomSpec)?.let { viewport ->
+            viewport.copy(
+                pageIndex = desktopPdfInitialPageIndex(
+                    requestedPageIndex = viewport.pageIndex,
+                    pageCount = document.pageCount,
+                    displayMode = initialPdfDisplayMode,
+                    settings = initialDesktopPdfReaderSettings
+                )
+            )
+        }
+    }
+    val initialPdfPageIndex = remember(
+        documentHandleId,
+        initialPageIndex,
+        restoredInitialViewport,
+        initialPdfDisplayMode,
+        initialDesktopPdfReaderSettings
+    ) {
+        desktopPdfInitialPageIndex(
+            requestedPageIndex = restoredInitialViewport?.pageIndex ?: initialPageIndex,
+            pageCount = document.pageCount,
+            displayMode = initialPdfDisplayMode,
+            settings = initialDesktopPdfReaderSettings
+        )
     }
     var pdfReaderSettings by remember(documentHandleId) {
         mutableStateOf(initialDesktopPdfReaderSettings)
@@ -221,10 +264,10 @@ internal fun PdfReaderScreen(
         mutableStateOf(
             SharedPdfReaderState.initial(
                 pageCount = document.pageCount,
-                initialPageIndex = restoredInitialViewport?.pageIndex ?: initialPageIndex,
+                initialPageIndex = initialPdfPageIndex,
                 zoomSpec = zoomSpec
             ).copy(
-                displayMode = initialDesktopPdfReaderSettings.toDesktopPdfDisplayMode(),
+                displayMode = initialPdfDisplayMode,
                 zoom = restoredInitialViewport?.zoom ?: zoomSpec.clamp(zoomSpec.default)
             )
         )
@@ -736,11 +779,60 @@ internal fun PdfReaderScreen(
                 "${verticalListState.firstVisibleItemScrollOffset} renderPage=${renderedPageIndex?.plus(1) ?: "none"} " +
                 "renderScale=${renderedPageScale?.formatLogFloat() ?: "none"} renderJob=${renderJob?.isActive == true}"
         }
-        val targetHorizontalScroll = anchor?.let {
+        val rawTargetHorizontalScroll = anchor?.let {
             desktopPdfAnchoredScrollTarget(pageHorizontalScrollState.value, it.x, oldZoom, newZoom)
         }
-        val targetVerticalScroll = anchor?.let {
+        val rawTargetVerticalScroll = anchor?.let {
             desktopPdfAnchoredScrollTarget(pageVerticalScrollState.value, it.y, oldZoom, newZoom)
+        }
+        val paginationCommitPrediction: DesktopPdfLayoutScrollPrediction? = if (activeDisplayMode == PdfDisplayMode.PAGINATION) {
+            val predictedScale = zoomSpec.clamp(newZoom)
+            if (isPdfTwoPageSpread) {
+                val predictedSizes = paginatedVisiblePageIndices.mapNotNull { visiblePageIndex ->
+                    document.pageSizes.getOrNull(visiblePageIndex)?.let { pageSize ->
+                        visiblePageIndex to IntSize(
+                            width = (pageSize.width * predictedScale).roundToInt().coerceAtLeast(1),
+                            height = (pageSize.height * predictedScale).roundToInt().coerceAtLeast(1)
+                        )
+                    }
+                }.toMap()
+                desktopPdfSpreadLayoutPrediction(
+                    viewportRootOffset = pdfZoomViewportRootOffset,
+                    viewportSize = pdfZoomViewportSize,
+                    visiblePageIndices = paginatedVisiblePageIndices,
+                    pageCanvasSizes = predictedSizes,
+                    horizontalScroll = rawTargetHorizontalScroll ?: pageHorizontalScrollState.value,
+                    verticalScroll = rawTargetVerticalScroll ?: pageVerticalScrollState.value,
+                    paddingPx = with(density) { 24.dp.toPx() },
+                    pageGapPx = with(density) { 18.dp.toPx() }
+                )
+            } else {
+                document.pageSizes.getOrNull(committedPreviewPageIndex)?.let { pageSize ->
+                    desktopPdfSinglePageLayoutPrediction(
+                        viewportRootOffset = pdfZoomViewportRootOffset,
+                        viewportSize = pdfZoomViewportSize,
+                        pageCanvasSize = IntSize(
+                            width = (pageSize.width * predictedScale).roundToInt().coerceAtLeast(1),
+                            height = (pageSize.height * predictedScale).roundToInt().coerceAtLeast(1)
+                        ),
+                        horizontalScroll = rawTargetHorizontalScroll ?: pageHorizontalScrollState.value,
+                        verticalScroll = rawTargetVerticalScroll ?: pageVerticalScrollState.value,
+                        paddingPx = with(density) { 24.dp.toPx() }
+                    )
+                }
+            }
+        } else {
+            null
+        }
+        val targetHorizontalScroll = rawTargetHorizontalScroll?.let { target ->
+            paginationCommitPrediction?.maxHorizontalScroll?.let { maxScroll ->
+                target.coerceIn(0, maxScroll)
+            } ?: target
+        }
+        val targetVerticalScroll = rawTargetVerticalScroll?.let { target ->
+            paginationCommitPrediction?.maxVerticalScroll?.let { maxScroll ->
+                target.coerceIn(0, maxScroll)
+            } ?: target
         }
         val targetVerticalItem = if (activeDisplayMode == PdfDisplayMode.VERTICAL_SCROLL && anchor != null) {
             verticalZoomAnchorItem(anchor)
@@ -763,7 +855,10 @@ internal fun PdfReaderScreen(
         }
         logPdfZoomSettle {
             "commit_targets seq=$settleSequence mode=$activeDisplayMode targetH=${targetHorizontalScroll ?: "none"} " +
-                "targetV=${targetVerticalScroll ?: "none"} targetItem=${targetVerticalItem?.first?.plus(1) ?: "none"} " +
+                "targetV=${targetVerticalScroll ?: "none"} rawH=${rawTargetHorizontalScroll ?: "none"} " +
+                "rawV=${rawTargetVerticalScroll ?: "none"} predictedMaxH=${paginationCommitPrediction?.maxHorizontalScroll ?: "none"} " +
+                "predictedMaxV=${paginationCommitPrediction?.maxVerticalScroll ?: "none"} " +
+                "targetItem=${targetVerticalItem?.first?.plus(1) ?: "none"} " +
                 "targetItemOffset=${targetVerticalItem?.second ?: "none"} targetItemRoot=${targetVerticalItem?.third.formatLogOffset()}"
         }
         var committedPreviewForClear = committedPreview
@@ -1284,6 +1379,10 @@ internal fun PdfReaderScreen(
 
     val pdfPopupActive =
         externalLinkDialogUrl != null ||
+            showPdfAiHub ||
+            showPdfSaveDialog ||
+            pdfFileActionNotice != null ||
+            isPdfFileActionLoading ||
             selectedTextHighlight != null ||
             selectedEmbeddedAnnotation != null ||
             pdfExtrasState.aiResult.hasContent ||
@@ -2578,6 +2677,16 @@ internal fun PdfReaderScreen(
         return runPdfKeyCommand(command)
     }
 
+    fun handlePdfReaderFullscreenAwtKeyEvent(event: AwtKeyEvent): Boolean {
+        if (isPdfSearchActive) {
+            if (event.id == AwtKeyEvent.KEY_PRESSED && isFullscreen && event.keyCode == AwtKeyEvent.VK_ESCAPE) {
+                return runPdfKeyCommand(DesktopPdfKeyCommand.EXIT_FULLSCREEN)
+            }
+            return false
+        }
+        return handlePdfReaderAwtKeyEvent(event)
+    }
+
     fun handlePdfReaderGlobalShortcutAwtKeyEvent(event: AwtKeyEvent): Boolean {
         if (event.id != AwtKeyEvent.KEY_PRESSED || !event.isControlDown) return false
         return when (event.keyCode) {
@@ -2592,9 +2701,16 @@ internal fun PdfReaderScreen(
         onKeyPressed = { event -> handlePdfReaderGlobalShortcutAwtKeyEvent(event) }
     )
 
+    DesktopReaderKeyDispatcherEffect(
+        enabled = !pdfPopupActive && !isPdfSearchActive,
+        allowPanelModalWindows = true,
+        dispatchWhenOwnerWindowActive = false,
+        onKeyPressed = { event -> handlePdfReaderAwtKeyEvent(event) }
+    )
+
     DesktopReaderFullscreenKeyEffect(
         enabled = isFullscreen && !pdfPopupActive,
-        onKeyPressed = { event -> handlePdfReaderAwtKeyEvent(event) }
+        onKeyPressed = { event -> handlePdfReaderFullscreenAwtKeyEvent(event) }
     )
 
     ReaderWorkspaceShell(
@@ -3012,22 +3128,44 @@ internal fun PdfReaderScreen(
                             horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterHorizontally),
                             verticalAlignment = Alignment.Top
                         ) {
-                            paginatedVisiblePageIndices.forEach { spreadPageIndex ->
-                                val spreadZoomPreview = pdfZoomPreview?.takeIf {
-                                    it.displayMode == PdfDisplayMode.PAGINATION
-                                }
-                                val spreadZoomAnchorPageRootOffset = spreadZoomPreview
-                                    ?.pageIndex
-                                    ?.let(::paginatedZoomPageRoot)
-                                val spreadZoomScrollBounds = spreadZoomPreview?.let {
-                                    desktopPdfZoomScrollBoundsWithCommitTargets(
-                                        preview = it,
-                                        currentHorizontalScroll = pageHorizontalScrollState.value,
-                                        maxHorizontalScroll = pageHorizontalScrollState.maxValue,
-                                        currentVerticalScroll = pageVerticalScrollState.value,
-                                        maxVerticalScroll = pageVerticalScrollState.maxValue
+                            val spreadZoomPreview = pdfZoomPreview?.takeIf {
+                                it.displayMode == PdfDisplayMode.PAGINATION
+                            }
+                            val spreadPredictedPageCanvasSizes = paginatedVisiblePageIndices.mapNotNull { visiblePageIndex ->
+                                document.pageSizes.getOrNull(visiblePageIndex)?.let { pageSize ->
+                                    val pageDisplayScale = zoomSpec.clamp(scale)
+                                    visiblePageIndex to IntSize(
+                                        width = (pageSize.width * pageDisplayScale).roundToInt().coerceAtLeast(1),
+                                        height = (pageSize.height * pageDisplayScale).roundToInt().coerceAtLeast(1)
                                     )
                                 }
+                            }.toMap()
+                            val spreadLayoutPrediction = spreadZoomPreview?.let {
+                                desktopPdfSpreadLayoutPrediction(
+                                    viewportRootOffset = pdfZoomViewportRootOffset,
+                                    viewportSize = pdfZoomViewportSize,
+                                    visiblePageIndices = paginatedVisiblePageIndices,
+                                    pageCanvasSizes = spreadPredictedPageCanvasSizes,
+                                    horizontalScroll = pageHorizontalScrollState.value,
+                                    verticalScroll = pageVerticalScrollState.value,
+                                    paddingPx = with(density) { 24.dp.toPx() },
+                                    pageGapPx = with(density) { 18.dp.toPx() }
+                                )
+                            }
+                            val spreadZoomAnchorPageRootOffset = spreadZoomPreview
+                                ?.pageIndex
+                                ?.let { spreadLayoutPrediction?.pageRootOffsets?.get(it) ?: paginatedZoomPageRoot(it) }
+                            val spreadZoomScrollBounds = spreadZoomPreview?.let {
+                                DesktopPdfZoomScrollBounds(
+                                    currentHorizontalScroll = pageHorizontalScrollState.value,
+                                    maxHorizontalScroll = spreadLayoutPrediction?.maxHorizontalScroll
+                                        ?: pageHorizontalScrollState.maxValue,
+                                    currentVerticalScroll = pageVerticalScrollState.value,
+                                    maxVerticalScroll = spreadLayoutPrediction?.maxVerticalScroll
+                                        ?: pageVerticalScrollState.maxValue
+                                )
+                            }
+                            paginatedVisiblePageIndices.forEach { spreadPageIndex ->
                                 DesktopVerticalPdfPage(
                                     document = document,
                                     pageIndex = spreadPageIndex,

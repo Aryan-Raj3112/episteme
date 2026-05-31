@@ -192,6 +192,42 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
+    fun `reader focus is restored when an open sidebar is hidden with chrome`() {
+        assertTrue(
+            readerWorkspaceShouldRestoreFocusAfterPanelVisibilityChange(
+                wasPanelVisible = true,
+                isPanelVisible = false,
+                panelOpen = true,
+                otherPanelOpen = false
+            )
+        )
+        assertFalse(
+            readerWorkspaceShouldRestoreFocusAfterPanelVisibilityChange(
+                wasPanelVisible = true,
+                isPanelVisible = true,
+                panelOpen = true,
+                otherPanelOpen = false
+            )
+        )
+        assertFalse(
+            readerWorkspaceShouldRestoreFocusAfterPanelVisibilityChange(
+                wasPanelVisible = true,
+                isPanelVisible = false,
+                panelOpen = true,
+                otherPanelOpen = true
+            )
+        )
+        assertFalse(
+            readerWorkspaceShouldRestoreFocusAfterPanelVisibilityChange(
+                wasPanelVisible = true,
+                isPanelVisible = false,
+                panelOpen = false,
+                otherPanelOpen = false
+            )
+        )
+    }
+
+    @Test
     fun `epub workspace exposes visual options through tools popup`() {
         val session = ReaderEngine().createSession(readerFixtureBook())
         val preferences = ReaderToolbarPreferences(

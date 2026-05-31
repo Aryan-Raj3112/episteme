@@ -20,11 +20,32 @@ internal data class DesktopAccountProfile(
     val fetchedAtEpochMillis: Long = 0L
 )
 
+// Credits and Pro status are server-owned, so startup only trusts a recent snapshot.
+internal const val DesktopAccountProfileCacheTtlMillis: Long = 30L * 60L * 1000L
+
+internal fun DesktopAccountProfile.isFresh(
+    nowEpochMillis: Long = System.currentTimeMillis(),
+    ttlMillis: Long = DesktopAccountProfileCacheTtlMillis
+): Boolean {
+    if (fetchedAtEpochMillis <= 0L || ttlMillis <= 0L) return false
+    val ageMillis = nowEpochMillis - fetchedAtEpochMillis
+    return ageMillis in 0L..ttlMillis
+}
+
 internal class DesktopAccountProfileRepository(
     private val config: DesktopCloudConfig,
     private val store: DesktopAccountProfileStore = DesktopAccountProfileStore()
 ) {
-    fun cachedProfile(uid: String): DesktopAccountProfile? = store.load(uid)
+    fun cachedProfile(
+        uid: String,
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): DesktopAccountProfile? {
+        return store.load(uid)?.takeIf { profile -> profile.isFresh(nowEpochMillis) }
+    }
+
+    fun saveFetchedProfile(uid: String, profile: DesktopAccountProfile) {
+        store.save(uid, profile)
+    }
 
     fun clearCachedProfiles() {
         store.clear()
@@ -42,9 +63,7 @@ internal class DesktopAccountProfileRepository(
         }
         try {
             if (connection.responseCode == HttpURLConnection.HTTP_NOT_FOUND) {
-                val profile = DesktopAccountProfile(fetchedAtEpochMillis = System.currentTimeMillis())
-                store.save(uid, profile)
-                return@withContext profile
+                return@withContext DesktopAccountProfile(fetchedAtEpochMillis = System.currentTimeMillis())
             }
             val stream = if (connection.responseCode in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
@@ -57,7 +76,6 @@ internal class DesktopAccountProfileRepository(
                 credits = fields?.numberField("credits")?.toInt() ?: 0,
                 fetchedAtEpochMillis = System.currentTimeMillis()
             )
-            store.save(uid, profile)
             profile
         } finally {
             connection.disconnect()
@@ -90,10 +108,7 @@ internal class DesktopAccountProfileStore(
             setProperty("credits", profile.credits.toString())
             setProperty("fetchedAtEpochMillis", profile.fetchedAtEpochMillis.toString())
         }
-        settingsFile.parentFile?.mkdirs()
-        settingsFile.outputStream().use { output ->
-            properties.store(output, "Episteme desktop account profile")
-        }
+        settingsFile.storePropertiesAtomically(properties, "Episteme desktop account profile")
     }
 
     fun clear() {

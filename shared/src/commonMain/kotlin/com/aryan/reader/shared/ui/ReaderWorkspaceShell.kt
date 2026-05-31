@@ -194,6 +194,7 @@ fun ReaderWorkspaceShell(
             hasNavigationSections = model.leftSections.isNotEmpty()
         )
         val showRightPanel = rightPanelOpen && model.inspectorSections.isNotEmpty()
+        var previousShowLeftPanel by remember(model.kind) { mutableStateOf(showLeftPanel) }
         val leftChromeExtensionWidth = if (showLeftPanel) {
             readerWorkspaceLeftPanelWidth(
                 availableWidth = this@shellConstraints.maxWidth,
@@ -227,6 +228,19 @@ fun ReaderWorkspaceShell(
             if (!wide && leftPanelOpen && rightPanelOpen) {
                 rightPanelOpen = false
             }
+        }
+        LaunchedEffect(showLeftPanel, leftPanelOpen, rightPanelOpen) {
+            if (
+                readerWorkspaceShouldRestoreFocusAfterPanelVisibilityChange(
+                    wasPanelVisible = previousShowLeftPanel,
+                    isPanelVisible = showLeftPanel,
+                    panelOpen = leftPanelOpen,
+                    otherPanelOpen = rightPanelOpen
+                )
+            ) {
+                onReaderFocusRestoreRequest()
+            }
+            previousShowLeftPanel = showLeftPanel
         }
         LaunchedEffect(showTopChrome, showBottomChrome, topSearchBar != null) {
             var nextSources = chromeHoverSources
@@ -765,6 +779,15 @@ internal fun readerWorkspaceShouldRestoreFocusAfterPanelClose(
     otherPanelOpen: Boolean
 ): Boolean {
     return closingPanelOpen && !otherPanelOpen
+}
+
+internal fun readerWorkspaceShouldRestoreFocusAfterPanelVisibilityChange(
+    wasPanelVisible: Boolean,
+    isPanelVisible: Boolean,
+    panelOpen: Boolean,
+    otherPanelOpen: Boolean
+): Boolean {
+    return wasPanelVisible && !isPanelVisible && panelOpen && !otherPanelOpen
 }
 
 private const val ReaderWorkspaceChromeAnimationMillis = 140

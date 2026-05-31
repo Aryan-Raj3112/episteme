@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.reader.ReaderLayoutSignature
 import com.aryan.reader.shared.reader.ReaderPage
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubBook
 
@@ -39,6 +40,13 @@ internal fun desktopMeasuredPaginationReady(
         completedRequest == request &&
         measuredPages.isNotEmpty() &&
         currentPages.samePageLayoutAs(measuredPages)
+}
+
+internal fun desktopPaginatedLayoutReadyForDisplay(
+    readingMode: ReaderReadingMode,
+    measuredPagesApplied: Boolean
+): Boolean {
+    return readingMode != ReaderReadingMode.PAGINATED || measuredPagesApplied
 }
 
 internal fun desktopPagesWithMeasuredChapter(

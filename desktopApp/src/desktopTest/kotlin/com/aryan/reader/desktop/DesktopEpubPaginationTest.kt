@@ -44,6 +44,28 @@ class DesktopEpubPaginationTest {
     }
 
     @Test
+    fun `paginated display waits for completed measured pages`() {
+        assertFalse(
+            desktopPaginatedLayoutReadyForDisplay(
+                readingMode = ReaderReadingMode.PAGINATED,
+                measuredPagesApplied = false
+            )
+        )
+        assertTrue(
+            desktopPaginatedLayoutReadyForDisplay(
+                readingMode = ReaderReadingMode.PAGINATED,
+                measuredPagesApplied = true
+            )
+        )
+        assertTrue(
+            desktopPaginatedLayoutReadyForDisplay(
+                readingMode = ReaderReadingMode.VERTICAL,
+                measuredPagesApplied = false
+            )
+        )
+    }
+
+    @Test
     fun `measured chapter warm start replaces only that chapter and renumbers pages`() {
         val currentPages = listOf(
             readerPage(text = "chapter 0 page", chapterIndex = 0, pageIndex = 0),

@@ -129,4 +129,73 @@ class DesktopStartupTest {
             directory.deleteRecursively()
         }
     }
+
+    @Test
+    fun `desktop account profile freshness uses fetched timestamp`() {
+        val now = 10_000L
+        val ttl = 1_000L
+
+        assertTrue(DesktopAccountProfile(fetchedAtEpochMillis = now - ttl).isFresh(now, ttl))
+        assertTrue(DesktopAccountProfile(fetchedAtEpochMillis = now - 1L).isFresh(now, ttl))
+        assertFalse(DesktopAccountProfile(fetchedAtEpochMillis = now - ttl - 1L).isFresh(now, ttl))
+        assertFalse(DesktopAccountProfile(fetchedAtEpochMillis = now + 1L).isFresh(now, ttl))
+        assertFalse(DesktopAccountProfile(fetchedAtEpochMillis = 0L).isFresh(now, ttl))
+    }
+
+    @Test
+    fun `desktop account profile repository ignores stale startup cache`() {
+        val directory = Files.createTempDirectory("episteme-account-profile-policy-test").toFile()
+        try {
+            val store = DesktopAccountProfileStore(File(directory, "account_profile.properties"))
+            val repository = DesktopAccountProfileRepository(testDesktopCloudConfig(), store)
+            val now = DesktopAccountProfileCacheTtlMillis + 10_000L
+            val freshProfile = DesktopAccountProfile(
+                isProUser = true,
+                credits = 42,
+                fetchedAtEpochMillis = now - DesktopAccountProfileCacheTtlMillis + 1L
+            )
+
+            repository.saveFetchedProfile("user-1", freshProfile)
+            assertEquals(freshProfile, repository.cachedProfile("user-1", now))
+
+            repository.saveFetchedProfile(
+                "user-1",
+                freshProfile.copy(fetchedAtEpochMillis = now - DesktopAccountProfileCacheTtlMillis - 1L)
+            )
+            assertNull(repository.cachedProfile("user-1", now))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `desktop account profile repository clear removes sign out cache`() {
+        val directory = Files.createTempDirectory("episteme-account-profile-clear-test").toFile()
+        try {
+            val store = DesktopAccountProfileStore(File(directory, "account_profile.properties"))
+            val repository = DesktopAccountProfileRepository(testDesktopCloudConfig(), store)
+
+            repository.saveFetchedProfile(
+                "user-1",
+                DesktopAccountProfile(isProUser = true, credits = 42, fetchedAtEpochMillis = 10_000L)
+            )
+            repository.clearCachedProfiles()
+
+            assertNull(repository.cachedProfile("user-1", 10_001L))
+            assertNull(store.load("user-1"))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    private fun testDesktopCloudConfig(): DesktopCloudConfig {
+        return DesktopCloudConfig(
+            aiWorkerUrl = "",
+            ttsWorkerUrl = "",
+            firebaseWebApiKey = "",
+            firebaseProjectId = "reader-test",
+            googleOAuthClientId = "",
+            googleOAuthClientSecret = ""
+        )
+    }
 }

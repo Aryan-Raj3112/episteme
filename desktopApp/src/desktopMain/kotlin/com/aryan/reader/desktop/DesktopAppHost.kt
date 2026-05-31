@@ -499,19 +499,31 @@ internal fun DesktopReaderFullscreenKeyEffect(
 internal fun DesktopReaderKeyDispatcherEffect(
     enabled: Boolean,
     allowChromeModalWindows: Boolean = false,
+    allowPanelModalWindows: Boolean = false,
+    dispatchWhenOwnerWindowActive: Boolean = true,
     onKeyPressed: (AwtKeyEvent) -> Boolean
 ) {
     val currentOnKeyPressed by rememberUpdatedState(onKeyPressed)
-    DisposableEffect(enabled, allowChromeModalWindows) {
+    DisposableEffect(
+        enabled,
+        allowChromeModalWindows,
+        allowPanelModalWindows,
+        dispatchWhenOwnerWindowActive
+    ) {
         if (!enabled) {
             onDispose {}
         } else {
             val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
             val dispatcher = java.awt.KeyEventDispatcher { event ->
-                val modalWindowActive = focusManager.activeWindow?.isDesktopReaderModalWindow(
-                    allowChromeWindows = allowChromeModalWindows
-                ) == true
-                !modalWindowActive && event.id == AwtKeyEvent.KEY_PRESSED && currentOnKeyPressed(event)
+                val keyWindow = focusManager.focusedWindow ?: focusManager.activeWindow
+                val activeReaderModalKind = keyWindow?.desktopReaderModalWindowKind()
+                val activeWindowAllowed = desktopReaderKeyDispatchAllowedForActiveWindowKind(
+                    activeReaderModalKind = activeReaderModalKind,
+                    allowChromeModalWindows = allowChromeModalWindows,
+                    allowPanelModalWindows = allowPanelModalWindows,
+                    dispatchWhenOwnerWindowActive = dispatchWhenOwnerWindowActive
+                )
+                activeWindowAllowed && event.id == AwtKeyEvent.KEY_PRESSED && currentOnKeyPressed(event)
             }
             focusManager.addKeyEventDispatcher(dispatcher)
             onDispose {
@@ -521,23 +533,62 @@ internal fun DesktopReaderKeyDispatcherEffect(
     }
 }
 
-private fun java.awt.Window.isDesktopReaderModalWindow(allowChromeWindows: Boolean): Boolean {
+internal enum class DesktopReaderModalWindowKind {
+    CHROME,
+    PANEL,
+    POPUP
+}
+
+internal fun desktopReaderKeyDispatchAllowedForActiveWindowKind(
+    activeReaderModalKind: DesktopReaderModalWindowKind?,
+    allowChromeModalWindows: Boolean,
+    allowPanelModalWindows: Boolean,
+    dispatchWhenOwnerWindowActive: Boolean
+): Boolean {
+    return when (activeReaderModalKind) {
+        null -> dispatchWhenOwnerWindowActive
+        DesktopReaderModalWindowKind.CHROME -> allowChromeModalWindows
+        DesktopReaderModalWindowKind.PANEL -> allowPanelModalWindows
+        DesktopReaderModalWindowKind.POPUP -> false
+    }
+}
+
+private fun java.awt.Window.desktopReaderModalWindowKind(): DesktopReaderModalWindowKind? {
     val windowTitle = when (this) {
         is java.awt.Dialog -> title
         is Frame -> title
         else -> ""
     }
-    val windowName = name.orEmpty()
-    val isChromeWindow = windowName == "${DesktopReaderModalWindowNamePrefix}ChromeTop" ||
-        windowName == "${DesktopReaderModalWindowNamePrefix}ChromeBottom" ||
-        windowTitle.startsWith("Reader Chrome")
-    if (allowChromeWindows && isChromeWindow) return false
-    return windowName.startsWith(DesktopReaderModalWindowNamePrefix) ||
-        windowTitle.startsWith("Reader Panel") ||
-        windowTitle.startsWith("Reader Popup")
+    return desktopReaderModalWindowKind(
+        windowName = name.orEmpty(),
+        windowTitle = windowTitle
+    )
 }
 
-private const val DesktopReaderModalWindowNamePrefix = "shared-reader-modal:"
+internal fun desktopReaderModalWindowKind(
+    windowName: String,
+    windowTitle: String
+): DesktopReaderModalWindowKind? {
+    return when {
+        windowName == "${DesktopReaderModalWindowNamePrefix}ChromeTop" ||
+            windowName == "${DesktopReaderModalWindowNamePrefix}ChromeBottom" ||
+            windowTitle.startsWith("Reader Chrome") -> DesktopReaderModalWindowKind.CHROME
+
+        windowName == "${DesktopReaderModalWindowNamePrefix}Panel" ||
+            windowName == "${DesktopReaderModalWindowNamePrefix}PanelLeft" ||
+            windowName == "${DesktopReaderModalWindowNamePrefix}PanelRight" ||
+            windowTitle.startsWith("Reader Panel") ||
+            windowTitle.startsWith("Reader Navigation") ||
+            windowTitle.startsWith("Reader Tools") -> DesktopReaderModalWindowKind.PANEL
+
+        windowName.startsWith(DesktopReaderModalWindowNamePrefix) ||
+            windowTitle.startsWith("Reader Popup") -> DesktopReaderModalWindowKind.POPUP
+
+        else -> null
+    }
+}
+
+internal const val DesktopReaderModalWindowNamePrefix = "shared-reader-modal:"
 
 internal data class DesktopWebViewRuntimeState(
     val initialized: Boolean = false,
