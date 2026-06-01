@@ -1,6 +1,7 @@
 import org.gradle.api.GradleException
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.JavaExec
@@ -97,6 +98,41 @@ abstract class GenerateDesktopCloudConfigTask : DefaultTask() {
                 "$key=${value.replace("\\", "\\\\").replace("\n", "")}"
             }
         )
+    }
+}
+
+@DisableCachingByDefault(because = "Verification task has no outputs.")
+abstract class VerifyDesktopNativePackagingTask : DefaultTask() {
+    @get:Input
+    abstract val supportedHost: Property<Boolean>
+
+    @get:Input
+    abstract val hostOsId: Property<String>
+
+    @get:Input
+    abstract val hostArchId: Property<String>
+
+    @get:Input
+    abstract val missingStandardServiceConfig: ListProperty<String>
+
+    @TaskAction
+    fun verify() {
+        if (!supportedHost.get()) {
+            throw GradleException(
+                "Desktop native packaging is currently release-supported only on Windows x64 and Linux x64. " +
+                    "Current host: ${hostOsId.get()} ${hostArchId.get()}."
+            )
+        }
+        val missing = missingStandardServiceConfig.get()
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "Standard desktop packages require account/sync service config. Missing: " +
+                    missing.joinToString(", ") + ". " +
+                    "Set DESKTOP_FIREBASE_WEB_API_KEY and DESKTOP_GOOGLE_OAUTH_CLIENT_ID, " +
+                    "use -PdesktopFlavor=oss for the offline build, or set " +
+                    "-PdesktopAllowUnconfiguredStandardServices=true for a local non-GA package."
+            )
+        }
     }
 }
 
@@ -645,6 +681,13 @@ val prepareDesktopStringResources by tasks.registering(Sync::class) {
     into(generatedDesktopStringResourcesDir)
 }
 
+val verifyDesktopNativePackaging by tasks.registering(VerifyDesktopNativePackagingTask::class) {
+    supportedHost.set(desktopNativePackageSupportedHost)
+    hostOsId.set(desktopOsId(desktopOsName))
+    hostArchId.set(desktopArchId(desktopOsArch))
+    missingStandardServiceConfig.set(desktopMissingStandardServiceConfig)
+}
+
 kotlin {
     jvm("desktop")
     jvmToolchain(21)
@@ -818,23 +861,7 @@ tasks.matching {
         "runReleaseDistributable"
     )
 }.configureEach {
-    doFirst {
-        if (!desktopNativePackageSupportedHost) {
-            throw GradleException(
-                "Desktop native packaging is currently release-supported only on Windows x64 and Linux x64. " +
-                    "Current host: ${desktopOsId(desktopOsName)} ${desktopArchId(desktopOsArch)}."
-            )
-        }
-        if (desktopMissingStandardServiceConfig.isNotEmpty()) {
-            throw GradleException(
-                "Standard desktop packages require account/sync service config. Missing: " +
-                    desktopMissingStandardServiceConfig.joinToString(", ") + ". " +
-                    "Set DESKTOP_FIREBASE_WEB_API_KEY and DESKTOP_GOOGLE_OAUTH_CLIENT_ID, " +
-                    "use -PdesktopFlavor=oss for the offline build, or set " +
-                    "-PdesktopAllowUnconfiguredStandardServices=true for a local non-GA package."
-            )
-        }
-    }
+    dependsOn(verifyDesktopNativePackaging)
     dependsOn(prepareBundledDesktopResources)
     inputs.dir(generatedDesktopResourcesDir)
         .withPropertyName("bundledDesktopResources")

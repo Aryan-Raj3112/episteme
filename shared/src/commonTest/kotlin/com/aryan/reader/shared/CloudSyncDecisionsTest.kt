@@ -81,6 +81,13 @@ class CloudSyncDecisionsTest {
                 remoteContentModifiedTimestamp = 200L
             )
         )
+        assertTrue(
+            shouldDownloadRemoteCloudBookContent(
+                localFileAvailable = false,
+                localContentModifiedTimestamp = 0L,
+                remoteContentModifiedTimestamp = 200L
+            )
+        )
         assertFalse(
             shouldDownloadRemoteCloudBookContent(
                 localFileAvailable = true,
@@ -103,5 +110,13 @@ class CloudSyncDecisionsTest {
                 remoteContentModifiedTimestamp = 200L
             )
         )
+    }
+
+    @Test
+    fun `cloud book content file name uses shared primary extension`() {
+        assertEquals("book-1.epub", sharedCloudBookContentFileName("book-1", FileType.EPUB))
+        assertEquals("book-1.md", sharedCloudBookContentFileName("book-1", FileType.MD))
+        assertEquals("book-1.mobi", sharedCloudBookContentFileName("book-1", FileType.MOBI))
+        assertEquals(null, sharedCloudBookContentFileName("book-1", FileType.UNKNOWN))
     }
 }

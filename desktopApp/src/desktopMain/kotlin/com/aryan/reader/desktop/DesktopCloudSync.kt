@@ -14,6 +14,7 @@ import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.sharedCloudBookMetadataWinner
 import com.aryan.reader.shared.shouldDownloadRemoteCloudBookContent
 import com.aryan.reader.shared.shouldUploadLocalCloudBookContent
+import com.aryan.reader.shared.sharedCloudBookContentFileName
 import com.aryan.reader.shared.toStablePositionCfi
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderBookmark
@@ -37,7 +38,8 @@ internal data class DesktopCloudSyncResult(
     val shelfRefs: List<BookShelfRef>,
     val customFonts: List<CustomFontItem>,
     val uploadedBooks: Int = 0,
-    val downloadedBooks: Int = 0
+    val downloadedBooks: Int = 0,
+    val pendingContentDownloads: Int = 0
 )
 
 internal class DesktopCloudSync(
@@ -53,6 +55,7 @@ internal class DesktopCloudSync(
         var customFonts = input.customFonts
         var uploadedBooks = 0
         var downloadedBooks = 0
+        var pendingContentDownloads = 0
 
         logDesktopCloudSync {
             "desktop.engine.full_sync.start user=${input.userId} device=${input.deviceId} " +
@@ -99,9 +102,17 @@ internal class DesktopCloudSync(
                     }
                     logDesktopCloudSync { "desktop.engine.book_decision action=apply_remote_new ${remote.desktopCloudSyncSummary()}" }
                     val downloaded = downloadRemoteBook(input.driveAccessToken, remote, null, driveFiles)
-                    val remoteBook = downloaded ?: remote.toDesktopBookItem()
+                    if (downloaded == null) {
+                        pendingContentDownloads += 1
+                        logDesktopCloudSync {
+                            "desktop.engine.book_decision action=defer_remote_new_pending_content " +
+                                remote.desktopCloudSyncSummary()
+                        }
+                        return@forEach
+                    }
+                    val remoteBook = downloaded
                     state = state.upsertCloudBook(remoteBook)
-                    if (downloaded != null) downloadedBooks += 1
+                    downloadedBooks += 1
                     importDesktopPdfBookmarksMetadata(remoteBook, remote.bookmarksJson, remote.lastModifiedTimestamp)
                     if (remote.hasAnnotations) {
                         downloadAnnotations(input.driveAccessToken, remoteBook, remote.lastModifiedTimestamp)
@@ -115,6 +126,18 @@ internal class DesktopCloudSync(
                         downloadRemoteBook(input.driveAccessToken, remote, local, driveFiles)
                     } else {
                         null
+                    }
+                    if (shouldDownloadContent && downloaded == null) {
+                        pendingContentDownloads += 1
+                    }
+                    val localContentAvailable = local.path?.let(::File)?.isFile == true
+                    if (shouldDownloadContent && downloaded == null && !localContentAvailable) {
+                        logDesktopCloudSync {
+                            "desktop.engine.book_decision action=defer_existing_pending_content book=$bookId " +
+                                local.desktopCloudSyncSummary() + " " + remote.desktopCloudSyncSummary()
+                        }
+                        state = state.removeCloudBook(bookId)
+                        return@forEach
                     }
                     val localSidecarTimestampBeforeMerge = DesktopCloudSidecarSync.localAnnotationTimestamp(local)
                     val metadataWinner = sharedCloudBookMetadataWinner(
@@ -237,19 +260,45 @@ internal class DesktopCloudSync(
                 val localFile = book.path?.let(::File)
                 when {
                     localFile?.isFile == true && driveFiles[driveName] == null -> {
-                        logDesktopCloudSync { "desktop.engine.content_upload_missing_remote book=${book.id} driveName=$driveName" }
-                        if (driveRepository.uploadFile(input.driveAccessToken, book.id, localFile, book.type) != null) {
-                            uploadedBooks += 1
+                        val remote = remoteBooksMap[book.id]
+                        if (remote == null || shouldUploadLocalBookContent(book, remote)) {
+                            logDesktopCloudSync { "desktop.engine.content_upload_missing_remote book=${book.id} driveName=$driveName" }
+                            uploadBookAndMetadata(
+                                input = input,
+                                book = book,
+                                uploadContent = true,
+                                uploadAnnotations = false,
+                                remoteHasAnnotations = remote?.hasAnnotations == true,
+                                remoteContentModifiedTimestamp = remote?.fileContentModifiedTimestamp
+                            )?.let { synced ->
+                                state = state.upsertCloudBook(synced)
+                                uploadedBooks += 1
+                            }
+                        } else {
+                            pendingContentDownloads += 1
+                            logDesktopCloudSync {
+                                "desktop.engine.content_wait_missing_remote book=${book.id} driveName=$driveName " +
+                                    "localContentTs=${book.fileContentModifiedTimestamp} remoteContentTs=${remote.fileContentModifiedTimestamp}"
+                            }
                         }
                     }
 
                     (localFile == null || !localFile.isFile) && driveFiles[driveName] != null -> {
                         val remote = remoteBooksMap[book.id] ?: return@forEach
                         logDesktopCloudSync { "desktop.engine.content_download_missing_local book=${book.id} driveName=$driveName" }
-                        downloadRemoteBook(input.driveAccessToken, remote, book, driveFiles)?.let { downloaded ->
+                        val downloaded = downloadRemoteBook(input.driveAccessToken, remote, book, driveFiles)
+                        if (downloaded != null) {
                             state = state.upsertCloudBook(downloaded)
                             downloadedBooks += 1
+                        } else {
+                            pendingContentDownloads += 1
                         }
+                    }
+
+                    (localFile == null || !localFile.isFile) && driveFiles[driveName] == null -> {
+                        pendingContentDownloads += 1
+                        logDesktopCloudSync { "desktop.engine.content_wait_missing_remote book=${book.id} driveName=$driveName" }
+                        state = state.removeCloudBook(book.id)
                     }
                 }
             }
@@ -278,7 +327,7 @@ internal class DesktopCloudSync(
 
         logDesktopCloudSync {
             "desktop.engine.full_sync.complete user=${input.userId} uploaded=$uploadedBooks downloaded=$downloadedBooks " +
-                "books=${state.rawLibraryBooks.size}"
+                "pendingContent=$pendingContentDownloads books=${state.rawLibraryBooks.size}"
         }
         return DesktopCloudSyncResult(
             state = state,
@@ -286,7 +335,8 @@ internal class DesktopCloudSync(
             shelfRefs = shelfRefs,
             customFonts = customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() },
             uploadedBooks = uploadedBooks,
-            downloadedBooks = downloadedBooks
+            downloadedBooks = downloadedBooks,
+            pendingContentDownloads = pendingContentDownloads
         )
     }
 
@@ -772,8 +822,7 @@ internal fun CustomFontItem.toDesktopCloudFontMetadata(): DesktopCloudFontMetada
 }
 
 internal fun desktopCloudBookDriveFileName(bookId: String, type: FileType): String? {
-    val extension = SharedFileCapabilities.primaryExtensionFor(type) ?: return null
-    return "$bookId.$extension"
+    return sharedCloudBookContentFileName(bookId, type)
 }
 
 private data class DesktopCloudShelfRecord(

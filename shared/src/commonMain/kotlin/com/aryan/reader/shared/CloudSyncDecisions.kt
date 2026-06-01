@@ -95,3 +95,8 @@ fun shouldUploadLocalCloudBookContent(
         localContentModifiedTimestamp > 0L &&
         localContentModifiedTimestamp > (remoteContentModifiedTimestamp ?: 0L)
 }
+
+fun sharedCloudBookContentFileName(bookId: String, type: FileType): String? {
+    val extension = SharedFileCapabilities.primaryExtensionFor(type) ?: return null
+    return "$bookId.$extension"
+}

@@ -133,6 +133,7 @@ import java.util.concurrent.atomic.AtomicReference
 private const val DesktopReaderCloseDisposeSyncDelayMillis = 350L
 private const val DesktopVerticalInitialPreparedHtmlChapterRadius = 2
 private const val DesktopLibraryOpenPersistDebounceMillis = 300L
+private const val DesktopCloudContentRetryDelayMillis = 10_000L
 private const val DesktopReaderPositionPersistDebounceMillis = 650L
 private const val DesktopProgressEpsilon = 0.001f
 
@@ -387,6 +388,7 @@ internal fun EpistemeDesktopApp(
     var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
     var opdsState by remember { mutableStateOf(opdsController.state) }
     var desktopCloudSyncJob by remember { mutableStateOf<Job?>(null) }
+    var desktopCloudContentRetryJob by remember { mutableStateOf<Job?>(null) }
     var pendingDesktopCloudSyncAfterActive by remember { mutableStateOf(false) }
     val desktopBookCloudSyncJobs = remember { mutableMapOf<String, Job>() }
     val pendingLibraryPersistJob = remember { AtomicReference<Job?>(null) }
@@ -789,6 +791,7 @@ internal fun EpistemeDesktopApp(
         val details = buildList {
             if (result.uploadedBooks > 0) add("Uploaded ${result.uploadedBooks}.")
             if (result.downloadedBooks > 0) add("Downloaded ${result.downloadedBooks}.")
+            if (result.pendingContentDownloads > 0) add("Waiting for ${result.pendingContentDownloads} upload(s) to finish.")
         }
         return if (details.isEmpty()) {
             "Cloud sync complete."
@@ -863,7 +866,20 @@ internal fun EpistemeDesktopApp(
                 }
                 logDesktopCloudSync {
                     "desktop.full_sync.success user=${credentials.userId} uploaded=${result.uploadedBooks} " +
-                        "downloaded=${result.downloadedBooks} books=${result.state.rawLibraryBooks.size}"
+                        "downloaded=${result.downloadedBooks} pendingContent=${result.pendingContentDownloads} " +
+                        "books=${result.state.rawLibraryBooks.size}"
+                }
+                if (result.pendingContentDownloads <= 0) {
+                    desktopCloudContentRetryJob?.cancel()
+                    desktopCloudContentRetryJob = null
+                } else if (desktopCloudContentRetryJob?.isActive != true) {
+                    desktopCloudContentRetryJob = scope.launch {
+                        delay(DesktopCloudContentRetryDelayMillis)
+                        if (state.isSyncEnabled) {
+                            logDesktopCloudSync { "desktop.full_sync.content_retry pending=${result.pendingContentDownloads}" }
+                            syncDesktopCloud(showBanner = false).join()
+                        }
+                    }
                 }
                 customFonts = result.customFonts
                 val syncedState = result.state.copy(

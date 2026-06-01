@@ -114,6 +114,7 @@ import com.aryan.reader.shared.shouldApplyRemoteCloudBookMetadataUpdate
 import com.aryan.reader.shared.shouldDownloadRemoteCloudBookContent
 import com.aryan.reader.shared.shouldUploadLocalCloudBookContent
 import com.aryan.reader.shared.shouldUploadLocalCloudBookMetadataUpdate
+import com.aryan.reader.shared.sharedCloudBookContentFileName
 import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import kotlinx.coroutines.CompletableDeferred
@@ -137,7 +138,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -174,6 +174,7 @@ private data class PendingExternalFileRemoval(
 )
 
 private const val BANNER_AUTO_DISMISS_MILLIS = 3_000L
+private const val CLOUD_CONTENT_RETRY_DELAY_MILLIS = 10_000L
 
 @kotlin.OptIn(ExperimentalSerializationApi::class)
 @UnstableApi
@@ -222,6 +223,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var bannerDismissGeneration = 0L
     private var pendingSwitchDeferred: CompletableDeferred<Boolean>? = null
     private var externalOpenedBookId: String? = null
+    private var cloudContentRetryJob: Job? = null
 
     private var panelDetector: com.aryan.reader.ml.IPanelDetector? = null
     private var speechBubbleDetector: ISpeechBubbleDetector? = null
@@ -2232,8 +2234,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val deviceId = getInstallationId()
                 var bookForMetadata = book
+                var remoteBookLoaded = false
+                var remoteBookForUpload: BookMetadata? = null
+                suspend fun loadRemoteBookForUpload(): BookMetadata? {
+                    if (!remoteBookLoaded) {
+                        remoteBookForUpload = firestoreRepository.getBookMetadata(currentUser.uid, book.bookId)
+                        remoteBookLoaded = true
+                    }
+                    return remoteBookForUpload
+                }
                 if (book.needsRemoteEpubAnnotationMetadataGuard()) {
-                    val remote = firestoreRepository.getBookMetadata(currentUser.uid, book.bookId)
+                    val remote = loadRemoteBookForUpload()
                     val merged = bookForMetadata.mergeRemoteEpubAnnotationMetadata(remote)
                     if (merged != bookForMetadata) {
                         logCloudSyncTrace {
@@ -2244,6 +2255,46 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                         recentFilesRepository.addRecentFile(merged)
                         bookForMetadata = merged
+                    }
+                }
+                val remoteForContent = loadRemoteBookForUpload()?.toRecentFileItem()
+                if (shouldUploadLocalBookContent(bookForMetadata, remoteForContent)) {
+                    val accessToken = googleDriveRepository.getAccessToken(appContext) ?: run {
+                        logCloudSyncTrace { "android.upload.content_guard_skip reason=no_access_token ${bookForMetadata.cloudSyncTraceSummary()}" }
+                        return@launch
+                    }
+                    val source = bookForMetadata.getUri()?.path?.let(::File)
+                    if (source?.exists() != true) {
+                        logCloudSyncTrace {
+                            "android.upload.content_guard_skip reason=file_missing book=${bookForMetadata.bookId} " +
+                                "path=${(source?.absolutePath).cloudSyncPreview()}"
+                        }
+                        return@launch
+                    }
+                    logCloudSyncTrace {
+                        "android.upload.content_guard_start book=${bookForMetadata.bookId} " +
+                            "localContentTs=${bookForMetadata.fileContentModifiedTimestamp} " +
+                            "remoteContentTs=${remoteForContent?.fileContentModifiedTimestamp ?: 0L}"
+                    }
+                    val uploadedFile = googleDriveRepository.uploadFile(
+                        accessToken,
+                        bookForMetadata.bookId,
+                        source,
+                        bookForMetadata.type
+                    )
+                    if (uploadedFile == null) {
+                        logCloudSyncTrace { "android.upload.content_guard_failed book=${bookForMetadata.bookId}" }
+                        return@launch
+                    }
+                    val contentTimestamp = bookForMetadata.fileContentModifiedTimestamp.takeIf { it > 0L }
+                        ?: source.lastModified()
+                    bookForMetadata = bookForMetadata.copy(
+                        fileSize = source.length(),
+                        fileContentModifiedTimestamp = contentTimestamp
+                    )
+                    logCloudSyncTrace {
+                        "android.upload.content_guard_success book=${bookForMetadata.bookId} " +
+                            "driveId=${uploadedFile.id} contentTs=$contentTimestamp"
                     }
                 }
                 logCloudSyncTrace { "android.upload.start device=$deviceId ${bookForMetadata.cloudSyncTraceSummary()}" }
@@ -2953,8 +3004,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         it.name
                     }
 
-                val fileExtension = item.type.name.lowercase()
-                val fileName = "${item.bookId}.$fileExtension"
+                val fileName = sharedCloudBookContentFileName(item.bookId, item.type)
+                    ?: throw Exception("Unsupported cloud file type: ${item.type}")
                 val driveFileId = remoteFiles[fileName]?.id
 
                 if (driveFileId != null) {
@@ -2964,6 +3015,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             accessToken, driveFileId, destinationFile
                         )
                     ) {
+                        if (item.fileContentModifiedTimestamp > 0L) {
+                            destinationFile.setLastModified(item.fileContentModifiedTimestamp)
+                        }
                         addFileToRecent(
                             destinationFile.toUri(),
                             item.type,
@@ -3222,31 +3276,38 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun shouldDownloadRemoteBookContent(local: RecentFileItem, remote: RecentFileItem): Boolean {
+        val localFile = local.getUri()?.path?.let(::File)
+        val localContentTimestamp = local.fileContentModifiedTimestamp.takeIf { it > 0L }
+            ?: localFile?.takeIf { it.isFile }?.lastModified()
+            ?: 0L
         return local.sourceFolderUri == null &&
             !local.isDeleted &&
-            local.type == FileType.EPUB &&
-            remote.type == FileType.EPUB &&
+            local.type == remote.type &&
+            sharedCloudBookContentFileName(local.bookId, local.type) != null &&
             shouldDownloadRemoteCloudBookContent(
-                localFileAvailable = local.isAvailable,
-                localContentModifiedTimestamp = local.fileContentModifiedTimestamp,
+                localFileAvailable = local.isAvailable && localFile?.isFile != false,
+                localContentModifiedTimestamp = localContentTimestamp,
                 remoteContentModifiedTimestamp = remote.fileContentModifiedTimestamp,
                 remoteDeleted = remote.isDeleted
             )
     }
 
     private fun shouldUploadLocalBookContent(local: RecentFileItem, remote: RecentFileItem?): Boolean {
+        val localFile = local.getUri()?.path?.let(::File)
+        val localContentTimestamp = local.fileContentModifiedTimestamp.takeIf { it > 0L }
+            ?: localFile?.takeIf { it.isFile }?.lastModified()
+            ?: 0L
         return local.sourceFolderUri == null &&
-            local.type == FileType.EPUB &&
+            sharedCloudBookContentFileName(local.bookId, local.type) != null &&
             shouldUploadLocalCloudBookContent(
-                localFileAvailable = local.isAvailable,
-                localContentModifiedTimestamp = local.fileContentModifiedTimestamp,
+                localFileAvailable = local.isAvailable && localFile?.isFile == true,
+                localContentModifiedTimestamp = localContentTimestamp,
                 remoteContentModifiedTimestamp = remote?.fileContentModifiedTimestamp
             )
     }
 
     private suspend fun downloadCloudBookFile(accessToken: String, remote: RecentFileItem): Boolean {
-        val fileExtension = remote.type.name.lowercase()
-        val fileName = "${remote.bookId}.$fileExtension"
+        val fileName = sharedCloudBookContentFileName(remote.bookId, remote.type) ?: return false
         val driveFileId = googleDriveRepository.getFiles(accessToken)
             ?.files
             .orEmpty()
@@ -3273,6 +3334,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             sourceFolderUri = null
         )
         return true
+    }
+
+    private fun scheduleCloudContentRetry(bookIds: Set<String>) {
+        if (bookIds.isEmpty() || cloudContentRetryJob?.isActive == true) return
+        cloudContentRetryJob = viewModelScope.launch {
+            delay(CLOUD_CONTENT_RETRY_DELAY_MILLIS)
+            if (uiState.value.isSyncEnabled) {
+                logCloudSyncTrace { "android.full_sync.content_retry books=${bookIds.joinToString()}" }
+                syncWithCloud(showBanner = false).join()
+            }
+        }
     }
 
     fun setFolderSyncEnabled(enabled: Boolean) {
@@ -3359,6 +3431,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             val localBooksMap = localBooks.associateBy { it.bookId }
             val remoteBooksMap = remoteBooks.associateBy { it.bookId }
             val allBookIds = (localBooksMap.keys + remoteBooksMap.keys).distinct()
+            val pendingContentDownloads = mutableSetOf<String>()
 
             allBookIds.forEach { bookId ->
                 val local = localBooksMap[bookId]
@@ -3485,6 +3558,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         logCloudSyncTrace {
                             "android.full_sync.content_decision book=$bookId shouldDownload=$shouldDownloadContent " +
                                 "downloaded=$downloadedRemoteContent localSidecarTs=$fileLastModified"
+                        }
+                        if (shouldDownloadContent && !downloadedRemoteContent) {
+                            pendingContentDownloads += bookId
                         }
 
                         if (shouldUploadLocalCloudBookMetadataUpdate(
@@ -3645,12 +3721,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 googleDriveRepository.getFiles(accessToken)?.files.orEmpty().associateBy { it.name }
             }
 
-            val downloadJobs = mutableListOf<Job>()
-
             finalMergedBooks.forEach { book ->
                 if (book.sourceFolderUri != null) return@forEach
-                val fileExtension = book.type.name.lowercase()
-                val fileName = "${book.bookId}.$fileExtension"
+                val fileName = sharedCloudBookContentFileName(book.bookId, book.type) ?: return@forEach
                 if (book.isDeleted) {
                     remoteFiles[fileName]?.id?.let { fileId ->
                         Timber.d("Deleting from Drive: $fileName")
@@ -3662,22 +3735,59 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     book.isAvailable &&
                     !remoteFiles.containsKey(fileName)
                 ) {
-                    book.getUri()?.path?.let { path ->
-                        val file = File(path)
-                        if (file.exists()) {
-                            Timber.d("Uploading book: ${book.displayName}")
-                            googleDriveRepository.uploadFile(
-                                accessToken, book.bookId, file, book.type
-                            )
+                    val remoteItem = remoteBooksMap[book.bookId]?.toRecentFileItem()
+                    if (remoteItem == null || shouldUploadLocalBookContent(book, remoteItem)) {
+                        book.getUri()?.path?.let { path ->
+                            val file = File(path)
+                            if (file.exists()) {
+                                Timber.d("Uploading book: ${book.displayName}")
+                                val uploadedFile = googleDriveRepository.uploadFile(
+                                    accessToken, book.bookId, file, book.type
+                                )
+                                if (uploadedFile != null) {
+                                    val contentTimestamp = book.fileContentModifiedTimestamp.takeIf { it > 0L }
+                                        ?: file.lastModified()
+                                    uploadSingleBookMetadata(
+                                        book.copy(
+                                            fileSize = file.length(),
+                                            fileContentModifiedTimestamp = contentTimestamp
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        pendingContentDownloads += book.bookId
+                        logCloudSyncTrace {
+                            "android.full_sync.content_wait_missing_remote book=${book.bookId} " +
+                                "file=$fileName localContentTs=${book.fileContentModifiedTimestamp} " +
+                                "remoteContentTs=${remoteItem.fileContentModifiedTimestamp}"
                         }
                     }
                 } else if (!book.isAvailable && remoteFiles.containsKey(fileName)) {
                     Timber.d("Sync: Triggering auto-download for ${book.displayName}")
-                    downloadJobs.add(downloadBook(book))
+                    val remoteItem = remoteBooksMap[book.bookId]
+                        ?.toRecentFileItem()
+                        ?.copy(displayName = book.displayName)
+                        ?: book
+                    val downloaded = downloadCloudBookFile(accessToken, remoteItem)
+                    if (!downloaded) {
+                        pendingContentDownloads += book.bookId
+                    }
+                } else if (!book.isAvailable) {
+                    pendingContentDownloads += book.bookId
                 }
             }
 
-            downloadJobs.joinAll()
+            if (pendingContentDownloads.isNotEmpty()) {
+                logCloudSyncTrace {
+                    "android.full_sync.content_pending books=${pendingContentDownloads.joinToString()}"
+                }
+                scheduleCloudContentRetry(pendingContentDownloads)
+            } else {
+                cloudContentRetryJob?.cancel()
+                cloudContentRetryJob = null
+            }
             syncFonts(currentUser.uid)
 
             logCloudSyncTrace { "android.full_sync.complete user=${currentUser.uid}" }
@@ -5846,12 +5956,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                         deviceId
                                     )
 
-                                    val fileExtension = item.type.name.lowercase()
-                                    val fileName = "${item.bookId}.$fileExtension"
-                                    remoteFiles[fileName]?.id?.let { fileId ->
-                                        Timber.d("Deleting from Drive: $fileName")
-                                        googleDriveRepository.deleteDriveFile(accessToken, fileId)
-                                    }
+                                    sharedCloudBookContentFileName(item.bookId, item.type)
+                                        ?.let { fileName ->
+                                            remoteFiles[fileName]?.id?.let { fileId ->
+                                                Timber.d("Deleting from Drive: $fileName")
+                                                googleDriveRepository.deleteDriveFile(accessToken, fileId)
+                                            }
+                                        }
 
                                     recentFilesRepository.deleteFilePermanently(listOf(item.bookId))
                                 }

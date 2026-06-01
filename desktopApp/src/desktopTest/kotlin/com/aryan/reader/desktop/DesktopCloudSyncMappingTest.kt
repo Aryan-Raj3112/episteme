@@ -115,6 +115,14 @@ class DesktopCloudSyncMappingTest {
     }
 
     @Test
+    fun `desktop drive file names use shared cloud content extension`() {
+        assertEquals("book-1.epub", desktopCloudBookDriveFileName("book-1", FileType.EPUB))
+        assertEquals("book-1.md", desktopCloudBookDriveFileName("book-1", FileType.MD))
+        assertEquals("book-1.mobi", desktopCloudBookDriveFileName("book-1", FileType.MOBI))
+        assertNull(desktopCloudBookDriveFileName("book-1", FileType.UNKNOWN))
+    }
+
+    @Test
     fun `empty epub annotations upload as empty arrays`() {
         val book = BookItem(
             id = "book-1",

@@ -4,6 +4,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.SharedLibraryStateProjector
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.ui.toNonReaderLibraryOrganizationModel
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -85,6 +86,7 @@ class DesktopPdfReflowTest {
         assertEquals(listOf(source.id), projected.libraryBooks.map { it.id })
         assertTrue(projected.rawLibraryBooks.any { it.id == reflow.id })
         assertTrue(projected.recentBooks.none { it.id == reflow.id })
+        assertEquals(1, projected.toNonReaderLibraryOrganizationModel().allBooksCount)
         assertEquals(listOf(reflow.id), projected.openTabIds)
         assertEquals(reflow.id, projected.activeTabBookId)
     }

@@ -299,7 +299,7 @@ internal fun nonReaderLibraryFileTypeGroups(
 }
 
 fun SharedReaderScreenState.toNonReaderLibraryOrganizationModel(): NonReaderLibraryOrganizationModel {
-    val books = rawLibraryBooks
+    val books = organizationBooks()
     val rootFolderCount = shelves.count { it.type == ShelfType.FOLDER && it.parentShelfId == null }
     val tagIds = (allTags.map { it.id } + books.flatMap { book -> book.tags.map { it.id } }).toSet()
     return NonReaderLibraryOrganizationModel(
@@ -320,6 +320,13 @@ fun SharedReaderScreenState.toNonReaderLibraryOrganizationModel(): NonReaderLibr
         hasInAppBooks = books.any { it.sourceFolder == null && !it.isOpdsStream() },
         hasOpdsStreams = books.any { it.isOpdsStream() }
     )
+}
+
+private fun SharedReaderScreenState.organizationBooks(): List<BookItem> {
+    if (shelves.isEmpty()) return rawLibraryBooks
+    return shelves
+        .flatMap { it.books }
+        .distinctBy { it.id }
 }
 
 private fun LibraryFilters.activeFilterCount(): Int {

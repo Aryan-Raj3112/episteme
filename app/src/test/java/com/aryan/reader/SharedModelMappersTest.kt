@@ -3,6 +3,8 @@ package com.aryan.reader
 import com.aryan.reader.data.BookTagCrossRef
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
+import com.aryan.reader.data.toBookMetadata
+import com.aryan.reader.data.toRecentFileItem
 import com.aryan.reader.shared.ReaderFeatureSurface
 import com.aryan.reader.shared.FileType as SharedFileType
 import com.aryan.reader.shared.SharedReaderScreenState
@@ -70,6 +72,22 @@ class SharedModelMappersTest {
         assertEquals(original.lastPositionCfi, mapped.lastPositionCfi)
         assertEquals(original.locatorBlockIndex, mapped.locatorBlockIndex)
         assertEquals(original.locatorCharOffset, mapped.locatorCharOffset)
+    }
+
+    @Test
+    fun `android cloud metadata preserves file content timestamp`() {
+        val original = recentFile(
+            id = "book",
+            type = FileType.EPUB,
+            fileContentModifiedTimestamp = 1_500L
+        )
+
+        val metadata = original.toBookMetadata()
+        val restored = metadata.toRecentFileItem()
+
+        assertEquals(1_500L, metadata.fileContentModifiedTimestamp)
+        assertEquals(1_500L, restored.fileContentModifiedTimestamp)
+        assertFalse(restored.isAvailable)
     }
 
     @Test
@@ -220,6 +238,7 @@ class SharedModelMappersTest {
         lastPositionCfi: String? = null,
         locatorBlockIndex: Int? = null,
         locatorCharOffset: Int? = null,
+        fileContentModifiedTimestamp: Long = 0L,
         tags: List<TagEntity> = emptyList()
     ) = RecentFileItem(
         bookId = id,
@@ -236,6 +255,7 @@ class SharedModelMappersTest {
         lastPositionCfi = lastPositionCfi,
         locatorBlockIndex = locatorBlockIndex,
         locatorCharOffset = locatorCharOffset,
+        fileContentModifiedTimestamp = fileContentModifiedTimestamp,
         tags = tags
     )
 
