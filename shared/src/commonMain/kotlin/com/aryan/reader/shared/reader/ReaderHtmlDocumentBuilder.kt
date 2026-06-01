@@ -201,7 +201,7 @@ object ReaderHtmlDocumentBuilder {
     }
 
     fun highlightPaletteUpdateScript(highlightPalette: ReaderHighlightPalette): String {
-        val highlightButtons = highlightPalette.toSelectionColorButtons()
+        val highlightButtons = highlightPalette.toSelectionPaletteButtons()
         return """
             (function () {
               var container = document.querySelector('#reader-selection-menu .reader-selection-colors');
@@ -269,7 +269,7 @@ object ReaderHtmlDocumentBuilder {
         val align = settings.readerTextAlignCss()
         val customFontCss = settings.readerCustomFontFaceCss()
         val family = settings.readerFontFamilyCss()
-        val highlightButtons = highlightPalette.toSelectionColorButtons()
+        val highlightButtons = highlightPalette.toSelectionPaletteButtons()
         val defineButton = if (readerAiFeaturesEnabled) {
             readerSelectionActionButton("define", "Define", ReaderSelectionIconDefinePath)
         } else {
@@ -632,13 +632,21 @@ object ReaderHtmlDocumentBuilder {
                   overflow-x: auto;
                 }
                 #reader-selection-menu .reader-selection-color {
-                  width: 24px;
-                  height: 24px;
+                  width: 28px;
+                  height: 28px;
                   flex: 0 0 auto;
                   padding: 0;
                   border-radius: 999px;
                   background: var(--selection-color);
                   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--reader-fg) 18%, transparent);
+                }
+                #reader-selection-menu .reader-selection-spectrum {
+                  width: 28px;
+                  height: 28px;
+                  flex: 0 0 auto;
+                  padding: 0;
+                  border-radius: 999px;
+                  background: conic-gradient(#f44336, #ff7f00, #ffeb3b, #4caf50, #2196f3, #4b0082, #8b00ff, #f44336);
                 }
                 #reader-selection-menu .reader-selection-actions {
                   display: grid;
@@ -647,16 +655,21 @@ object ReaderHtmlDocumentBuilder {
                   padding: 5px 6px 2px;
                 }
                 #reader-selection-menu .reader-selection-action {
-                  min-height: 52px;
+                  min-height: 56px;
                   border-radius: 10px;
                   display: flex;
                   flex-direction: column;
                   align-items: center;
                   justify-content: center;
                   gap: 4px;
-                  padding: 6px 4px;
-                  line-height: 1;
+                  padding: 6px 4px 7px;
+                  line-height: 1.15;
                   white-space: nowrap;
+                }
+                #reader-selection-menu .reader-selection-action span:last-child {
+                  display: block;
+                  line-height: 1.2;
+                  padding-bottom: 1px;
                 }
                 #reader-selection-menu .reader-selection-icon {
                   display: grid;
@@ -3773,6 +3786,7 @@ object ReaderHtmlDocumentBuilder {
                     }
                     if (action === 'copy') copyText(text);
                     if (action === 'highlight') highlightRange(target.getAttribute('data-color-id') || 'yellow');
+                    if (action === 'palette') sendSelectionAction('palette', text);
                     if (action === 'define') sendSelectionAction('define', text);
                     if (action === 'speak') sendSelectionAction('speak', text);
                     if (action === 'web-search') sendSelectionAction('web-search', text);
@@ -5123,6 +5137,13 @@ object ReaderHtmlDocumentBuilder {
         return sanitized().colors.joinToString("\n") { color ->
             """<button type="button" class="reader-selection-color" data-action="highlight" data-color-id="${color.id}" title="Highlight ${color.id.escapeHtml()}" style="--selection-color:${color.color.toCssHex()}"><span></span></button>"""
         }
+    }
+
+    private fun ReaderHighlightPalette.toSelectionPaletteButtons(): String {
+        return listOf(
+            toSelectionColorButtons(),
+            """<button type="button" class="reader-selection-spectrum" data-action="palette" title="Customize highlight palette" aria-label="Customize highlight palette"><span></span></button>"""
+        ).joinToString("\n")
     }
 
     private fun readerSelectionSvg(pathData: String): String {

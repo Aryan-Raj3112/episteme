@@ -526,6 +526,7 @@ internal fun DesktopReaderScreen(
                 if (settings.isCloudTtsAvailable) onCloudTtsToggle(text, locator)
             }
             DesktopReaderSelectionAction.SEARCH -> onExternalLookup(ReaderExternalLookupAction.SEARCH, text)
+            DesktopReaderSelectionAction.PALETTE -> Unit
         }
     }
     val nativeSelectionActions = buildSet {
@@ -629,7 +630,7 @@ internal fun DesktopReaderScreen(
         bottomChromeExtraContent = bottomChromeExtraContent,
         useDetachedChromeLayer = useDetachedChromeLayer,
         useDetachedPanelLayer = useDetachedPanelLayer
-    ) { renderPlan, onVisiblePageChanged, onHighlightSelected, onChromeActivity ->
+    ) { renderPlan, onVisiblePageChanged, onHighlightSelected, onOpenHighlightPaletteManager, onChromeActivity ->
         val renderPlanModeKey = renderPlan.desktopReaderSurfaceModeKey()
         val readerSurfaceKey = renderPlan.desktopReaderSurfaceContentKey(paginatedLayoutReady)
         val readerModeSwitchLayoutModifier =
@@ -815,7 +816,11 @@ internal fun DesktopReaderScreen(
                                     }
                                 },
                                 onSelectionAction = { payload ->
-                                    handleDesktopSelectionAction(payload.action, payload.text, payload.locator)
+                                    if (payload.action == DesktopReaderSelectionAction.PALETTE) {
+                                        onOpenHighlightPaletteManager()
+                                    } else {
+                                        handleDesktopSelectionAction(payload.action, payload.text, payload.locator)
+                                    }
                                 },
                                 onLinkClicked = handleDesktopEpubLinkClicked,
                                 onVisiblePageChanged = onVisiblePageChanged,
@@ -864,6 +869,7 @@ internal fun DesktopReaderScreen(
                                 enabledSelectionActions = nativeSelectionActions,
                                 onCopyText = { text -> clipboardManager.setText(AnnotatedString(text)) },
                                 onSelectionAction = handleNativeSelectionAction,
+                                onOpenHighlightPaletteManager = onOpenHighlightPaletteManager,
                                 onHighlightCreated = { highlight ->
                                     logDesktopHighlightMap(
                                         "native_state_reduce_start id=${highlight.id.logPreview(80)} before=${session.highlights.size} " +

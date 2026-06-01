@@ -90,6 +90,19 @@ class DesktopEpubBridgeParsingTest {
     }
 
     @Test
+    fun `selection action bridge parses highlight palette manager action`() {
+        val payload = """
+            {
+              "action": "palette",
+              "text": "selected text"
+            }
+        """.trimIndent().readerSelectionActionOrNull()
+
+        assertEquals(DesktopReaderSelectionAction.PALETTE, payload?.action)
+        assertEquals("selected text", payload?.text)
+    }
+
+    @Test
     fun `desktop epub chrome tap script keeps click fallback for pointer-capable webviews`() {
         assertTrue(DesktopEpubKeyNavigationScript.contains("var lastChromeTapNotifiedAt = 0;"))
         assertTrue(DesktopEpubKeyNavigationScript.contains("function maybeNotifyChromeTapFromClick(event)"))

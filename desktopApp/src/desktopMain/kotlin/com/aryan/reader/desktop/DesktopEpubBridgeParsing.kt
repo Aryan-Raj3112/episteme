@@ -47,7 +47,8 @@ internal data class DesktopEpubHandledLink(
 internal enum class DesktopReaderSelectionAction {
     DEFINE,
     SPEAK,
-    SEARCH
+    SEARCH,
+    PALETTE
 }
 
 internal enum class DesktopReaderKeyNavigation {
@@ -141,6 +142,7 @@ internal fun String.readerSelectionActionOrNull(): DesktopReaderSelectionActionP
             "define" -> DesktopReaderSelectionAction.DEFINE
             "speak" -> DesktopReaderSelectionAction.SPEAK
             "web-search", "search" -> DesktopReaderSelectionAction.SEARCH
+            "palette" -> DesktopReaderSelectionAction.PALETTE
             else -> return@runCatching null
         }
         val locator = obj["locator"]

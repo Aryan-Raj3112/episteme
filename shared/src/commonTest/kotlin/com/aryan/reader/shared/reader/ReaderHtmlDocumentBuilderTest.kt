@@ -658,6 +658,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertFalse(html.contains("""data-action="define""""))
         assertFalse(html.contains("""data-action="speak""""))
         assertTrue(html.contains("""data-action="web-search""""))
+        assertTrue(html.contains("""data-action="palette""""))
         assertTrue(html.contains("""aria-label="Search""""))
         assertTrue(html.contains("""<svg viewBox="0 0 960 960""""))
         assertFalse(html.contains("""data-action="dictionary""""))
@@ -685,6 +686,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertFalse(html.contains("""data-action="web-search""""))
         assertFalse(html.contains("""data-action="translate""""))
         assertFalse(html.contains("""data-action="find""""))
+        assertTrue(html.contains("""data-action="palette""""))
         assertTrue(html.contains("""data-action="copy""""))
         assertTrue(html.contains("""data-action="clear""""))
     }
@@ -748,6 +750,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var actionSegments = selectionSegmentsForRange(actionRange);"))
         assertTrue(html.contains("payload.locator = {"))
         assertTrue(html.contains("window.kmpJsBridge.callNative('readerSelectionAction', JSON.stringify(payload));"))
+        assertTrue(html.contains("sendSelectionAction('palette', text)"))
         assertTrue(html.contains("bridge_send_success attempt="))
         assertTrue(html.contains("<p><span>Alpha beta</span></p><p><span>Gamma delta</span></p>"))
     }
@@ -806,6 +809,8 @@ class ReaderHtmlDocumentBuilderTest {
         assertEquals(4, Regex("""class="reader-selection-color"""").findAll(html).count())
         assertTrue(html.contains("""data-color-id="cyan""""))
         assertTrue(html.contains("""data-color-id="pink""""))
+        assertTrue(html.contains("""class="reader-selection-spectrum""""))
+        assertTrue(html.contains("""data-action="palette""""))
     }
 
     @Test
@@ -824,6 +829,8 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(script.contains("reader-selection-colors"))
         assertTrue(script.contains("""data-color-id=\"cyan\""""))
         assertTrue(script.contains("""data-color-id=\"pink\""""))
+        assertTrue(script.contains("""reader-selection-spectrum"""))
+        assertTrue(script.contains("""data-action=\"palette\""""))
         assertFalse(script.contains("location.reload"))
     }
 

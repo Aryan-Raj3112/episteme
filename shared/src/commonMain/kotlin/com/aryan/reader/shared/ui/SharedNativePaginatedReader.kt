@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.isSpecified
@@ -230,6 +231,7 @@ fun SharedNativePaginatedReader(
     enabledSelectionActions: Set<SharedNativeReaderSelectionAction> = emptySet(),
     onCopyText: (String) -> Unit = {},
     onSelectionAction: (SharedNativeReaderSelectionAction, String, ReaderLocator?) -> Unit = { _, _, _ -> },
+    onOpenHighlightPaletteManager: () -> Unit = {},
     onHighlightCreated: (UserHighlight) -> Unit = {},
     onHighlightSelected: (String) -> Unit = {},
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
@@ -408,6 +410,7 @@ fun SharedNativePaginatedReader(
                         onHighlightCreated(highlight)
                         updateActiveSelection(null)
                     },
+                    onOpenHighlightPaletteManager = onOpenHighlightPaletteManager,
                     onDismiss = { updateActiveSelection(null) },
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -694,6 +697,7 @@ private fun SharedNativeSelectionMenu(
     onCopy: () -> Unit,
     onSelectionAction: (SharedNativeReaderSelectionAction) -> Unit,
     onHighlight: (HighlightColor) -> Unit,
+    onOpenHighlightPaletteManager: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -752,13 +756,14 @@ private fun SharedNativeSelectionMenu(
                     modifier = Modifier
                         .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 10.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     highlightPalette.forEach { color ->
                         Box(
                             modifier = Modifier
-                                .size(24.dp)
+                                .padding(horizontal = 4.dp)
+                                .size(28.dp)
                                 .clip(CircleShape)
                                 .background(color.color)
                                 .border(
@@ -769,6 +774,11 @@ private fun SharedNativeSelectionMenu(
                                 .clickable { onHighlight(color) }
                         )
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    SharedNativeSelectionPaletteButton(
+                        onClick = onOpenHighlightPaletteManager,
+                        modifier = Modifier.size(28.dp)
+                    )
                 }
                 HorizontalDivider(color = foreground.copy(alpha = 0.12f))
             }
@@ -804,6 +814,30 @@ private data class SharedNativeSelectionMenuAction(
 )
 
 @Composable
+private fun SharedNativeSelectionPaletteButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val rainbowColors = listOf(
+        Color.Red,
+        Color(0xFFFF7F00),
+        Color.Yellow,
+        Color.Green,
+        Color.Blue,
+        Color(0xFF4B0082),
+        Color(0xFF8B00FF)
+    )
+    Box(
+        modifier = modifier
+            .background(
+                brush = Brush.sweepGradient(rainbowColors),
+                shape = CircleShape
+            )
+            .clickable(onClick = onClick)
+    )
+}
+
+@Composable
 private fun SharedNativeSelectionIconButton(
     action: SharedNativeSelectionMenuAction,
     iconColor: Color,
@@ -813,12 +847,12 @@ private fun SharedNativeSelectionIconButton(
     Column(
         modifier = Modifier
             .width(70.dp)
-            .height(52.dp)
+            .height(56.dp)
             .clip(RoundedCornerShape(10.dp))
             .clickable { action.onClick() }
             .padding(horizontal = 4.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically)
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)
     ) {
         Box(
             modifier = Modifier
@@ -839,7 +873,7 @@ private fun SharedNativeSelectionIconButton(
             color = foreground,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontSize = 12.sp,
-                lineHeight = 12.sp,
+                lineHeight = 14.sp,
                 fontWeight = FontWeight.SemiBold
             )
         )
@@ -2736,9 +2770,9 @@ private fun sharedNativeSelectionMenuEstimatedHeightPx(
 ): Float {
     val actionRows = ((actionCount.coerceAtLeast(1) + 2) / 3).coerceAtLeast(1)
     return with(density) {
-        val paletteHeight = if (highlightPaletteSize > 0) 41.dp.toPx() else 0f
+        val paletteHeight = if (highlightPaletteSize > 0) 45.dp.toPx() else 0f
         val actionsHeight = 7.dp.toPx() +
-            (actionRows * 52).dp.toPx() +
+            (actionRows * 56).dp.toPx() +
             ((actionRows - 1).coerceAtLeast(0) * 3).dp.toPx()
         paletteHeight + actionsHeight
     }
