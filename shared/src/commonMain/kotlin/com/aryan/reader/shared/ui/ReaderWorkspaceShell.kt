@@ -84,6 +84,8 @@ import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
+private const val ReaderChromeTapLogTag = "EpistemePdfChromeTap"
+
 @Composable
 fun ReaderWorkspaceShell(
     model: ReaderWorkspaceModel,
@@ -109,6 +111,7 @@ fun ReaderWorkspaceShell(
     useDetachedChromeLayer: Boolean = true,
     useDetachedPanelLayer: Boolean = true,
     contentHandlesChromeTap: Boolean = false,
+    closeRightPanelOnReaderTap: Boolean = false,
     onReaderFocusRestoreRequest: () -> Unit = {},
     leftSidebar: @Composable (closePanel: () -> Unit) -> Unit,
     rightInspector: @Composable () -> Unit,
@@ -128,11 +131,41 @@ fun ReaderWorkspaceShell(
     var chromeHoverSources by remember(model.kind) { mutableStateOf(emptySet<ReaderChromeHoverSource>()) }
 
     fun toggleChromeFromReaderTap() {
-        chromeVisible = readerWorkspaceChromeVisibleAfterReaderTap(
+        val previousChromeVisible = chromeVisible
+        val previousRightPanelOpen = rightPanelOpen
+        val shouldCloseRightPanel = readerWorkspaceShouldCloseRightPanelAfterReaderTap(
+            rightPanelOpen = rightPanelOpen,
+            hasInspectorSections = model.inspectorSections.isNotEmpty(),
+            closeRightPanelOnReaderTap = closeRightPanelOnReaderTap
+        )
+        val shouldRestoreFocus = readerWorkspaceShouldRestoreFocusAfterPanelClose(
+            closingPanelOpen = shouldCloseRightPanel,
+            otherPanelOpen = leftPanelOpen
+        )
+        val nextChromeVisible = readerWorkspaceChromeVisibleAfterReaderTap(
             requestedVisible = chromeVisible,
             lockedVisible = topSearchBar != null,
-            forcedVisible = model.chrome.forceVisible
+            forcedVisible = model.chrome.forceVisible,
+            rightPanelClosedByTap = shouldCloseRightPanel
         )
+        logReaderChromeTap {
+            "shell_toggle_request kind=${model.kind} chromeBefore=$previousChromeVisible " +
+                "rightPanelBefore=$previousRightPanelOpen leftPanelOpen=$leftPanelOpen " +
+                "topSearchActive=${topSearchBar != null} forced=${model.chrome.forceVisible} " +
+                "inspectorSections=${model.inspectorSections.size} closeRightPanelOnReaderTap=$closeRightPanelOnReaderTap " +
+                "shouldCloseRightPanel=$shouldCloseRightPanel nextChrome=$nextChromeVisible"
+        }
+        chromeVisible = nextChromeVisible
+        if (shouldCloseRightPanel) {
+            rightPanelOpen = false
+            if (shouldRestoreFocus) {
+                onReaderFocusRestoreRequest()
+            }
+        }
+        logReaderChromeTap {
+            "shell_toggle_result kind=${model.kind} chromeAfter=$chromeVisible " +
+                "rightPanelAfter=$rightPanelOpen restoredFocus=${shouldCloseRightPanel && shouldRestoreFocus}"
+        }
     }
 
     fun updateChromeHovered(source: ReaderChromeHoverSource, hovered: Boolean) {
@@ -156,6 +189,13 @@ fun ReaderWorkspaceShell(
             fullscreenBannerVisible = false
         } else {
             fullscreenBannerVisible = false
+        }
+    }
+
+    LaunchedEffect(model.kind, contentHandlesChromeTap, closeRightPanelOnReaderTap) {
+        logReaderChromeTap {
+            "shell_config kind=${model.kind} contentHandlesChromeTap=$contentHandlesChromeTap " +
+                "closeRightPanelOnReaderTap=$closeRightPanelOnReaderTap inspectorSections=${model.inspectorSections.size}"
         }
     }
 
@@ -207,6 +247,9 @@ fun ReaderWorkspaceShell(
             this@shellConstraints.maxWidth,
             this@shellConstraints.maxHeight,
             wide,
+            showChrome,
+            chromeVisible,
+            model.chrome.forceVisible,
             leftPanelOpen,
             rightPanelOpen,
             showLeftPanel,
@@ -223,6 +266,16 @@ fun ReaderWorkspaceShell(
                     "showTopChrome=$showTopChrome showBottomChrome=$showBottomChrome " +
                     "topSearchBar=$chromeLockedVisible chromeSuppressedByPanel=$chromeSuppressedByPanel"
             )
+            val forceReasonsLabel = model.chrome.forceVisibleReasons.joinToString("|").ifBlank { "none" }
+            val revealReasonsLabel = model.chrome.revealVisibleReasons.joinToString("|").ifBlank { "none" }
+            logReaderChromeTap {
+                "shell_visibility kind=${model.kind} size=${this@shellConstraints.maxWidth}x${this@shellConstraints.maxHeight} " +
+                    "chromeState=$chromeVisible showChrome=$showChrome forced=${model.chrome.forceVisible} " +
+                    "forceReasons=$forceReasonsLabel revealReasons=$revealReasonsLabel " +
+                    "fullscreen=$isFullscreen rightPanelOpen=$rightPanelOpen chromeSuppressedByPanel=$chromeSuppressedByPanel " +
+                    "showTopChrome=$showTopChrome showBottomChrome=$showBottomChrome " +
+                    "topSearchBar=$chromeLockedVisible leftPanelOpen=$leftPanelOpen showLeftPanel=$showLeftPanel"
+            }
         }
         LaunchedEffect(wide, leftPanelOpen, rightPanelOpen) {
             if (!wide && leftPanelOpen && rightPanelOpen) {
@@ -542,15 +595,39 @@ internal fun Modifier.readerChromeTapTogglePointerInput(
             val touchSlop = viewConfiguration.touchSlop
             var moved = false
             var consumed = down.isConsumed
+            var consumedLogged = down.isConsumed
+            logReaderChromeTap {
+                "shell_tap_down x=${start.x} y=${start.y} downConsumed=${down.isConsumed}"
+            }
             while (true) {
                 val event = awaitPointerEvent(PointerEventPass.Final)
-                val change = event.changes.firstOrNull { it.id == pointerId } ?: return@awaitEachGesture
+                val change = event.changes.firstOrNull { it.id == pointerId }
+                    ?: run {
+                        logReaderChromeTap {
+                            "shell_tap_cancel reason=pointer_lost moved=$moved consumed=$consumed"
+                        }
+                        return@awaitEachGesture
+                    }
+                if (!consumedLogged && change.isConsumed) {
+                    consumedLogged = true
+                    logReaderChromeTap {
+                        "shell_tap_consumed x=${change.position.x} y=${change.position.y} eventType=${event.type}"
+                    }
+                }
                 consumed = consumed || change.isConsumed
                 if (!moved && (change.position - start).getDistance() > touchSlop) {
                     moved = true
+                    logReaderChromeTap {
+                        "shell_tap_moved x=${change.position.x} y=${change.position.y} touchSlop=$touchSlop"
+                    }
                 }
                 if (change.changedToUp() || !change.pressed) {
-                    if (!moved && !consumed) {
+                    val willToggle = !moved && !consumed
+                    logReaderChromeTap {
+                        "shell_tap_up x=${change.position.x} y=${change.position.y} " +
+                            "moved=$moved consumed=$consumed willToggle=$willToggle"
+                    }
+                    if (willToggle) {
                         onTap()
                     }
                     return@awaitEachGesture
@@ -558,6 +635,10 @@ internal fun Modifier.readerChromeTapTogglePointerInput(
             }
         }
     }
+}
+
+private fun logReaderChromeTap(message: () -> String) {
+    logSharedReaderDiagnostic(ReaderChromeTapLogTag, message)
 }
 
 private fun Modifier.readerChromeHoverPointerInput(
@@ -854,6 +935,12 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
     onToggleFullscreen: (() -> Unit)?,
     bottomBar: @Composable () -> Unit
 ) {
+    LaunchedEffect(showTopBar, showBottomBar, topSearchBar != null) {
+        logReaderChromeTap {
+            "chrome_overlay_compose showTopBar=$showTopBar showBottomBar=$showBottomBar " +
+                "topSearchBar=${topSearchBar != null}"
+        }
+    }
     if (topSearchBar != null) {
         Box(
             modifier = Modifier
@@ -866,6 +953,9 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
             topSearchBar.invoke()
         }
     } else {
+        LaunchedEffect(showTopBar) {
+            logReaderChromeTap { "chrome_top_visibility visible=$showTopBar" }
+        }
         AnimatedVisibility(
             visible = showTopBar,
             enter = slideInVertically(
@@ -918,6 +1008,9 @@ private fun BoxScope.ReaderWorkspaceChromeOverlay(
                 onToggleFullscreen = onToggleFullscreen
             )
         }
+    }
+    LaunchedEffect(showBottomBar) {
+        logReaderChromeTap { "chrome_bottom_visibility visible=$showBottomBar" }
     }
     AnimatedVisibility(
         visible = showBottomBar,

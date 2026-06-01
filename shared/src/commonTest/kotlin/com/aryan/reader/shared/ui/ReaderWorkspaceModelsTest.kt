@@ -100,6 +100,39 @@ class ReaderWorkspaceModelsTest {
     }
 
     @Test
+    fun `reader tap closes inspector and reveals chrome when panel suppresses bars`() {
+        assertTrue(
+            readerWorkspaceChromeVisibleAfterReaderTap(
+                requestedVisible = false,
+                lockedVisible = false,
+                forcedVisible = false,
+                rightPanelClosedByTap = true
+            )
+        )
+        assertTrue(
+            readerWorkspaceShouldCloseRightPanelAfterReaderTap(
+                rightPanelOpen = true,
+                hasInspectorSections = true,
+                closeRightPanelOnReaderTap = true
+            )
+        )
+        assertFalse(
+            readerWorkspaceShouldCloseRightPanelAfterReaderTap(
+                rightPanelOpen = true,
+                hasInspectorSections = false,
+                closeRightPanelOnReaderTap = true
+            )
+        )
+        assertFalse(
+            readerWorkspaceShouldCloseRightPanelAfterReaderTap(
+                rightPanelOpen = true,
+                hasInspectorSections = true,
+                closeRightPanelOnReaderTap = false
+            )
+        )
+    }
+
+    @Test
     fun `active tts reveals chrome without locking reader tap toggle`() {
         val model = readerWorkspaceChromeModel(
             preferAutoHide = true,

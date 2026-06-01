@@ -66,13 +66,22 @@ internal fun readerWorkspaceChromeVisible(
 internal fun readerWorkspaceChromeVisibleAfterReaderTap(
     requestedVisible: Boolean,
     lockedVisible: Boolean,
-    forcedVisible: Boolean
+    forcedVisible: Boolean,
+    rightPanelClosedByTap: Boolean = false
 ): Boolean {
-    return if (lockedVisible || forcedVisible) {
+    return if (lockedVisible || forcedVisible || rightPanelClosedByTap) {
         true
     } else {
         !requestedVisible
     }
+}
+
+internal fun readerWorkspaceShouldCloseRightPanelAfterReaderTap(
+    rightPanelOpen: Boolean,
+    hasInspectorSections: Boolean,
+    closeRightPanelOnReaderTap: Boolean
+): Boolean {
+    return closeRightPanelOnReaderTap && rightPanelOpen && hasInspectorSections
 }
 
 internal fun readerWorkspaceLeftPanelVisible(

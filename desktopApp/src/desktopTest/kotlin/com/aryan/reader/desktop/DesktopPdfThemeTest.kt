@@ -12,6 +12,7 @@ class DesktopPdfThemeTest {
     fun `desktop pdf defaults to paginated display mode`() {
         assertEquals(PdfDisplayMode.PAGINATION, DesktopDefaultPdfDisplayMode)
         assertEquals(8.dp, DesktopDefaultPdfVerticalPageGap)
+        assertEquals(18.dp, DesktopDefaultPdfSpreadPageGap)
     }
 
     @Test
@@ -48,5 +49,36 @@ class DesktopPdfThemeTest {
                 isPageGapVisible = false
             )
         )
+    }
+
+    @Test
+    fun `pagination viewport uses app theme color outside pages`() {
+        val pageBackground = Color.Black
+        val appBackground = Color(0xFFE2E2E2)
+
+        assertEquals(
+            appBackground,
+            desktopPdfViewportBackgroundColor(
+                displayMode = PdfDisplayMode.PAGINATION,
+                pageBackgroundColor = pageBackground,
+                appBackgroundColor = appBackground,
+                isVerticalPageGapVisible = false
+            )
+        )
+        assertEquals(
+            appBackground,
+            desktopPdfViewportBackgroundColor(
+                displayMode = PdfDisplayMode.PAGINATION,
+                pageBackgroundColor = pageBackground,
+                appBackgroundColor = appBackground,
+                isVerticalPageGapVisible = true
+            )
+        )
+    }
+
+    @Test
+    fun `spread page gap follows pdf page gap visibility setting`() {
+        assertEquals(18.dp, desktopPdfSpreadPageGapDp(isPageGapVisible = true))
+        assertEquals(0.dp, desktopPdfSpreadPageGapDp(isPageGapVisible = false))
     }
 }

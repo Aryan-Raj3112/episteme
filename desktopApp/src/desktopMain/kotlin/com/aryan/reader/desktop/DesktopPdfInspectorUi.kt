@@ -364,7 +364,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                                 title = readerString("visual_options_remove_page_gap", "Remove gap between pages"),
                                 description = readerString(
                                     "desktop_remove_gap_between_pages_desc",
-                                    "Applies to vertical reading mode."
+                                    "Applies to vertical reading and two-page spreads."
                                 ),
                                 checked = !pdfReaderSettings.pdfVerticalPageGapVisible,
                                 onCheckedChange = { removeGap ->

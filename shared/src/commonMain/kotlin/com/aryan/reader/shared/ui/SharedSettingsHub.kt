@@ -573,7 +573,7 @@ private fun SharedSettingsDetailPage(
                         )
                         SharedPdfVisualOptionDefaultsSwitch(
                             title = readerString("visual_options_remove_page_gap", "Remove gap between pages"),
-                            summary = readerString("desktop_remove_gap_between_pages_desc", "Applies to vertical reading mode."),
+                            summary = readerString("desktop_remove_gap_between_pages_desc", "Applies to vertical reading and two-page spreads."),
                             checked = !pdfSettings.pdfVerticalPageGapVisible,
                             onCheckedChange = { removeGap ->
                                 onPdfSettingsChange(pdfSettings.copy(pdfVerticalPageGapVisible = !removeGap))

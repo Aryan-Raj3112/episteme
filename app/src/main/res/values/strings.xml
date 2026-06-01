@@ -1875,7 +1875,7 @@
     <string name="desktop_pro_required_multi_word_dictionary_desc">Multi-word smart dictionary requires Pro. Pro can only be purchased from the Android app, then desktop will use the upgraded account after sign-in.</string>
     <string name="desktop_reader_ai_hidden_desc">Reader AI features are hidden.</string>
     <string name="desktop_ai_not_configured_desc">Desktop AI is not configured for this build.</string>
-    <string name="desktop_remove_gap_between_pages_desc">Applies to vertical reading mode.</string>
+    <string name="desktop_remove_gap_between_pages_desc">Applies to vertical reading and two-page spreads.</string>
     <string name="desktop_round_highlighter">Round highlighter</string>
     <!-- Desktop save result. %1$s = saved file path. Example: "Saved to C:\\Books\\Dracula.pdf". -->
     <string name="desktop_saved_to_path_format">Saved to %1$s</string>

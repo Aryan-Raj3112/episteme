@@ -318,6 +318,16 @@ internal fun DesktopVerticalPdfPage(
                             val event = awaitPointerEvent()
                             val point = event.changes.firstOrNull()?.position ?: continue
                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
+                                if (isTextSelectionMode) {
+                                    logPdfChromeTap {
+                                        "page_press source=vertical_page page=${pageIndex + 1} " +
+                                            "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
+                                            "consumedBefore=${event.changes.any { it.isConsumed }} " +
+                                            "selectionActive=${currentTextSelection != null} " +
+                                            "selectionMenuOpen=${selectionMenuOffset != null} " +
+                                            "selectedTool=$selectedTool richText=$isRichTextMode"
+                                    }
+                                }
                                 val highlightHit = if (selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER) {
                                     currentAnnotations.asReversed().firstOrNull {
                                         it.isDesktopTextSelectionHighlight &&
@@ -328,6 +338,10 @@ internal fun DesktopVerticalPdfPage(
                                     null
                                 }
                                 if (highlightHit != null) {
+                                    logPdfChromeTap {
+                                        "page_press_consume source=vertical_page page=${pageIndex + 1} " +
+                                            "reason=text_selection_highlight annotation=${highlightHit.id}"
+                                    }
                                     onSelectPage(pageIndex)
                                     onAnnotationSelected(highlightHit)
                                     clearInteractionState()
@@ -337,6 +351,10 @@ internal fun DesktopVerticalPdfPage(
                                 if (selectedTool != PdfInkTool.TEXT) {
                                     val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
                                     if (linkTarget != null) {
+                                        logPdfChromeTap {
+                                            "page_press_consume source=vertical_page page=${pageIndex + 1} " +
+                                                "reason=link target=${linkTarget.formatLogTarget()}"
+                                        }
                                         logPdfLink(
                                             "tap_hit mode=vertical page=${pageIndex + 1} " +
                                                 "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
@@ -353,6 +371,10 @@ internal fun DesktopVerticalPdfPage(
                                     it.sharedPdfEmbeddedHitTest(point, pageCanvasSize)
                                 }
                                 if (embeddedHit != null) {
+                                    logPdfChromeTap {
+                                        "page_press_consume source=vertical_page page=${pageIndex + 1} " +
+                                            "reason=embedded_annotation annotation=${embeddedHit.id}"
+                                    }
                                     onSelectPage(pageIndex)
                                     onEmbeddedAnnotationSelected(embeddedHit)
                                     clearInteractionState()
@@ -361,7 +383,16 @@ internal fun DesktopVerticalPdfPage(
                                     currentTextSelection != null &&
                                     selectionMenuOffset == null
                                 ) {
+                                    logPdfChromeTap {
+                                        "page_press_passthrough source=vertical_page page=${pageIndex + 1} " +
+                                            "action=clear_selection consumed=false"
+                                    }
                                     clearSelection()
+                                } else if (isTextSelectionMode) {
+                                    logPdfChromeTap {
+                                        "page_press_passthrough source=vertical_page page=${pageIndex + 1} " +
+                                            "action=none consumed=false"
+                                    }
                                 }
                             } else if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                                 val selection = currentTextSelection
@@ -382,28 +413,34 @@ internal fun DesktopVerticalPdfPage(
                 }
                 .pointerInput(pageIndex, displayPageIsCurrent, pageCanvasSize, isTextSelectionMode, isRichTextMode) {
                     if (!displayPageIsCurrent || isRichTextMode || !isTextSelectionMode) return@pointerInput
-                    detectTapGestures(
-                        onLongPress = { point ->
-                            val selection = document.wordSelectionAt(pageIndex, point, pageCanvasSize)
-                            if (selection != null) {
-                                onSelectPage(pageIndex)
-                                selectionStartIndex = null
-                                selectionEndIndex = null
-                                selectionStartHit = null
-                                selectionEndHit = null
-                                activeSelectionHandle = null
-                                textSelection = selection
-                                selectionMenuOffset = selection.menuAnchor(pageCanvasSize, point)
-                                logPdfSelection(
-                                    "long_press page=${pageIndex + 1} " +
-                                        "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
-                                        "range=${selection.startIndex}..${selection.endIndex} " +
-                                        "chars=${selection.text.length} " +
-                                        "text=\"${selection.text.logPreview()}\""
-                                )
-                            }
+                    detectDesktopPdfTextSelectionLongPress(
+                        source = "vertical_page",
+                        pageIndex = pageIndex
+                    ) { point ->
+                        val selection = document.wordSelectionAt(pageIndex, point, pageCanvasSize)
+                        logPdfChromeTap {
+                            "long_press_selection source=vertical_page page=${pageIndex + 1} " +
+                                "selectionFound=${selection != null} " +
+                                "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()}"
                         }
-                    )
+                        if (selection != null) {
+                            onSelectPage(pageIndex)
+                            selectionStartIndex = null
+                            selectionEndIndex = null
+                            selectionStartHit = null
+                            selectionEndHit = null
+                            activeSelectionHandle = null
+                            textSelection = selection
+                            selectionMenuOffset = selection.menuAnchor(pageCanvasSize, point)
+                            logPdfSelection(
+                                "long_press page=${pageIndex + 1} " +
+                                    "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
+                                    "range=${selection.startIndex}..${selection.endIndex} " +
+                                    "chars=${selection.text.length} " +
+                                    "text=\"${selection.text.logPreview()}\""
+                            )
+                        }
+                    }
                 }
                 .pointerInput(pageIndex, displayPageIsCurrent, selectedTool, isTextSelectionMode, isRichTextMode) {
                     if (!displayPageIsCurrent || isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) {
@@ -898,6 +935,10 @@ internal fun DesktopVerticalPdfPage(
                                 .matchParentSize()
                                 .pointerInput(pageIndex, selectionMenuOffset) {
                                     detectTapGestures {
+                                        logPdfChromeTap {
+                                            "selection_menu_scrim_tap source=vertical_page page=${pageIndex + 1} " +
+                                                "consumedByScrim=true"
+                                        }
                                         clearSelection()
                                     }
                                 }

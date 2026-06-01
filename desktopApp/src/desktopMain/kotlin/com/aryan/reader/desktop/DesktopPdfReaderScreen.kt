@@ -814,7 +814,9 @@ internal fun PdfReaderScreen(
                     horizontalScroll = rawTargetHorizontalScroll ?: pageHorizontalScrollState.value,
                     verticalScroll = rawTargetVerticalScroll ?: pageVerticalScrollState.value,
                     paddingPx = with(density) { 24.dp.toPx() },
-                    pageGapPx = with(density) { 18.dp.toPx() }
+                    pageGapPx = with(density) {
+                        desktopPdfSpreadPageGapDp(pdfReaderSettings.pdfVerticalPageGapVisible).toPx()
+                    }
                 )
             } else {
                 document.pageSizes.getOrNull(committedPreviewPageIndex)?.let { pageSize ->
@@ -2599,8 +2601,7 @@ internal fun PdfReaderScreen(
         searchActive = isPdfSearchActive || searchQuery.isNotBlank(),
         annotationEditing = activeTextDraft != null ||
             selectedAnnotation != null ||
-            selectedTool != PdfInkTool.NONE ||
-            isTextSelectionMode,
+            selectedTool != PdfInkTool.NONE,
         richTextEditing = isRichTextMode,
         loading = isRendering || isSearchIndexing || isPdfFileActionLoading || isReflowingThisBook,
         errorMessage = renderError,
@@ -2769,6 +2770,7 @@ internal fun PdfReaderScreen(
             .focusRequester(pdfReaderFocusRequester)
             .onPreviewKeyEvent(::handlePdfReaderKeyEvent)
             .focusable(),
+        closeRightPanelOnReaderTap = true,
         onReaderFocusRestoreRequest = ::requestPdfReaderFocusRestore,
         leftSidebar = { _ ->
             DesktopPdfNavigationSidebar(
@@ -2962,20 +2964,21 @@ internal fun PdfReaderScreen(
             onNext = { goToSearchResult(activeSearchIndex + 1) },
             onToggleHighlightMode = { dispatchPdf(SharedPdfReaderAction.SearchHighlightModeToggled) }
         )
+        val pdfViewportBackground = desktopPdfViewportBackgroundColor(
+            displayMode = displayMode,
+            pageBackgroundColor = pdfThemeStyle.pageBackgroundColor,
+            appBackgroundColor = MaterialTheme.colorScheme.surfaceVariant,
+            isVerticalPageGapVisible = pdfReaderSettings.pdfVerticalPageGapVisible
+        )
         if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
             val verticalPageGap = pdfVerticalPageGapDp(
                 isPageGapVisible = pdfReaderSettings.pdfVerticalPageGapVisible,
                 defaultGap = DesktopDefaultPdfVerticalPageGap
             )
-            val verticalViewportBackground = desktopPdfVerticalViewportBackgroundColor(
-                pageBackgroundColor = pdfThemeStyle.pageBackgroundColor,
-                gapBackgroundColor = MaterialTheme.colorScheme.surfaceVariant,
-                isPageGapVisible = pdfReaderSettings.pdfVerticalPageGapVisible
-            )
             Box(
                 modifier = Modifier
                             .fillMaxSize()
-                            .background(verticalViewportBackground, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
+                            .background(pdfViewportBackground, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
                             .onSizeChanged { size -> pdfZoomViewportSize = size }
                             .onGloballyPositioned { coordinates ->
                         val rootOffset = coordinates.positionInRoot()
@@ -3096,7 +3099,7 @@ internal fun PdfReaderScreen(
                         listState = verticalListState,
                         pageCount = document.pageCount,
                         currentPage = pageIndex,
-                        isDarkMode = verticalViewportBackground.luminance() < 0.5f,
+                        isDarkMode = pdfViewportBackground.luminance() < 0.5f,
                         modifier = Modifier.align(Alignment.CenterEnd)
                     )
                     DesktopPdfPageScrubOverlay(
@@ -3110,7 +3113,7 @@ internal fun PdfReaderScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
+                            .background(pdfViewportBackground, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
                             .onSizeChanged { size -> pdfZoomViewportSize = size }
                             .onGloballyPositioned { coordinates ->
                                 val rootOffset = coordinates.positionInRoot()
@@ -3133,8 +3136,11 @@ internal fun PdfReaderScreen(
                             .padding(24.dp),
                         contentAlignment = Alignment.TopCenter
                     ) {
+                        val spreadPageGap = desktopPdfSpreadPageGapDp(
+                            isPageGapVisible = pdfReaderSettings.pdfVerticalPageGapVisible
+                        )
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterHorizontally),
+                            horizontalArrangement = Arrangement.spacedBy(spreadPageGap, Alignment.CenterHorizontally),
                             verticalAlignment = Alignment.Top
                         ) {
                             val spreadZoomPreview = pdfZoomPreview?.takeIf {
@@ -3158,7 +3164,7 @@ internal fun PdfReaderScreen(
                                     horizontalScroll = pageHorizontalScrollState.value,
                                     verticalScroll = pageVerticalScrollState.value,
                                     paddingPx = with(density) { 24.dp.toPx() },
-                                    pageGapPx = with(density) { 18.dp.toPx() }
+                                    pageGapPx = with(density) { spreadPageGap.toPx() }
                                 )
                             }
                             val spreadZoomAnchorPageRootOffset = spreadZoomPreview
@@ -3268,7 +3274,7 @@ internal fun PdfReaderScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(pdfThemeStyle.viewerBackgroundColor, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
+                        .background(pdfViewportBackground, RoundedCornerShape(if (isFullscreen) 0.dp else 4.dp))
                         .onSizeChanged { size -> pdfZoomViewportSize = size }
                         .onGloballyPositioned { coordinates ->
                             val rootOffset = coordinates.positionInRoot()
@@ -3492,6 +3498,16 @@ internal fun PdfReaderScreen(
                                             val event = awaitPointerEvent()
                                             val point = event.changes.firstOrNull()?.position ?: continue
                                             if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed) {
+                                                if (isTextSelectionMode) {
+                                                    logPdfChromeTap {
+                                                        "page_press source=paginated_inline_page page=${pageIndex + 1} " +
+                                                            "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
+                                                            "consumedBefore=${event.changes.any { it.isConsumed }} " +
+                                                            "selectionActive=${currentTextSelection != null} " +
+                                                            "selectionMenuOpen=${selectionMenuOffset != null} " +
+                                                            "selectedTool=$selectedTool richText=$isRichTextMode"
+                                                    }
+                                                }
                                                 val highlightHit = if (selectedTool != PdfInkTool.TEXT && selectedTool != PdfInkTool.ERASER) {
                                                     currentPdfAnnotations.asReversed().firstOrNull {
                                                         it.isDesktopTextSelectionHighlight &&
@@ -3502,6 +3518,10 @@ internal fun PdfReaderScreen(
                                                     null
                                                 }
                                                 if (highlightHit != null) {
+                                                    logPdfChromeTap {
+                                                        "page_press_consume source=paginated_inline_page page=${pageIndex + 1} " +
+                                                            "reason=text_selection_highlight annotation=${highlightHit.id}"
+                                                    }
                                                     selectAnnotation(highlightHit)
                                                     clearPdfInteractionState()
                                                     event.changes.forEach { it.consume() }
@@ -3510,6 +3530,10 @@ internal fun PdfReaderScreen(
                                                 if (selectedTool != PdfInkTool.TEXT) {
                                                     val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
                                                     if (linkTarget != null) {
+                                                        logPdfChromeTap {
+                                                            "page_press_consume source=paginated_inline_page page=${pageIndex + 1} " +
+                                                                "reason=link target=${linkTarget.formatLogTarget()}"
+                                                        }
                                                         logPdfLink(
                                                             "tap_hit mode=page page=${pageIndex + 1} " +
                                                                 "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
@@ -3524,6 +3548,10 @@ internal fun PdfReaderScreen(
                                                     it.sharedPdfEmbeddedHitTest(point, pageCanvasSize)
                                                 }
                                                 if (embeddedHit != null) {
+                                                    logPdfChromeTap {
+                                                        "page_press_consume source=paginated_inline_page page=${pageIndex + 1} " +
+                                                            "reason=embedded_annotation annotation=${embeddedHit.id}"
+                                                    }
                                                     selectEmbeddedAnnotation(embeddedHit)
                                                     clearPdfInteractionState()
                                                     event.changes.forEach { it.consume() }
@@ -3531,10 +3559,19 @@ internal fun PdfReaderScreen(
                                                     currentTextSelection != null &&
                                                     selectionMenuOffset == null
                                                 ) {
+                                                    logPdfChromeTap {
+                                                        "page_press_passthrough source=paginated_inline_page page=${pageIndex + 1} " +
+                                                            "action=clear_selection consumed=false"
+                                                    }
                                                     selectionMenuOffset = null
                                                     textSelection = null
                                                     selectionStartHit = null
                                                     selectionEndHit = null
+                                                } else if (isTextSelectionMode) {
+                                                    logPdfChromeTap {
+                                                        "page_press_passthrough source=paginated_inline_page page=${pageIndex + 1} " +
+                                                            "action=none consumed=false"
+                                                    }
                                                 }
                                             } else if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                                                 val selection = currentTextSelection
@@ -3560,27 +3597,33 @@ internal fun PdfReaderScreen(
                                     displayPageIsCurrent
                                 ) {
                                     if (!displayPageIsCurrent || isRichTextMode || !isTextSelectionMode) return@pointerInput
-                                    detectTapGestures(
-                                        onLongPress = { point ->
-                                            val selection = document.wordSelectionAt(pageIndex, point, pageCanvasSize)
-                                            if (selection != null) {
-                                                selectionStartIndex = null
-                                                selectionEndIndex = null
-                                                selectionStartHit = null
-                                                selectionEndHit = null
-                                                activeSelectionHandle = null
-                                                textSelection = selection
-                                                selectionMenuOffset = selection.menuAnchor(pageCanvasSize, point)
-                                                logPdfSelection(
-                                                    "long_press page=${pageIndex + 1} " +
-                                                        "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
-                                                        "range=${selection.startIndex}..${selection.endIndex} " +
-                                                        "chars=${selection.text.length} " +
-                                                        "text=\"${selection.text.logPreview()}\""
-                                                )
-                                            }
+                                    detectDesktopPdfTextSelectionLongPress(
+                                        source = "paginated_inline_page",
+                                        pageIndex = pageIndex
+                                    ) { point ->
+                                        val selection = document.wordSelectionAt(pageIndex, point, pageCanvasSize)
+                                        logPdfChromeTap {
+                                            "long_press_selection source=paginated_inline_page page=${pageIndex + 1} " +
+                                                "selectionFound=${selection != null} " +
+                                                "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()}"
                                         }
-                                    )
+                                        if (selection != null) {
+                                            selectionStartIndex = null
+                                            selectionEndIndex = null
+                                            selectionStartHit = null
+                                            selectionEndHit = null
+                                            activeSelectionHandle = null
+                                            textSelection = selection
+                                            selectionMenuOffset = selection.menuAnchor(pageCanvasSize, point)
+                                            logPdfSelection(
+                                                "long_press page=${pageIndex + 1} " +
+                                                    "x=${point.x.formatLogFloat()} y=${point.y.formatLogFloat()} " +
+                                                    "range=${selection.startIndex}..${selection.endIndex} " +
+                                                    "chars=${selection.text.length} " +
+                                                    "text=\"${selection.text.logPreview()}\""
+                                            )
+                                        }
+                                    }
                                 }
                                 .pointerInput(
                                     pageIndex,
@@ -3974,6 +4017,10 @@ internal fun PdfReaderScreen(
                                         .matchParentSize()
                                         .pointerInput(pageIndex, selectionMenuOffset) {
                                             detectTapGestures {
+                                                logPdfChromeTap {
+                                                    "selection_menu_scrim_tap source=paginated_inline_page page=${pageIndex + 1} " +
+                                                        "consumedByScrim=true"
+                                                }
                                                 selectionMenuOffset = null
                                                 textSelection = null
                                                 selectionStartHit = null
