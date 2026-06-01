@@ -229,6 +229,32 @@ internal data class DesktopPdfCachedPageRender(
     val scale: Float
 )
 
+internal data class DesktopPdfNavigationZoomSnapshot(
+    val zoom: Float,
+    val horizontalScroll: Int,
+    val verticalScroll: Int
+)
+
+internal fun desktopPdfNavigationZoomSnapshot(
+    preview: DesktopPdfZoomPreview?,
+    currentHorizontalScroll: Int,
+    currentVerticalScroll: Int
+): DesktopPdfNavigationZoomSnapshot? {
+    val activePreview = preview ?: return null
+    val baseZoom = activePreview.baseZoom.takeIf { it.isFinite() && it > 0f } ?: return null
+    val targetZoom = activePreview.zoom.takeIf { it.isFinite() && it > 0f } ?: return null
+    val anchor = activePreview.anchor
+    return DesktopPdfNavigationZoomSnapshot(
+        zoom = targetZoom,
+        horizontalScroll = anchor?.let {
+            desktopPdfAnchoredScrollTarget(currentHorizontalScroll, it.x, baseZoom, targetZoom)
+        } ?: currentHorizontalScroll.coerceAtLeast(0),
+        verticalScroll = anchor?.let {
+            desktopPdfAnchoredScrollTarget(currentVerticalScroll, it.y, baseZoom, targetZoom)
+        } ?: currentVerticalScroll.coerceAtLeast(0)
+    )
+}
+
 internal fun desktopPdfZoomPreviewMatchesScale(
     preview: DesktopPdfZoomPreview,
     scale: Float

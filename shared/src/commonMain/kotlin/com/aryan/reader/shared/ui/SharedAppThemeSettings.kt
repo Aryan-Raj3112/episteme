@@ -6,7 +6,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +48,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +64,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextRange
@@ -692,10 +695,17 @@ fun SharedHsvColorPickerDialog(
     onSave: (Color) -> Unit,
     modifier: Modifier = Modifier,
     resetColor: Color? = null,
+    stateKey: Any? = null,
+    onLiveColorChange: (Color) -> Unit = {},
     preview: @Composable (Color) -> Unit = {}
 ) {
-    var hsv by remember(initialColor) { mutableStateOf(initialColor.toSharedHsvColor()) }
+    val effectiveStateKey = stateKey ?: initialColor
+    var hsv by remember(effectiveStateKey) { mutableStateOf(initialColor.toSharedHsvColor()) }
     val color = hsv.toComposeColor()
+
+    LaunchedEffect(effectiveStateKey, color) {
+        onLiveColorChange(color)
+    }
 
     fun updateFromColor(nextColor: Color) {
         hsv = nextColor.toSharedHsvColor()
@@ -745,7 +755,8 @@ fun SharedHsvColorPickerDialog(
                         onHueSatChanged = { hue, saturation ->
                             hsv = hsv.copy(hue = hue, saturation = saturation)
                         },
-                        modifier = Modifier.size(240.dp)
+                        modifier = Modifier.size(240.dp),
+                        gestureKey = effectiveStateKey
                     )
 
                     SharedBrightnessSlider(
@@ -753,7 +764,8 @@ fun SharedHsvColorPickerDialog(
                         saturation = hsv.saturation,
                         value = hsv.value,
                         onValueChanged = { hsv = hsv.copy(value = it) },
-                        modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp))
+                        modifier = Modifier.fillMaxWidth().height(24.dp).clip(RoundedCornerShape(12.dp)),
+                        gestureKey = effectiveStateKey
                     )
 
                     Row(
@@ -836,32 +848,23 @@ fun SharedHsvWheel(
     saturation: Float,
     currentColor: Color,
     onHueSatChanged: (Float, Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    gestureKey: Any? = Unit
 ) {
     val touchPadding = 12.dp
 
     Box(
-        modifier = modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                val down = awaitFirstDown()
-                val paddingPx = touchPadding.toPx()
-
-                fun update(offset: Offset) {
-                    val selection = sharedHsvWheelSelection(
-                        offsetX = offset.x,
-                        offsetY = offset.y,
-                        width = size.width.toFloat(),
-                        height = size.height.toFloat(),
-                        paddingPx = paddingPx
-                    )
-                    onHueSatChanged(selection.hue, selection.saturation)
-                }
-
-                update(down.position)
-                drag(down.id) { change ->
-                    change.consume()
-                    update(change.position)
-                }
+        modifier = modifier.pointerInput(gestureKey) {
+            val paddingPx = touchPadding.toPx()
+            awaitSharedColorPickerDrag { offset ->
+                val selection = sharedHsvWheelSelection(
+                    offsetX = offset.x,
+                    offsetY = offset.y,
+                    width = size.width.toFloat(),
+                    height = size.height.toFloat(),
+                    paddingPx = paddingPx
+                )
+                onHueSatChanged(selection.hue, selection.saturation)
             }
         }
     ) {
@@ -937,7 +940,8 @@ fun SharedSpectrumBox(
     saturation: Float,
     currentColor: Color,
     onHueSatChanged: (Float, Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    gestureKey: Any? = Unit
 ) {
     val rainbowColors = listOf(
         Color.Red,
@@ -951,26 +955,16 @@ fun SharedSpectrumBox(
     val touchPadding = 12.dp
 
     Box(
-        modifier = modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                val down = awaitFirstDown()
-                val paddingPx = touchPadding.toPx()
+        modifier = modifier.pointerInput(gestureKey) {
+            val paddingPx = touchPadding.toPx()
+            awaitSharedColorPickerDrag { offset ->
                 val activeWidth = size.width.toFloat() - (paddingPx * 2)
                 val activeHeight = size.height.toFloat() - (paddingPx * 2)
-
-                fun update(offset: Offset) {
-                    val relativeX = offset.x - paddingPx
-                    val relativeY = offset.y - paddingPx
-                    val nextHue = (relativeX / activeWidth).coerceIn(0f, 1f) * 360f
-                    val nextSaturation = (relativeY / activeHeight).coerceIn(0f, 1f)
-                    onHueSatChanged(nextHue, nextSaturation)
-                }
-
-                update(down.position)
-                drag(down.id) { change ->
-                    change.consume()
-                    update(change.position)
-                }
+                val relativeX = offset.x - paddingPx
+                val relativeY = offset.y - paddingPx
+                val nextHue = (relativeX / activeWidth).coerceIn(0f, 1f) * 360f
+                val nextSaturation = (relativeY / activeHeight).coerceIn(0f, 1f)
+                onHueSatChanged(nextHue, nextSaturation)
             }
         }
     ) {
@@ -1023,27 +1017,18 @@ fun SharedBrightnessSlider(
     saturation: Float,
     value: Float,
     onValueChanged: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    gestureKey: Any? = Unit
 ) {
     val baseColor = remember(hue, saturation) {
         Color.hsv(hue, saturation, 1f)
     }
 
     Box(
-        modifier = modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                val down = awaitFirstDown()
-
-                fun update(offset: Offset) {
-                    val nextValue = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                    onValueChanged(nextValue)
-                }
-
-                update(down.position)
-                drag(down.id) { change ->
-                    change.consume()
-                    update(change.position)
-                }
+        modifier = modifier.pointerInput(gestureKey) {
+            awaitSharedColorPickerDrag { offset ->
+                val nextValue = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                onValueChanged(nextValue)
             }
         }
     ) {
@@ -1058,6 +1043,27 @@ fun SharedBrightnessSlider(
                 radius = 8.dp.toPx(),
                 center = Offset(value.coerceIn(0f, 1f) * size.width, size.height / 2)
             )
+        }
+    }
+}
+
+private suspend fun PointerInputScope.awaitSharedColorPickerDrag(
+    onPosition: (Offset) -> Unit
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        down.consume()
+        onPosition(down.position)
+        val pointerId = down.id
+
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull { it.id == pointerId } ?: return@awaitEachGesture
+            onPosition(change.position)
+            change.consume()
+            if (change.changedToUp() || !change.pressed) {
+                return@awaitEachGesture
+            }
         }
     }
 }

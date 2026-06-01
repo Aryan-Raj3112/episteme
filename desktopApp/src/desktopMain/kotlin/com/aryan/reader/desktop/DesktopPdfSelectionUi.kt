@@ -293,8 +293,12 @@ internal fun PdfSelectionMenu(
     val paletteColors = remember(highlighterPalette) {
         SharedPdfHighlighterPalette(highlighterPalette).sanitized().colors
     }
+    val density = LocalDensity.current
     var editingHighlighterSlot by remember(selection.startIndex, selection.endIndex, paletteColors) {
         mutableStateOf<Int?>(null)
+    }
+    var editingHighlighterDraftColors by remember(selection.startIndex, selection.endIndex, paletteColors) {
+        mutableStateOf<List<Int>>(emptyList())
     }
     val actions = buildList {
         add(PdfSelectionMenuAction(readerString("action_copy", "Copy"), DesktopPdfSelectionMenuIcons.Copy, onCopy))
@@ -303,13 +307,38 @@ internal fun PdfSelectionMenu(
         if (showSearch) add(PdfSelectionMenuAction(readerString("action_search", "Search"), DesktopPdfSelectionMenuIcons.Search, onSearch))
         add(PdfSelectionMenuAction(readerString("action_clear", "Clear"), Icons.Default.Close, onClear, isDestructive = true))
     }
-    val estimatedHeight = PdfSelectionMenuPaletteHeightPx +
-        (((actions.size + 2) / 3).coerceAtLeast(1) * PdfSelectionMenuActionRowHeightPx)
+
+    fun highlighterDraftColors(): List<Int> {
+        return editingHighlighterDraftColors.ifEmpty { paletteColors }
+    }
+
+    fun updateHighlighterDraft(slotIndex: Int, color: Color): List<Int> {
+        val nextColors = highlighterDraftColors().toMutableList()
+        if (slotIndex in nextColors.indices) {
+            nextColors[slotIndex] = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
+            editingHighlighterDraftColors = nextColors
+        }
+        return nextColors
+    }
+
+    fun openHighlighterEditor(slotIndex: Int) {
+        if (editingHighlighterSlot == null) {
+            editingHighlighterDraftColors = paletteColors
+        }
+        editingHighlighterSlot = slotIndex
+    }
+
+    val actionRowCount = ((actions.size + 2) / 3).coerceAtLeast(1)
+    val popupWidthPx = with(density) { PdfSelectionMenuWidth.toPx() }
+    val estimatedHeightPx = with(density) {
+        PdfSelectionMenuPaletteHeight.toPx() +
+            (actionRowCount * PdfSelectionMenuActionRowHeight.toPx())
+    }
     val placement = sharedSelectionMenuPlacement(
         viewport = SharedSelectionMenuViewport(canvasSize.width, canvasSize.height),
         popup = SharedSelectionMenuSize(
-            width = PdfSelectionMenuWidthPx.roundToInt(),
-            height = estimatedHeight.roundToInt()
+            width = popupWidthPx.roundToInt(),
+            height = estimatedHeightPx.roundToInt()
         ),
         selection = if (selectionBounds != null) {
             SharedSelectionMenuRect(
@@ -326,8 +355,8 @@ internal fun PdfSelectionMenu(
                 bottom = anchor.y
             )
         },
-        marginPx = PdfSelectionMenuMarginPx,
-        gapPx = PdfSelectionMenuAnchorGapPx
+        marginPx = with(density) { PdfSelectionMenuMargin.toPx() },
+        gapPx = with(density) { PdfSelectionMenuAnchorGap.toPx() }
     )
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
         Surface(
@@ -384,7 +413,7 @@ internal fun PdfSelectionMenu(
                                 )
                             )
                             .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f), RoundedCornerShape(16.dp))
-                            .clickable { editingHighlighterSlot = 0 }
+                            .clickable { openHighlighterEditor(0) }
                     )
                 }
                 HorizontalDivider()
@@ -435,24 +464,28 @@ internal fun PdfSelectionMenu(
         }
     }
     editingHighlighterSlot?.let { requestedSlot ->
-        val slot = requestedSlot.coerceIn(0, paletteColors.lastIndex)
-        val initialColor = Color(paletteColors[slot]).copy(alpha = 1f)
+        val draftColors = highlighterDraftColors()
+        val safeDraftColors = draftColors.ifEmpty { SharedPdfHighlighterPalette.defaultColors }
+        val slot = requestedSlot.coerceIn(0, safeDraftColors.lastIndex)
+        val initialColor = remember(slot) { Color(safeDraftColors[slot]).copy(alpha = 1f) }
         SharedHsvColorPickerDialog(
             initialColor = initialColor,
             title = readerString("desktop_highlight_color_format", "Highlight color %1\$d", slot + 1),
             onDismiss = { editingHighlighterSlot = null },
             onSave = { color ->
+                val nextColors = updateHighlighterDraft(slot, color)
                 onHighlighterPaletteChange(
-                    SharedPdfHighlighterPalette(paletteColors).withColorAt(
-                        slotIndex = slot,
-                        colorArgb = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
-                    )
+                    SharedPdfHighlighterPalette(nextColors).sanitized()
                 )
                 editingHighlighterSlot = null
             },
             resetColor = Color(SharedPdfHighlighterPalette.defaultColors.getOrElse(slot) {
                 SharedPdfHighlighterPalette.defaultColors.first()
-            }).copy(alpha = 1f)
+            }).copy(alpha = 1f),
+            stateKey = slot,
+            onLiveColorChange = { color ->
+                updateHighlighterDraft(slot, color)
+            }
         ) { liveColor ->
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
@@ -460,7 +493,7 @@ internal fun PdfSelectionMenu(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    paletteColors.forEachIndexed { index, argb ->
+                    highlighterDraftColors().forEachIndexed { index, argb ->
                         val color = if (index == slot) liveColor else Color(argb).copy(alpha = 1f)
                         Box(
                             modifier = Modifier
@@ -469,10 +502,14 @@ internal fun PdfSelectionMenu(
                                 .background(color)
                                 .border(
                                     width = if (index == slot) 3.dp else 1.dp,
-                                    color = if (index == slot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                    color = if (index == slot) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                                    },
                                     shape = RoundedCornerShape(21.dp)
                                 )
-                                .clickable { editingHighlighterSlot = index },
+                                .clickable { openHighlighterEditor(index) },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -496,11 +533,11 @@ private data class PdfSelectionMenuAction(
     val isDestructive: Boolean = false
 )
 
-private const val PdfSelectionMenuWidthPx = 220f
-private const val PdfSelectionMenuPaletteHeightPx = 54f
-private const val PdfSelectionMenuActionRowHeightPx = 66f
-private const val PdfSelectionMenuAnchorGapPx = 16f
-private const val PdfSelectionMenuMarginPx = 6f
+private val PdfSelectionMenuWidth = 220.dp
+private val PdfSelectionMenuPaletteHeight = 54.dp
+private val PdfSelectionMenuActionRowHeight = 66.dp
+private val PdfSelectionMenuAnchorGap = 16.dp
+private val PdfSelectionMenuMargin = 6.dp
 private const val DesktopPdfSelectionHandleTouchWidthPx = 44f
 private const val DesktopPdfSelectionHandleTouchTopPx = 8f
 private const val DesktopPdfSelectionHandleTouchBottomPx = 40f

@@ -160,6 +160,26 @@ class DesktopReaderDefaultsTest {
     }
 
     @Test
+    fun `desktop pdf page navigation commits pending zoom preview position`() {
+        val preview = DesktopPdfZoomPreview(
+            baseZoom = 1f,
+            zoom = 2f,
+            anchor = Offset(100f, 80f),
+            displayMode = PdfDisplayMode.PAGINATION,
+            pageIndex = 0
+        )
+        val snapshot = desktopPdfNavigationZoomSnapshot(
+            preview = preview,
+            currentHorizontalScroll = 40,
+            currentVerticalScroll = 20
+        ) ?: error("Expected navigation zoom snapshot")
+
+        assertEquals(2f, snapshot.zoom)
+        assertEquals(180, snapshot.horizontalScroll)
+        assertEquals(120, snapshot.verticalScroll)
+    }
+
+    @Test
     fun `desktop paginated pdf page changes avoid high resolution first render`() {
         assertEquals(
             DesktopPdfPaginationFastFirstRenderMaxScale,

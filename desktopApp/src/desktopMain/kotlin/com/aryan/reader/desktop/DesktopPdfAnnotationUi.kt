@@ -101,6 +101,9 @@ internal fun DesktopPdfAnnotationEditor(
         SharedPdfHighlighterPalette(highlighterPalette).sanitized().colors
     }
     var editingHighlighterSlot by remember(annotation.id, highlighterColors) { mutableStateOf<Int?>(null) }
+    var editingHighlighterDraftColors by remember(annotation.id, highlighterColors) {
+        mutableStateOf<List<Int>>(emptyList())
+    }
     val isHighlighterAnnotation = annotation.kind == PdfAnnotationKind.HIGHLIGHT ||
         annotation.tool == PdfInkTool.HIGHLIGHTER ||
         annotation.tool == PdfInkTool.HIGHLIGHTER_ROUND
@@ -119,6 +122,26 @@ internal fun DesktopPdfAnnotationEditor(
 
     fun updateComments(nextComments: List<SharedPdfAnnotationComment>) {
         onUpdate(annotation.copy(comments = nextComments))
+    }
+
+    fun highlighterDraftColors(): List<Int> {
+        return editingHighlighterDraftColors.ifEmpty { highlighterColors }
+    }
+
+    fun updateHighlighterDraft(slotIndex: Int, color: Color): List<Int> {
+        val nextColors = highlighterDraftColors().toMutableList()
+        if (slotIndex in nextColors.indices) {
+            nextColors[slotIndex] = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
+            editingHighlighterDraftColors = nextColors
+        }
+        return nextColors
+    }
+
+    fun openHighlighterEditor(slotIndex: Int) {
+        if (editingHighlighterSlot == null) {
+            editingHighlighterDraftColors = highlighterColors
+        }
+        editingHighlighterSlot = slotIndex
     }
 
     Surface(
@@ -244,10 +267,12 @@ internal fun DesktopPdfAnnotationEditor(
                                 )
                                 .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f), RoundedCornerShape(15.dp))
                                 .clickable {
-                                    editingHighlighterSlot = highlighterColors
-                                        .indexOf(annotation.colorArgb)
-                                        .takeIf { it >= 0 }
-                                        ?: 0
+                                    openHighlighterEditor(
+                                        highlighterColors
+                                            .indexOf(annotation.colorArgb)
+                                            .takeIf { it >= 0 }
+                                            ?: 0
+                                    )
                                 }
                         )
                     }
@@ -365,33 +390,37 @@ internal fun DesktopPdfAnnotationEditor(
         }
     }
     editingHighlighterSlot?.let { requestedSlot ->
-        val slot = requestedSlot.coerceIn(0, highlighterColors.lastIndex)
-        val initialColor = Color(highlighterColors[slot]).copy(alpha = 1f)
+        val draftColors = highlighterDraftColors()
+        val safeDraftColors = draftColors.ifEmpty { SharedPdfHighlighterPalette.defaultColors }
+        val slot = requestedSlot.coerceIn(0, safeDraftColors.lastIndex)
+        val initialColor = remember(slot) { Color(safeDraftColors[slot]).copy(alpha = 1f) }
         SharedHsvColorPickerDialog(
             initialColor = initialColor,
             title = readerString("desktop_highlight_color_format", "Highlight color %1\$d", slot + 1),
             onDismiss = { editingHighlighterSlot = null },
             onSave = { color ->
                 val nextArgb = color.copy(alpha = SharedPdfHighlighterPalette.DefaultAlpha / 255f).toArgb()
+                val nextColors = updateHighlighterDraft(slot, color)
                 onHighlighterPaletteChange(
-                    SharedPdfHighlighterPalette(highlighterColors).withColorAt(
-                        slotIndex = slot,
-                        colorArgb = nextArgb
-                    )
+                    SharedPdfHighlighterPalette(nextColors).sanitized()
                 )
                 onUpdate(annotation.copy(colorArgb = nextArgb))
                 editingHighlighterSlot = null
             },
             resetColor = Color(SharedPdfHighlighterPalette.defaultColors.getOrElse(slot) {
                 SharedPdfHighlighterPalette.defaultColors.first()
-            }).copy(alpha = 1f)
+            }).copy(alpha = 1f),
+            stateKey = slot,
+            onLiveColorChange = { color ->
+                updateHighlighterDraft(slot, color)
+            }
         ) { liveColor ->
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                highlighterColors.forEachIndexed { index, argb ->
+                highlighterDraftColors().forEachIndexed { index, argb ->
                     val color = if (index == slot) liveColor else Color(argb).copy(alpha = 1f)
                     Box(
                         modifier = Modifier
@@ -400,10 +429,14 @@ internal fun DesktopPdfAnnotationEditor(
                             .background(color)
                             .border(
                                 width = if (index == slot) 3.dp else 1.dp,
-                                color = if (index == slot) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                                color = if (index == slot) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                                },
                                 shape = RoundedCornerShape(21.dp)
                             )
-                            .clickable { editingHighlighterSlot = index },
+                            .clickable { openHighlighterEditor(index) },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(

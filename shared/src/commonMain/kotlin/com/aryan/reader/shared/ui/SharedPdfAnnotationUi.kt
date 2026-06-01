@@ -691,8 +691,11 @@ private fun SharedPdfAnnotationToolSettingsPanel(
     val activeColor = if (isEraser) Color.White else Color(selectedColor)
     var showColorPicker by remember { mutableStateOf(false) }
     var colorPickerSlotIndex by remember { mutableStateOf<Int?>(null) }
+    var colorPickerDraftPalette by remember { mutableStateOf<List<Int>>(emptyList()) }
     val activePalette = if (isHighlighter) {
-        highlighterPalette.ifEmpty { SharedPdfHighlighterPalette.defaultColors }
+        SharedPdfHighlighterPalette(
+            highlighterPalette.ifEmpty { SharedPdfHighlighterPalette.defaultColors }
+        ).sanitized().colors
     } else {
         penPalette.ifEmpty { SharedPdfAnnotationDefaults.penPalette }
     }
@@ -704,6 +707,27 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                 paletteColor == selectedColor
             }
         }
+    }
+
+    fun colorPickerPalette(): List<Int> {
+        return colorPickerDraftPalette.ifEmpty { activePalette }
+    }
+
+    fun updateColorPickerDraft(slotIndex: Int, color: Color): List<Int> {
+        val nextPalette = colorPickerPalette().toMutableList()
+        if (slotIndex in nextPalette.indices) {
+            nextPalette[slotIndex] = color.copy(alpha = 1f).toArgb()
+            colorPickerDraftPalette = nextPalette
+        }
+        return nextPalette
+    }
+
+    fun openColorPicker(slotIndex: Int) {
+        if (!showColorPicker) {
+            colorPickerDraftPalette = activePalette
+        }
+        colorPickerSlotIndex = slotIndex
+        showColorPicker = true
     }
 
     fun selectPaletteColor(argb: Int) {
@@ -848,34 +872,35 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                         modifier = Modifier.weight(1f),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        activePalette.take(6).forEachIndexed { index, argb ->
-                            val isSelected = index == selectedPaletteIndex
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .pointerInput(argb, index) {
-                                        detectTapGestures(
-                                            onTap = { selectPaletteColor(argb) },
-                                            onLongPress = {
-                                                colorPickerSlotIndex = index
-                                                showColorPicker = true
-                                            }
-                                        )
-                                    }
-                            ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    drawCircle(color = Color(argb).copy(alpha = 1f))
-                                    if (isSelected) {
-                                        drawCircle(
-                                            color = Color.White,
-                                            radius = size.minDimension / 2f,
-                                            style = Stroke(width = 2.dp.toPx())
-                                        )
+                        activePalette
+                            .take(if (isHighlighter) SharedPdfHighlighterPalette.MaxColors else 6)
+                            .forEachIndexed { index, argb ->
+                                val isSelected = index == selectedPaletteIndex
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .pointerInput(argb, index) {
+                                            detectTapGestures(
+                                                onTap = { selectPaletteColor(argb) },
+                                                onLongPress = {
+                                                    openColorPicker(index)
+                                                }
+                                            )
+                                        }
+                                ) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        drawCircle(color = Color(argb).copy(alpha = 1f))
+                                        if (isSelected) {
+                                            drawCircle(
+                                                color = Color.White,
+                                                radius = size.minDimension / 2f,
+                                                style = Stroke(width = 2.dp.toPx())
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
                     }
                     Spacer(Modifier.width(16.dp))
                     Box(
@@ -904,8 +929,7 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                             )
                             .clickable {
                                 if (selectedPaletteIndex != -1) {
-                                    colorPickerSlotIndex = selectedPaletteIndex
-                                    showColorPicker = true
+                                    openColorPicker(selectedPaletteIndex)
                                 }
                             }
                     )
@@ -915,16 +939,18 @@ private fun SharedPdfAnnotationToolSettingsPanel(
     }
 
     if (showColorPicker) {
-        val slot = colorPickerSlotIndex ?: 0
-        val initialColor = Color(activePalette.getOrElse(slot) { activePalette.firstOrNull() ?: selectedColor })
+        val pickerPalette = colorPickerPalette()
+        val slot = (colorPickerSlotIndex ?: 0).coerceIn(0, pickerPalette.lastIndex.coerceAtLeast(0))
+        val initialColor = remember(slot, showColorPicker) {
+            Color(pickerPalette.getOrElse(slot) { pickerPalette.firstOrNull() ?: selectedColor }).copy(alpha = 1f)
+        }
         SharedHsvColorPickerDialog(
-            initialColor = initialColor.copy(alpha = 1f),
+            initialColor = initialColor,
             title = readerString("label_spectrum", "Spectrum"),
             onDismiss = { showColorPicker = false },
             onSave = { color ->
-                val nextPalette = activePalette.toMutableList()
+                val nextPalette = updateColorPickerDraft(slot, color)
                 if (slot in nextPalette.indices) {
-                    nextPalette[slot] = color.toArgb()
                     onPaletteChange(nextPalette)
                     if (isHighlighter) {
                         onColorSelected(color.toArgb().withSharedPdfAnnotationAlpha(Color(selectedColor).alpha))
@@ -934,8 +960,72 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                 }
                 showColorPicker = false
             },
-            resetColor = initialColor
-        )
+            resetColor = initialColor,
+            stateKey = slot,
+            onLiveColorChange = { color ->
+                updateColorPickerDraft(slot, color)
+            }
+        ) { liveColor ->
+            SharedPdfHighlighterPalettePreview(
+                colors = colorPickerPalette(),
+                activeSlot = slot,
+                activeColor = liveColor,
+                onSlotSelected = { index ->
+                    colorPickerSlotIndex = index
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedPdfHighlighterPalettePreview(
+    colors: List<Int>,
+    activeSlot: Int,
+    activeColor: Color,
+    onSlotSelected: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        colors.forEachIndexed { index, argb ->
+            val color = if (index == activeSlot) activeColor else Color(argb).copy(alpha = 1f)
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(color)
+                    .border(
+                        width = if (index == activeSlot) 3.dp else 1.dp,
+                        color = if (index == activeSlot) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                        },
+                        shape = CircleShape
+                    )
+                    .clickable { onSlotSelected(index) },
+                contentAlignment = Alignment.Center
+            ) {
+                if (index == activeSlot) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = if (color.luminance() > 0.5f) Color.Black else Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                } else {
+                    Text(
+                        text = "${index + 1}",
+                        color = if (color.luminance() > 0.5f) Color.Black else Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1203,7 +1293,8 @@ fun SharedPdfHighlighterPaletteEditor(
             },
             resetColor = Color(SharedPdfHighlighterPalette.defaultColors.getOrElse(slot) {
                 SharedPdfHighlighterPalette.defaultColors.first()
-            }).copy(alpha = 1f)
+            }).copy(alpha = 1f),
+            stateKey = slot
         ) { color ->
             Row(
                 modifier = Modifier.fillMaxWidth(),

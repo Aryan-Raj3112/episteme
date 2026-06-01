@@ -167,6 +167,14 @@ private data class DesktopPdfPaginatedPageDisplay(
     val render: DesktopPdfPageRender
 )
 
+private data class DesktopPdfPendingPaginatedScrollRestore(
+    val requestId: Int,
+    val pageIndex: Int,
+    val zoom: Float,
+    val horizontalScroll: Int,
+    val verticalScroll: Int
+)
+
 internal fun desktopPdfInitialPageIndex(
     requestedPageIndex: Int,
     pageCount: Int,
@@ -283,6 +291,10 @@ internal fun PdfReaderScreen(
     val zoomCommitJob = remember(documentHandleId) { AtomicReference<Job?>(null) }
     var pdfZoomPreview by remember(documentHandleId) { mutableStateOf<DesktopPdfZoomPreview?>(null) }
     var pdfZoomSettleSequence by remember(documentHandleId) { mutableIntStateOf(0) }
+    var pdfNavigationScrollRestoreSequence by remember(documentHandleId) { mutableIntStateOf(0) }
+    var pendingPdfNavigationScrollRestore by remember(documentHandleId) {
+        mutableStateOf<DesktopPdfPendingPaginatedScrollRestore?>(null)
+    }
     var activeTextDraft by remember(documentHandleId) { mutableStateOf<SharedPdfTextDraft?>(null) }
     var textStyleConfig by remember(documentHandleId) { mutableStateOf(SharedPdfTextStyleConfig()) }
     var pageCanvasSize by remember(documentHandleId) { mutableStateOf(IntSize.Zero) }
@@ -1079,6 +1091,9 @@ internal fun PdfReaderScreen(
                 it.baseZoom > 0f &&
                 abs(it.baseZoom - activeScale) <= 0.0001f
         }
+        if (existingPreview == null && currentShouldRestorePdfReaderFocus) {
+            runCatching { pdfReaderFocusRequester.requestFocus() }
+        }
         if (existingPreview == null) {
             pdfZoomSettleSequence += 1
         }
@@ -1139,6 +1154,38 @@ internal fun PdfReaderScreen(
         zoomCommitJob.getAndSet(null)?.cancel()
     }
 
+    fun commitPendingPdfZoomPreviewForNavigation(targetPageIndex: Int) {
+        val snapshot = desktopPdfNavigationZoomSnapshot(
+            preview = pdfZoomPreview,
+            currentHorizontalScroll = pageHorizontalScrollState.value,
+            currentVerticalScroll = pageVerticalScrollState.value
+        ) ?: return
+        val committedZoom = zoomSpec.clamp(snapshot.zoom)
+        logPdfZoomSettle {
+            "preview_navigation_commit seq=$pdfZoomSettleSequence page=${pageIndex + 1} " +
+                "target=${targetPageIndex + 1} zoom=${committedZoom.formatLogFloat()} " +
+                "h=${snapshot.horizontalScroll} v=${snapshot.verticalScroll}"
+        }
+        zoomCommitJob.getAndSet(null)?.cancel()
+        zoomAnchorJob.getAndSet(null)?.cancel()
+        pdfZoomPreview = null
+        dispatchPdf(SharedPdfReaderAction.ZoomChanged(committedZoom))
+        if (displayMode == PdfDisplayMode.PAGINATION) {
+            pdfNavigationScrollRestoreSequence += 1
+            pendingPdfNavigationScrollRestore = DesktopPdfPendingPaginatedScrollRestore(
+                requestId = pdfNavigationScrollRestoreSequence,
+                pageIndex = targetPageIndex.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0)),
+                zoom = committedZoom,
+                horizontalScroll = snapshot.horizontalScroll,
+                verticalScroll = snapshot.verticalScroll
+            )
+        } else {
+            pdfScope.launch {
+                pageHorizontalScrollState.scrollTo(snapshot.horizontalScroll)
+            }
+        }
+    }
+
     fun cachePaginatedRender(page: Int, renderScale: Float, render: DesktopPdfPageRender) {
         paginatedRenderCache[page] = DesktopPdfCachedPageRender(render, renderScale)
         val activePageIndex = currentPdfPageIndex
@@ -1159,8 +1206,10 @@ internal fun PdfReaderScreen(
         }
     }
 
-    LaunchedEffect(documentHandleId, pageIndex, displayMode) {
-        runCatching { pdfReaderFocusRequester.requestFocus() }
+    LaunchedEffect(documentHandleId, pageIndex, displayMode, scale) {
+        if (currentShouldRestorePdfReaderFocus) {
+            runCatching { pdfReaderFocusRequester.requestFocus() }
+        }
     }
 
     val searchQuery = pdfState.searchQuery
@@ -1474,7 +1523,8 @@ internal fun PdfReaderScreen(
         target: Int,
         scrollVertical: Boolean = true,
         recordJump: Boolean = false,
-        saveRichTextBeforePageChange: Boolean = true
+        saveRichTextBeforePageChange: Boolean = true,
+        commitPendingZoomPreview: Boolean = true
     ) {
         val boundedTarget = target.coerceIn(0, (document.pageCount - 1).coerceAtLeast(0))
         val clampedTarget = if (displayMode == PdfDisplayMode.PAGINATION) {
@@ -1503,6 +1553,9 @@ internal fun PdfReaderScreen(
                 targetPageIndex = clampedTarget,
                 pageCount = document.pageCount
             )
+        }
+        if (commitPendingZoomPreview) {
+            commitPendingPdfZoomPreviewForNavigation(clampedTarget)
         }
         dispatchPdf(SharedPdfReaderAction.GoToPage(clampedTarget))
         if (scrollVertical && displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
@@ -2306,6 +2359,37 @@ internal fun PdfReaderScreen(
         }
     }
 
+    LaunchedEffect(
+        documentHandleId,
+        pendingPdfNavigationScrollRestore?.requestId,
+        pageIndex,
+        scale,
+        displayMode
+    ) {
+        val restore = pendingPdfNavigationScrollRestore ?: return@LaunchedEffect
+        if (
+            displayMode != PdfDisplayMode.PAGINATION ||
+            restore.pageIndex != pageIndex ||
+            abs(restore.zoom - scale) > 0.001f
+        ) {
+            return@LaunchedEffect
+        }
+        withFrameNanos { }
+        pageHorizontalScrollState.scrollTo(restore.horizontalScroll)
+        pageVerticalScrollState.scrollTo(restore.verticalScroll)
+        withFrameNanos { }
+        pageHorizontalScrollState.scrollTo(restore.horizontalScroll)
+        pageVerticalScrollState.scrollTo(restore.verticalScroll)
+        logPdfZoomSettle {
+            "preview_navigation_restore request=${restore.requestId} page=${pageIndex + 1} " +
+                "zoom=${scale.formatLogFloat()} h=${pageHorizontalScrollState.value} " +
+                "v=${pageVerticalScrollState.value}"
+        }
+        if (pendingPdfNavigationScrollRestore == restore) {
+            pendingPdfNavigationScrollRestore = null
+        }
+    }
+
     fun selectPdfPanMode() {
         SharedPdfRichTextLog.d(
             "desktop.tool.select tool=${PdfInkTool.NONE} richMode=$isRichTextMode page=${pdfState.pageIndex}"
@@ -2397,7 +2481,7 @@ internal fun PdfReaderScreen(
             .distinctUntilChanged()
             .collect { visiblePage ->
                 if (visiblePage in 0 until document.pageCount && visiblePage != currentPdfPageIndex) {
-                    goToPage(visiblePage, scrollVertical = false)
+                    goToPage(visiblePage, scrollVertical = false, commitPendingZoomPreview = false)
                 }
             }
     }
