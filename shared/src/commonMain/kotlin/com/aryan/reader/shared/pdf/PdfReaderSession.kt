@@ -186,12 +186,20 @@ data class SharedPdfReaderState(
     val isTextSelectionMode: Boolean = false,
     val bookmarks: List<SharedPdfBookmark> = emptyList(),
     val selectedAnnotationId: String? = null,
-    val annotations: List<SharedPdfAnnotation> = emptyList()
+    val annotations: List<SharedPdfAnnotation> = emptyList(),
+    val toolConfigs: Map<PdfInkTool, PdfToolConfig> = emptyMap(),
+    val penPalette: List<Int> = SharedPdfAnnotationDefaults.penPalette,
+    val lastActivePenTool: PdfInkTool = PdfInkTool.PEN,
+    val lastActiveHighlighterTool: PdfInkTool = PdfInkTool.HIGHLIGHTER,
+    val annotationUndoStack: List<SharedPdfAnnotationHistoryAction> = emptyList(),
+    val annotationRedoStack: List<SharedPdfAnnotationHistoryAction> = emptyList()
 ) {
     val safePageCount: Int get() = pageCount.coerceAtLeast(0)
     val lastPageIndex: Int get() = (safePageCount - 1).coerceAtLeast(0)
     val canGoPrevious: Boolean get() = pageIndex > 0
     val canGoNext: Boolean get() = pageIndex < lastPageIndex
+    val canUndoAnnotationEdit: Boolean get() = annotationUndoStack.isNotEmpty()
+    val canRedoAnnotationEdit: Boolean get() = annotationRedoStack.isNotEmpty()
     val progressPercent: Float get() = ((pageIndex + 1).toFloat() / safePageCount.coerceAtLeast(1)) * 100f
 
     fun coerced(zoomSpec: PdfZoomSpec = PdfZoomSpec()): SharedPdfReaderState {
@@ -202,6 +210,10 @@ data class SharedPdfReaderState(
             activeSearchResultIndex = activeSearchResultIndex.coerceAtLeast(-1),
             zoom = zoomSpec.clamp(zoom),
             bookmarks = bookmarks.normalizedBookmarks(lastPageIndex),
+            penPalette = penPalette.sanitizedSharedPdfPenPalette(),
+            lastActivePenTool = lastActivePenTool.takeIf { it.isSharedPdfPenTool } ?: PdfInkTool.PEN,
+            lastActiveHighlighterTool = lastActiveHighlighterTool.takeIf { it.isSharedPdfHighlighterTool }
+                ?: PdfInkTool.HIGHLIGHTER,
             selectedAnnotationId = selectedAnnotationId?.takeIf { selectedId ->
                 annotations.any { it.id == selectedId }
             }
@@ -223,6 +235,11 @@ data class SharedPdfReaderState(
             )
         }
     }
+}
+
+sealed interface SharedPdfAnnotationHistoryAction {
+    data class Add(val pageIndex: Int, val annotation: SharedPdfAnnotation) : SharedPdfAnnotationHistoryAction
+    data class Remove(val itemsByPage: Map<Int, List<SharedPdfAnnotation>>) : SharedPdfAnnotationHistoryAction
 }
 
 sealed interface SharedPdfReaderAction {
@@ -248,6 +265,7 @@ sealed interface SharedPdfReaderAction {
     data class ToolSelected(val tool: PdfInkTool) : SharedPdfReaderAction
     data class ColorSelected(val colorArgb: Int) : SharedPdfReaderAction
     data class StrokeWidthChanged(val strokeWidth: Float) : SharedPdfReaderAction
+    data class PenPaletteChanged(val colors: List<Int>) : SharedPdfReaderAction
     data class TextSelectionModeChanged(val enabled: Boolean) : SharedPdfReaderAction
     data class BookmarksLoaded(val bookmarks: List<SharedPdfBookmark>) : SharedPdfReaderAction
     data class BookmarkToggled(
@@ -262,6 +280,8 @@ sealed interface SharedPdfReaderAction {
     data class AnnotationDeleted(val annotationId: String) : SharedPdfReaderAction
     data class AnnotationsChanged(val annotations: List<SharedPdfAnnotation>) : SharedPdfReaderAction
     data class UndoLastAnnotationOnPage(val pageIndex: Int) : SharedPdfReaderAction
+    data object UndoAnnotationEdit : SharedPdfReaderAction
+    data object RedoAnnotationEdit : SharedPdfReaderAction
     data class ClearPageAnnotations(val pageIndex: Int) : SharedPdfReaderAction
 }
 
@@ -327,16 +347,23 @@ fun SharedPdfReaderState.reduce(
             }
         }
         is SharedPdfReaderAction.ToolSelected -> {
-            val config = SharedPdfAnnotationDefaults.configFor(action.tool)
+            val config = toolConfigFor(action.tool)
             copy(
                 selectedTool = action.tool,
                 selectedColorArgb = config.colorArgb,
                 strokeWidth = config.strokeWidth,
-                isTextSelectionMode = false
+                isTextSelectionMode = false,
+                lastActivePenTool = if (action.tool.isSharedPdfPenTool) action.tool else lastActivePenTool,
+                lastActiveHighlighterTool = if (action.tool.isSharedPdfHighlighterTool) {
+                    action.tool
+                } else {
+                    lastActiveHighlighterTool
+                }
             )
         }
-        is SharedPdfReaderAction.ColorSelected -> copy(selectedColorArgb = action.colorArgb)
-        is SharedPdfReaderAction.StrokeWidthChanged -> copy(strokeWidth = action.strokeWidth.coerceAtLeast(0.0001f))
+        is SharedPdfReaderAction.ColorSelected -> withActiveToolColor(action.colorArgb)
+        is SharedPdfReaderAction.StrokeWidthChanged -> withActiveToolStrokeWidth(action.strokeWidth.coerceAtLeast(0.0001f))
+        is SharedPdfReaderAction.PenPaletteChanged -> copy(penPalette = action.colors.sanitizedSharedPdfPenPalette())
         is SharedPdfReaderAction.TextSelectionModeChanged -> {
             if (action.enabled) {
                 val config = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE)
@@ -365,10 +392,19 @@ fun SharedPdfReaderState.reduce(
             }
             copy(bookmarks = nextBookmarks.normalizedBookmarks(lastPageIndex))
         }
-        is SharedPdfReaderAction.AnnotationsLoaded -> copy(annotations = action.annotations.toList())
+        is SharedPdfReaderAction.AnnotationsLoaded -> copy(
+            annotations = action.annotations.toList(),
+            annotationUndoStack = emptyList(),
+            annotationRedoStack = emptyList()
+        )
         is SharedPdfReaderAction.AnnotationAdded -> copy(
             annotations = annotations + action.annotation,
-            selectedAnnotationId = action.annotation.id
+            selectedAnnotationId = action.annotation.id,
+            annotationUndoStack = annotationUndoStack + SharedPdfAnnotationHistoryAction.Add(
+                pageIndex = action.annotation.pageIndex,
+                annotation = action.annotation
+            ),
+            annotationRedoStack = emptyList()
         )
         is SharedPdfReaderAction.AnnotationSelected -> copy(
             selectedAnnotationId = action.annotationId?.takeIf { id -> annotations.any { it.id == id } }
@@ -378,34 +414,156 @@ fun SharedPdfReaderState.reduce(
             if (index < 0) {
                 this
             } else {
-                copy(annotations = annotations.toMutableList().also { it[index] = action.annotation })
+                copy(
+                    annotations = annotations.toMutableList().also { it[index] = action.annotation },
+                    annotationRedoStack = emptyList()
+                )
             }
         }
-        is SharedPdfReaderAction.AnnotationDeleted -> copy(
-            annotations = annotations.filterNot { it.id == action.annotationId },
-            selectedAnnotationId = selectedAnnotationId?.takeIf { it != action.annotationId }
+        is SharedPdfReaderAction.AnnotationDeleted -> {
+            val removed = annotations.firstOrNull { it.id == action.annotationId }
+            if (removed == null) {
+                this
+            } else {
+                copy(
+                    annotations = annotations.filterNot { it.id == action.annotationId },
+                    selectedAnnotationId = selectedAnnotationId?.takeIf { it != action.annotationId },
+                    annotationUndoStack = annotationUndoStack + SharedPdfAnnotationHistoryAction.Remove(
+                        itemsByPage = mapOf(removed.pageIndex to listOf(removed))
+                    ),
+                    annotationRedoStack = emptyList()
+                )
+            }
+        }
+        is SharedPdfReaderAction.AnnotationsChanged -> copy(
+            annotations = action.annotations.toList(),
+            annotationUndoStack = emptyList(),
+            annotationRedoStack = emptyList()
         )
-        is SharedPdfReaderAction.AnnotationsChanged -> copy(annotations = action.annotations.toList())
         is SharedPdfReaderAction.UndoLastAnnotationOnPage -> {
             val index = annotations.indexOfLast { it.pageIndex == action.pageIndex }
             if (index < 0) {
                 this
             } else {
+                val removed = annotations[index]
                 val removedId = annotations[index].id
                 copy(
                     annotations = annotations.toMutableList().also { it.removeAt(index) },
-                    selectedAnnotationId = selectedAnnotationId?.takeIf { it != removedId }
+                    selectedAnnotationId = selectedAnnotationId?.takeIf { it != removedId },
+                    annotationUndoStack = annotationUndoStack + SharedPdfAnnotationHistoryAction.Remove(
+                        itemsByPage = mapOf(removed.pageIndex to listOf(removed))
+                    ),
+                    annotationRedoStack = emptyList()
                 )
             }
         }
+        SharedPdfReaderAction.UndoAnnotationEdit -> undoSharedPdfAnnotationEdit()
+        SharedPdfReaderAction.RedoAnnotationEdit -> redoSharedPdfAnnotationEdit()
         is SharedPdfReaderAction.ClearPageAnnotations -> {
-            val removedIds = annotations.filter { it.pageIndex == action.pageIndex }.map { it.id }.toSet()
-            copy(
-                annotations = annotations.filterNot { it.pageIndex == action.pageIndex },
-                selectedAnnotationId = selectedAnnotationId?.takeIf { it !in removedIds }
-            )
+            val removed = annotations.filter { it.pageIndex == action.pageIndex }
+            if (removed.isEmpty()) {
+                this
+            } else {
+                val removedIds = removed.mapTo(mutableSetOf()) { it.id }
+                copy(
+                    annotations = annotations.filterNot { it.pageIndex == action.pageIndex },
+                    selectedAnnotationId = selectedAnnotationId?.takeIf { it !in removedIds },
+                    annotationUndoStack = annotationUndoStack + SharedPdfAnnotationHistoryAction.Remove(
+                        itemsByPage = mapOf(action.pageIndex to removed)
+                    ),
+                    annotationRedoStack = emptyList()
+                )
+            }
         }
     }.coerced(zoomSpec)
+}
+
+private fun SharedPdfReaderState.toolConfigFor(tool: PdfInkTool): PdfToolConfig {
+    return toolConfigs[tool] ?: SharedPdfAnnotationDefaults.configFor(tool)
+}
+
+private fun SharedPdfReaderState.withActiveToolColor(colorArgb: Int): SharedPdfReaderState {
+    if (!selectedTool.isSharedPdfConfigurableTool) {
+        return copy(selectedColorArgb = colorArgb)
+    }
+    val currentConfig = toolConfigFor(selectedTool)
+    return copy(
+        selectedColorArgb = colorArgb,
+        toolConfigs = toolConfigs + (selectedTool to currentConfig.copy(colorArgb = colorArgb))
+    )
+}
+
+private fun SharedPdfReaderState.withActiveToolStrokeWidth(strokeWidth: Float): SharedPdfReaderState {
+    if (!selectedTool.isSharedPdfConfigurableTool) {
+        return copy(strokeWidth = strokeWidth)
+    }
+    val currentConfig = toolConfigFor(selectedTool)
+    return copy(
+        strokeWidth = strokeWidth,
+        toolConfigs = toolConfigs + (selectedTool to currentConfig.copy(strokeWidth = strokeWidth))
+    )
+}
+
+private fun List<Int>.sanitizedSharedPdfPenPalette(): List<Int> {
+    val defaults = SharedPdfAnnotationDefaults.penPalette
+    val normalized = filter { it != 0 }.take(defaults.size)
+    val filled = if (normalized.isEmpty()) {
+        defaults
+    } else {
+        normalized + defaults.drop(normalized.size)
+    }
+    return filled.take(defaults.size)
+}
+
+private val PdfInkTool.isSharedPdfPenTool: Boolean
+    get() = this == PdfInkTool.FOUNTAIN_PEN || this == PdfInkTool.PEN || this == PdfInkTool.PENCIL
+
+private val PdfInkTool.isSharedPdfHighlighterTool: Boolean
+    get() = this == PdfInkTool.HIGHLIGHTER || this == PdfInkTool.HIGHLIGHTER_ROUND
+
+private val PdfInkTool.isSharedPdfConfigurableTool: Boolean
+    get() = this != PdfInkTool.NONE
+
+private fun SharedPdfReaderState.undoSharedPdfAnnotationEdit(): SharedPdfReaderState {
+    val action = annotationUndoStack.lastOrNull() ?: return this
+    val nextUndoStack = annotationUndoStack.dropLast(1)
+    return when (action) {
+        is SharedPdfAnnotationHistoryAction.Add -> copy(
+            annotations = annotations.filterNot { it.id == action.annotation.id },
+            selectedAnnotationId = selectedAnnotationId?.takeIf { it != action.annotation.id },
+            annotationUndoStack = nextUndoStack,
+            annotationRedoStack = annotationRedoStack + action
+        )
+
+        is SharedPdfAnnotationHistoryAction.Remove -> copy(
+            annotations = annotations + action.itemsByPage.values.flatten(),
+            annotationUndoStack = nextUndoStack,
+            annotationRedoStack = annotationRedoStack + action
+        )
+    }
+}
+
+private fun SharedPdfReaderState.redoSharedPdfAnnotationEdit(): SharedPdfReaderState {
+    val action = annotationRedoStack.lastOrNull() ?: return this
+    val nextRedoStack = annotationRedoStack.dropLast(1)
+    return when (action) {
+        is SharedPdfAnnotationHistoryAction.Add -> copy(
+            annotations = annotations + action.annotation,
+            selectedAnnotationId = action.annotation.id,
+            annotationUndoStack = annotationUndoStack + action,
+            annotationRedoStack = nextRedoStack
+        )
+
+        is SharedPdfAnnotationHistoryAction.Remove -> {
+            val removedIds = action.itemsByPage.values.flatten().mapTo(mutableSetOf()) { it.id }
+            copy(
+                annotations = annotations.filterNot { it.id in removedIds },
+                selectedAnnotationId = selectedAnnotationId?.takeIf { it !in removedIds },
+                annotationUndoStack = annotationUndoStack + action,
+                annotationRedoStack = nextRedoStack
+            )
+        }
+    }
 }
 
 object SharedPdfSearchEngine {

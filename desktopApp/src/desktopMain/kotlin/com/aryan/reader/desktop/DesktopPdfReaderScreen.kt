@@ -132,6 +132,7 @@ import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.SharedPdfAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfEmbeddedAnnotationOverlay
 import com.aryan.reader.shared.ui.SharedPdfInlineTextEditorOverlay
+import com.aryan.reader.shared.ui.SharedPdfInteractionDock
 import com.aryan.reader.shared.ui.SharedPdfPageNumberOverlay
 import com.aryan.reader.shared.ui.SharedPdfRichTextHiddenInput
 import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
@@ -603,11 +604,6 @@ internal fun PdfReaderScreen(
         }
         if (previousTool != tool) {
             dispatchPdf(SharedPdfReaderAction.ToolSelected(tool))
-        }
-        if (tool.isDesktopHighlighter && previousTool != tool) {
-            pdfHighlighterPalette.sanitized().colors.firstOrNull()?.let { colorArgb ->
-                dispatchPdf(SharedPdfReaderAction.ColorSelected(colorArgb))
-            }
         }
     }
 
@@ -1369,10 +1365,12 @@ internal fun PdfReaderScreen(
     }
 
     fun updatePdfHighlighterPalette(nextPalette: SharedPdfHighlighterPalette) {
-        val previousSlot = pdfHighlighterPalette.sanitized().colors.indexOf(selectedColor)
+        fun sameRgb(left: Int, right: Int): Boolean = (left and 0x00FFFFFF) == (right and 0x00FFFFFF)
+
+        val previousSlot = pdfHighlighterPalette.sanitized().colors.indexOfFirst { sameRgb(it, selectedColor) }
         val sanitizedPalette = nextPalette.sanitized()
         onPdfHighlighterPaletteChange(sanitizedPalette)
-        if (selectedTool.isDesktopHighlighter && selectedColor !in sanitizedPalette.colors) {
+        if (selectedTool.isDesktopHighlighter && sanitizedPalette.colors.none { sameRgb(it, selectedColor) }) {
             val colorArgb = sanitizedPalette.colors.getOrNull(previousSlot)
                 ?: sanitizedPalette.colors.firstOrNull()
             colorArgb?.let { nextSelectedColor ->
@@ -2321,6 +2319,59 @@ internal fun PdfReaderScreen(
         dispatchPdf(SharedPdfReaderAction.ToolSelected(PdfInkTool.NONE))
     }
 
+    fun togglePdfTextSelectionMode() {
+        val enabled = !isTextSelectionMode
+        if (enabled) {
+            deactivateRichTextMode()
+            commitActiveTextDraft()
+        }
+        dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(enabled))
+        if (!enabled) {
+            clearPdfInteractionState()
+        }
+    }
+
+    @Composable
+    fun DesktopPdfBottomMarkupDock(modifier: Modifier = Modifier) {
+        SharedPdfInteractionDock(
+            isTextSelectionMode = isTextSelectionMode,
+            selectedTool = selectedTool,
+            selectedColor = selectedColor,
+            strokeWidth = strokeWidth,
+            toolConfigs = pdfState.toolConfigs,
+            penPalette = pdfState.penPalette,
+            highlighterPalette = pdfHighlighterColors,
+            lastActivePenTool = pdfState.lastActivePenTool,
+            lastActiveHighlighterTool = pdfState.lastActiveHighlighterTool,
+            onPanSelected = ::selectPdfPanMode,
+            onTextSelectionSelected = ::togglePdfTextSelectionMode,
+            onToolSelected = ::selectPdfAnnotationTool,
+            onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
+            onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
+            onUndo = { dispatchPdf(SharedPdfReaderAction.UndoAnnotationEdit) },
+            onRedo = { dispatchPdf(SharedPdfReaderAction.RedoAnnotationEdit) },
+            onClearPage = { dispatchPdf(SharedPdfReaderAction.ClearPageAnnotations(pageIndex)) },
+            modifier = modifier,
+            allowExpandedSettings = !isPdfSearchActive &&
+                activeTextDraft == null &&
+                !isRichTextMode &&
+                textSelection == null &&
+                selectionMenuOffset == null &&
+                !pdfSelectionSheetActive &&
+                externalLinkDialogUrl == null &&
+                !pdfExtrasState.aiResult.hasContent,
+            canUndo = pdfState.canUndoAnnotationEdit,
+            canRedo = pdfState.canRedoAnnotationEdit,
+            canClearPage = annotations.any { it.pageIndex == pageIndex },
+            isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+            onHighlighterSnapChange = { isHighlighterSnapEnabled = it },
+            onHighlighterPaletteChange = { colors ->
+                onPdfHighlighterPaletteChange(SharedPdfHighlighterPalette(colors).sanitized())
+            },
+            onPenPaletteChange = { colors -> dispatchPdf(SharedPdfReaderAction.PenPaletteChanged(colors)) }
+        )
+    }
+
     LaunchedEffect(documentHandleId, displayMode, verticalListState) {
         if (displayMode != PdfDisplayMode.VERTICAL_SCROLL) return@LaunchedEffect
         snapshotFlow {
@@ -2795,14 +2846,9 @@ internal fun PdfReaderScreen(
                 customTextureIds = customTextureIds,
                 onImportTexture = onImportTexture,
                 onReaderSettingsChange = ::updatePdfReaderSettings,
-                isTextSelectionMode = isTextSelectionMode,
                 selectedTool = selectedTool,
                 isRichTextMode = isRichTextMode,
-                selectedColor = selectedColor,
-                strokeWidth = strokeWidth,
-                pdfHighlighterColors = pdfHighlighterColors,
                 pdfHighlighterPalette = pdfHighlighterPalette,
-                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                 effectiveTextStyleConfig = effectiveTextStyleConfig,
                 richTextController = richTextController,
                 pdfExtrasState = pdfExtrasState,
@@ -2816,18 +2862,6 @@ internal fun PdfReaderScreen(
                     )
                     dispatchPdf(SharedPdfReaderAction.DisplayModeChanged(mode))
                 },
-                onSelectPanMode = ::selectPdfPanMode,
-                onTextSelectionModeToggle = {
-                    val enabled = !isTextSelectionMode
-                    if (enabled) {
-                        deactivateRichTextMode()
-                        commitActiveTextDraft()
-                    }
-                    dispatchPdf(SharedPdfReaderAction.TextSelectionModeChanged(enabled))
-                    if (!enabled) {
-                        clearPdfInteractionState()
-                    }
-                },
                 onRichTextModeToggle = {
                     if (isRichTextMode) {
                         deactivateRichTextMode()
@@ -2835,12 +2869,6 @@ internal fun PdfReaderScreen(
                         activateRichTextMode()
                     }
                 },
-                onToolSelected = ::selectPdfAnnotationTool,
-                onColorSelected = { dispatchPdf(SharedPdfReaderAction.ColorSelected(it)) },
-                onStrokeWidthChange = { dispatchPdf(SharedPdfReaderAction.StrokeWidthChanged(it)) },
-                onUndoPage = { dispatchPdf(SharedPdfReaderAction.UndoLastAnnotationOnPage(pageIndex)) },
-                onClearPage = { dispatchPdf(SharedPdfReaderAction.ClearPageAnnotations(pageIndex)) },
-                onHighlighterSnapChange = { isHighlighterSnapEnabled = it },
                 onHighlighterPaletteChange = ::updatePdfHighlighterPalette,
                 onTextStyleChange = ::updateTextStyleConfig,
                 onCloudTtsClearCache = ::clearPdfCloudTtsCache,
@@ -2888,6 +2916,11 @@ internal fun PdfReaderScreen(
                             )
                         }
                     }
+                    DesktopPdfBottomMarkupDock(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(start = 16.dp, top = 6.dp, end = 16.dp, bottom = 4.dp)
+                    )
                 }
             )
         },
@@ -2928,6 +2961,11 @@ internal fun PdfReaderScreen(
                             )
                         }
                     }
+                    DesktopPdfBottomMarkupDock(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(start = 16.dp, top = 6.dp, end = 16.dp, bottom = 4.dp)
+                    )
                 }
             )
         }

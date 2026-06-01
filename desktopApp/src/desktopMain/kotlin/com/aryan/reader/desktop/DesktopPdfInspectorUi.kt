@@ -52,7 +52,6 @@ import com.aryan.reader.shared.pdf.currentSharedPdfTextStyleConfig
 import com.aryan.reader.shared.pdf.updateCurrentSharedPdfTextStyle
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
-import com.aryan.reader.shared.ui.SharedPdfAnnotationToolDock
 import com.aryan.reader.shared.ui.SharedPdfHighlighterPaletteEditor
 import com.aryan.reader.shared.ui.SharedPdfTextAnnotationDock
 import com.aryan.reader.shared.ui.SharedReaderThemeControls
@@ -71,14 +70,9 @@ internal fun DesktopPdfInspectorPanel(
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
-    isTextSelectionMode: Boolean,
     selectedTool: PdfInkTool,
     isRichTextMode: Boolean,
-    selectedColor: Int,
-    strokeWidth: Float,
-    pdfHighlighterColors: List<Int>,
     pdfHighlighterPalette: SharedPdfHighlighterPalette,
-    isHighlighterSnapEnabled: Boolean,
     effectiveTextStyleConfig: SharedPdfTextStyleConfig,
     richTextController: SharedPdfRichTextController,
     pdfExtrasState: ReaderExtrasState,
@@ -86,15 +80,7 @@ internal fun DesktopPdfInspectorPanel(
     cloudTtsFeatureAvailable: Boolean,
     ttsReplacementPreferences: ReaderTtsReplacementPreferences,
     onDisplayModeSelected: (PdfDisplayMode) -> Unit,
-    onSelectPanMode: () -> Unit,
-    onTextSelectionModeToggle: () -> Unit,
     onRichTextModeToggle: () -> Unit,
-    onToolSelected: (PdfInkTool) -> Unit,
-    onColorSelected: (Int) -> Unit,
-    onStrokeWidthChange: (Float) -> Unit,
-    onUndoPage: () -> Unit,
-    onClearPage: () -> Unit,
-    onHighlighterSnapChange: (Boolean) -> Unit,
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onTextStyleChange: (SharedPdfTextStyleConfig) -> Unit,
     onCloudTtsClearCache: () -> Unit,
@@ -146,14 +132,9 @@ internal fun DesktopPdfInspectorPanel(
                 customTextureIds = customTextureIds,
                 onImportTexture = onImportTexture,
                 onReaderSettingsChange = onReaderSettingsChange,
-                isTextSelectionMode = isTextSelectionMode,
                 selectedTool = selectedTool,
                 isRichTextMode = isRichTextMode,
-                selectedColor = selectedColor,
-                strokeWidth = strokeWidth,
-                pdfHighlighterColors = pdfHighlighterColors,
                 pdfHighlighterPalette = pdfHighlighterPalette,
-                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
                 effectiveTextStyleConfig = effectiveTextStyleConfig,
                 richTextController = richTextController,
                 pdfExtrasState = pdfExtrasState,
@@ -163,15 +144,7 @@ internal fun DesktopPdfInspectorPanel(
                 selectedTab = selectedPdfInspectorTab,
                 listState = pdfInspectorListState,
                 onDisplayModeSelected = onDisplayModeSelected,
-                onSelectPanMode = onSelectPanMode,
-                onTextSelectionModeToggle = onTextSelectionModeToggle,
                 onRichTextModeToggle = onRichTextModeToggle,
-                onToolSelected = onToolSelected,
-                onColorSelected = onColorSelected,
-                onStrokeWidthChange = onStrokeWidthChange,
-                onUndoPage = onUndoPage,
-                onClearPage = onClearPage,
-                onHighlighterSnapChange = onHighlighterSnapChange,
                 onHighlighterPaletteChange = onHighlighterPaletteChange,
                 onTextStyleChange = onTextStyleChange,
                 onCloudTtsClearCache = onCloudTtsClearCache,
@@ -226,14 +199,9 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     customTextureIds: List<String>,
     onImportTexture: ((ReaderSettings) -> ReaderSettings?)?,
     onReaderSettingsChange: (ReaderSettings) -> Unit,
-    isTextSelectionMode: Boolean,
     selectedTool: PdfInkTool,
     isRichTextMode: Boolean,
-    selectedColor: Int,
-    strokeWidth: Float,
-    pdfHighlighterColors: List<Int>,
     pdfHighlighterPalette: SharedPdfHighlighterPalette,
-    isHighlighterSnapEnabled: Boolean,
     effectiveTextStyleConfig: SharedPdfTextStyleConfig,
     richTextController: SharedPdfRichTextController,
     pdfExtrasState: ReaderExtrasState,
@@ -243,15 +211,7 @@ private fun ColumnScope.DesktopPdfInspectorContent(
     selectedTab: DesktopPdfInspectorTab,
     listState: LazyListState,
     onDisplayModeSelected: (PdfDisplayMode) -> Unit,
-    onSelectPanMode: () -> Unit,
-    onTextSelectionModeToggle: () -> Unit,
     onRichTextModeToggle: () -> Unit,
-    onToolSelected: (PdfInkTool) -> Unit,
-    onColorSelected: (Int) -> Unit,
-    onStrokeWidthChange: (Float) -> Unit,
-    onUndoPage: () -> Unit,
-    onClearPage: () -> Unit,
-    onHighlighterSnapChange: (Boolean) -> Unit,
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onTextStyleChange: (SharedPdfTextStyleConfig) -> Unit,
     onCloudTtsClearCache: () -> Unit,
@@ -391,42 +351,14 @@ private fun ColumnScope.DesktopPdfInspectorContent(
                 }
                 DesktopPdfInspectorTab.MARKUP -> {
                     item {
-                        DesktopPdfInspectorSection(readerString("desktop_interaction", "Interaction")) {
+                        DesktopPdfInspectorSection(readerString("desktop_document_text", "Document text")) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                FilterChip(
-                                    selected = !isTextSelectionMode && selectedTool == PdfInkTool.NONE && !isRichTextMode,
-                                    onClick = onSelectPanMode,
-                                    label = { Text(readerString("desktop_pan", "Pan")) }
-                                )
-                                FilterChip(
-                                    selected = isTextSelectionMode,
-                                    onClick = onTextSelectionModeToggle,
-                                    label = { Text(readerString("desktop_select_text", "Select text")) }
-                                )
                                 FilterChip(
                                     selected = isRichTextMode,
                                     onClick = onRichTextModeToggle,
                                     label = { Text(readerString("desktop_document_text", "Document text")) }
                                 )
                             }
-                        }
-                    }
-                    item {
-                        DesktopPdfInspectorSection(readerString("desktop_annotation_tools", "Annotation tools")) {
-                            SharedPdfAnnotationToolDock(
-                                selectedTool = selectedTool,
-                                selectedColor = selectedColor,
-                                strokeWidth = strokeWidth,
-                                tools = DesktopPdfAnnotationTools,
-                                highlighterPalette = pdfHighlighterColors,
-                                onToolSelected = onToolSelected,
-                                onColorSelected = onColorSelected,
-                                onStrokeWidthChange = onStrokeWidthChange,
-                                onUndo = onUndoPage,
-                                onClearPage = onClearPage,
-                                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
-                                onHighlighterSnapChange = onHighlighterSnapChange
-                            )
                         }
                     }
                     item {
@@ -507,7 +439,6 @@ private fun desktopPdfInspectorTabs(appThemeControlsAvailable: Boolean): List<De
         add(DesktopPdfInspectorTab.APPEARANCE)
         if (appThemeControlsAvailable) add(DesktopPdfInspectorTab.APP_THEME)
         add(DesktopPdfInspectorTab.VISUAL)
-        add(DesktopPdfInspectorTab.MARKUP)
         add(DesktopPdfInspectorTab.TTS)
     }
 }

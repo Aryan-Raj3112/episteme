@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -82,7 +83,7 @@ internal fun DesktopPdfFullscreenBottomChrome(
     val chromeBackground = MaterialTheme.colorScheme.surfaceVariant
     val chromeContent = MaterialTheme.colorScheme.onSurface
     val sliderActive = MaterialTheme.colorScheme.primary
-    val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
+    val sliderInactive = chromeContent.copy(alpha = if (chromeBackground.luminance() > 0.5f) 0.44f else 0.52f)
     Surface(
         modifier = Modifier
             .fillMaxWidth(),
@@ -178,7 +179,7 @@ internal fun DesktopPdfBottomChrome(
     val chromeBackground = MaterialTheme.colorScheme.surfaceVariant
     val chromeContent = MaterialTheme.colorScheme.onSurface
     val sliderActive = MaterialTheme.colorScheme.primary
-    val sliderInactive = MaterialTheme.colorScheme.surfaceVariant
+    val sliderInactive = chromeContent.copy(alpha = if (chromeBackground.luminance() > 0.5f) 0.44f else 0.52f)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(0.dp),

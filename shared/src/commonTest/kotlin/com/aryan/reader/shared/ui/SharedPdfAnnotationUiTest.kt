@@ -41,4 +41,37 @@ class SharedPdfAnnotationUiTest {
 
         assertEquals(0.18f, style.color.alpha, 0.005f)
     }
+
+    @Test
+    fun `interaction dock keeps reading modes before markup actions`() {
+        assertEquals(
+            listOf(
+                SharedPdfInteractionDockItem.PAN,
+                SharedPdfInteractionDockItem.SELECT_TEXT,
+                SharedPdfInteractionDockItem.PEN,
+                SharedPdfInteractionDockItem.HIGHLIGHTER,
+                SharedPdfInteractionDockItem.TEXT_NOTE,
+                SharedPdfInteractionDockItem.ERASER,
+                SharedPdfInteractionDockItem.UNDO,
+                SharedPdfInteractionDockItem.REDO,
+                SharedPdfInteractionDockItem.CLEAR_PAGE
+            ),
+            sharedPdfInteractionDockItems()
+        )
+    }
+
+    @Test
+    fun `interaction dock only exposes available markup groups`() {
+        assertEquals(
+            listOf(
+                SharedPdfInteractionDockItem.PAN,
+                SharedPdfInteractionDockItem.SELECT_TEXT,
+                SharedPdfInteractionDockItem.TEXT_NOTE,
+                SharedPdfInteractionDockItem.UNDO,
+                SharedPdfInteractionDockItem.REDO,
+                SharedPdfInteractionDockItem.CLEAR_PAGE
+            ),
+            sharedPdfInteractionDockItems(tools = listOf(PdfInkTool.TEXT))
+        )
+    }
 }

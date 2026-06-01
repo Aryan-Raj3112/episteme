@@ -161,6 +161,37 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `tool color and thickness changes persist per active tool`() {
+        val penColor = 0xFF123456.toInt()
+        val highlighterColor = 0x8CABCDEF.toInt()
+
+        val penConfigured = SharedPdfReaderState.initial(pageCount = 1)
+            .reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.PEN))
+            .reduce(SharedPdfReaderAction.ColorSelected(penColor))
+            .reduce(SharedPdfReaderAction.StrokeWidthChanged(0.012f))
+        val highlighterConfigured = penConfigured
+            .reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.HIGHLIGHTER))
+            .reduce(SharedPdfReaderAction.ColorSelected(highlighterColor))
+        val penAgain = highlighterConfigured.reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.PEN))
+        val highlighterAgain = penAgain.reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.HIGHLIGHTER))
+
+        assertEquals(penColor, penAgain.selectedColorArgb)
+        assertEquals(0.012f, penAgain.strokeWidth)
+        assertEquals(highlighterColor, highlighterAgain.selectedColorArgb)
+    }
+
+    @Test
+    fun `pen palette changes follow android fixed slot behavior`() {
+        val customColor = 0xFF010203.toInt()
+
+        val state = SharedPdfReaderState.initial(pageCount = 1)
+            .reduce(SharedPdfReaderAction.PenPaletteChanged(listOf(0, customColor, 0xFF040506.toInt())))
+
+        assertEquals(SharedPdfAnnotationDefaults.penPalette.size, state.penPalette.size)
+        assertEquals(customColor, state.penPalette.first())
+    }
+
+    @Test
     fun `text selection markup tools and neutral mode are exclusive`() {
         val selectingText = SharedPdfReaderState.initial(pageCount = 1)
             .reduce(SharedPdfReaderAction.ToolSelected(PdfInkTool.PEN))
@@ -190,6 +221,29 @@ class PdfReaderSessionTest {
             .reduce(SharedPdfReaderAction.ClearPageAnnotations(1))
 
         assertEquals(listOf(first), state.annotations)
+    }
+
+    @Test
+    fun `annotation undo and redo follow add remove history`() {
+        val first = annotation("first", pageIndex = 0)
+        val second = annotation("second", pageIndex = 0)
+
+        val added = SharedPdfReaderState.initial(pageCount = 1)
+            .reduce(SharedPdfReaderAction.AnnotationAdded(first))
+            .reduce(SharedPdfReaderAction.AnnotationAdded(second))
+
+        val undoneAdd = added.reduce(SharedPdfReaderAction.UndoAnnotationEdit)
+        val redoneAdd = undoneAdd.reduce(SharedPdfReaderAction.RedoAnnotationEdit)
+        val removed = redoneAdd.reduce(SharedPdfReaderAction.ClearPageAnnotations(0))
+        val undoneRemove = removed.reduce(SharedPdfReaderAction.UndoAnnotationEdit)
+        val redoneRemove = undoneRemove.reduce(SharedPdfReaderAction.RedoAnnotationEdit)
+
+        assertEquals(listOf(first), undoneAdd.annotations)
+        assertEquals(true, undoneAdd.canRedoAnnotationEdit)
+        assertEquals(listOf(first, second), redoneAdd.annotations)
+        assertEquals(emptyList(), removed.annotations)
+        assertEquals(listOf(first, second), undoneRemove.annotations)
+        assertEquals(emptyList(), redoneRemove.annotations)
     }
 
     @Test

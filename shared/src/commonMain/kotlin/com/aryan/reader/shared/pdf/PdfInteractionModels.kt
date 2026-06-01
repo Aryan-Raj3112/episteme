@@ -235,7 +235,7 @@ data class SharedPdfHighlighterPalette(
 
     companion object {
         const val DefaultAlpha: Int = 0x8C
-        const val MaxColors: Int = 4
+        const val MaxColors: Int = 5
         val defaultColors: List<Int>
             get() = SharedPdfAnnotationDefaults.highlighterPalette.map { it.withPdfHighlighterAlpha() }
     }
@@ -245,20 +245,21 @@ object SharedPdfAndroidHighlightColors {
     const val StoredAlpha: Int = 0x8C
     const val RenderAlpha: Float = 0.4f
 
-    val orderedNames: List<String> = listOf("YELLOW", "GREEN", "BLUE", "RED")
+    val orderedNames: List<String> = listOf("ORANGE", "YELLOW", "GREEN", "BLUE", "PURPLE")
 
     val colorsByName: Map<String, Int> = mapOf(
-        "YELLOW" to 0xFFFBC02D.toInt(),
-        "GREEN" to 0xFF388E3C.toInt(),
-        "BLUE" to 0xFF1976D2.toInt(),
-        "RED" to 0xFFD32F2F.toInt()
+        "ORANGE" to 0xFFFF9800.toInt(),
+        "YELLOW" to 0xFFFFEB3B.toInt(),
+        "GREEN" to 0xFF81C784.toInt(),
+        "BLUE" to 0xFF64B5F6.toInt(),
+        "PURPLE" to 0xFFE1BEE7.toInt()
     )
 
     val palette: List<Int>
         get() = orderedNames.map(::argbForName)
 
     fun argbForName(name: String): Int {
-        val opaqueArgb = colorsByName[name.uppercase()] ?: colorsByName.getValue("YELLOW")
+        val opaqueArgb = colorsByName[name.uppercase()] ?: colorsByName.getValue("ORANGE")
         return (StoredAlpha shl 24) or (opaqueArgb and 0x00FFFFFF)
     }
 
@@ -270,7 +271,7 @@ object SharedPdfAndroidHighlightColors {
             val dg = ((rgb shr 8) and 0xFF) - ((candidate shr 8) and 0xFF)
             val db = (rgb and 0xFF) - (candidate and 0xFF)
             dr * dr + dg * dg + db * db
-        }?.key ?: "YELLOW"
+        }?.key ?: "ORANGE"
     }
 
     fun nearestArgb(argb: Int): Int {
