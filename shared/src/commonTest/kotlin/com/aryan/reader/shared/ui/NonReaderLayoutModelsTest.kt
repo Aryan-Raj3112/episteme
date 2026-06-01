@@ -39,22 +39,47 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `desktop library keeps browse focused on books shelves and folders`() {
+    fun `desktop library includes organization and reading status tabs`() {
         val visibleTabs = visibleNonReaderLibraryTabs(ReaderPlatform.DESKTOP)
 
         assertEquals(
             listOf(
                 NonReaderLibraryTab.BOOKS,
                 NonReaderLibraryTab.SHELVES,
-                NonReaderLibraryTab.FOLDERS
+                NonReaderLibraryTab.FOLDERS,
+                NonReaderLibraryTab.UNREAD,
+                NonReaderLibraryTab.IN_PROGRESS,
+                NonReaderLibraryTab.COMPLETED
             ),
             visibleTabs
         )
         assertFalse(NonReaderLibraryTab.SMART_SHELVES in visibleTabs)
         assertFalse(NonReaderLibraryTab.TAGS in visibleTabs)
-        assertFalse(NonReaderLibraryTab.UNREAD in visibleTabs)
-        assertFalse(NonReaderLibraryTab.IN_PROGRESS in visibleTabs)
-        assertFalse(NonReaderLibraryTab.COMPLETED in visibleTabs)
+    }
+
+    @Test
+    fun `desktop shelves tab exposes primary new shelf action only on desktop`() {
+        assertEquals(
+            listOf(NonReaderLibraryPrimaryAction.NEW_SHELF),
+            primaryLibraryActionsForTab(NonReaderLibraryTab.SHELVES, ReaderPlatform.DESKTOP)
+        )
+        assertEquals(
+            emptyList<NonReaderLibraryPrimaryAction>(),
+            primaryLibraryActionsForTab(NonReaderLibraryTab.SHELVES, ReaderPlatform.ANDROID)
+        )
+        assertEquals(
+            emptyList<NonReaderLibraryPrimaryAction>(),
+            primaryLibraryActionsForTab(NonReaderLibraryTab.BOOKS, ReaderPlatform.DESKTOP)
+        )
+    }
+
+    @Test
+    fun `desktop book overflow exposes add to shelf action without changing android`() {
+        assertEquals(
+            setOf(NonReaderBookOverflowAction.ADD_TO_SHELF),
+            bookOverflowActionsForPlatform(ReaderPlatform.DESKTOP)
+        )
+        assertEquals(emptySet<NonReaderBookOverflowAction>(), bookOverflowActionsForPlatform(ReaderPlatform.ANDROID))
     }
 
     @Test
@@ -192,7 +217,7 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `hidden desktop status tabs fall back to all books`() {
+    fun `desktop status tabs filter books while android hidden statuses fall back`() {
         val unread = book("unread", type = FileType.EPUB, progress = 0f)
         val inProgress = book("progress", type = FileType.PDF, progress = 44f)
         val complete = book("complete", type = FileType.CBZ, progress = 100f)
@@ -202,16 +227,20 @@ class NonReaderLayoutModelsTest {
         )
 
         assertEquals(
-            listOf("unread", "progress", "complete"),
+            listOf("unread"),
             state.booksForNonReaderLibraryTab(NonReaderLibraryTab.UNREAD, ReaderPlatform.DESKTOP).map { it.id }
         )
         assertEquals(
-            listOf("unread", "progress", "complete"),
+            listOf("progress"),
             state.visibleBooksForLibrarySelection(NonReaderLibraryTab.IN_PROGRESS, ReaderPlatform.DESKTOP).map { it.id }
         )
         assertEquals(
-            listOf("unread", "progress", "complete"),
+            listOf("complete"),
             state.booksForNonReaderLibraryTab(NonReaderLibraryTab.COMPLETED, ReaderPlatform.DESKTOP).map { it.id }
+        )
+        assertEquals(
+            listOf("unread", "progress", "complete"),
+            state.booksForNonReaderLibraryTab(NonReaderLibraryTab.UNREAD, ReaderPlatform.ANDROID).map { it.id }
         )
     }
 

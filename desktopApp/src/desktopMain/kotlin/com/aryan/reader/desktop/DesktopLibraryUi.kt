@@ -47,7 +47,6 @@ import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.ui.NonReaderLibraryTab
 import com.aryan.reader.shared.ui.SharedLibraryScreen
-import com.aryan.reader.shared.ui.SharedShelvesScreen
 import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
 import com.aryan.reader.shared.ui.readerString
 import java.io.File
@@ -192,12 +191,15 @@ internal fun LibraryScreen(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onCreateShelf: () -> Unit,
+    onCreateShelfWithBooks: (String, Set<String>) -> Unit,
     onCreateSmartShelf: () -> Unit,
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
     onRemoveFolder: (Shelf) -> Unit,
     onTagSelectedBooks: () -> Unit,
     onAddSelectedBooksToShelf: () -> Unit,
+    onAddBooksToShelf: (Set<String>) -> Unit,
+    onManageShelfBooks: (Shelf) -> Unit,
     onImportFolder: () -> Unit,
     onSyncFolderMetadata: () -> Unit,
     onScanFolders: () -> Unit,
@@ -216,51 +218,21 @@ internal fun LibraryScreen(
         onShowBookInfo = onShowBookInfo,
         onEditBook = onEditBook,
         onCreateShelf = onCreateShelf,
+        onCreateShelfWithBooks = onCreateShelfWithBooks,
         onCreateSmartShelf = onCreateSmartShelf,
         onRenameShelf = onRenameShelf,
         onDeleteShelf = onDeleteShelf,
         onRemoveFolder = onRemoveFolder,
         onTagSelectedBooks = onTagSelectedBooks,
         onAddSelectedBooksToShelf = onAddSelectedBooksToShelf,
+        onAddBooksToShelf = onAddBooksToShelf,
+        onManageShelfBooks = onManageShelfBooks,
         onImportFolder = onImportFolder,
         onSyncFolderMetadata = onSyncFolderMetadata,
         onScanFolders = onScanFolders,
         onTogglePinned = onTogglePinned,
         platform = ReaderPlatform.DESKTOP,
         useImportEmptyStateWhenLibraryEmpty = true
-    )
-}
-
-@Composable
-internal fun ShelvesScreen(
-    shelves: List<Shelf>,
-    selectedBookIds: Set<String>,
-    pinnedBookIds: Set<String>,
-    onRead: (BookItem) -> Unit,
-    onSelect: (String) -> Unit,
-    onShowBookInfo: (BookItem) -> Unit,
-    onEditBook: (BookItem) -> Unit,
-    onTogglePinned: (BookItem) -> Unit,
-    onCreateShelf: () -> Unit,
-    onCreateSmartShelf: () -> Unit,
-    onRenameShelf: (Shelf) -> Unit,
-    onDeleteShelf: (Shelf) -> Unit,
-    onRemoveFolder: (Shelf) -> Unit
-) {
-    SharedShelvesScreen(
-        shelves = shelves,
-        selectedBookIds = selectedBookIds,
-        pinnedBookIds = pinnedBookIds,
-        onOpenBook = onRead,
-        onToggleSelection = onSelect,
-        onShowBookInfo = onShowBookInfo,
-        onEditBook = onEditBook,
-        onTogglePinned = onTogglePinned,
-        onCreateShelf = onCreateShelf,
-        onCreateSmartShelf = onCreateSmartShelf,
-        onRenameShelf = onRenameShelf,
-        onDeleteShelf = onDeleteShelf,
-        onRemoveFolder = onRemoveFolder
     )
 }
 

@@ -107,6 +107,7 @@ import com.aryan.reader.shared.ui.SharedConfirmDialog
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
 import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
+import com.aryan.reader.shared.ui.SharedManageShelfBooksDialog
 import com.aryan.reader.shared.ui.SharedOpdsScreen
 import com.aryan.reader.shared.ui.SharedReaderModalOwnerWindowProvider
 import com.aryan.reader.shared.ui.SharedReaderTtsOverlayControls
@@ -369,11 +370,15 @@ internal fun EpistemeDesktopApp(
     var epubPaginationCacheGeneration by remember { mutableStateOf(0) }
     var nextReaderOpenRequestId by remember { mutableStateOf(0L) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
+    var createShelfBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var createShelfClearsSelection by remember { mutableStateOf(false) }
     var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
     var shelfToRename by remember { mutableStateOf<Shelf?>(null) }
     var shelfToDelete by remember { mutableStateOf<Shelf?>(null) }
     var folderToRemove by remember { mutableStateOf<Shelf?>(null) }
-    var showAddToShelfDialog by remember { mutableStateOf(false) }
+    var addToShelfBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var addToShelfClearsSelection by remember { mutableStateOf(false) }
+    var shelfToManageBooks by remember { mutableStateOf<Shelf?>(null) }
     var showTagSelectionDialog by remember { mutableStateOf(false) }
     var showAiByokSettingsDialog by remember { mutableStateOf(false) }
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
@@ -2994,6 +2999,22 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun createShelfWithBooks(name: String, bookIds: Set<String>, clearSelection: Boolean = true) {
+        SharedLibraryEditor.createShelfWithBooks(
+            state = state,
+            shelfRecords = shelfRecords,
+            shelfRefs = shelfRefs,
+            name = name,
+            bookIds = bookIds,
+            clearSelection = clearSelection,
+            nowMillis = System.currentTimeMillis()
+        )?.let { result ->
+            replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+            result.shelfRecords.lastOrNull { record -> record.name == name.trim() }
+                ?.let { record -> syncCloudShelfChange(record, result.shelfRefs) }
+        }
+    }
+
     fun createSmartShelf(name: String, definition: SmartCollectionDefinition) {
         SharedLibraryEditor.createSmartShelf(state, shelfRecords, shelfRefs, name, definition, System.currentTimeMillis())?.let {
             replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
@@ -3025,6 +3046,33 @@ internal fun EpistemeDesktopApp(
         SharedLibraryEditor.addSelectedBooksToShelf(state, shelfRecords, shelfRefs, shelfId, System.currentTimeMillis())?.let { result ->
             replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
             result.shelfRecords.firstOrNull { record -> record.id == shelfId }
+                ?.let { record -> syncCloudShelfChange(record, result.shelfRefs) }
+        }
+    }
+
+    fun addBooksToShelves(bookIds: Set<String>, shelfIds: Set<String>, clearSelection: Boolean) {
+        val targetShelfIds = shelfIds.filterTo(linkedSetOf()) { SharedLibraryEditor.canMutateShelf(it) }
+        SharedLibraryEditor.addBooksToShelves(
+            state = state,
+            shelfRecords = shelfRecords,
+            shelfRefs = shelfRefs,
+            bookIds = bookIds,
+            shelfIds = targetShelfIds,
+            clearSelection = clearSelection,
+            nowMillis = System.currentTimeMillis()
+        )?.let { result ->
+            replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+            targetShelfIds.forEach { shelfId ->
+                result.shelfRecords.firstOrNull { record -> record.id == shelfId }
+                    ?.let { record -> syncCloudShelfChange(record, result.shelfRefs) }
+            }
+        }
+    }
+
+    fun replaceShelfBooks(shelf: Shelf, bookIds: Set<String>) {
+        SharedLibraryEditor.replaceShelfBooks(state, shelfRecords, shelfRefs, shelf.id, bookIds, System.currentTimeMillis())?.let { result ->
+            replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
+            result.shelfRecords.firstOrNull { record -> record.id == shelf.id }
                 ?.let { record -> syncCloudShelfChange(record, result.shelfRefs) }
         }
     }
@@ -3157,13 +3205,22 @@ internal fun EpistemeDesktopApp(
     }
 
     fun exitReaderTo(tab: SharedAppTab) {
-        selectedTab = tab.takeUnless { it == SharedAppTab.READER } ?: SharedAppTab.LIBRARY
+        if (tab == SharedAppTab.SHELVES) {
+            selectedLibraryTab = NonReaderLibraryTab.SHELVES
+            selectedTab = SharedAppTab.LIBRARY
+        } else {
+            selectedTab = tab.takeUnless { it == SharedAppTab.READER } ?: SharedAppTab.LIBRARY
+        }
     }
 
     fun selectAppTab(tab: SharedAppTab) {
         val nextTab = when {
             tab == SharedAppTab.CATALOGS && !featurePolicy.opdsCatalogs -> SharedAppTab.LIBRARY
             tab == SharedAppTab.PRO && !desktopAccountAvailable() -> SharedAppTab.LIBRARY
+            tab == SharedAppTab.SHELVES -> {
+                selectedLibraryTab = NonReaderLibraryTab.SHELVES
+                SharedAppTab.LIBRARY
+            }
             else -> tab
         }
         if (nextTab == SharedAppTab.SETTINGS) {
@@ -4126,24 +4183,47 @@ internal fun EpistemeDesktopApp(
                                 bookInfoInitiallyEditing = true
                                 bookInfoDialogFor = it
                             },
-                            onCreateShelf = { showCreateShelfDialog = true },
+                            onCreateShelf = {
+                                createShelfBookIds = emptySet()
+                                createShelfClearsSelection = false
+                                showCreateShelfDialog = true
+                            },
+                            onCreateShelfWithBooks = { name, bookIds -> createShelfWithBooks(name, bookIds) },
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
                             onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
-                            onAddSelectedBooksToShelf = { showAddToShelfDialog = true },
+                            onAddSelectedBooksToShelf = {
+                                addToShelfBookIds = state.selectedBookIds
+                                addToShelfClearsSelection = true
+                            },
+                            onAddBooksToShelf = { bookIds ->
+                                addToShelfBookIds = bookIds
+                                addToShelfClearsSelection = false
+                            },
+                            onManageShelfBooks = { shelfToManageBooks = it },
                             onSyncFolderMetadata = { syncFolderMetadata() },
                             onScanFolders = { scanSyncedFolders() },
                             onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
                         )
 
-                        SharedAppTab.SHELVES -> ShelvesScreen(
-                            shelves = state.shelves,
+                        SharedAppTab.SHELVES -> LibraryScreen(
+                            state = state,
+                            selectedLibraryTab = NonReaderLibraryTab.SHELVES,
+                            onLibraryTabChange = {
+                                selectedLibraryTab = it
+                                selectedTab = SharedAppTab.LIBRARY
+                            },
+                            onStateChange = ::updateState,
+                            onImportBooks = {
+                                importFiles(chooseFiles())
+                            },
+                            onImportFolder = { chooseFolder()?.let(::importFolder) },
                             onRead = ::openReader,
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
-                            selectedBookIds = state.selectedBookIds,
-                            pinnedBookIds = state.pinnedLibraryBookIds,
+                            onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
+                            onRemoveSelected = ::removeSelectedBooks,
                             onShowBookInfo = {
                                 bookInfoInitiallyEditing = false
                                 bookInfoDialogFor = it
@@ -4152,12 +4232,29 @@ internal fun EpistemeDesktopApp(
                                 bookInfoInitiallyEditing = true
                                 bookInfoDialogFor = it
                             },
-                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) },
-                            onCreateShelf = { showCreateShelfDialog = true },
+                            onCreateShelf = {
+                                createShelfBookIds = emptySet()
+                                createShelfClearsSelection = false
+                                showCreateShelfDialog = true
+                            },
+                            onCreateShelfWithBooks = { name, bookIds -> createShelfWithBooks(name, bookIds) },
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
-                            onRemoveFolder = { folderToRemove = it }
+                            onRemoveFolder = { folderToRemove = it },
+                            onTagSelectedBooks = { showTagSelectionDialog = true },
+                            onAddSelectedBooksToShelf = {
+                                addToShelfBookIds = state.selectedBookIds
+                                addToShelfClearsSelection = true
+                            },
+                            onAddBooksToShelf = { bookIds ->
+                                addToShelfBookIds = bookIds
+                                addToShelfClearsSelection = false
+                            },
+                            onManageShelfBooks = { shelfToManageBooks = it },
+                            onSyncFolderMetadata = { syncFolderMetadata() },
+                            onScanFolders = { scanSyncedFolders() },
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
                         )
 
                         SharedAppTab.CATALOGS -> {
@@ -4738,10 +4835,20 @@ internal fun EpistemeDesktopApp(
                 label = readerString("shelf_name_hint", "Shelf name"),
                 initialValue = "",
                 confirmLabel = readerString("action_create", "Create"),
-                onDismiss = { showCreateShelfDialog = false },
-                onConfirm = { name ->
-                    createShelf(name)
+                onDismiss = {
                     showCreateShelfDialog = false
+                    createShelfBookIds = emptySet()
+                    createShelfClearsSelection = false
+                },
+                onConfirm = { name ->
+                    if (createShelfBookIds.isEmpty()) {
+                        createShelf(name)
+                    } else {
+                        createShelfWithBooks(name, createShelfBookIds, clearSelection = createShelfClearsSelection)
+                    }
+                    showCreateShelfDialog = false
+                    createShelfBookIds = emptySet()
+                    createShelfClearsSelection = false
                 }
             )
         }
@@ -4803,17 +4910,36 @@ internal fun EpistemeDesktopApp(
             )
         }
 
-        if (showAddToShelfDialog) {
+        if (addToShelfBookIds.isNotEmpty()) {
             SharedAddToShelfDialog(
                 shelves = state.shelves.filter { it.type == ShelfType.MANUAL && it.id != "unshelved" },
-                onDismiss = { showAddToShelfDialog = false },
+                onDismiss = {
+                    addToShelfBookIds = emptySet()
+                    addToShelfClearsSelection = false
+                },
                 onCreateShelf = {
-                    showAddToShelfDialog = false
+                    createShelfBookIds = addToShelfBookIds
+                    createShelfClearsSelection = addToShelfClearsSelection
+                    addToShelfBookIds = emptySet()
+                    addToShelfClearsSelection = false
                     showCreateShelfDialog = true
                 },
-                onShelfSelected = { shelf ->
-                    addSelectedBooksToShelf(shelf.id)
-                    showAddToShelfDialog = false
+                onShelvesSelected = { shelfIds ->
+                    addBooksToShelves(addToShelfBookIds, shelfIds, clearSelection = addToShelfClearsSelection)
+                    addToShelfBookIds = emptySet()
+                    addToShelfClearsSelection = false
+                }
+            )
+        }
+
+        shelfToManageBooks?.let { shelf ->
+            SharedManageShelfBooksDialog(
+                shelf = shelf,
+                books = state.rawLibraryBooks,
+                onDismiss = { shelfToManageBooks = null },
+                onSave = { bookIds ->
+                    replaceShelfBooks(shelf, bookIds)
+                    shelfToManageBooks = null
                 }
             )
         }

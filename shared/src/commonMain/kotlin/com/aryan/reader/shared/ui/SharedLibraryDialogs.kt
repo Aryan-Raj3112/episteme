@@ -30,9 +30,11 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +64,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.Tag
+import com.aryan.reader.shared.cardAuthor
 import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.formatFileSize
 import com.aryan.reader.shared.parseTagList
@@ -131,32 +134,51 @@ fun SharedAddToShelfDialog(
     shelves: List<Shelf>,
     onDismiss: () -> Unit,
     onCreateShelf: () -> Unit,
-    onShelfSelected: (Shelf) -> Unit
+    onShelvesSelected: (Set<String>) -> Unit
 ) {
+    var selectedShelfIds by remember(shelves) { mutableStateOf(emptySet<String>()) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(readerString("desktop_add_to_shelf", "Add to shelf")) },
         text = {
             if (shelves.isEmpty()) {
-                Text(readerString("desktop_create_shelf_first", "Create a shelf first, then add selected books to it."))
+                Text(readerString("desktop_create_shelf_for_books", "Create a shelf and the chosen books will be added to it."))
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(shelves, key = { it.id }) { shelf ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier.fillMaxWidth().clickable { onShelfSelected(shelf) }
-                        ) {
-                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    shelf.name,
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text("${shelf.bookCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        readerString("desktop_select_shelves_to_add", "Choose one or more shelves."),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.heightIn(max = 360.dp)) {
+                        items(shelves, key = { it.id }) { shelf ->
+                            val selected = shelf.id in selectedShelfIds
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    selectedShelfIds = selectedShelfIds.toggle(shelf.id)
+                                }
+                            ) {
+                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = selected,
+                                        onCheckedChange = {
+                                            selectedShelfIds = selectedShelfIds.toggle(shelf.id)
+                                        }
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(20.dp))
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        shelf.name,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text("${shelf.bookCount}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     }
@@ -164,8 +186,22 @@ fun SharedAddToShelfDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onCreateShelf) {
-                Text(readerString("fab_new_shelf", "New shelf"))
+            if (shelves.isEmpty()) {
+                Button(onClick = onCreateShelf) {
+                    Text(readerString("fab_new_shelf", "New shelf"))
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onCreateShelf) {
+                        Text(readerString("fab_new_shelf", "New shelf"))
+                    }
+                    Button(
+                        onClick = { onShelvesSelected(selectedShelfIds) },
+                        enabled = selectedShelfIds.isNotEmpty()
+                    ) {
+                        Text(readerString("action_add", "Add"))
+                    }
+                }
             }
         },
         dismissButton = {
@@ -174,6 +210,112 @@ fun SharedAddToShelfDialog(
             }
         }
     )
+}
+
+@Composable
+fun SharedManageShelfBooksDialog(
+    shelf: Shelf,
+    books: List<BookItem>,
+    onDismiss: () -> Unit,
+    onSave: (Set<String>) -> Unit
+) {
+    var query by remember(shelf.id) { mutableStateOf("") }
+    var selectedBookIds by remember(shelf.id, shelf.books) {
+        mutableStateOf(shelf.books.mapTo(linkedSetOf<String>()) { it.id }.toSet())
+    }
+    val normalizedQuery = query.trim()
+    val visibleBooks = remember(books, normalizedQuery) {
+        if (normalizedQuery.isBlank()) {
+            books
+        } else {
+            books.filter { book ->
+                book.cardTitle().contains(normalizedQuery, ignoreCase = true) ||
+                    book.cardAuthor().contains(normalizedQuery, ignoreCase = true) ||
+                    book.displayName.contains(normalizedQuery, ignoreCase = true) ||
+                    book.tags.any { tag -> tag.name.contains(normalizedQuery, ignoreCase = true) }
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(readerString("desktop_manage_shelf_books_title", "Manage %1\$s", shelf.name)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SharedStableOutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(readerString("library_search_placeholder", "Search books, authors, or tags")) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    readerString("desktop_shelf_selected_book_count", "%1\$d selected", selectedBookIds.size),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (books.isEmpty()) {
+                    Text(readerString("your_library_empty", "Your library is empty"))
+                } else if (visibleBooks.isEmpty()) {
+                    Text(readerString("desktop_no_books_match", "No books match."))
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(visibleBooks, key = { it.id }) { book ->
+                            val selected = book.id in selectedBookIds
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    selectedBookIds = selectedBookIds.toggle(book.id)
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Checkbox(
+                                        checked = selected,
+                                        onCheckedChange = {
+                                            selectedBookIds = selectedBookIds.toggle(book.id)
+                                        }
+                                    )
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(book.cardTitle(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            book.cardAuthor(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(selectedBookIds) }) {
+                Text(readerString("action_save", "Save"))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(readerString("action_cancel", "Cancel"))
+            }
+        }
+    )
+}
+
+private fun Set<String>.toggle(value: String): Set<String> {
+    return if (value in this) this - value else this + value
 }
 
 @Composable

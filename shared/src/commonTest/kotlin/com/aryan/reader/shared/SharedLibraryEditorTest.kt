@@ -78,6 +78,113 @@ class SharedLibraryEditorTest {
     }
 
     @Test
+    fun `addBooksToShelves adds missing refs to multiple shelves and can keep selection`() {
+        val state = SharedReaderScreenState(selectedBookIds = setOf("selected"))
+        val refs = listOf(BookShelfRef(bookId = "one", shelfId = "manual_a", addedAt = 1L))
+
+        val result = SharedLibraryEditor.addBooksToShelves(
+            state = state,
+            shelfRecords = listOf(ShelfRecord("manual_a", "A"), ShelfRecord("manual_b", "B")),
+            shelfRefs = refs,
+            bookIds = listOf(" one ", "two", "one"),
+            shelfIds = listOf("manual_a", "manual_b", "unshelved", " "),
+            clearSelection = false,
+            nowMillis = 9L
+        )
+
+        requireNotNull(result)
+        assertEquals(setOf("selected"), result.state.selectedBookIds)
+        assertEquals(
+            listOf(
+                BookShelfRef(bookId = "one", shelfId = "manual_a", addedAt = 1L),
+                BookShelfRef(bookId = "two", shelfId = "manual_a", addedAt = 9L),
+                BookShelfRef(bookId = "one", shelfId = "manual_b", addedAt = 9L),
+                BookShelfRef(bookId = "two", shelfId = "manual_b", addedAt = 9L)
+            ),
+            result.shelfRefs
+        )
+        assertEquals("3 shelf entries added.", result.state.bannerMessage?.message)
+    }
+
+    @Test
+    fun `addBooksToShelves clears selection when requested`() {
+        val state = SharedReaderScreenState(selectedBookIds = setOf("one"))
+
+        val result = SharedLibraryEditor.addBooksToShelves(
+            state = state,
+            shelfRecords = listOf(ShelfRecord("manual", "Manual")),
+            shelfRefs = emptyList(),
+            bookIds = listOf("one"),
+            shelfIds = listOf("manual"),
+            clearSelection = true,
+            nowMillis = 10L
+        )
+
+        requireNotNull(result)
+        assertTrue(result.state.selectedBookIds.isEmpty())
+        assertEquals(
+            listOf(BookShelfRef(bookId = "one", shelfId = "manual", addedAt = 10L)),
+            result.shelfRefs
+        )
+    }
+
+    @Test
+    fun `replaceShelfBooks only rewrites target shelf refs`() {
+        val state = SharedReaderScreenState(
+            shelves = listOf(Shelf("manual", "Manual", ShelfType.MANUAL, emptyList()))
+        )
+        val refs = listOf(
+            BookShelfRef(bookId = "old", shelfId = "manual", addedAt = 1L),
+            BookShelfRef(bookId = "keep", shelfId = "other", addedAt = 2L)
+        )
+
+        val result = SharedLibraryEditor.replaceShelfBooks(
+            state = state,
+            shelfRecords = listOf(ShelfRecord("manual", "Manual")),
+            shelfRefs = refs,
+            shelfId = "manual",
+            bookIds = listOf("new", "new", " "),
+            nowMillis = 7L
+        )
+
+        requireNotNull(result)
+        assertEquals(
+            listOf(
+                BookShelfRef(bookId = "keep", shelfId = "other", addedAt = 2L),
+                BookShelfRef(bookId = "new", shelfId = "manual", addedAt = 7L)
+            ),
+            result.shelfRefs
+        )
+        assertEquals("Updated \"Manual\" with 1 book.", result.state.bannerMessage?.message)
+    }
+
+    @Test
+    fun `createShelfWithBooks creates shelf refs and clears selection`() {
+        val state = SharedReaderScreenState(selectedBookIds = setOf("one", "two"))
+
+        val result = SharedLibraryEditor.createShelfWithBooks(
+            state = state,
+            shelfRecords = emptyList(),
+            shelfRefs = emptyList(),
+            name = "  Favorites  ",
+            bookIds = listOf("one", "two", "one"),
+            nowMillis = 12L
+        )
+
+        requireNotNull(result)
+        assertTrue(result.state.selectedBookIds.isEmpty())
+        assertEquals(listOf(ShelfRecord("shelf_12", "Favorites")), result.shelfRecords)
+        assertEquals(
+            listOf(
+                BookShelfRef(bookId = "one", shelfId = "shelf_12", addedAt = 12L),
+                BookShelfRef(bookId = "two", shelfId = "shelf_12", addedAt = 12L)
+            ),
+            result.shelfRefs
+        )
+        assertEquals("Created shelf \"Favorites\" with 2 books.", result.state.bannerMessage?.message)
+    }
+
+    @Test
     fun `createSmartShelf stores trimmed shared rules and rejects blank definitions`() {
         val definition = SmartCollectionDefinition(
             rules = listOf(

@@ -332,12 +332,15 @@ fun SharedLibraryScreen(
     onShowBookInfo: (BookItem) -> Unit = {},
     onEditBook: (BookItem) -> Unit = {},
     onCreateShelf: () -> Unit = {},
+    onCreateShelfWithBooks: (String, Set<String>) -> Unit = { _, _ -> },
     onCreateSmartShelf: () -> Unit = {},
     onRenameShelf: (Shelf) -> Unit = {},
     onDeleteShelf: (Shelf) -> Unit = {},
     onRemoveFolder: (Shelf) -> Unit = {},
     onTagSelectedBooks: () -> Unit = {},
     onAddSelectedBooksToShelf: () -> Unit = {},
+    onAddBooksToShelf: (Set<String>) -> Unit = {},
+    onManageShelfBooks: ((Shelf) -> Unit)? = null,
     onImportFolder: () -> Unit = {},
     onSyncFolderMetadata: () -> Unit = {},
     onScanFolders: () -> Unit = {},
@@ -416,6 +419,7 @@ fun SharedLibraryScreen(
                         Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             LibraryToolbar(
                                 state = state,
+                                selectedTab = activeLibraryTab,
                                 viewMode = viewMode,
                                 showFilters = showFilters,
                                 platform = platform,
@@ -437,11 +441,14 @@ fun SharedLibraryScreen(
                                 onImportBooks = onImportBooks,
                                 onImportFolder = onImportFolder,
                                 useImportEmptyStateWhenLibraryEmpty = useImportEmptyStateWhenLibraryEmpty,
+                                onCreateShelf = onCreateShelf,
                                 onOpenBook = onOpenBook,
                                 onToggleSelection = onToggleSelection,
                                 onShowBookInfo = onShowBookInfo,
                                 onEditBook = onEditBook,
                                 onTogglePinned = onTogglePinned,
+                                onAddBooksToShelf = onAddBooksToShelf,
+                                onManageShelfBooks = onManageShelfBooks,
                                 onRenameShelf = onRenameShelf,
                                 onDeleteShelf = onDeleteShelf,
                                 onRemoveFolder = onRemoveFolder,
@@ -461,6 +468,7 @@ fun SharedLibraryScreen(
                         )
                         LibraryToolbar(
                             state = state,
+                            selectedTab = activeLibraryTab,
                             viewMode = viewMode,
                             showFilters = showFilters,
                             platform = platform,
@@ -482,11 +490,14 @@ fun SharedLibraryScreen(
                             onImportBooks = onImportBooks,
                             onImportFolder = onImportFolder,
                             useImportEmptyStateWhenLibraryEmpty = useImportEmptyStateWhenLibraryEmpty,
+                            onCreateShelf = onCreateShelf,
                             onOpenBook = onOpenBook,
                             onToggleSelection = onToggleSelection,
                             onShowBookInfo = onShowBookInfo,
                             onEditBook = onEditBook,
                             onTogglePinned = onTogglePinned,
+                            onAddBooksToShelf = onAddBooksToShelf,
+                            onManageShelfBooks = onManageShelfBooks,
                             onRenameShelf = onRenameShelf,
                             onDeleteShelf = onDeleteShelf,
                             onRemoveFolder = onRemoveFolder,
@@ -923,6 +934,7 @@ private fun LibraryNavItem(
 @Composable
 private fun LibraryToolbar(
     state: SharedReaderScreenState,
+    selectedTab: NonReaderLibraryTab,
     viewMode: BookViewMode,
     showFilters: Boolean,
     platform: ReaderPlatform,
@@ -938,8 +950,10 @@ private fun LibraryToolbar(
         if (layout == LibraryCommandBarLayout.INLINE) {
             DesktopLibraryCommandBar(
                 state = state,
+                selectedTab = selectedTab,
                 viewMode = viewMode,
                 showFilters = showFilters,
+                platform = platform,
                 onViewModeChange = onViewModeChange,
                 onToggleFilters = onToggleFilters,
                 onStateChange = onStateChange,
@@ -950,8 +964,10 @@ private fun LibraryToolbar(
         } else {
             StackedLibraryCommandBar(
                 state = state,
+                selectedTab = selectedTab,
                 viewMode = viewMode,
                 showFilters = showFilters,
+                platform = platform,
                 onViewModeChange = onViewModeChange,
                 onToggleFilters = onToggleFilters,
                 onStateChange = onStateChange,
@@ -966,8 +982,10 @@ private fun LibraryToolbar(
 @Composable
 private fun DesktopLibraryCommandBar(
     state: SharedReaderScreenState,
+    selectedTab: NonReaderLibraryTab,
     viewMode: BookViewMode,
     showFilters: Boolean,
+    platform: ReaderPlatform,
     onViewModeChange: (BookViewMode) -> Unit,
     onToggleFilters: () -> Unit,
     onStateChange: (SharedReaderScreenState) -> Unit,
@@ -975,6 +993,9 @@ private fun DesktopLibraryCommandBar(
     onImportFolder: () -> Unit,
     onCreateShelf: () -> Unit
 ) {
+    val showCreateShelfPrimaryAction = NonReaderLibraryPrimaryAction.NEW_SHELF in
+        primaryLibraryActionsForTab(selectedTab, platform)
+
     Surface(
         shape = RoundedCornerShape(SharedUiTokens.surfaceRadius),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1009,10 +1030,18 @@ private fun DesktopLibraryCommandBar(
                 Spacer(Modifier.width(8.dp))
                 Text(readerString("fab_add_folder", "Add folder"))
             }
+            if (showCreateShelfPrimaryAction) {
+                Button(onClick = onCreateShelf) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(readerString("fab_new_shelf", "New shelf"))
+                }
+            }
             LibraryMoreActionsMenu(
                 viewMode = viewMode,
                 onViewModeChange = onViewModeChange,
-                onCreateShelf = onCreateShelf
+                onCreateShelf = onCreateShelf,
+                showCreateShelfAction = !showCreateShelfPrimaryAction
             )
         }
     }
@@ -1021,8 +1050,10 @@ private fun DesktopLibraryCommandBar(
 @Composable
 private fun StackedLibraryCommandBar(
     state: SharedReaderScreenState,
+    selectedTab: NonReaderLibraryTab,
     viewMode: BookViewMode,
     showFilters: Boolean,
+    platform: ReaderPlatform,
     onViewModeChange: (BookViewMode) -> Unit,
     onToggleFilters: () -> Unit,
     onStateChange: (SharedReaderScreenState) -> Unit,
@@ -1030,6 +1061,9 @@ private fun StackedLibraryCommandBar(
     onImportFolder: () -> Unit,
     onCreateShelf: () -> Unit
 ) {
+    val showCreateShelfPrimaryAction = NonReaderLibraryPrimaryAction.NEW_SHELF in
+        primaryLibraryActionsForTab(selectedTab, platform)
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         LibrarySearchField(
             state = state,
@@ -1060,10 +1094,18 @@ private fun StackedLibraryCommandBar(
                 Spacer(Modifier.width(8.dp))
                 Text(readerString("fab_add_folder", "Add folder"))
             }
+            if (showCreateShelfPrimaryAction) {
+                Button(onClick = onCreateShelf) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(readerString("fab_new_shelf", "New shelf"))
+                }
+            }
             LibraryMoreActionsMenu(
                 viewMode = viewMode,
                 onViewModeChange = onViewModeChange,
-                onCreateShelf = onCreateShelf
+                onCreateShelf = onCreateShelf,
+                showCreateShelfAction = !showCreateShelfPrimaryAction
             )
         }
     }
@@ -1117,7 +1159,8 @@ private fun LibraryFilterButton(
 private fun LibraryMoreActionsMenu(
     viewMode: BookViewMode,
     onViewModeChange: (BookViewMode) -> Unit,
-    onCreateShelf: () -> Unit
+    onCreateShelf: () -> Unit,
+    showCreateShelfAction: Boolean = true
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -1152,14 +1195,16 @@ private fun LibraryMoreActionsMenu(
                     )
                 }
             )
-            DropdownMenuItem(
-                leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
-                text = { Text(readerString("fab_new_shelf", "New shelf")) },
-                onClick = {
-                    expanded = false
-                    onCreateShelf()
-                }
-            )
+            if (showCreateShelfAction) {
+                DropdownMenuItem(
+                    leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
+                    text = { Text(readerString("fab_new_shelf", "New shelf")) },
+                    onClick = {
+                        expanded = false
+                        onCreateShelf()
+                    }
+                )
+            }
         }
     }
 }
@@ -1176,11 +1221,14 @@ private fun LibraryContent(
     onImportBooks: () -> Unit,
     onImportFolder: () -> Unit,
     useImportEmptyStateWhenLibraryEmpty: Boolean = false,
+    onCreateShelf: () -> Unit,
     onOpenBook: (BookItem) -> Unit,
     onToggleSelection: (String) -> Unit,
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onAddBooksToShelf: (Set<String>) -> Unit,
+    onManageShelfBooks: ((Shelf) -> Unit)?,
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
     onRemoveFolder: (Shelf) -> Unit,
@@ -1209,6 +1257,14 @@ private fun LibraryContent(
         val rootFolderShelves = remember(state.shelves) {
             state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null }
         }
+        val addToShelfFromBookAction = if (NonReaderBookOverflowAction.ADD_TO_SHELF in bookOverflowActionsForPlatform(platform)) {
+            onAddBooksToShelf
+        } else {
+            null
+        }
+        val manageShelfBooksAction = if (platform == ReaderPlatform.DESKTOP) onManageShelfBooks else null
+        val showNewShelfPrimaryAction = NonReaderLibraryPrimaryAction.NEW_SHELF in
+            primaryLibraryActionsForTab(selectedTab, platform)
         if (showFilters) {
             LibraryFilterPanel(
                 state = state,
@@ -1259,6 +1315,7 @@ private fun LibraryContent(
                         onShowBookInfo = onShowBookInfo,
                         onEditBook = onEditBook,
                         onTogglePinned = onTogglePinned,
+                        onAddToShelf = addToShelfFromBookAction?.let { addToShelf -> { book -> addToShelf(setOf(book.id)) } },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -1291,11 +1348,15 @@ private fun LibraryContent(
                         onShowBookInfo = onShowBookInfo,
                         onEditBook = onEditBook,
                         onTogglePinned = onTogglePinned,
+                        onAddBooksToShelf = addToShelfFromBookAction,
+                        onManageShelfBooks = manageShelfBooksAction,
                         onRenameShelf = onRenameShelf,
                         onDeleteShelf = onDeleteShelf,
                         onRemoveFolder = onRemoveFolder,
+                        onCreateShelf = if (showNewShelfPrimaryAction) onCreateShelf else null,
                         emptyTitle = readerString("desktop_no_shelves_yet", "No shelves yet"),
                         emptyBody = readerString("desktop_no_shelves_desc", "Manual shelves and series collections will appear here."),
+                        emptyActionLabel = if (showNewShelfPrimaryAction) readerString("fab_new_shelf", "New shelf") else null,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -1310,6 +1371,7 @@ private fun LibraryContent(
                 onShowBookInfo = onShowBookInfo,
                 onEditBook = onEditBook,
                 onTogglePinned = onTogglePinned,
+                onAddBooksToShelf = addToShelfFromBookAction,
                 onRenameShelf = onRenameShelf,
                 onDeleteShelf = onDeleteShelf,
                 emptyTitle = readerString("desktop_no_smart_shelves_yet", "No smart shelves yet"),
@@ -1326,6 +1388,7 @@ private fun LibraryContent(
                 onShowBookInfo = onShowBookInfo,
                 onEditBook = onEditBook,
                 onTogglePinned = onTogglePinned,
+                onAddBooksToShelf = addToShelfFromBookAction,
                 emptyTitle = readerString("desktop_no_tags_yet", "No tags yet"),
                 emptyBody = readerString("desktop_no_tags_desc", "Tags added to books will appear here."),
                 modifier = Modifier.weight(1f)
@@ -1347,6 +1410,7 @@ private fun LibraryContent(
                         onShowBookInfo = onShowBookInfo,
                         onEditBook = onEditBook,
                         onTogglePinned = onTogglePinned,
+                        onAddBooksToShelf = addToShelfFromBookAction,
                         onOpenShelf = { shelf -> onStateChange(state.copy(viewingShelfId = shelf.id)) },
                         onBack = { onStateChange(state.copy(viewingShelfId = currentFolder.parentShelfId)) },
                         modifier = Modifier.weight(1f)
@@ -1368,6 +1432,7 @@ private fun LibraryContent(
                             onShowBookInfo = onShowBookInfo,
                             onEditBook = onEditBook,
                             onTogglePinned = onTogglePinned,
+                            onAddBooksToShelf = addToShelfFromBookAction,
                             onRemoveFolder = onRemoveFolder,
                             onOpenShelf = { shelf -> onStateChange(state.copy(viewingShelfId = shelf.id)) },
                             emptyTitle = readerString("desktop_no_folders_yet", "No folders yet"),
@@ -1625,6 +1690,7 @@ private fun BookGrid(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onAddToShelf: ((BookItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     if (viewMode == BookViewMode.LIST) {
@@ -1643,7 +1709,8 @@ private fun BookGrid(
                     onToggleSelection = { onToggleSelection(book.id) },
                     onShowInfo = { onShowBookInfo(book) },
                     onEdit = { onEditBook(book) },
-                    onTogglePinned = { onTogglePinned(book) }
+                    onTogglePinned = { onTogglePinned(book) },
+                    onAddToShelf = onAddToShelf?.let { addToShelf -> { addToShelf(book) } }
                 )
             }
         }
@@ -1665,7 +1732,8 @@ private fun BookGrid(
                     onToggleSelection = { onToggleSelection(book.id) },
                     onShowInfo = { onShowBookInfo(book) },
                     onEdit = { onEditBook(book) },
-                    onTogglePinned = { onTogglePinned(book) }
+                    onTogglePinned = { onTogglePinned(book) },
+                    onAddToShelf = onAddToShelf?.let { addToShelf -> { addToShelf(book) } }
                 )
             }
         }
@@ -1684,6 +1752,7 @@ private fun BookTile(
     onShowInfo: () -> Unit,
     onEdit: () -> Unit,
     onTogglePinned: () -> Unit,
+    onAddToShelf: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -1733,7 +1802,8 @@ private fun BookTile(
                         onTogglePinned = onTogglePinned,
                         onShowInfo = onShowInfo,
                         onEdit = onEdit,
-                        onToggleSelection = onToggleSelection
+                        onToggleSelection = onToggleSelection,
+                        onAddToShelf = onAddToShelf
                     )
                 }
                 TypeBadge(book.type, modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp))
@@ -1768,7 +1838,8 @@ private fun BookListItem(
     onToggleSelection: () -> Unit,
     onShowInfo: () -> Unit,
     onEdit: () -> Unit,
-    onTogglePinned: () -> Unit
+    onTogglePinned: () -> Unit,
+    onAddToShelf: (() -> Unit)? = null
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Surface(
@@ -1809,7 +1880,8 @@ private fun BookListItem(
                     onTogglePinned = onTogglePinned,
                     onShowInfo = onShowInfo,
                     onEdit = onEdit,
-                    onToggleSelection = onToggleSelection
+                    onToggleSelection = onToggleSelection,
+                    onAddToShelf = onAddToShelf
                 )
             }
         }
@@ -1825,7 +1897,8 @@ private fun BookActionMenu(
     onTogglePinned: () -> Unit,
     onShowInfo: () -> Unit,
     onEdit: () -> Unit,
-    onToggleSelection: () -> Unit
+    onToggleSelection: () -> Unit,
+    onAddToShelf: (() -> Unit)? = null
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         DropdownMenuItem(
@@ -1852,6 +1925,16 @@ private fun BookActionMenu(
                 onEdit()
             }
         )
+        if (onAddToShelf != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
+                text = { Text(readerString("desktop_add_to_shelf", "Add to shelf")) },
+                onClick = {
+                    onDismiss()
+                    onAddToShelf()
+                }
+            )
+        }
         DropdownMenuItem(
             leadingIcon = { Icon(if (selected) Icons.Default.Check else Icons.AutoMirrored.Filled.List, contentDescription = null) },
             text = { Text(if (selected) readerString("clear_selection", "Clear selection") else readerString("action_select", "Select")) },
@@ -2029,12 +2112,16 @@ private fun ShelfCollection(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onAddBooksToShelf: ((Set<String>) -> Unit)? = null,
+    onManageShelfBooks: ((Shelf) -> Unit)? = null,
     onRenameShelf: (Shelf) -> Unit = {},
     onDeleteShelf: (Shelf) -> Unit = {},
     onRemoveFolder: (Shelf) -> Unit = {},
     onOpenShelf: ((Shelf) -> Unit)? = null,
+    onCreateShelf: (() -> Unit)? = null,
     emptyTitle: String,
     emptyBody: String,
+    emptyActionLabel: String? = null,
     modifier: Modifier = Modifier
 ) {
     if (shelves.isEmpty()) {
@@ -2042,6 +2129,8 @@ private fun ShelfCollection(
             icon = { Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(56.dp)) },
             title = emptyTitle,
             body = emptyBody,
+            actionLabel = emptyActionLabel,
+            onAction = onCreateShelf,
             modifier = modifier
         )
         return
@@ -2062,6 +2151,8 @@ private fun ShelfCollection(
                 onShowBookInfo = onShowBookInfo,
                 onEditBook = onEditBook,
                 onTogglePinned = onTogglePinned,
+                onAddBooksToShelf = onAddBooksToShelf,
+                onManageShelfBooks = onManageShelfBooks,
                 onRenameShelf = onRenameShelf,
                 onDeleteShelf = onDeleteShelf,
                 onRemoveFolder = onRemoveFolder,
@@ -2081,6 +2172,8 @@ private fun ShelfSection(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onAddBooksToShelf: ((Set<String>) -> Unit)?,
+    onManageShelfBooks: ((Shelf) -> Unit)?,
     onRenameShelf: (Shelf) -> Unit,
     onDeleteShelf: (Shelf) -> Unit,
     onRemoveFolder: (Shelf) -> Unit,
@@ -2123,6 +2216,23 @@ private fun ShelfSection(
                     }
                 }
                 if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved") {
+                    if (onManageShelfBooks != null) {
+                        OutlinedButton(onClick = { onManageShelfBooks(shelf) }) {
+                            Icon(
+                                if (shelf.bookCount == 0) Icons.Default.Add else Icons.Default.FormatListNumbered,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (shelf.bookCount == 0) {
+                                    readerString("fab_add_books", "Add books")
+                                } else {
+                                    readerString("desktop_manage_books", "Manage books")
+                                }
+                            )
+                        }
+                    }
                     IconButton(onClick = { onRenameShelf(shelf) }, modifier = Modifier.size(34.dp)) {
                         Icon(Icons.Default.Edit, contentDescription = readerString("menu_rename_shelf", "Rename shelf"), modifier = Modifier.size(18.dp))
                     }
@@ -2148,6 +2258,7 @@ private fun ShelfSection(
                             onShowInfo = { onShowBookInfo(book) },
                             onEdit = { onEditBook(book) },
                             onTogglePinned = { onTogglePinned(book) },
+                            onAddToShelf = onAddBooksToShelf?.let { addToShelf -> { addToShelf(setOf(book.id)) } },
                             modifier = Modifier.width(148.dp)
                         )
                     }
@@ -2168,6 +2279,7 @@ private fun FolderShelfDetail(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onAddBooksToShelf: ((Set<String>) -> Unit)? = null,
     onOpenShelf: (Shelf) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
@@ -2232,7 +2344,8 @@ private fun FolderShelfDetail(
                             onToggleSelection = { onToggleSelection(book.id) },
                             onShowInfo = { onShowBookInfo(book) },
                             onEdit = { onEditBook(book) },
-                            onTogglePinned = { onTogglePinned(book) }
+                            onTogglePinned = { onTogglePinned(book) },
+                            onAddToShelf = onAddBooksToShelf?.let { addToShelf -> { addToShelf(setOf(book.id)) } }
                         )
                     }
                 }

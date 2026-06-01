@@ -228,8 +228,19 @@ private val AndroidLibraryTabs = listOf(
 private val DesktopLibraryTabs = listOf(
     NonReaderLibraryTab.BOOKS,
     NonReaderLibraryTab.SHELVES,
-    NonReaderLibraryTab.FOLDERS
+    NonReaderLibraryTab.FOLDERS,
+    NonReaderLibraryTab.UNREAD,
+    NonReaderLibraryTab.IN_PROGRESS,
+    NonReaderLibraryTab.COMPLETED
 )
+
+internal enum class NonReaderLibraryPrimaryAction {
+    NEW_SHELF
+}
+
+internal enum class NonReaderBookOverflowAction {
+    ADD_TO_SHELF
+}
 
 internal fun visibleNonReaderLibraryTabs(
     platform: ReaderPlatform = ReaderPlatform.ANDROID
@@ -237,6 +248,26 @@ internal fun visibleNonReaderLibraryTabs(
     return when (platform) {
         ReaderPlatform.ANDROID -> AndroidLibraryTabs
         ReaderPlatform.DESKTOP -> DesktopLibraryTabs
+    }
+}
+
+internal fun primaryLibraryActionsForTab(
+    tab: NonReaderLibraryTab,
+    platform: ReaderPlatform = ReaderPlatform.ANDROID
+): List<NonReaderLibraryPrimaryAction> {
+    return if (platform == ReaderPlatform.DESKTOP && tab.visibleLibraryTab(platform) == NonReaderLibraryTab.SHELVES) {
+        listOf(NonReaderLibraryPrimaryAction.NEW_SHELF)
+    } else {
+        emptyList()
+    }
+}
+
+internal fun bookOverflowActionsForPlatform(
+    platform: ReaderPlatform = ReaderPlatform.ANDROID
+): Set<NonReaderBookOverflowAction> {
+    return when (platform) {
+        ReaderPlatform.DESKTOP -> setOf(NonReaderBookOverflowAction.ADD_TO_SHELF)
+        ReaderPlatform.ANDROID -> emptySet()
     }
 }
 
