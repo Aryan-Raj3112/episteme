@@ -1,5 +1,9 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.shared.HighlightColor
@@ -8,6 +12,7 @@ import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -34,6 +39,24 @@ class SharedNativePaginatedReaderInteractionTest {
         )
 
         assertNull(range)
+    }
+
+    @Test
+    fun `selection gesture key ignores paint-only annotated string changes`() {
+        val plain = AnnotatedString("Alpha beta")
+        val selected = buildAnnotatedString {
+            append("Alpha beta")
+            addStyle(SpanStyle(background = Color.Blue), start = 0, end = 5)
+        }
+
+        assertEquals(
+            sharedNativeReaderSelectionGestureKey("0:1:0", plain),
+            sharedNativeReaderSelectionGestureKey("0:1:0", selected)
+        )
+        assertNotEquals(
+            sharedNativeReaderSelectionGestureKey("0:1:0", plain),
+            sharedNativeReaderSelectionGestureKey("0:1:0", AnnotatedString("Alpha beta gamma"))
+        )
     }
 
     @Test

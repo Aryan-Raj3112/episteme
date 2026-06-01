@@ -59,7 +59,9 @@ object PdfSelectionGeometry {
         chars: List<PdfTextCharBounds>,
         lineTolerance: Float = DefaultCharLineTolerance
     ): List<PdfPageBounds> {
-        return chars.groupByLine(lineTolerance).map { it.toCharLineBounds() }
+        return mergeBoundsByLine(
+            bounds = chars.groupByLine(lineTolerance).map { it.toCharLineBounds() }
+        )
     }
 
     fun nearestCharOnLine(

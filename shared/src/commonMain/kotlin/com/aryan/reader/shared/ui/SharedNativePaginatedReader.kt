@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -933,12 +934,15 @@ private fun SharedNativeInteractiveText(
     onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
     fitLabel: SharedNativeTextFitLabel? = null
 ) {
-    var textLayoutResult by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
-    var textCoordinates by remember(text) { mutableStateOf<LayoutCoordinates?>(null) }
-    var lastTextClipLogSignature by remember(text) { mutableStateOf<String?>(null) }
-    var dragAnchorOffset by remember(text) { mutableStateOf<Int?>(null) }
+    var textLayoutResult by remember(text.text) { mutableStateOf<TextLayoutResult?>(null) }
+    var textCoordinates by remember(text.text) { mutableStateOf<LayoutCoordinates?>(null) }
+    var lastTextClipLogSignature by remember(text.text) { mutableStateOf<String?>(null) }
+    var dragAnchorOffset by remember(text.text) { mutableStateOf<Int?>(null) }
+    val currentText by rememberUpdatedState(text)
+    val currentActiveSelection by rememberUpdatedState(activeSelection)
     val viewConfiguration = LocalViewConfiguration.current
     val textBlockKey = textBlock.key.stableKey
+    val selectionGestureKey = sharedNativeReaderSelectionGestureKey(textBlockKey, text)
     DisposableEffect(textBlockKey, selectionLayouts) {
         onDispose {
             selectionLayouts.remove(textBlockKey)
@@ -991,7 +995,7 @@ private fun SharedNativeInteractiveText(
         modifier = modifier
             .fillMaxWidth()
             .onGloballyPositioned { textCoordinates = it }
-            .pointerInput(text) {
+            .pointerInput(selectionGestureKey) {
                 detectTapGestures(
                     onPress = {
                         onSelectionGestureActiveChange(true)
@@ -1003,11 +1007,13 @@ private fun SharedNativeInteractiveText(
                     },
                     onLongPress = { offset ->
                         val layout = textLayoutResult ?: return@detectTapGestures
+                        val annotatedText = currentText
+                        val plainText = annotatedText.text
                         val charOffset = layout.getOffsetForPosition(offset)
-                            .coerceIn(0, text.text.length)
+                            .coerceIn(0, plainText.length)
                         val boundary = layout.getWordBoundary(charOffset)
                         val range = sharedNativeReaderTrimmedWordRange(
-                            text = text.text,
+                            text = plainText,
                             start = boundary.start,
                             end = boundary.end
                         ) ?: return@detectTapGestures
@@ -1021,42 +1027,45 @@ private fun SharedNativeInteractiveText(
                     },
                     onTap = { offset ->
                         val layout = textLayoutResult ?: return@detectTapGestures
+                        val annotatedText = currentText
+                        val plainText = annotatedText.text
                         val charOffset = layout.getOffsetForPosition(offset)
-                            .coerceIn(0, text.text.length)
-                        text.stringAnnotationAt(ReaderNativeAnnotationUrl, charOffset)?.let { href ->
+                            .coerceIn(0, plainText.length)
+                        annotatedText.stringAnnotationAt(ReaderNativeAnnotationUrl, charOffset)?.let { href ->
                             onSelectionChange(null)
                             onLinkClicked(
                                 SharedNativeReaderLinkClick(
                                     href = href,
                                     chapterIndex = page.chapterIndex,
-                                    text = text.text
+                                    text = plainText
                                 )
                             )
                             return@detectTapGestures
                         }
-                        text.stringAnnotationAt(ReaderNativeAnnotationHighlight, charOffset)?.let { highlightId ->
+                        annotatedText.stringAnnotationAt(ReaderNativeAnnotationHighlight, charOffset)?.let { highlightId ->
                             onSelectionChange(null)
                             onHighlightSelected(highlightId)
                             return@detectTapGestures
                         }
-                        if (activeSelection == null) {
+                        if (currentActiveSelection == null) {
                             onReaderTap()
                         }
                         onSelectionChange(null)
                     }
                 )
             }
-            .pointerInput(text) {
+            .pointerInput(selectionGestureKey) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { offset ->
                         onSelectionGestureActiveChange(true)
                         val layout = textLayoutResult
                         if (layout != null) {
+                            val plainText = currentText.text
                             val charOffset = layout.getOffsetForPosition(offset)
-                                .coerceIn(0, text.text.length)
+                                .coerceIn(0, plainText.length)
                             val boundary = layout.getWordBoundary(charOffset)
                             val range = sharedNativeReaderTrimmedWordRange(
-                                text = text.text,
+                                text = plainText,
                                 start = boundary.start,
                                 end = boundary.end
                             )
@@ -1076,6 +1085,7 @@ private fun SharedNativeInteractiveText(
                         val layout = textLayoutResult
                         val anchor = dragAnchorOffset
                         if (layout != null && anchor != null) {
+                            val plainText = currentText.text
                             val current = textCoordinates?.let { coordinates ->
                                 sharedNativeReaderTextPositionAtWindow(
                                     windowPosition = coordinates.localToWindow(change.position),
@@ -1084,7 +1094,7 @@ private fun SharedNativeInteractiveText(
                             } ?: SharedNativeTextPosition(
                                 descriptor = textBlock,
                                 localOffset = layout.getOffsetForPosition(change.position)
-                                    .coerceIn(0, text.text.length)
+                                    .coerceIn(0, plainText.length)
                             )
                             onSelectionChange(
                                 sharedNativeReaderSelectionBetween(
@@ -1106,13 +1116,14 @@ private fun SharedNativeInteractiveText(
                     }
                 )
             }
-            .pointerInput(textBlockKey, text) {
+            .pointerInput(selectionGestureKey) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val layout = textLayoutResult ?: return@awaitEachGesture
                     val coordinates = textCoordinates ?: return@awaitEachGesture
+                    val plainText = currentText.text
                     val anchorOffset = layout.getOffsetForPosition(down.position)
-                        .coerceIn(0, text.text.length)
+                        .coerceIn(0, plainText.length)
                     val anchor = SharedNativeTextPosition(textBlock, anchorOffset)
                     val touchSlopSquared = viewConfiguration.touchSlop * viewConfiguration.touchSlop
                     var selecting = false
@@ -1136,7 +1147,7 @@ private fun SharedNativeInteractiveText(
                                 ) ?: SharedNativeTextPosition(
                                     descriptor = textBlock,
                                     localOffset = layout.getOffsetForPosition(change.position)
-                                        .coerceIn(0, text.text.length)
+                                        .coerceIn(0, plainText.length)
                                 )
                                 onSelectionChange(
                                     sharedNativeReaderSelectionBetween(
@@ -2664,6 +2675,11 @@ private fun AnnotatedString.stringAnnotationAt(tag: String, offset: Int): String
     val end = (start + 1).coerceAtMost(length)
     return getStringAnnotations(tag, start, end).firstOrNull()?.item
 }
+
+internal fun sharedNativeReaderSelectionGestureKey(
+    textBlockKey: String,
+    text: AnnotatedString
+): String = "$textBlockKey:${text.text}"
 
 private data class SharedNativeSelectedTextRange(
     val info: SharedNativeTextLayoutInfo,

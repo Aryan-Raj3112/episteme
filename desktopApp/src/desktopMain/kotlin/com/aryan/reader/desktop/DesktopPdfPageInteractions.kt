@@ -39,25 +39,18 @@ internal fun SharedPdfReaderState.withDesktopPdfTextSelectionHighlightAdded(
     annotation: SharedPdfAnnotation,
     zoomSpec: PdfZoomSpec = PdfZoomSpec()
 ): SharedPdfReaderState {
-    var next = reduce(SharedPdfReaderAction.AnnotationAdded(annotation), zoomSpec)
-    if (annotation.isDesktopTextSelectionHighlight) {
-        next = next.reduce(SharedPdfReaderAction.AnnotationSelected(null), zoomSpec)
-        if (next.isTextSelectionMode) {
-            next = next.reduce(SharedPdfReaderAction.TextSelectionModeChanged(false), zoomSpec)
-        }
+    val next = reduce(SharedPdfReaderAction.AnnotationAdded(annotation), zoomSpec)
+    return if (annotation.isDesktopTextSelectionHighlight) {
+        next.reduce(SharedPdfReaderAction.AnnotationSelected(null), zoomSpec)
+    } else {
+        next
     }
-    return next
 }
 
 internal fun SharedPdfReaderState.withDesktopPdfTextHighlightSheetDismissed(
     zoomSpec: PdfZoomSpec = PdfZoomSpec()
 ): SharedPdfReaderState {
-    val selected = annotations.firstOrNull { it.id == selectedAnnotationId }
-    var next = reduce(SharedPdfReaderAction.AnnotationSelected(null), zoomSpec)
-    if (selected?.isDesktopTextSelectionHighlight == true && next.isTextSelectionMode) {
-        next = next.reduce(SharedPdfReaderAction.TextSelectionModeChanged(false), zoomSpec)
-    }
-    return next
+    return reduce(SharedPdfReaderAction.AnnotationSelected(null), zoomSpec)
 }
 
 internal fun List<PdfPagePoint>.withDesktopPdfDragPoint(

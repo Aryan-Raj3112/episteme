@@ -8,13 +8,12 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.reduce
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopPdfTextHighlightStateTest {
     @Test
-    fun `text selection highlight returns pdf to pan mode after creation`() {
+    fun `text selection highlight keeps chosen text selection mode after creation`() {
         val annotation = textSelectionHighlight()
         val state = SharedPdfReaderState.initial(pageCount = 1)
             .reduce(SharedPdfReaderAction.TextSelectionModeChanged(true))
@@ -22,13 +21,13 @@ class DesktopPdfTextHighlightStateTest {
         val next = state.withDesktopPdfTextSelectionHighlightAdded(annotation)
 
         assertEquals(listOf(annotation), next.annotations)
-        assertFalse(next.isTextSelectionMode)
+        assertTrue(next.isTextSelectionMode)
         assertEquals(PdfInkTool.NONE, next.selectedTool)
         assertNull(next.selectedAnnotationId)
     }
 
     @Test
-    fun `dismissing selected text highlight sheet clears selection mode`() {
+    fun `dismissing selected text highlight sheet keeps chosen text selection mode`() {
         val annotation = textSelectionHighlight()
         val state = SharedPdfReaderState.initial(pageCount = 1)
             .reduce(SharedPdfReaderAction.TextSelectionModeChanged(true))
@@ -36,7 +35,7 @@ class DesktopPdfTextHighlightStateTest {
 
         val next = state.withDesktopPdfTextHighlightSheetDismissed()
 
-        assertFalse(next.isTextSelectionMode)
+        assertTrue(next.isTextSelectionMode)
         assertEquals(PdfInkTool.NONE, next.selectedTool)
         assertNull(next.selectedAnnotationId)
     }

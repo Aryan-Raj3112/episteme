@@ -993,11 +993,13 @@ fun SharedPdfAnnotationOverlay(
                 when (annotation.kind) {
                     PdfAnnotationKind.HIGHLIGHT -> {
                         val highlightBounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
+                        val style = sharedPdfHighlightAnnotationOverlayStyle(annotation)
                         highlightBounds.forEach { bounds ->
                             drawRect(
-                                color = Color(annotation.colorArgb).copy(alpha = SharedPdfAndroidHighlightColors.RenderAlpha),
+                                color = style.color,
                                 topLeft = bounds.topLeft(canvasSize),
                                 size = bounds.size(canvasSize),
+                                blendMode = style.blendMode
                             )
                         }
                     }
@@ -1079,6 +1081,25 @@ fun SharedPdfAnnotationOverlay(
                 )
             }
     }
+}
+
+internal data class SharedPdfHighlightAnnotationOverlayStyle(
+    val color: Color,
+    val blendMode: BlendMode
+)
+
+internal fun sharedPdfHighlightAnnotationOverlayStyle(
+    annotation: SharedPdfAnnotation
+): SharedPdfHighlightAnnotationOverlayStyle {
+    val storedColor = Color(annotation.colorArgb)
+    val renderAlpha = storedColor.alpha
+        .takeIf { it > 0f }
+        ?.coerceAtMost(SharedPdfAndroidHighlightColors.RenderAlpha)
+        ?: SharedPdfAndroidHighlightColors.RenderAlpha
+    return SharedPdfHighlightAnnotationOverlayStyle(
+        color = storedColor.copy(alpha = renderAlpha),
+        blendMode = BlendMode.Multiply
+    )
 }
 
 @Composable

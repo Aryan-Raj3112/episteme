@@ -64,4 +64,20 @@ class PdfSelectionGeometryTest {
 
         assertEquals(2, merged.size)
     }
+
+    @Test
+    fun `line fallback collapses overlapping glyph bands on the same visual line`() {
+        val bounds = PdfSelectionGeometry.lineBoundsForChars(
+            listOf(
+                PdfTextCharBounds(index = 1, left = 0.10f, top = 0.100f, right = 0.13f, bottom = 0.130f),
+                PdfTextCharBounds(index = 2, left = 0.14f, top = 0.116f, right = 0.17f, bottom = 0.146f),
+                PdfTextCharBounds(index = 3, left = 0.18f, top = 0.101f, right = 0.21f, bottom = 0.131f)
+            )
+        )
+
+        assertEquals(
+            listOf(PdfPageBounds(left = 0.10f, top = 0.100f, right = 0.21f, bottom = 0.146f)),
+            bounds
+        )
+    }
 }

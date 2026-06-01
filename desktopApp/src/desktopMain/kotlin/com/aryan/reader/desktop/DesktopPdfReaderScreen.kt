@@ -1245,8 +1245,8 @@ internal fun PdfReaderScreen(
         annotations.firstOrNull { it.id == selectedAnnotationId }
     }
     val selectedTextHighlight = selectedAnnotation?.takeIf { it.isDesktopTextSelectionHighlight }
-    val sortedAnnotations = remember(annotations) {
-        annotations.sortedWith(compareBy<SharedPdfAnnotation> { it.pageIndex }.thenBy { it.createdAt })
+    val sortedSidebarHighlights = remember(annotations) {
+        desktopPdfSidebarHighlights(annotations)
     }
     val sortedEmbeddedAnnotations = remember(document.embeddedAnnotations) {
         document.embeddedAnnotations.sortedWith(compareBy<SharedPdfEmbeddedAnnotation> { it.pageIndex }.thenBy { it.index })
@@ -2596,7 +2596,7 @@ internal fun PdfReaderScreen(
         displayMode = displayMode,
         hasContents = document.toc.isNotEmpty(),
         hasBookmarks = bookmarks.isNotEmpty(),
-        hasAnnotations = sortedAnnotations.isNotEmpty(),
+        hasAnnotations = sortedSidebarHighlights.isNotEmpty(),
         hasEmbeddedComments = sortedEmbeddedAnnotations.isNotEmpty(),
         searchActive = isPdfSearchActive || searchQuery.isNotBlank(),
         annotationEditing = activeTextDraft != null ||
@@ -2776,17 +2776,12 @@ internal fun PdfReaderScreen(
             DesktopPdfNavigationSidebar(
                 document = document,
                 pageIndex = pageIndex,
-                sortedAnnotations = sortedAnnotations,
-                sortedEmbeddedAnnotations = sortedEmbeddedAnnotations,
+                sortedHighlights = sortedSidebarHighlights,
                 bookmarks = bookmarks,
-                selectedAnnotationId = selectedAnnotationId,
-                selectedEmbeddedAnnotationId = selectedEmbeddedAnnotationId,
                 onPageSelected = { page -> goToPage(page, recordJump = true) },
                 onAnnotationOpened = ::goToAnnotation,
                 onAnnotationSelected = ::selectAnnotation,
-                onAnnotationDeleted = { annotation -> deleteAnnotation(annotation.id) },
-                onEmbeddedAnnotationOpened = ::goToEmbeddedAnnotation,
-                onEmbeddedAnnotationSelected = ::selectEmbeddedAnnotation
+                onAnnotationDeleted = { annotation -> deleteAnnotation(annotation.id) }
             )
         },
         rightInspector = {
