@@ -798,7 +798,6 @@ private class DesktopStreamingPcmPlayer(
                 openLine(24_000f)
             }.onFailure { secondError ->
                 logDesktopTts("play_fallback_failed sampleRate=24000 error=\"${secondError.desktopTtsSummary()}\"")
-                secondError.printStackTrace()
             }.getOrElse {
                 throw firstError
             }

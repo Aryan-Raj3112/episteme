@@ -31,6 +31,7 @@ import com.aryan.reader.pdf.PdfUserHighlight
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
 import java.util.Locale
 import java.util.UUID
 
@@ -143,7 +144,7 @@ object AnnotationSerializer {
                 resultMap[pageIndex]?.add(annotation)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Timber.e(e, "Failed to parse PDF ink annotations")
         }
         return resultMap
     }
@@ -217,7 +218,7 @@ object TextBoxSerializer {
                 )
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Timber.e(e, "Failed to parse PDF text boxes")
         }
         return result
     }
@@ -290,7 +291,7 @@ object HighlightSerializer {
                 )
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Timber.e(e, "Failed to parse PDF highlights")
         }
         return result
     }

@@ -12,6 +12,7 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
+import com.aryan.reader.BuildConfig
 import androidx.compose.ui.unit.isSpecified
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -5027,6 +5028,7 @@ private fun LayoutCoordinates.androidEpubPageContentBounds(
 }
 
 private fun logAndroidEpubCutoff(message: String) {
+    if (!BuildConfig.DEBUG) return
     Log.d(AndroidEpubCutoffLogTag, message)
 }
 

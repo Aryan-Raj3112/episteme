@@ -750,6 +750,12 @@ object ReaderHtmlDocumentBuilder {
               </button>
               <script>
                 (function () {
+                  var readerDiagnosticsConsoleEnabled = ${SharedReaderDiagnosticsEnabled};
+                  function readerConsoleLog(line) {
+                    if (readerDiagnosticsConsoleEnabled) {
+                      try { console.log(line); } catch (error) {}
+                    }
+                  }
                   var menu = document.getElementById('reader-selection-menu');
                   var startHandle = document.getElementById('reader-selection-start-handle');
                   var endHandle = document.getElementById('reader-selection-end-handle');
@@ -786,7 +792,7 @@ object ReaderHtmlDocumentBuilder {
                   }
                   function readerTtsLog(message) {
                     var line = 'EPUB_TTS_HIGHLIGHT ' + message;
-                    try { console.log(line); } catch (error) {}
+                    readerConsoleLog(line);
                     if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
                       try { window.kmpJsBridge.callNative('readerTtsHighlightLog', JSON.stringify({ message: line })); } catch (error) {}
                     }
@@ -802,7 +808,7 @@ object ReaderHtmlDocumentBuilder {
                       } catch (error) {}
                     }
                     if (!delivered) {
-                      try { console.log(line); } catch (error) {}
+                      readerConsoleLog(line);
                     }
                   }
                   window.readerSelectionDebugLog = readerSelectionDebugLog;
@@ -816,7 +822,7 @@ object ReaderHtmlDocumentBuilder {
                       } catch (error) {}
                     }
                     if (!delivered) {
-                      try { console.log(line); } catch (error) {}
+                      readerConsoleLog(line);
                     }
                   }
                   window.readerHighlightFlowLog = readerHighlightFlowLog;
@@ -830,7 +836,7 @@ object ReaderHtmlDocumentBuilder {
                       } catch (error) {}
                     }
                     if (!delivered) {
-                      try { console.log(line); } catch (error) {}
+                      readerConsoleLog(line);
                     }
                   }
                   window.readerDesktopHighlightMapLog = readerDesktopHighlightMapLog;
@@ -844,7 +850,7 @@ object ReaderHtmlDocumentBuilder {
                       } catch (error) {}
                     }
                     if (!delivered) {
-                      try { console.log(line); } catch (error) {}
+                      readerConsoleLog(line);
                     }
                   }
                   window.readerDesktopPositionTraceLog = readerDesktopPositionTraceLog;
@@ -858,7 +864,7 @@ object ReaderHtmlDocumentBuilder {
                       } catch (error) {}
                     }
                     if (!delivered) {
-                      try { console.log(line); } catch (error) {}
+                      readerConsoleLog(line);
                     }
                   }
                   window.readerTtsStartTraceLog = readerTtsStartTraceLog;
@@ -889,7 +895,7 @@ object ReaderHtmlDocumentBuilder {
                       } catch (error) {}
                     }
                     if (!delivered) {
-                      try { console.log(line); } catch (error) {}
+                      readerConsoleLog(line);
                     }
                   }
                   function readerGapLog(message) {
@@ -902,7 +908,7 @@ object ReaderHtmlDocumentBuilder {
                       } catch (error) {}
                     }
                     if (!delivered) {
-                      try { console.log(line); } catch (error) {}
+                      readerConsoleLog(line);
                     }
                   }
                   function readerPaginationLayoutLog(reason) {
@@ -1849,26 +1855,26 @@ object ReaderHtmlDocumentBuilder {
                   function fallbackReaderLinkNavigation(payload, reason) {
                     try {
                       var encoded = encodeURIComponent(JSON.stringify(payload));
-                      console.log('READER_LINK fallback_navigation href=' + payload.href + ' reason=' + reason);
+                      readerConsoleLog('READER_LINK fallback_navigation href=' + payload.href + ' reason=' + reason);
                       window.location.href = 'readerlink://click?payload=' + encoded;
                     } catch (error) {
-                      console.log('READER_LINK fallback_navigation_error href=' + payload.href + ' error=' + error);
+                      readerConsoleLog('READER_LINK fallback_navigation_error href=' + payload.href + ' error=' + error);
                     }
                   }
                   function sendReaderLinkClick(payload, attempt) {
                     if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
                       try {
                         window.kmpJsBridge.callNative('readerLinkClicked', JSON.stringify(payload));
-                        console.log('READER_LINK bridge_sent href=' + payload.href + ' attempt=' + attempt);
+                        readerConsoleLog('READER_LINK bridge_sent href=' + payload.href + ' attempt=' + attempt);
                         window.setTimeout(function () {
                           fallbackReaderLinkNavigation(payload, 'post_bridge');
                         }, 260);
                         return true;
                       } catch (error) {
-                        console.log('READER_LINK bridge_error href=' + payload.href + ' attempt=' + attempt + ' error=' + error);
+                        readerConsoleLog('READER_LINK bridge_error href=' + payload.href + ' attempt=' + attempt + ' error=' + error);
                       }
                     } else {
-                      console.log('READER_LINK bridge_missing href=' + payload.href + ' attempt=' + attempt);
+                      readerConsoleLog('READER_LINK bridge_missing href=' + payload.href + ' attempt=' + attempt);
                     }
                     if (attempt < 3) {
                       window.setTimeout(function () {
@@ -1876,7 +1882,7 @@ object ReaderHtmlDocumentBuilder {
                       }, attempt === 0 ? 60 : 220);
                       return true;
                     }
-                    console.log('READER_LINK bridge_gave_up href=' + payload.href);
+                    readerConsoleLog('READER_LINK bridge_gave_up href=' + payload.href);
                     fallbackReaderLinkNavigation(payload, 'bridge_gave_up');
                     return false;
                   }
@@ -1887,7 +1893,7 @@ object ReaderHtmlDocumentBuilder {
                         window.kmpJsBridge.callNative('readerHighlightClicked', JSON.stringify({ id: highlightId }));
                         return true;
                       } catch (error) {
-                        console.log('READER_HIGHLIGHT bridge_error id=' + highlightId + ' error=' + error);
+                        readerConsoleLog('READER_HIGHLIGHT bridge_error id=' + highlightId + ' error=' + error);
                       }
                     }
                     return false;
@@ -2464,7 +2470,7 @@ object ReaderHtmlDocumentBuilder {
                         window.kmpJsBridge.callNative('readerSelectionAction', JSON.stringify(payload));
                         return true;
                       } catch (error) {
-                        console.log('READER_SELECTION_ACTION bridge_error action=' + action + ' error=' + error);
+                        readerConsoleLog('READER_SELECTION_ACTION bridge_error action=' + action + ' error=' + error);
                       }
                     }
                     fallbackSelectionAction(action, text);

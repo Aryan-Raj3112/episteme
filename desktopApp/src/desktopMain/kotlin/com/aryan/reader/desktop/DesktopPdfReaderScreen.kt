@@ -2071,7 +2071,6 @@ internal fun PdfReaderScreen(
                 }
             }.onFailure { error ->
                 logDesktopTts("pdf_sequence_failed error=\"${error.desktopTtsSummary()}\"")
-                if (error !is kotlinx.coroutines.CancellationException && error.message != noTextMessage) error.printStackTrace()
                 updatePdfTtsSession { extras ->
                     if (error is kotlinx.coroutines.CancellationException) {
                         extras.copy(

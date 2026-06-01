@@ -11,24 +11,28 @@ internal const val CloudSyncTraceTag = "EpistemeCloudSync"
 internal const val CloudAnnotationSyncTraceTag = "EpistemeCloudAnnotations"
 
 internal fun logCloudSyncTrace(message: () -> String) {
+    if (!BuildConfig.DEBUG) return
     val text = message()
     Log.d(CloudSyncTraceTag, text)
     Timber.tag(CloudSyncTraceTag).d(text)
 }
 
 internal fun logCloudSyncError(error: Throwable, message: () -> String) {
+    if (!BuildConfig.DEBUG) return
     val text = message()
     Log.e(CloudSyncTraceTag, text, error)
     Timber.tag(CloudSyncTraceTag).e(error, text)
 }
 
 internal fun logCloudAnnotationSyncTrace(message: () -> String) {
+    if (!BuildConfig.DEBUG) return
     val text = message()
     Log.d(CloudAnnotationSyncTraceTag, text)
     Timber.tag(CloudAnnotationSyncTraceTag).d(text)
 }
 
 internal fun logCloudAnnotationSyncError(error: Throwable, message: () -> String) {
+    if (!BuildConfig.DEBUG) return
     val text = message()
     Log.e(CloudAnnotationSyncTraceTag, text, error)
     Timber.tag(CloudAnnotationSyncTraceTag).e(error, text)

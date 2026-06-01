@@ -29,6 +29,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.aryan.reader.BuildConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -182,11 +183,18 @@ class MathMLRenderer(private val context: Context) {
         val mathMLForJs = job.mathML.replace("`", "\\`")
         val script = """
         (function() {
-            console.log("MATH_DIAGNOSTIC: Starting MathML to SVG conversion.");
+            var mathDiagnosticsEnabled = ${BuildConfig.DEBUG};
+            function mathLog() {
+                if (mathDiagnosticsEnabled) console.log.apply(console, arguments);
+            }
+            function mathError() {
+                if (mathDiagnosticsEnabled) console.error.apply(console, arguments);
+            }
+            mathLog("MATH_DIAGNOSTIC: Starting MathML to SVG conversion.");
             const mathMLContent = `${mathMLForJs}`;
-            console.log("MATH_DIAGNOSTIC: Input MathML: " + mathMLContent);
+            mathLog("MATH_DIAGNOSTIC: Input MathML: " + mathMLContent);
             MathJax.mathml2svgPromise(mathMLContent).then(function (node) {
-                console.log("MATH_DIAGNOSTIC: mathml2svgPromise successful.");
+                mathLog("MATH_DIAGNOSTIC: mathml2svgPromise successful.");
                 var svgElement = node.querySelector('svg');
                 if (svgElement) {
                     svgElement.style.fill = 'currentColor';
@@ -194,15 +202,15 @@ class MathMLRenderer(private val context: Context) {
                     var width = svgElement.getAttribute('width');
                     var height = svgElement.getAttribute('height');
                     var viewBox = svgElement.getAttribute('viewBox');
-                    console.log('MATH_SIZE_DIAGNOSTIC: Generated SVG details -> width: ' + width + ', height: ' + height + ', viewBox: ' + viewBox + ', length: ' + svgOutput.length);
-                    console.log("MATH_DIAGNOSTIC: SVG generated: " + svgOutput);
+                    mathLog('MATH_SIZE_DIAGNOSTIC: Generated SVG details -> width: ' + width + ', height: ' + height + ', viewBox: ' + viewBox + ', length: ' + svgOutput.length);
+                    mathLog("MATH_DIAGNOSTIC: SVG generated: " + svgOutput);
                     AndroidBridge.onSvgReady(svgOutput);
                 } else {
-                    console.error("MATH_DIAGNOSTIC: SVG element not found in MathJax output.");
+                    mathError("MATH_DIAGNOSTIC: SVG element not found in MathJax output.");
                     AndroidBridge.onSvgReady('');
                 }
             }).catch((err) => {
-                console.error("MATH_DIAGNOSTIC: MathJax conversion error:", err);
+                mathError("MATH_DIAGNOSTIC: MathJax conversion error:", err);
                 AndroidBridge.onSvgReady('');
             });
         })();

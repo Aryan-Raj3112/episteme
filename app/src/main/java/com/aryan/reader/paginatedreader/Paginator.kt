@@ -21,6 +21,7 @@ package com.aryan.reader.paginatedreader
 
 import android.os.Build
 import android.util.Log
+import com.aryan.reader.BuildConfig
 import timber.log.Timber
 import androidx.annotation.RequiresApi
 import androidx.compose.ui.text.AnnotatedString
@@ -62,6 +63,7 @@ private fun TextLayoutResult.paginationMeasuredHeightPx(): Int {
 }
 
 private fun logAndroidEpubCutoff(message: String) {
+    if (!BuildConfig.DEBUG) return
     Log.d(AndroidEpubCutoffLogTag, message)
 }
 

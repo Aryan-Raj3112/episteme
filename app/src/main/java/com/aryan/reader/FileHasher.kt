@@ -21,6 +21,7 @@ package com.aryan.reader
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import java.io.InputStream
 import java.security.MessageDigest
 
@@ -50,8 +51,7 @@ object FileHasher {
             }
             hexString.toString()
         } catch (e: Exception) {
-            // In a real app, you'd want to log this error
-            e.printStackTrace()
+            Timber.e(e, "Failed to calculate SHA-256 hash")
             null
         }
     }

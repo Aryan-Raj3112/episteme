@@ -2434,7 +2434,6 @@ internal fun EpistemeDesktopApp(
                 }
             }.onFailure { error ->
                 logDesktopTts("reader_sequence_failed error=\"${error.desktopTtsSummary()}\"")
-                if (error !is kotlinx.coroutines.CancellationException) error.printStackTrace()
                 updateTextReaderTtsSession { latest ->
                     if (error is kotlinx.coroutines.CancellationException) {
                         latest.copy(
@@ -3090,7 +3089,9 @@ internal fun EpistemeDesktopApp(
                 }
                 rewritten.onSuccess(::applyBookMetadataUpdate)
                     .onFailure { error ->
-                        println("Failed to update EPUB metadata for ${updated.displayName}: ${error.message}")
+                        logDesktopDiagnostic("EpistemeDesktopMetadata") {
+                            "epub_metadata_update_failed book=${updated.id} error=\"${error.message.orEmpty().logPreview()}\""
+                        }
                         updateState(state.copy(bannerMessage = BannerMessage("Could not update EPUB metadata.")))
                     }
             }
