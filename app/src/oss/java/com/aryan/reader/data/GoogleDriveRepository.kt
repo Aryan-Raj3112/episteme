@@ -12,7 +12,8 @@ data class DriveFileList(
 
 data class DriveFile(
     val id: String,
-    val name: String
+    val name: String,
+    val modifiedTimeMillis: Long = 0L
 )
 
 data class ShelfMetadata(

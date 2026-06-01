@@ -61,6 +61,45 @@ class PdfReaderRepositoryTest {
     }
 
     @Test
+    fun `PdfAnnotationRepository does not rewrite unchanged annotation file`() = runTest {
+        val context = contextWithFilesDir(tempRoot("annotation-noop"))
+        val repository = PdfAnnotationRepository(context)
+        val annotations = mapOf(
+            0 to listOf(
+                PdfAnnotation(
+                    type = AnnotationType.INK,
+                    inkType = InkType.PEN,
+                    pageIndex = 0,
+                    points = listOf(PdfPoint(0.1f, 0.2f, 123L)),
+                    color = Color.Blue,
+                    strokeWidth = 0.01f
+                )
+            )
+        )
+
+        repository.saveAnnotations("book", annotations)
+        val file = requireNotNull(repository.getAnnotationFileForSync("book"))
+        val previousModified = 1_700_000_000_000L
+        assertTrue(file.setLastModified(previousModified))
+
+        repository.saveAnnotations("book", annotations)
+
+        assertEquals(previousModified, file.lastModified())
+    }
+
+    @Test
+    fun `PdfAnnotationRepository stores deleted annotation tombstones for sync`() = runTest {
+        val context = contextWithFilesDir(tempRoot("annotation-deleted"))
+        val repository = PdfAnnotationRepository(context)
+
+        repository.markAnnotationsDeleted("book", listOf("old-ink"), deletedAt = 123L)
+
+        val file = requireNotNull(repository.getDeletedAnnotationsFileForSync("book"))
+        assertTrue(file.readText().contains("old-ink"))
+        assertTrue(file.readText().contains("123"))
+    }
+
+    @Test
     fun `PdfHighlightRepository saves loads deletes empty highlights and clears all`() = runTest {
         val context = contextWithFilesDir(tempRoot("highlights"))
         val repository = PdfHighlightRepository(context)
@@ -87,6 +126,29 @@ class PdfReaderRepositoryTest {
     }
 
     @Test
+    fun `PdfHighlightRepository does not rewrite unchanged highlight file`() = runTest {
+        val context = contextWithFilesDir(tempRoot("highlights-noop"))
+        val repository = PdfHighlightRepository(context)
+        val highlight = PdfUserHighlight(
+            id = "h1",
+            pageIndex = 2,
+            bounds = emptyList(),
+            color = PdfHighlightColor.GREEN,
+            text = "quote",
+            range = 5 to 10
+        )
+
+        repository.saveHighlights("book", listOf(highlight))
+        val file = repository.getFileForSync("book")
+        val previousModified = 1_700_000_000_000L
+        assertTrue(file.setLastModified(previousModified))
+
+        repository.saveHighlights("book", listOf(highlight))
+
+        assertEquals(previousModified, file.lastModified())
+    }
+
+    @Test
     fun `PdfTextBoxRepository saves loads deletes and clears files`() = runTest {
         val context = contextWithFilesDir(tempRoot("textboxes"))
         val repository = PdfTextBoxRepository(context)
@@ -110,6 +172,30 @@ class PdfReaderRepositoryTest {
         repository.saveTextBoxes("book/two", listOf(box.copy(id = "box2")))
         repository.clearAll()
         assertTrue(File(context.filesDir, "textboxes").listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun `PdfTextBoxRepository does not rewrite unchanged textbox file`() = runTest {
+        val context = contextWithFilesDir(tempRoot("textboxes-noop"))
+        val repository = PdfTextBoxRepository(context)
+        val box = PdfTextBox(
+            id = "box",
+            pageIndex = 0,
+            relativeBounds = Rect(0.1f, 0.2f, 0.3f, 0.4f),
+            text = "Text box",
+            color = Color.Black,
+            backgroundColor = Color.White,
+            fontSize = 16f
+        )
+
+        repository.saveTextBoxes("book", listOf(box))
+        val file = repository.getFileForSync("book")
+        val previousModified = 1_700_000_000_000L
+        assertTrue(file.setLastModified(previousModified))
+
+        repository.saveTextBoxes("book", listOf(box))
+
+        assertEquals(previousModified, file.lastModified())
     }
 
     @Test

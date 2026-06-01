@@ -56,7 +56,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 21
+    private const val SCHEMA_VERSION = 22
 
     private val json = Json {
         prettyPrint = true
@@ -289,7 +289,8 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         readerSettings = obj["readerSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
         readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() },
         readerHighlights = obj.array("readerHighlights").mapNotNull { it.asReaderHighlightOrNull() },
-        pdfReaderViewport = obj["pdfReaderViewport"]?.takeUnless { it is JsonNull }?.asSharedPdfReaderViewportOrNull()
+        pdfReaderViewport = obj["pdfReaderViewport"]?.takeUnless { it is JsonNull }?.asSharedPdfReaderViewportOrNull(),
+        readingPositionModifiedTimestamp = obj.long("readingPositionModifiedTimestamp")
     )
 }
 
@@ -415,7 +416,8 @@ private fun BookItem.toJsonObject(): JsonObject {
             "readerSettings" to readerSettings.asJson(),
             "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() }),
             "readerHighlights" to JsonArray(readerHighlights.map { it.toJsonObject() }),
-            "pdfReaderViewport" to pdfReaderViewport.asJson()
+            "pdfReaderViewport" to pdfReaderViewport.asJson(),
+            "readingPositionModifiedTimestamp" to JsonPrimitive(readingPositionModifiedTimestamp)
         )
     )
 }

@@ -104,6 +104,8 @@ class RecentFilesRepositoryReadingPositionMergeTest {
                 locatorBlockIndex = 31,
                 locatorCharOffset = 12,
                 progressPercentage = 82f,
+                lastModifiedTimestamp = 2_000L,
+                readingPositionModifiedTimestamp = 2_000L,
                 isRecent = true
             )
         )
@@ -113,6 +115,41 @@ class RecentFilesRepositoryReadingPositionMergeTest {
         assertEquals(31, inserted.captured.locatorBlockIndex)
         assertEquals(12, inserted.captured.locatorCharOffset)
         assertEquals(82f, inserted.captured.progressPercentage)
+        assertEquals(2_000L, inserted.captured.readingPositionModifiedTimestamp)
+    }
+
+    @Test
+    fun `addRecentFile preserves newer existing reading position when incoming metadata timestamp is newer`() = runTest {
+        val inserted = slot<RecentFileEntity>()
+        coEvery { recentFileDao.getFileByBookId("book-1") } returns existingEntity().copy(
+            readingPositionModifiedTimestamp = 1_800L
+        )
+        coEvery { recentFileDao.insertOrUpdateFile(capture(inserted)) } just Runs
+
+        repository.addRecentFile(
+            RecentFileItem(
+                bookId = "book-1",
+                uriString = "content://new",
+                type = FileType.EPUB,
+                displayName = "New.epub",
+                timestamp = 3_000L,
+                lastChapterIndex = 1,
+                lastPositionCfi = "/old/remote",
+                locatorBlockIndex = 2,
+                locatorCharOffset = 3,
+                progressPercentage = 12f,
+                lastModifiedTimestamp = 3_000L,
+                readingPositionModifiedTimestamp = 1_200L,
+                isRecent = true
+            )
+        )
+
+        assertEquals("/4/2/6:44", inserted.captured.lastPositionCfi)
+        assertEquals(6, inserted.captured.lastChapterIndex)
+        assertEquals(24, inserted.captured.locatorBlockIndex)
+        assertEquals(44, inserted.captured.locatorCharOffset)
+        assertEquals(71.5f, inserted.captured.progressPercentage)
+        assertEquals(1_800L, inserted.captured.readingPositionModifiedTimestamp)
     }
 
     @Test

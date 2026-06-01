@@ -248,6 +248,7 @@ import com.aryan.reader.loadReaderBrightnessSettings
 import com.aryan.reader.loadReaderScreenOrientationMode
 import com.aryan.reader.loadReaderSliderToggled
 import com.aryan.reader.loadTtsReplacementPreferences
+import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.pdf.data.AnnotationSettingsRepository
@@ -1365,22 +1366,50 @@ fun PdfViewerScreen(
                     saveMutex.withLock {
                         withContext(Dispatchers.IO) {
                             @Suppress("VariableNeverRead") var didSave = false
+                            var sidecarsSaved = false
 
                             if (canSaveSidecarsSnapshot) {
-                                if (force || annotsHash != lastSavedHashes[0]) {
+                                if (annotsHash != lastSavedHashes[0]) {
+                                    logCloudAnnotationSyncTrace {
+                                        "android.reader.save_ink book=$bookId force=$force oldHash=${lastSavedHashes[0]} " +
+                                            "newHash=$annotsHash pages=${annots.keys.sorted()} count=${annots.values.sumOf { it.size }}"
+                                    }
                                     annotationRepository.saveAnnotations(bookId, annots)
                                     lastSavedHashes[0] = annotsHash
                                     didSave = true
+                                    sidecarsSaved = true
+                                } else if (force) {
+                                    logCloudAnnotationSyncTrace {
+                                        "android.reader.save_ink_noop book=$bookId force=true hash=$annotsHash"
+                                    }
                                 }
-                                if (force || boxesHash != lastSavedHashes[1]) {
+                                if (boxesHash != lastSavedHashes[1]) {
+                                    logCloudAnnotationSyncTrace {
+                                        "android.reader.save_textboxes book=$bookId force=$force oldHash=${lastSavedHashes[1]} " +
+                                            "newHash=$boxesHash count=${boxes.size}"
+                                    }
                                     textBoxRepository.saveTextBoxes(bookId, boxes)
                                     lastSavedHashes[1] = boxesHash
                                     didSave = true
+                                    sidecarsSaved = true
+                                } else if (force) {
+                                    logCloudAnnotationSyncTrace {
+                                        "android.reader.save_textboxes_noop book=$bookId force=true hash=$boxesHash"
+                                    }
                                 }
-                                if (force || highlightsHash != lastSavedHashes[2]) {
+                                if (highlightsHash != lastSavedHashes[2]) {
+                                    logCloudAnnotationSyncTrace {
+                                        "android.reader.save_highlights book=$bookId force=$force oldHash=${lastSavedHashes[2]} " +
+                                            "newHash=$highlightsHash count=${highlights.size}"
+                                    }
                                     highlightRepository.saveHighlights(bookId, highlights)
                                     lastSavedHashes[2] = highlightsHash
                                     didSave = true
+                                    sidecarsSaved = true
+                                } else if (force) {
+                                    logCloudAnnotationSyncTrace {
+                                        "android.reader.save_highlights_noop book=$bookId force=true hash=$highlightsHash"
+                                    }
                                 }
                             } else {
                                 Timber.tag("PdfTabSync").d(
@@ -1410,9 +1439,53 @@ fun PdfViewerScreen(
                                 }
                                 lastSavedHashes[4] = page
                             }
+                            if (sidecarsSaved) {
+                                logCloudAnnotationSyncTrace {
+                                    "android.reader.sidecar_upload_queue book=$bookId force=$force"
+                                }
+                                viewModel.queuePdfSidecarCloudUpload(bookId)
+                            }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    val persistInkAnnotationsNow = remember(currentBookId, annotationRepository) {
+        { annotationsSnapshot: Map<Int, List<PdfAnnotation>>, deletedAnnotations: Collection<PdfAnnotation>, reason: String ->
+            val bookIdSnapshot = currentBookId
+            val loadedSidecarBookIdSnapshot = currentLoadedSidecarBookId
+            val canSaveSidecarsSnapshot = canUsePdfSidecarsForBook(
+                bookIdSnapshot,
+                loadedSidecarBookIdSnapshot,
+                currentAreAnnotationsLoaded
+            )
+            viewModel.viewModelScope.launch {
+                val bookId = bookIdSnapshot ?: return@launch
+                if (!canSaveSidecarsSnapshot) {
+                    logCloudAnnotationSyncTrace {
+                        "android.reader.persist_ink_skip book=$bookId reason=$reason loadedSidecarBook=$loadedSidecarBookIdSnapshot"
+                    }
+                    return@launch
+                }
+                val deletedIds = deletedAnnotations.mapNotNull { it.id.takeIf(String::isNotBlank) }.toSet()
+                withContext(NonCancellable) {
+                    saveMutex.withLock {
+                        withContext(Dispatchers.IO) {
+                            if (deletedIds.isNotEmpty()) {
+                                annotationRepository.markAnnotationsDeleted(bookId, deletedIds)
+                            }
+                            annotationRepository.saveAnnotations(bookId, annotationsSnapshot)
+                            lastSavedHashes[0] = annotationsSnapshot.hashCode()
+                        }
+                    }
+                }
+                logCloudAnnotationSyncTrace {
+                    "android.reader.persist_ink book=$bookId reason=$reason count=${annotationsSnapshot.values.sumOf { it.size }} " +
+                        "deletedIds=${deletedIds.sorted()}"
+                }
+                viewModel.queuePdfSidecarCloudUpload(bookId)
             }
         }
     }
@@ -2503,8 +2576,16 @@ fun PdfViewerScreen(
         allAnnotations = loaded
         textBoxes.addAll(loadedBoxes)
         userHighlights.addAll(loadedHighlights)
+        lastSavedHashes[0] = loaded.hashCode()
+        lastSavedHashes[1] = loadedBoxes.hashCode()
+        lastSavedHashes[2] = loadedHighlights.hashCode()
         loadedSidecarBookId = loadingBookId
         areAnnotationsLoaded = true
+        logCloudAnnotationSyncTrace {
+            "android.reader.sidecar_load book=$loadingBookId inkPages=${loaded.keys.sorted()} " +
+                "inkCount=${loaded.values.sumOf { it.size }} textBoxes=${loadedBoxes.size} " +
+                "highlights=${loadedHighlights.size} hashes=${lastSavedHashes.copyOfRange(0, 3).joinToString()}"
+        }
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.sidecarLoad.done bookId=$loadingBookId annotationPages=${loaded.keys.sorted()} " +
                 "textBoxes=${loadedBoxes.size} highlights=${loadedHighlights.size}"
@@ -5092,8 +5173,14 @@ fun PdfViewerScreen(
                                                         val pageIdx = finalAnnotation.pageIndex
                                                         val existing =
                                                             allAnnotations[pageIdx] ?: emptyList()
-                                                        allAnnotations =
+                                                        val nextAnnotations =
                                                             allAnnotations + (pageIdx to (existing + finalAnnotation))
+                                                        allAnnotations = nextAnnotations
+                                                        persistInkAnnotationsNow(
+                                                            nextAnnotations,
+                                                            emptyList(),
+                                                            "draw_end"
+                                                        )
                                                         undoStack.add(
                                                             HistoryAction.Add(
                                                                 pageIdx, finalAnnotation
@@ -5107,6 +5194,11 @@ fun PdfViewerScreen(
                                                             erasedAnnotationsFromStroke.mapValues {
                                                                 it.value.toList()
                                                             }
+                                                        persistInkAnnotationsNow(
+                                                            allAnnotations,
+                                                            removalMap.values.flatten(),
+                                                            "erase_end"
+                                                        )
                                                         undoStack.add(
                                                             HistoryAction.Remove(removalMap)
                                                         )
@@ -5567,8 +5659,14 @@ fun PdfViewerScreen(
                                                     val pageIdx = finalAnnotation.pageIndex
                                                     val existing =
                                                         allAnnotations[pageIdx] ?: emptyList()
-                                                    allAnnotations =
+                                                    val nextAnnotations =
                                                         allAnnotations + (pageIdx to (existing + finalAnnotation))
+                                                    allAnnotations = nextAnnotations
+                                                    persistInkAnnotationsNow(
+                                                        nextAnnotations,
+                                                        emptyList(),
+                                                        "draw_end"
+                                                    )
                                                     undoStack.add(
                                                         HistoryAction.Add(
                                                             pageIdx, finalAnnotation
@@ -5582,6 +5680,11 @@ fun PdfViewerScreen(
                                                         erasedAnnotationsFromStroke.mapValues {
                                                             it.value.toList()
                                                         }
+                                                    persistInkAnnotationsNow(
+                                                        allAnnotations,
+                                                        removalMap.values.flatten(),
+                                                        "erase_end"
+                                                    )
                                                     undoStack.add(
                                                         HistoryAction.Remove(removalMap)
                                                     )

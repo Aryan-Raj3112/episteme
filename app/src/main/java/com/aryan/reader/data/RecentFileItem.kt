@@ -57,8 +57,24 @@ data class RecentFileItem(
     val originalDescription: String? = null,
     val folderTextMetadataParsed: Boolean = false,
     val folderCoverMetadataParsed: Boolean = false,
+    val readingPositionModifiedTimestamp: Long = 0L,
     val tags: List<TagEntity> = emptyList()
 )
+
+fun RecentFileItem.hasReadingPositionForSync(): Boolean {
+    return lastChapterIndex != null ||
+        lastPage != null ||
+        !lastPositionCfi.isNullOrBlank() ||
+        locatorBlockIndex != null ||
+        locatorCharOffset != null ||
+        (progressPercentage ?: 0f) > 0f
+}
+
+fun RecentFileItem.effectiveReadingPositionModifiedTimestamp(): Long {
+    return readingPositionModifiedTimestamp.takeIf { it > 0L }
+        ?: lastModifiedTimestamp.takeIf { hasReadingPositionForSync() }
+        ?: 0L
+}
 
 fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
     return RecentFileItem(
@@ -96,7 +112,8 @@ fun RecentFileEntity.toRecentFileItem(): RecentFileItem {
         originalSeriesIndex = this.originalSeriesIndex,
         originalDescription = this.originalDescription,
         folderTextMetadataParsed = this.folderTextMetadataParsed,
-        folderCoverMetadataParsed = this.folderCoverMetadataParsed
+        folderCoverMetadataParsed = this.folderCoverMetadataParsed,
+        readingPositionModifiedTimestamp = this.readingPositionModifiedTimestamp
     )
 }
 
@@ -136,7 +153,8 @@ fun RecentFileItem.toRecentFileEntity(): RecentFileEntity {
         originalSeriesIndex = this.originalSeriesIndex ?: this.seriesIndex,
         originalDescription = this.originalDescription ?: this.description,
         folderTextMetadataParsed = this.folderTextMetadataParsed,
-        folderCoverMetadataParsed = this.folderCoverMetadataParsed
+        folderCoverMetadataParsed = this.folderCoverMetadataParsed,
+        readingPositionModifiedTimestamp = this.effectiveReadingPositionModifiedTimestamp()
     )
 }
 
@@ -156,6 +174,7 @@ fun RecentFileItem.toBookMetadata(): BookMetadata {
         isRecent = this.isRecent,
         isDeleted = this.isDeleted,
         lastModifiedTimestamp = this.lastModifiedTimestamp,
+        readingPositionModifiedTimestamp = this.effectiveReadingPositionModifiedTimestamp(),
         bookmarksJson = this.bookmarksJson,
         hasAnnotations = false,
         customName = this.customName,
@@ -170,6 +189,27 @@ fun RecentFileItem.toBookMetadata(): BookMetadata {
         originalSeriesIndex = this.originalSeriesIndex ?: this.seriesIndex,
         originalDescription = this.originalDescription ?: this.description
     )
+}
+
+fun BookMetadata.hasReadingPositionForSync(): Boolean {
+    return lastChapterIndex != null ||
+        lastPage != null ||
+        !lastPositionCfi.isNullOrBlank() ||
+        locatorBlockIndex != null ||
+        locatorCharOffset != null ||
+        (progressPercentage ?: 0f) > 0f
+}
+
+fun BookMetadata.effectiveReadingPositionModifiedTimestamp(): Long {
+    return readingPositionModifiedTimestamp.takeIf { it > 0L }
+        ?: lastModifiedTimestamp.takeIf { hasReadingPositionForSync() }
+        ?: 0L
+}
+
+fun BookMetadata.effectiveAnnotationModifiedTimestamp(sidecarModifiedTimestamp: Long = 0L): Long {
+    return sidecarModifiedTimestamp.takeIf { it > 0L }
+        ?: annotationModifiedTimestamp.takeIf { it > 0L }
+        ?: 0L
 }
 
 fun BookMetadata.toRecentFileItem(): RecentFileItem {
@@ -203,7 +243,8 @@ fun BookMetadata.toRecentFileItem(): RecentFileItem {
         originalAuthor = this.originalAuthor,
         originalSeriesName = this.originalSeriesName,
         originalSeriesIndex = this.originalSeriesIndex,
-        originalDescription = this.originalDescription
+        originalDescription = this.originalDescription,
+        readingPositionModifiedTimestamp = this.effectiveReadingPositionModifiedTimestamp()
     )
 }
 
@@ -241,6 +282,7 @@ fun RecentFileSummary.toRecentFileItem(): RecentFileItem {
         originalAuthor = this.originalAuthor,
         originalSeriesName = this.originalSeriesName,
         originalSeriesIndex = this.originalSeriesIndex,
-        originalDescription = this.originalDescription
+        originalDescription = this.originalDescription,
+        readingPositionModifiedTimestamp = this.readingPositionModifiedTimestamp
     )
 }

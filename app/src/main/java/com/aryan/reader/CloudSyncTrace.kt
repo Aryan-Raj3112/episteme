@@ -1,28 +1,50 @@
 package com.aryan.reader
 
+import android.util.Log
 import com.aryan.reader.data.BookMetadata
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.data.effectiveAnnotationModifiedTimestamp
+import com.aryan.reader.data.effectiveReadingPositionModifiedTimestamp
 import timber.log.Timber
 
 internal const val CloudSyncTraceTag = "EpistemeCloudSync"
+internal const val CloudAnnotationSyncTraceTag = "EpistemeCloudAnnotations"
 
 internal fun logCloudSyncTrace(message: () -> String) {
-    Timber.tag(CloudSyncTraceTag).d(message())
+    val text = message()
+    Log.d(CloudSyncTraceTag, text)
+    Timber.tag(CloudSyncTraceTag).d(text)
 }
 
 internal fun logCloudSyncError(error: Throwable, message: () -> String) {
-    Timber.tag(CloudSyncTraceTag).e(error, message())
+    val text = message()
+    Log.e(CloudSyncTraceTag, text, error)
+    Timber.tag(CloudSyncTraceTag).e(error, text)
+}
+
+internal fun logCloudAnnotationSyncTrace(message: () -> String) {
+    val text = message()
+    Log.d(CloudAnnotationSyncTraceTag, text)
+    Timber.tag(CloudAnnotationSyncTraceTag).d(text)
+}
+
+internal fun logCloudAnnotationSyncError(error: Throwable, message: () -> String) {
+    val text = message()
+    Log.e(CloudAnnotationSyncTraceTag, text, error)
+    Timber.tag(CloudAnnotationSyncTraceTag).e(error, text)
 }
 
 internal fun RecentFileItem.cloudSyncTraceSummary(prefix: String = "local"): String {
-    return "$prefix{id=$bookId type=$type ts=$lastModifiedTimestamp contentTs=$fileContentModifiedTimestamp " +
+    return "$prefix{id=$bookId type=$type ts=$lastModifiedTimestamp readTs=${effectiveReadingPositionModifiedTimestamp()} " +
+        "contentTs=$fileContentModifiedTimestamp " +
         "page=$lastPage chapter=$lastChapterIndex block=$locatorBlockIndex char=$locatorCharOffset " +
         "progress=$progressPercentage cfi=${lastPositionCfi.cloudSyncPreview()} deleted=$isDeleted recent=$isRecent " +
         "bookmarks=${bookmarksJson.cloudSyncAnnotationSummary()} highlights=${highlightsJson.cloudSyncAnnotationSummary()}}"
 }
 
 internal fun BookMetadata.cloudSyncTraceSummary(prefix: String = "remote"): String {
-    return "$prefix{id=$bookId type=$type ts=$lastModifiedTimestamp contentTs=$fileContentModifiedTimestamp " +
+    return "$prefix{id=$bookId type=$type ts=$lastModifiedTimestamp readTs=${effectiveReadingPositionModifiedTimestamp()} " +
+        "annTs=${effectiveAnnotationModifiedTimestamp()} contentTs=$fileContentModifiedTimestamp " +
         "page=$lastPage chapter=$lastChapterIndex block=$locatorBlockIndex char=$locatorCharOffset " +
         "progress=$progressPercentage cfi=${lastPositionCfi.cloudSyncPreview()} deleted=$isDeleted recent=$isRecent " +
         "hasAnnotations=$hasAnnotations bookmarks=${bookmarksJson.cloudSyncAnnotationSummary()} " +

@@ -36,6 +36,10 @@ internal fun DesktopPdfAnnotationSidecarEffect(
             emptyList()
         }
         onAnnotationsLoaded(loadedAnnotations)
+        logDesktopCloudAnnotations {
+            "desktop.local.load_annotations document=$documentHandleId count=${loadedAnnotations.size} " +
+                "exists=${annotationFile.exists()} bytes=${annotationFile.length()} ts=${annotationFile.lastModifiedIfFileForCloudLog()}"
+        }
         onAnnotationsLoadedChange(true)
     }
 
@@ -59,6 +63,11 @@ internal fun DesktopPdfAnnotationSidecarEffect(
             }.getOrDefault(false)
         }
         if (changed) {
+            logDesktopCloudAnnotations {
+                "desktop.local.save_annotations document=$documentHandleId count=${annotations.size} " +
+                    "bytes=${annotationFile.length()} ts=${annotationFile.lastModifiedIfFileForCloudLog()} " +
+                    "path=${annotationFile.absolutePath.logPreview(140)}"
+            }
             onLocalSidecarsChanged()
         }
     }
@@ -199,4 +208,8 @@ internal fun DesktopPdfSearchResultsEffect(
         }
         onSearchResultsChange(results)
     }
+}
+
+private fun File.lastModifiedIfFileForCloudLog(): Long {
+    return if (isFile) lastModified() else 0L
 }

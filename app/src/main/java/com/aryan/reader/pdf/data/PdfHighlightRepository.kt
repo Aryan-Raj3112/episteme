@@ -2,6 +2,7 @@
 package com.aryan.reader.pdf.data
 
 import android.content.Context
+import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.pdf.PdfUserHighlight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,7 +26,19 @@ class PdfHighlightRepository(private val context: Context) {
                     if (file.exists()) file.delete()
                     return@withContext
                 }
-                file.writeText(HighlightSerializer.toJson(highlights))
+                val json = HighlightSerializer.toJson(highlights)
+                if (file.exists() && file.readText() == json) {
+                    logCloudAnnotationSyncTrace {
+                        "android.repository.save_highlights_noop book=$bookId count=${highlights.size} " +
+                            "bytes=${file.length()} ts=${file.lastModified()}"
+                    }
+                    return@withContext
+                }
+                file.writeText(json)
+                logCloudAnnotationSyncTrace {
+                    "android.repository.save_highlights book=$bookId count=${highlights.size} " +
+                        "bytes=${file.length()} ts=${file.lastModified()}"
+                }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to save local highlights")
             }

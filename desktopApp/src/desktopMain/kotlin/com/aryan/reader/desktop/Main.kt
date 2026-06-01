@@ -992,6 +992,26 @@ internal fun EpistemeDesktopApp(
                 val hasLocalAnnotations = withContext(Dispatchers.IO) {
                     DesktopCloudSidecarSync.hasLocalAnnotationData(latestBook)
                 }
+                val remoteAnnotationDriveTimestamp = if (remoteBook?.hasAnnotations == true) {
+                    withContext(Dispatchers.IO) {
+                        desktopGoogleDriveRepository.getFileByName(
+                            credentials.driveAccessToken,
+                            desktopCloudAnnotationDriveFileName(latestBook.id)
+                        )?.modifiedTimeMillis ?: 0L
+                    }
+                } else {
+                    0L
+                }
+                val localReadingTimestamp = latestBook.effectiveCloudReadingPositionModifiedTimestamp()
+                val remoteReadingTimestamp = remoteBook?.effectiveCloudReadingPositionModifiedTimestamp() ?: 0L
+                val remoteAnnotationTimestamp = remoteBook?.effectiveCloudAnnotationModifiedTimestamp(
+                    remoteAnnotationDriveTimestamp
+                ) ?: 0L
+                val latestBookForMetadata = if (remoteBook != null && remoteReadingTimestamp > localReadingTimestamp) {
+                    latestBook.withCloudReadingPosition(remoteBook)
+                } else {
+                    latestBook
+                }
                 val localFile = latestBook.path?.let(::File)
                 val localFileAvailable = localFile?.isFile == true
                 val localContentTimestamp = latestBook.fileContentModifiedTimestamp.takeIf { it > 0L }
@@ -1007,7 +1027,20 @@ internal fun EpistemeDesktopApp(
                         (remoteBook?.desktopCloudSyncSummary() ?: "remote=null") +
                         " localSidecarTs=$localSidecarTimestamp localContentTs=$localContentTimestamp"
                 }
-                if (remoteChangedSinceDirtyStart) {
+                logDesktopCloudAnnotations {
+                    "desktop.queue.inspect book=${latestBook.id} dirtyBaseTs=$dirtyBaseTimestamp " +
+                        "remoteChangedSinceDirtyStart=$remoteChangedSinceDirtyStart " +
+                        "remoteHas=${remoteBook?.hasAnnotations} remoteTs=${remoteBook?.lastModifiedTimestamp ?: 0L} " +
+                        "remoteAnnTs=$remoteAnnotationTimestamp remoteDriveAnnTs=$remoteAnnotationDriveTimestamp " +
+                        "remoteReadTs=$remoteReadingTimestamp localReadTs=$localReadingTimestamp " +
+                        "localHas=$hasLocalAnnotations localSidecarTs=$localSidecarTimestamp " +
+                        DesktopCloudSidecarSync.localAnnotationDebugSummary(latestBook)
+                }
+                if (remoteChangedSinceDirtyStart && !(forceUploadAnnotations && hasLocalAnnotations)) {
+                    logDesktopCloudAnnotations {
+                        "desktop.queue.skip_upload book=${latestBook.id} reason=remote_changed_since_dirty " +
+                            "dirtyBaseTs=$dirtyBaseTimestamp remoteTs=${remoteBook?.lastModifiedTimestamp ?: 0L}"
+                    }
                     logDesktopCloudSync { "desktop.book_queue.decision action=pull_remote_changed_since_dirty book=${latestBook.id}" }
                     syncDesktopCloud(showBanner = false).join()
                     return@launch
@@ -1025,17 +1058,24 @@ internal fun EpistemeDesktopApp(
                     )
                     else -> false
                 }
-                val canUploadAnnotations = forceUploadAnnotations ||
+                val canUploadAnnotations = (forceUploadAnnotations && hasLocalAnnotations) ||
                     (hasLocalAnnotations &&
                         (remoteBook == null ||
                             !remoteBook.hasAnnotations ||
-                            localSidecarTimestamp > remoteBook.lastModifiedTimestamp))
+                            localSidecarTimestamp > remoteAnnotationTimestamp))
                 val shouldApplyRemote = remoteBook != null && shouldApplyRemoteCloudBookMetadataUpdate(
                     localModifiedTimestamp = latestBook.timestamp,
                     remoteModifiedTimestamp = remoteBook.lastModifiedTimestamp
                 )
 
                 if (remoteBook != null && !canUploadMetadata && !canUploadContent && !canUploadAnnotations) {
+                    logDesktopCloudAnnotations {
+                        "desktop.queue.no_upload book=${latestBook.id} canUploadAnnotations=$canUploadAnnotations " +
+                            "canUploadMetadata=$canUploadMetadata shouldApplyRemote=$shouldApplyRemote " +
+                            "remoteHas=${remoteBook.hasAnnotations} remoteTs=${remoteBook.lastModifiedTimestamp} " +
+                            "remoteAnnTs=$remoteAnnotationTimestamp remoteDriveAnnTs=$remoteAnnotationDriveTimestamp " +
+                            "localSidecarTs=$localSidecarTimestamp"
+                    }
                     logDesktopCloudSync {
                         "desktop.book_queue.decision action=${if (remoteBook.isDeleted || shouldApplyRemote) "pull_remote" else "noop"} " +
                             "book=${latestBook.id} canUploadMetadata=$canUploadMetadata canUploadContent=$canUploadContent " +
@@ -1057,12 +1097,19 @@ internal fun EpistemeDesktopApp(
                         }
                     }
                 } else {
-                    latestBook
+                    latestBookForMetadata
                 }
                 logDesktopCloudSync {
                     "desktop.book_queue.decision action=${if (usesRemoteMetadataForUpload) "upload_annotations_with_remote_metadata" else "upload_local"} " +
                         "book=${latestBook.id} canUploadMetadata=$canUploadMetadata canUploadContent=$canUploadContent " +
                         "canUploadAnnotations=$canUploadAnnotations shouldApplyRemote=$shouldApplyRemote"
+                }
+                logDesktopCloudAnnotations {
+                    "desktop.queue.upload book=${latestBook.id} action=${if (usesRemoteMetadataForUpload) "upload_annotations_with_remote_metadata" else "upload_local"} " +
+                        "canUploadAnnotations=$canUploadAnnotations canUploadMetadata=$canUploadMetadata " +
+                        "remoteHas=${remoteBook?.hasAnnotations} remoteTs=${remoteBook?.lastModifiedTimestamp ?: 0L} " +
+                        "remoteAnnTs=$remoteAnnotationTimestamp remoteDriveAnnTs=$remoteAnnotationDriveTimestamp " +
+                        "localSidecarTs=$localSidecarTimestamp"
                 }
                 val syncedBook = withContext(Dispatchers.IO) {
                     desktopCloudSync.uploadBookAndMetadata(
@@ -1081,6 +1128,7 @@ internal fun EpistemeDesktopApp(
                         uploadContent = canUploadContent,
                         uploadAnnotations = canUploadAnnotations,
                         remoteHasAnnotations = remoteBook?.hasAnnotations == true,
+                        remoteAnnotationModifiedTimestamp = remoteAnnotationTimestamp,
                         remoteContentModifiedTimestamp = remoteBook?.fileContentModifiedTimestamp
                     )
                 } ?: return@launch
@@ -2013,16 +2061,18 @@ internal fun EpistemeDesktopApp(
                         dirtyBaseTimestamp = book.timestamp
                     }
                     if (isReaderDirty) {
+                        val now = System.currentTimeMillis()
                         book.copy(
                             progressPercentage = progress,
-                            timestamp = System.currentTimeMillis(),
+                            timestamp = now,
                             isRecent = true,
                             lastPageIndex = pageIndex,
                             readerPosition = readerPosition,
                             readerSettings = nextReaderSettings,
                             readerBookmarks = nextBookmarks,
                             readerHighlights = nextHighlights,
-                            pdfReaderViewport = nextPdfViewport
+                            pdfReaderViewport = nextPdfViewport,
+                            readingPositionModifiedTimestamp = now
                         ).also { updatedBook = it }
                     } else {
                         book
@@ -4370,6 +4420,12 @@ internal fun EpistemeDesktopApp(
                                                     bookId = book.id,
                                                     baseTimestamp = book.timestamp,
                                                     sidecarsDirty = true
+                                                )
+                                                queueCloudBookMetadataSync(
+                                                    book = book,
+                                                    debounce = true,
+                                                    dirtyBaseTimestamp = book.timestamp,
+                                                    forceUploadAnnotations = true
                                                 )
                                             }
                                         },

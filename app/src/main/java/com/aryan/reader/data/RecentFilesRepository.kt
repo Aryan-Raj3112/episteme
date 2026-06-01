@@ -30,6 +30,7 @@ import com.aryan.reader.ReaderPerfLog
 import com.aryan.reader.SyncedFolderPrefs
 import com.aryan.reader.cloudSyncPreview
 import com.aryan.reader.cloudSyncTraceSummary
+import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.logCloudSyncTrace
 import com.aryan.reader.scaledToCanvasLimit
 import timber.log.Timber
@@ -194,7 +195,20 @@ class RecentFilesRepository(private val context: Context) {
                 !embeddedMetadataFileChanged &&
                 existingItem.hasEmbeddedMetadataChanges()
 
-            item.toRecentFileEntity().copy(
+            val incomingEntity = item.toRecentFileEntity()
+            val incomingReadingTimestamp = item.effectiveReadingPositionModifiedTimestamp()
+            val existingReadingTimestamp = existingItem.readingPositionModifiedTimestamp.takeIf { it > 0L }
+                ?: existingItem.lastModifiedTimestamp.takeIf {
+                    existingItem.lastChapterIndex != null ||
+                        existingItem.lastPage != null ||
+                        !existingItem.lastPositionCfi.isNullOrBlank() ||
+                        existingItem.locatorBlockIndex != null ||
+                        existingItem.locatorCharOffset != null ||
+                        (existingItem.progressPercentage ?: 0f) > 0f
+                }
+                ?: 0L
+            val incomingReadingWins = incomingReadingTimestamp >= existingReadingTimestamp
+            incomingEntity.copy(
                 uriString = existingItem.uriString ?: item.uriString,
                 isAvailable = existingItem.isAvailable || item.isAvailable,
                 coverImagePath = if (folderFileChanged) {
@@ -216,13 +230,13 @@ class RecentFilesRepository(private val context: Context) {
                 } else {
                     item.author ?: existingItem.author
                 },
-                lastChapterIndex = item.lastChapterIndex ?: existingItem.lastChapterIndex,
-                lastPage = item.lastPage ?: existingItem.lastPage,
-                lastPositionCfi = item.lastPositionCfi ?: existingItem.lastPositionCfi,
-                locatorBlockIndex = item.locatorBlockIndex ?: existingItem.locatorBlockIndex,
-                locatorCharOffset = item.locatorCharOffset ?: existingItem.locatorCharOffset,
+                lastChapterIndex = if (incomingReadingWins) item.lastChapterIndex ?: existingItem.lastChapterIndex else existingItem.lastChapterIndex,
+                lastPage = if (incomingReadingWins) item.lastPage ?: existingItem.lastPage else existingItem.lastPage,
+                lastPositionCfi = if (incomingReadingWins) item.lastPositionCfi ?: existingItem.lastPositionCfi else existingItem.lastPositionCfi,
+                locatorBlockIndex = if (incomingReadingWins) item.locatorBlockIndex ?: existingItem.locatorBlockIndex else existingItem.locatorBlockIndex,
+                locatorCharOffset = if (incomingReadingWins) item.locatorCharOffset ?: existingItem.locatorCharOffset else existingItem.locatorCharOffset,
                 bookmarks = item.bookmarksJson ?: existingItem.bookmarks,
-                progressPercentage = item.progressPercentage ?: existingItem.progressPercentage,
+                progressPercentage = if (incomingReadingWins) item.progressPercentage ?: existingItem.progressPercentage else existingItem.progressPercentage,
                 isRecent = item.isRecent,
                 isDeleted = item.isDeleted,
                 sourceFolderUri = item.sourceFolderUri ?: existingItem.sourceFolderUri,
@@ -264,7 +278,8 @@ class RecentFilesRepository(private val context: Context) {
                     item.folderCoverMetadataParsed
                 } else {
                     item.folderCoverMetadataParsed || existingItem.folderCoverMetadataParsed
-                }
+                },
+                readingPositionModifiedTimestamp = maxOf(incomingReadingTimestamp, existingReadingTimestamp)
             )
         } else {
             item.toRecentFileEntity()
@@ -274,7 +289,9 @@ class RecentFilesRepository(private val context: Context) {
         logCloudSyncTrace {
             "android.db.upsert book=${item.bookId} ${item.cloudSyncTraceSummary("incoming")} " +
                 "existingTs=${existingItem?.lastModifiedTimestamp} existingPage=${existingItem?.lastPage} " +
+                "existingReadTs=${existingItem?.readingPositionModifiedTimestamp} " +
                 "existingChapter=${existingItem?.lastChapterIndex} finalTs=${entityToInsert.lastModifiedTimestamp} " +
+                "finalReadTs=${entityToInsert.readingPositionModifiedTimestamp} " +
                 "finalPage=${entityToInsert.lastPage} finalChapter=${entityToInsert.lastChapterIndex} " +
                 "finalBlock=${entityToInsert.locatorBlockIndex} finalChar=${entityToInsert.locatorCharOffset} " +
                 "finalProgress=${entityToInsert.progressPercentage} finalCfi=${entityToInsert.lastPositionCfi.cloudSyncPreview()} " +
@@ -500,6 +517,10 @@ class RecentFilesRepository(private val context: Context) {
             val bundle = JSONObject(
                 SharedPdfAnnotationSidecarCodec.legacyAndroidDataJsonFromCanonical(jsonString)
             )
+            logCloudAnnotationSyncTrace {
+                "android.repository.import_bundle book=$bookId remoteTs=${lastModifiedTimestamp ?: 0L} " +
+                    "rawBytes=${jsonString.length} keys=${bundle.keys().asSequence().toList()}"
+            }
             Timber.d(
                 "android.folder.import.bundle book=$bookId rawLen=${jsonString.length} " +
                     "hasRichText=${bundle.has("text")} keys=${bundle.keys().asSequence().toList()}"
@@ -511,12 +532,21 @@ class RecentFilesRepository(private val context: Context) {
                     val contentStr = bundle.get(key).toString()
                     file.writeText(contentStr)
                     lastModifiedTimestamp?.takeIf { it > 0L }?.let(file::setLastModified)
+                    logCloudAnnotationSyncTrace {
+                        "android.repository.import_write key=$key book=$bookId bytes=${contentStr.length} " +
+                            "path=${file.absolutePath.cloudSyncPreview(140)} ts=${file.lastModified()}"
+                    }
                     if (key == "text") {
                         Timber.d(
                             "android.folder.import.writeRichText book=$bookId rawLen=${contentStr.length} file=${file.absolutePath}"
                         )
                     }
                     Timber.tag("FolderAnnotationSync").v("   -> Updated $key file (${contentStr.length} chars)")
+                } else if (file != null) {
+                    logCloudAnnotationSyncTrace {
+                        "android.repository.import_missing_key key=$key book=$bookId " +
+                            "path=${file.absolutePath.cloudSyncPreview(140)} exists=${file.exists()}"
+                    }
                 }
             }
 
@@ -525,6 +555,10 @@ class RecentFilesRepository(private val context: Context) {
                 context.filesDir, "annotations/annotation_$bookId.json"
             )
             writeSafe("ink", inkFile)
+            writeSafe(
+                SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATION_DELETIONS,
+                File(context.filesDir, "annotations/deleted_annotation_$bookId.json")
+            )
 
             // 2. Text
             writeSafe("text", pdfRichTextRepository.getFileForSync(bookId))
@@ -656,6 +690,9 @@ class RecentFilesRepository(private val context: Context) {
             val currentTime = System.currentTimeMillis()
             recentFileDao.updatePdfReadingPosition(item.bookId, page, progress, currentTime)
             Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for ${item.bookId} to Page $page, Progress $progress% at TS: $currentTime")
+            logCloudSyncTrace {
+                "android.repository.pdf_position_update book=${item.bookId} page=$page progress=$progress ts=$currentTime"
+            }
         } else {
             Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found matching URI: $uriString")
         }

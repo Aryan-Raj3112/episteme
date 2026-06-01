@@ -550,7 +550,8 @@ class FolderSyncWorker(
             lastPageIndex = lastPage,
             readerPosition = readerPositionOrNull(),
             readerBookmarks = parseReaderBookmarks(),
-            readerHighlights = EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
+            readerHighlights = EpubAnnotationSerializer.parseHighlightsJson(highlightsJson),
+            readingPositionModifiedTimestamp = readingPositionModifiedTimestamp
         )
     }
 
@@ -623,6 +624,7 @@ class FolderSyncWorker(
             originalDescription = originalDescription,
             folderTextMetadataParsed = folderTextMetadataParsed,
             folderCoverMetadataParsed = if (contentChanged) false else existing?.folderCoverMetadataParsed ?: false,
+            readingPositionModifiedTimestamp = readingPositionModifiedTimestamp,
             tags = existing?.tags.orEmpty()
         )
     }

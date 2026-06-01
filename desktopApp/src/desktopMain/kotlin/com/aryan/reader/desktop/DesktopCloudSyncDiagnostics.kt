@@ -5,9 +5,14 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.SharedFileCapabilities
 
 internal const val DesktopCloudSyncLogTag = "EpistemeCloudSync"
+internal const val DesktopCloudAnnotationSyncLogTag = "EpistemeCloudAnnotations"
 
 internal fun logDesktopCloudSync(message: () -> String) {
     logDesktopDiagnostic(DesktopCloudSyncLogTag, message)
+}
+
+internal fun logDesktopCloudAnnotations(message: () -> String) {
+    logDesktopDiagnostic(DesktopCloudAnnotationSyncLogTag, message)
 }
 
 internal fun BookItem.desktopCloudSyncSummary(prefix: String = "local"): String {
@@ -17,7 +22,8 @@ internal fun BookItem.desktopCloudSyncSummary(prefix: String = "local"): String 
     } else {
         lastPageIndex
     }
-    return "$prefix{id=$id type=$type ts=$timestamp contentTs=$fileContentModifiedTimestamp " +
+    return "$prefix{id=$id type=$type ts=$timestamp readTs=${effectiveCloudReadingPositionModifiedTimestamp()} " +
+        "contentTs=$fileContentModifiedTimestamp " +
         "page=$page chapter=${position?.chapterIndex} " +
         "block=${position?.blockIndex} char=${position?.charOffset} progress=$progressPercentage " +
         "cfi=${position?.cfi.cloudSyncPreview()} sourceFolder=${sourceFolder != null} " +
@@ -25,7 +31,8 @@ internal fun BookItem.desktopCloudSyncSummary(prefix: String = "local"): String 
 }
 
 internal fun DesktopCloudBookMetadata.desktopCloudSyncSummary(prefix: String = "remote"): String {
-    return "$prefix{id=$bookId type=$type ts=$lastModifiedTimestamp contentTs=$fileContentModifiedTimestamp " +
+    return "$prefix{id=$bookId type=$type ts=$lastModifiedTimestamp readTs=${effectiveCloudReadingPositionModifiedTimestamp()} " +
+        "annTs=${effectiveCloudAnnotationModifiedTimestamp()} contentTs=$fileContentModifiedTimestamp " +
         "page=$lastPage chapter=$lastChapterIndex block=$locatorBlockIndex char=$locatorCharOffset " +
         "progress=$progressPercentage cfi=${lastPositionCfi.cloudSyncPreview()} deleted=$isDeleted " +
         "recent=$isRecent hasAnnotations=$hasAnnotations bookmarks=${bookmarksJson.cloudSyncAnnotationSummary()} " +

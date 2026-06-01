@@ -255,6 +255,106 @@ class SharedPdfAnnotationSerializerTest {
     }
 
     @Test
+    fun `sidecar codec merges local and remote annotation additions`() {
+        val local = SharedPdfAnnotation(
+            id = "local-ink",
+            pageIndex = 0,
+            kind = PdfAnnotationKind.INK,
+            points = listOf(PdfPagePoint(0.1f, 0.2f, 10L)),
+            colorArgb = 0xFF000000.toInt(),
+            createdAt = 10L
+        )
+        val remote = SharedPdfAnnotation(
+            id = "remote-ink",
+            pageIndex = 0,
+            kind = PdfAnnotationKind.INK,
+            points = listOf(PdfPagePoint(0.3f, 0.4f, 20L)),
+            colorArgb = 0xFFFF0000.toInt(),
+            createdAt = 20L
+        )
+        fun payload(annotation: SharedPdfAnnotation): String {
+            return testJson.encodeToString(
+                JsonElement.serializer(),
+                JsonObject(
+                    mapOf(
+                        SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS to
+                            SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(listOf(annotation))
+                    )
+                )
+            )
+        }
+
+        val merged = SharedPdfAnnotationSidecarCodec.mergeAnnotationDataJson(
+            localDataJson = payload(local),
+            remoteDataJson = payload(remote),
+            preferRemoteOnConflict = false
+        )
+        val annotations = SharedPdfAnnotationSidecarCodec.annotationsFromData(
+            testJson.parseToJsonElement(merged).jsonObject
+        )
+
+        assertEquals(listOf("local-ink", "remote-ink"), annotations.map { it.id })
+        assertEquals(2, SharedPdfAnnotationSidecarCodec.annotationCountFromDataJson(merged))
+    }
+
+    @Test
+    fun `sidecar codec deletion tombstones remove stale remote annotations`() {
+        val deletedRemote = SharedPdfAnnotation(
+            id = "deleted-remote-ink",
+            pageIndex = 0,
+            kind = PdfAnnotationKind.INK,
+            points = listOf(PdfPagePoint(0.1f, 0.2f, 10L)),
+            colorArgb = 0xFF000000.toInt(),
+            createdAt = 10L
+        )
+        val local = SharedPdfAnnotation(
+            id = "local-ink",
+            pageIndex = 0,
+            kind = PdfAnnotationKind.INK,
+            points = listOf(PdfPagePoint(0.3f, 0.4f, 20L)),
+            colorArgb = 0xFFFF0000.toInt(),
+            createdAt = 20L
+        )
+        fun payload(
+            annotations: List<SharedPdfAnnotation>,
+            deletions: Map<String, Long> = emptyMap()
+        ): String {
+            return testJson.encodeToString(
+                JsonElement.serializer(),
+                JsonObject(
+                    buildMap {
+                        put(
+                            SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATIONS,
+                            SharedPdfAnnotationSidecarCodec.encodeAnnotationsElement(annotations)
+                        )
+                        if (deletions.isNotEmpty()) {
+                            put(
+                                SharedPdfAnnotationSidecarCodec.KEY_PDF_ANNOTATION_DELETIONS,
+                                SharedPdfAnnotationSidecarCodec.encodeAnnotationDeletionsElement(deletions)
+                            )
+                        }
+                    }
+                )
+            )
+        }
+
+        val merged = SharedPdfAnnotationSidecarCodec.mergeAnnotationDataJson(
+            localDataJson = payload(
+                annotations = listOf(local),
+                deletions = mapOf(deletedRemote.id to 100L)
+            ),
+            remoteDataJson = payload(listOf(deletedRemote)),
+            preferRemoteOnConflict = false
+        )
+        val annotations = SharedPdfAnnotationSidecarCodec.annotationsFromData(
+            testJson.parseToJsonElement(merged).jsonObject
+        )
+
+        assertEquals(listOf("local-ink"), annotations.map { it.id })
+        assertEquals(mapOf(deletedRemote.id to 100L), SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(merged))
+    }
+
+    @Test
     fun `embedded annotation threads link replies and nearby orphan comments`() {
         val root = embeddedAnnotation(
             id = "root",

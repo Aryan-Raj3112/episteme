@@ -71,7 +71,8 @@ private fun RecentFileItem.toSharedBookItem(
             EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
         } else {
             emptyList()
-        }
+        },
+        readingPositionModifiedTimestamp = readingPositionModifiedTimestamp
     )
 }
 
@@ -120,6 +121,7 @@ fun SharedBookItem.toRecentFileItem(
             existing.lastPositionCfi == mappedLastPositionCfi &&
             existing.locatorBlockIndex == mappedLocatorBlockIndex &&
             existing.locatorCharOffset == mappedLocatorCharOffset &&
+            existing.readingPositionModifiedTimestamp == readingPositionModifiedTimestamp &&
             existing.tags == resolvedTags
         ) {
             return existing
@@ -152,6 +154,7 @@ fun SharedBookItem.toRecentFileItem(
             lastPositionCfi = mappedLastPositionCfi,
             locatorBlockIndex = mappedLocatorBlockIndex,
             locatorCharOffset = mappedLocatorCharOffset,
+            readingPositionModifiedTimestamp = readingPositionModifiedTimestamp,
             tags = resolvedTags
         )
     }
@@ -184,6 +187,7 @@ fun SharedBookItem.toRecentFileItem(
         lastPositionCfi = positionCfi,
         locatorBlockIndex = readerPosition?.blockIndex,
         locatorCharOffset = readerPosition?.charOffset,
+        readingPositionModifiedTimestamp = readingPositionModifiedTimestamp,
         tags = resolvedTags
     )
 }

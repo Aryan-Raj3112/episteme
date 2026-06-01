@@ -122,7 +122,8 @@ class SharedLibrarySnapshotJsonTest {
                         paginatedVerticalScrollOffset = 140,
                         verticalFirstPageIndex = 3,
                         verticalFirstPageScrollOffset = 44
-                    )
+                    ),
+                    readingPositionModifiedTimestamp = 9_000L
                 )
             ),
             shelfRecords = listOf(ShelfRecord(id = "shelf", name = "Shelf", isSmart = true, smartRulesJson = "{}")),

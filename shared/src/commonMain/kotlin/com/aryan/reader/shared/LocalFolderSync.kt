@@ -141,6 +141,13 @@ data class SharedFolderBookMetadata(
             seriesIndex = existing?.seriesIndex,
             lastPageIndex = lastPage,
             readerPosition = parsedReaderPosition ?: existing?.readerPosition,
+            readingPositionModifiedTimestamp = if (
+                parsedReaderPosition != null || lastPage != null || progressPercentage > 0f
+            ) {
+                metadataTimestamp
+            } else {
+                existing?.readingPositionModifiedTimestamp ?: 0L
+            },
             readerBookmarks = parsedBookmarks ?: existing?.readerBookmarks.orEmpty(),
             readerHighlights = parsedHighlights ?: existing?.readerHighlights.orEmpty()
         )

@@ -33,7 +33,7 @@ interface RecentFileDao {
     @Upsert
     suspend fun insertOrUpdateFiles(files: List<RecentFileEntity>)
 
-    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getRecentFiles(): Flow<List<RecentFileSummary>>
 
     @Query("SELECT * FROM recent_files WHERE sourceFolderUri = :sourceFolderUri AND isDeleted = 0")
@@ -45,7 +45,7 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET isReflowPreferred = :isPreferred WHERE bookId = :bookId")
     suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean)
 
-    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentFilesList(limit: Int): List<RecentFileSummary>
 
     @Query("DELETE FROM recent_files WHERE bookId IN (:bookIds)")
@@ -75,10 +75,10 @@ interface RecentFileDao {
     @Query("DELETE FROM recent_files")
     suspend fun clearAll()
 
-    @Query("UPDATE recent_files SET lastPositionCfi = :cfi, lastChapterIndex = :chapterIndex, locatorBlockIndex = :blockIndex, locatorCharOffset = :charOffset, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
+    @Query("UPDATE recent_files SET lastPositionCfi = :cfi, lastChapterIndex = :chapterIndex, locatorBlockIndex = :blockIndex, locatorCharOffset = :charOffset, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateEpubReadingPosition(bookId: String, cfi: String?, chapterIndex: Int, blockIndex: Int, charOffset: Int, progress: Float, timestamp: Long)
 
-    @Query("UPDATE recent_files SET lastPage = :page, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
+    @Query("UPDATE recent_files SET lastPage = :page, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updatePdfReadingPosition(bookId: String, page: Int, progress: Float, timestamp: Long)
 
     @Query("UPDATE recent_files SET bookmarks = :bookmarksJson, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")

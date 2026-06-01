@@ -15,6 +15,15 @@ internal fun desktopPdfAnnotationFile(documentPath: String): File {
     )
 }
 
+internal fun desktopPdfAnnotationDeletionFile(documentPath: String): File {
+    val safeName = desktopPdfDocumentKey(documentPath)
+    val legacyName = desktopPdfLegacyDocumentKey(documentPath)
+    return sidecarFileWithLegacyMigration(
+        file = File(desktopUserDataRoot(), "annotations/pdf_${safeName}_deleted_annotations.json"),
+        legacyFile = File(desktopUserDataRoot(), "annotations/pdf_${legacyName}_deleted_annotations.json")
+    )
+}
+
 internal fun desktopPdfBookmarkFile(documentPath: String): File {
     val safeName = desktopPdfDocumentKey(documentPath)
     val legacyName = desktopPdfLegacyDocumentKey(documentPath)

@@ -62,7 +62,8 @@ data class RecentFileEntity(
     @ColumnInfo(defaultValue = "NULL") val originalAuthor: String? = null,
     @ColumnInfo(defaultValue = "NULL") val originalSeriesName: String? = null,
     @ColumnInfo(defaultValue = "NULL") val originalSeriesIndex: Double? = null,
-    @ColumnInfo(defaultValue = "NULL") val originalDescription: String? = null
+    @ColumnInfo(defaultValue = "NULL") val originalDescription: String? = null,
+    @ColumnInfo(defaultValue = "0") val readingPositionModifiedTimestamp: Long = 0L
 )
 
 data class RecentFileSummary(
@@ -96,5 +97,6 @@ data class RecentFileSummary(
     @ColumnInfo(defaultValue = "NULL") val originalAuthor: String? = null,
     @ColumnInfo(defaultValue = "NULL") val originalSeriesName: String? = null,
     @ColumnInfo(defaultValue = "NULL") val originalSeriesIndex: Double? = null,
-    @ColumnInfo(defaultValue = "NULL") val originalDescription: String? = null
+    @ColumnInfo(defaultValue = "NULL") val originalDescription: String? = null,
+    @ColumnInfo(defaultValue = "0") val readingPositionModifiedTimestamp: Long = 0L
 )

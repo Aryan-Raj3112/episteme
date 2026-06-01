@@ -77,6 +77,7 @@ class DesktopCloudSyncMappingTest {
         assertEquals(2, metadata.lastChapterIndex)
         assertEquals(4, metadata.lastPage)
         assertEquals(42f, metadata.progressPercentage)
+        assertEquals(1_000L, metadata.readingPositionModifiedTimestamp)
         assertTrue(assertNotNull(metadata.bookmarksJson).contains("desktop:2:30:44"))
         assertTrue(assertNotNull(metadata.highlightsJson).contains("highlighted text"))
         assertEquals(book.id, restored.id)
@@ -112,6 +113,61 @@ class DesktopCloudSyncMappingTest {
         )
 
         assertEquals(999L, metadata.fileContentModifiedTimestamp)
+    }
+
+    @Test
+    fun `metadata upload keeps reading position timestamp separate from upload timestamp`() {
+        val book = BookItem(
+            id = "book-1",
+            path = null,
+            type = FileType.PDF,
+            displayName = "Book.pdf",
+            timestamp = 1_000L,
+            lastPageIndex = 12,
+            progressPercentage = 20f,
+            readingPositionModifiedTimestamp = 1_500L
+        )
+
+        val metadata = book.toDesktopCloudBookMetadata(hasAnnotations = true, timestamp = 3_000L)
+
+        assertEquals(3_000L, metadata.lastModifiedTimestamp)
+        assertEquals(1_500L, metadata.readingPositionModifiedTimestamp)
+        assertEquals(0L, metadata.annotationModifiedTimestamp)
+        assertEquals(12, metadata.lastPage)
+    }
+
+    @Test
+    fun `metadata upload keeps annotation timestamp separate from upload timestamp`() {
+        val book = BookItem(
+            id = "book-1",
+            path = null,
+            type = FileType.PDF,
+            displayName = "Book.pdf",
+            timestamp = 1_000L
+        )
+
+        val metadata = book.toDesktopCloudBookMetadata(
+            hasAnnotations = true,
+            timestamp = 3_000L,
+            annotationModifiedTimestamp = 2_250L
+        )
+
+        assertEquals(3_000L, metadata.lastModifiedTimestamp)
+        assertEquals(2_250L, metadata.annotationModifiedTimestamp)
+        assertEquals(2_250L, metadata.effectiveCloudAnnotationModifiedTimestamp())
+    }
+
+    @Test
+    fun `annotation freshness does not fall back to book metadata timestamp`() {
+        val metadata = DesktopCloudBookMetadata(
+            bookId = "book-1",
+            type = FileType.PDF.name,
+            lastModifiedTimestamp = 5_000L,
+            hasAnnotations = true
+        )
+
+        assertEquals(0L, metadata.effectiveCloudAnnotationModifiedTimestamp())
+        assertEquals(3_000L, metadata.effectiveCloudAnnotationModifiedTimestamp(sidecarModifiedTimestamp = 3_000L))
     }
 
     @Test
@@ -172,6 +228,39 @@ class DesktopCloudSyncMappingTest {
         assertEquals(69, restored.pdfReaderViewport?.pageIndex)
         assertEquals(69, restored.pdfReaderViewport?.verticalFirstPageIndex)
         assertEquals(0, restored.pdfReaderViewport?.verticalFirstPageScrollOffset)
+    }
+
+    @Test
+    fun `remote metadata with older reading timestamp preserves newer local pdf position`() {
+        val existing = BookItem(
+            id = "book-1",
+            path = "C:/books/Book.pdf",
+            type = FileType.PDF,
+            displayName = "Book.pdf",
+            timestamp = 4_000L,
+            lastPageIndex = 88,
+            progressPercentage = 44f,
+            pdfReaderViewport = SharedPdfReaderViewport(pageIndex = 88, verticalFirstPageIndex = 88),
+            readingPositionModifiedTimestamp = 4_000L
+        )
+        val remote = DesktopCloudBookMetadata(
+            bookId = "book-1",
+            displayName = "Book.pdf",
+            type = FileType.PDF.name,
+            lastModifiedTimestamp = 6_000L,
+            readingPositionModifiedTimestamp = 3_000L,
+            lastPage = 12,
+            progressPercentage = 6f,
+            hasAnnotations = true
+        )
+
+        val restored = remote.toDesktopBookItem(existing = existing)
+
+        assertEquals(6_000L, restored.timestamp)
+        assertEquals(88, restored.lastPageIndex)
+        assertEquals(44f, restored.progressPercentage)
+        assertEquals(88, restored.pdfReaderViewport?.pageIndex)
+        assertEquals(4_000L, restored.readingPositionModifiedTimestamp)
     }
 
     @Test

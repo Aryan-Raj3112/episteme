@@ -100,7 +100,8 @@ data class BookItem(
     val readerSettings: ReaderSettings? = null,
     val readerBookmarks: List<ReaderBookmark> = emptyList(),
     val readerHighlights: List<UserHighlight> = emptyList(),
-    val pdfReaderViewport: SharedPdfReaderViewport? = null
+    val pdfReaderViewport: SharedPdfReaderViewport? = null,
+    val readingPositionModifiedTimestamp: Long = 0L
 )
 
 data class Shelf(

@@ -56,6 +56,7 @@ class RecentFileDaoReadingPositionTest {
         assertEquals(58.5f, saved.progressPercentage)
         assertEquals(9_000L, saved.timestamp)
         assertEquals(9_000L, saved.lastModifiedTimestamp)
+        assertEquals(9_000L, saved.readingPositionModifiedTimestamp)
     }
 
     @Test
@@ -100,6 +101,7 @@ class RecentFileDaoReadingPositionTest {
         assertEquals(21, item.locatorBlockIndex)
         assertEquals(12, item.locatorCharOffset)
         assertEquals(44f, item.progressPercentage)
+        assertEquals(3_000L, item.readingPositionModifiedTimestamp)
         assertTrue(item.isRecent)
     }
 

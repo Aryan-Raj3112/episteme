@@ -32,6 +32,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.time.Duration
+import java.time.Instant
 import java.util.Collections
 import java.util.UUID
 
@@ -50,6 +51,8 @@ internal data class DesktopCloudBookMetadata(
     val isRecent: Boolean = true,
     val isDeleted: Boolean = false,
     val lastModifiedTimestamp: Long = 0L,
+    val readingPositionModifiedTimestamp: Long = 0L,
+    val annotationModifiedTimestamp: Long = 0L,
     val bookmarksJson: String? = null,
     val hasAnnotations: Boolean = false,
     val fileContentModifiedTimestamp: Long = 0L,
@@ -83,7 +86,8 @@ internal data class DesktopCloudFontMetadata(
 
 internal data class DesktopDriveFile(
     val id: String,
-    val name: String
+    val name: String,
+    val modifiedTimeMillis: Long = 0L
 )
 
 internal class DesktopFirestoreRepository(
@@ -266,6 +270,10 @@ internal class DesktopGoogleDriveRepository(
         listFiles(accessToken = accessToken, query = null)
     }
 
+    suspend fun getFileByName(accessToken: String, fileName: String): DesktopDriveFile? = withContext(Dispatchers.IO) {
+        listFiles(accessToken, "name = '${driveQueryStringValue(fileName)}' and trashed = false").firstOrNull()
+    }
+
     suspend fun uploadFont(accessToken: String, fileName: String, file: File, extension: String): DesktopDriveFile? =
         uploadNamedFile(
             accessToken = accessToken,
@@ -293,18 +301,20 @@ internal class DesktopGoogleDriveRepository(
     suspend fun uploadAnnotationFile(accessToken: String, bookId: String, file: File): DesktopDriveFile? {
         return uploadNamedFile(
             accessToken = accessToken,
-            fileName = "annotation_$bookId.json",
+            fileName = desktopCloudAnnotationDriveFileName(bookId),
             file = file,
             contentType = "application/json"
         )
     }
 
     suspend fun downloadAnnotationFile(accessToken: String, bookId: String, destination: File): Boolean {
-        val fileId = listFiles(accessToken, "name = '${driveQueryStringValue("annotation_$bookId.json")}' and trashed = false")
-            .firstOrNull()
-            ?.id
+        val driveFile = getFileByName(accessToken, desktopCloudAnnotationDriveFileName(bookId))
             ?: return false
-        return downloadFile(accessToken, fileId, destination)
+        return downloadFile(accessToken, driveFile.id, destination).also { downloaded ->
+            if (downloaded && driveFile.modifiedTimeMillis > 0L) {
+                destination.setLastModified(driveFile.modifiedTimeMillis)
+            }
+        }
     }
 
     suspend fun downloadFile(accessToken: String, fileId: String, destination: File): Boolean = withContext(Dispatchers.IO) {
@@ -375,9 +385,9 @@ internal class DesktopGoogleDriveRepository(
         }.toByteArray(Charsets.UTF_8)
         val suffix = "\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8)
         val uploadUri = if (existingFileId == null) {
-            URI.create("https://www.googleapis.com/upload/drive/v3/files?${query("uploadType" to "multipart", "fields" to "id,name")}")
+            URI.create("https://www.googleapis.com/upload/drive/v3/files?${query("uploadType" to "multipart", "fields" to "id,name,modifiedTime")}")
         } else {
-            URI.create("https://www.googleapis.com/upload/drive/v3/files/${pathEncode(existingFileId)}?${query("uploadType" to "multipart", "fields" to "id,name")}")
+            URI.create("https://www.googleapis.com/upload/drive/v3/files/${pathEncode(existingFileId)}?${query("uploadType" to "multipart", "fields" to "id,name,modifiedTime")}")
         }
         val request = HttpRequest.newBuilder(uploadUri)
             .timeout(Duration.ofMinutes(5))
@@ -399,14 +409,15 @@ internal class DesktopGoogleDriveRepository(
         val root = DesktopCloudJson.parseToJsonElement(response.body()).jsonObject
         DesktopDriveFile(
             id = root.string("id").orEmpty(),
-            name = root.string("name").orEmpty()
+            name = root.string("name").orEmpty(),
+            modifiedTimeMillis = parseDriveModifiedTimeMillis(root.string("modifiedTime"))
         )
     }
 
     private fun listFiles(accessToken: String, query: String?): List<DesktopDriveFile> {
         val params = buildList {
             add("spaces" to "appDataFolder")
-            add("fields" to "files(id,name)")
+            add("fields" to "files(id,name,modifiedTime)")
             if (!query.isNullOrBlank()) add("q" to query)
         }
         val request = HttpRequest.newBuilder(
@@ -426,9 +437,18 @@ internal class DesktopGoogleDriveRepository(
             val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
             val id = obj.string("id") ?: return@mapNotNull null
             val name = obj.string("name") ?: return@mapNotNull null
-            DesktopDriveFile(id = id, name = name)
+            DesktopDriveFile(
+                id = id,
+                name = name,
+                modifiedTimeMillis = parseDriveModifiedTimeMillis(obj.string("modifiedTime"))
+            )
         }
     }
+}
+
+private fun parseDriveModifiedTimeMillis(value: String?): Long {
+    if (value.isNullOrBlank()) return 0L
+    return runCatching { Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
 }
 
 private data class DesktopFirestoreDocument(
@@ -464,6 +484,8 @@ private fun DesktopCloudBookMetadata.toFirestoreFields(): Map<String, JsonElemen
     "isRecent" to firestoreBoolean(isRecent),
     "isDeleted" to firestoreBoolean(isDeleted),
     "lastModifiedTimestamp" to firestoreLong(lastModifiedTimestamp),
+    "readingPositionModifiedTimestamp" to firestoreLong(readingPositionModifiedTimestamp),
+    "annotationModifiedTimestamp" to firestoreLong(annotationModifiedTimestamp),
     "bookmarksJson" to firestoreNullableString(bookmarksJson),
     "hasAnnotations" to firestoreBoolean(hasAnnotations),
     "fileContentModifiedTimestamp" to firestoreLong(fileContentModifiedTimestamp),
@@ -512,6 +534,8 @@ private fun JsonObject.toBookMetadata(documentId: String): DesktopCloudBookMetad
         isRecent = booleanField("isRecent") ?: true,
         isDeleted = booleanField("isDeleted") ?: false,
         lastModifiedTimestamp = longField("lastModifiedTimestamp"),
+        readingPositionModifiedTimestamp = longField("readingPositionModifiedTimestamp"),
+        annotationModifiedTimestamp = longField("annotationModifiedTimestamp"),
         bookmarksJson = stringField("bookmarksJson"),
         hasAnnotations = booleanField("hasAnnotations") ?: false,
         fileContentModifiedTimestamp = longField("fileContentModifiedTimestamp"),

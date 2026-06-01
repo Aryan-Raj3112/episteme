@@ -19,6 +19,7 @@ import kotlinx.serialization.json.longOrNull
 
 object SharedPdfAnnotationSidecarCodec {
     const val KEY_PDF_ANNOTATIONS = "pdfAnnotations"
+    const val KEY_PDF_ANNOTATION_DELETIONS = "pdfAnnotationDeletions"
     const val KEY_LEGACY_INK = "ink"
     const val KEY_LEGACY_TEXT_BOXES = "textBoxes"
     const val KEY_LEGACY_HIGHLIGHTS = "highlights"
@@ -38,16 +39,17 @@ object SharedPdfAnnotationSidecarCodec {
     }
 
     fun annotationsFromData(data: JsonObject): List<SharedPdfAnnotation> {
-        data[KEY_PDF_ANNOTATIONS]?.let { return decodeAnnotationsElement(it) }
+        val deletedIds = annotationDeletionsFromData(data).keys
+        data[KEY_PDF_ANNOTATIONS]?.let { return decodeAnnotationsElement(it).filterNot { annotation -> annotation.id in deletedIds } }
 
         data[KEY_LEGACY_INK]?.let { ink ->
             val decoded = decodeAnnotationsElement(ink)
             if (decoded.isNotEmpty() || ink.looksLikeSharedAnnotationStore()) {
-                return decoded
+                return decoded.filterNot { annotation -> annotation.id in deletedIds }
             }
         }
 
-        return legacyAndroidAnnotationsFromData(data)
+        return legacyAndroidAnnotationsFromData(data).filterNot { annotation -> annotation.id in deletedIds }
     }
 
     fun withCanonicalAnnotations(data: JsonObject): JsonObject {
@@ -60,6 +62,80 @@ object SharedPdfAnnotationSidecarCodec {
     fun canonicalizeDataJson(rawDataJson: String): String {
         val data = parseObjectOrNull(rawDataJson) ?: return rawDataJson
         return json.encodeToString(JsonElement.serializer(), withCanonicalAnnotations(data))
+    }
+
+    fun mergeAnnotationDataJson(
+        localDataJson: String,
+        remoteDataJson: String,
+        preferRemoteOnConflict: Boolean
+    ): String {
+        val localData = parseObjectOrNull(localDataJson)?.sidecarDataObject() ?: JsonObject(emptyMap())
+        val remoteData = parseObjectOrNull(remoteDataJson)?.sidecarDataObject() ?: JsonObject(emptyMap())
+        val localCanonical = withCanonicalAnnotations(localData)
+        val remoteCanonical = withCanonicalAnnotations(remoteData)
+        val localAnnotations = annotationsFromData(localCanonical)
+        val remoteAnnotations = annotationsFromData(remoteCanonical)
+        val mergedDeletions = mergeAnnotationDeletions(
+            annotationDeletionsFromData(localCanonical),
+            annotationDeletionsFromData(remoteCanonical)
+        )
+        val mergedById = linkedMapOf<String, SharedPdfAnnotation>()
+        val first = if (preferRemoteOnConflict) localAnnotations else remoteAnnotations
+        val second = if (preferRemoteOnConflict) remoteAnnotations else localAnnotations
+        first.forEach { annotation ->
+            if (annotation.id !in mergedDeletions) mergedById[annotation.id] = annotation
+        }
+        second.forEach { annotation ->
+            if (annotation.id !in mergedDeletions) mergedById[annotation.id] = annotation
+        }
+        val base = (if (preferRemoteOnConflict) remoteCanonical else localCanonical).toMutableMap()
+        base[KEY_PDF_ANNOTATIONS] = encodeAnnotationsElement(mergedById.values.toList().sortedForSync())
+        if (mergedDeletions.isNotEmpty()) {
+            base[KEY_PDF_ANNOTATION_DELETIONS] = encodeAnnotationDeletionsElement(mergedDeletions)
+        } else {
+            base.remove(KEY_PDF_ANNOTATION_DELETIONS)
+        }
+        return json.encodeToString(JsonElement.serializer(), JsonObject(base))
+    }
+
+    fun annotationCountFromDataJson(rawDataJson: String): Int {
+        val data = parseObjectOrNull(rawDataJson)?.sidecarDataObject() ?: return 0
+        return annotationsFromData(withCanonicalAnnotations(data)).size
+    }
+
+    fun annotationDeletionsFromData(data: JsonObject): Map<String, Long> {
+        return data[KEY_PDF_ANNOTATION_DELETIONS].parseAnnotationDeletions()
+    }
+
+    fun annotationDeletionsFromJson(rawJson: String): Map<String, Long> {
+        val element = runCatching { json.parseToJsonElement(rawJson) }.getOrNull() ?: return emptyMap()
+        return when (element) {
+            is JsonObject -> {
+                val data = element.sidecarDataObject()
+                annotationDeletionsFromData(data).ifEmpty { element.parseAnnotationDeletions() }
+            }
+            else -> element.parseAnnotationDeletions()
+        }
+    }
+
+    fun annotationDeletionsJson(deletions: Map<String, Long>): String {
+        return json.encodeToString(JsonElement.serializer(), encodeAnnotationDeletionsElement(deletions))
+    }
+
+    fun encodeAnnotationDeletionsElement(deletions: Map<String, Long>): JsonElement {
+        return JsonArray(
+            deletions
+                .filterKeys { it.isNotBlank() }
+                .toSortedMap()
+                .map { (id, deletedAt) ->
+                    JsonObject(
+                        mapOf(
+                            "id" to JsonPrimitive(id),
+                            "deletedAt" to JsonPrimitive(deletedAt)
+                        )
+                    )
+                }
+        )
     }
 
     fun legacyAndroidDataFromAnnotations(
@@ -283,6 +359,47 @@ object SharedPdfAnnotationSidecarCodec {
         return runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
     }
 
+    private fun List<SharedPdfAnnotation>.sortedForSync(): List<SharedPdfAnnotation> {
+        return sortedWith(
+            compareBy<SharedPdfAnnotation> { it.pageIndex }
+                .thenBy { it.createdAt.takeIf { timestamp -> timestamp > 0L } ?: Long.MAX_VALUE }
+                .thenBy { it.id }
+        )
+    }
+
+    private fun mergeAnnotationDeletions(
+        local: Map<String, Long>,
+        remote: Map<String, Long>
+    ): Map<String, Long> {
+        if (local.isEmpty()) return remote
+        if (remote.isEmpty()) return local
+        return buildMap {
+            (local.keys + remote.keys).forEach { id ->
+                put(id, maxOf(local[id] ?: 0L, remote[id] ?: 0L))
+            }
+        }
+    }
+
+    private fun JsonElement?.parseAnnotationDeletions(): Map<String, Long> {
+        val element = this ?: return emptyMap()
+        val array = element.jsonArrayOrNull()
+            ?: element.jsonObjectOrNull()?.array(KEY_PDF_ANNOTATION_DELETIONS)
+            ?: return emptyMap()
+        return buildMap {
+            array.forEach { item ->
+                val primitiveId = item.jsonPrimitiveOrNull()?.contentOrNull
+                val obj = item.jsonObjectOrNull()
+                val id = primitiveId?.takeIf { it.isNotBlank() } ?: obj?.string("id")
+                if (id.isNullOrBlank()) return@forEach
+                val deletedAt = obj?.long("deletedAt")
+                    ?: obj?.long("timestamp")
+                    ?: obj?.long("ts")
+                    ?: 0L
+                put(id, maxOf(this[id] ?: 0L, deletedAt))
+            }
+        }
+    }
+
     private fun stableAnnotationId(prefix: String, element: JsonElement): String {
         return "${prefix}_${localFolderSyncSha256ShortHex(json.encodeToString(JsonElement.serializer(), element))}"
     }
@@ -314,6 +431,10 @@ object SharedPdfAnnotationSidecarCodec {
             this[KEY_LEGACY_HIGHLIGHTS] != null
     }
 
+    private fun JsonObject.sidecarDataObject(): JsonObject {
+        return this["data"]?.jsonObjectOrNull() ?: this
+    }
+
     private fun JsonElement.jsonArrayOrNull(): JsonArray? {
         if (this is JsonNull) return null
         return runCatching { jsonArray }.getOrNull()
@@ -322,6 +443,11 @@ object SharedPdfAnnotationSidecarCodec {
     private fun JsonElement.jsonObjectOrNull(): JsonObject? {
         if (this is JsonNull) return null
         return runCatching { jsonObject }.getOrNull()
+    }
+
+    private fun JsonElement.jsonPrimitiveOrNull(): JsonPrimitive? {
+        if (this is JsonNull) return null
+        return runCatching { jsonPrimitive }.getOrNull()
     }
 
     private fun JsonObject.array(name: String): JsonArray? = this[name]?.jsonArrayOrNull()

@@ -21,6 +21,8 @@ data class BookMetadata(
     var isRecent: Boolean = true,
     var isDeleted: Boolean = false,
     val lastModifiedTimestamp: Long = 0L,
+    val readingPositionModifiedTimestamp: Long = 0L,
+    val annotationModifiedTimestamp: Long = 0L,
     val bookmarksJson: String? = null,
     val hasAnnotations: Boolean = false,
     val fileContentModifiedTimestamp: Long = 0L,

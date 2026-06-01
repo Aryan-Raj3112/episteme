@@ -448,7 +448,17 @@ internal fun PdfReaderScreen(
 
     fun dispatchPdf(action: SharedPdfReaderAction) {
         val previousPage = pdfState.pageIndex
+        val previousAnnotationIds = pdfState.annotations.mapTo(mutableSetOf()) { it.id }
         val next = pdfState.reduce(action, zoomSpec)
+        val nextAnnotationIds = next.annotations.mapTo(mutableSetOf()) { it.id }
+        val removedAnnotationIds = previousAnnotationIds - nextAnnotationIds
+        if (removedAnnotationIds.isNotEmpty()) {
+            DesktopCloudSidecarSync.recordAnnotationDeletions(
+                documentPath = document.path,
+                logBookId = documentHandleId.toString(),
+                annotationIds = removedAnnotationIds
+            )
+        }
         pdfState = next
         if (next.pageIndex != previousPage) {
             clearPdfInteractionState()

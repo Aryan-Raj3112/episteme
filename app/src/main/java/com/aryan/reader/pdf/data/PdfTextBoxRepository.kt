@@ -20,6 +20,7 @@
 package com.aryan.reader.pdf.data
 
 import android.content.Context
+import com.aryan.reader.logCloudAnnotationSyncTrace
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -35,13 +36,24 @@ class PdfTextBoxRepository(private val context: Context) {
 
     suspend fun saveTextBoxes(bookId: String, textBoxes: List<PdfTextBox>) {
         withContext(Dispatchers.IO) {
+            val file = getFile(bookId)
             if (textBoxes.isEmpty()) {
-                val file = getFile(bookId)
                 if (file.exists()) file.delete()
                 return@withContext
             }
             val json = TextBoxSerializer.toJson(textBoxes)
-            getFile(bookId).writeText(json)
+            if (file.exists() && file.readText() == json) {
+                logCloudAnnotationSyncTrace {
+                    "android.repository.save_textboxes_noop book=$bookId count=${textBoxes.size} " +
+                        "bytes=${file.length()} ts=${file.lastModified()}"
+                }
+                return@withContext
+            }
+            file.writeText(json)
+            logCloudAnnotationSyncTrace {
+                "android.repository.save_textboxes book=$bookId count=${textBoxes.size} " +
+                    "bytes=${file.length()} ts=${file.lastModified()}"
+            }
         }
     }
 

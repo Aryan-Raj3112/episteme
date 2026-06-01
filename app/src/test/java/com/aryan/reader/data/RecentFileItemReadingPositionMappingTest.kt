@@ -18,6 +18,7 @@ class RecentFileItemReadingPositionMappingTest {
         assertEquals(item.locatorCharOffset, roundTripped.locatorCharOffset)
         assertEquals(item.progressPercentage, roundTripped.progressPercentage)
         assertEquals(item.fileContentModifiedTimestamp, roundTripped.fileContentModifiedTimestamp)
+        assertEquals(item.readingPositionModifiedTimestamp, roundTripped.readingPositionModifiedTimestamp)
     }
 
     @Test
@@ -32,6 +33,7 @@ class RecentFileItemReadingPositionMappingTest {
         assertEquals(item.locatorCharOffset, roundTripped.locatorCharOffset)
         assertEquals(item.progressPercentage, roundTripped.progressPercentage)
         assertEquals(item.fileContentModifiedTimestamp, roundTripped.fileContentModifiedTimestamp)
+        assertEquals(item.readingPositionModifiedTimestamp, roundTripped.readingPositionModifiedTimestamp)
     }
 
     @Test
@@ -101,6 +103,7 @@ class RecentFileItemReadingPositionMappingTest {
             locatorCharOffset = 88,
             progressPercentage = 61.5f,
             lastModifiedTimestamp = 2_000L,
+            readingPositionModifiedTimestamp = 1_900L,
             fileContentModifiedTimestamp = 3_000L,
             bookmarksJson = """[{"cfi":"/4/2"}]""",
             highlightsJson = """[{"cfi":"/4/2/6:88"}]"""
