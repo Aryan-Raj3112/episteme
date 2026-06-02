@@ -74,4 +74,43 @@ class SharedPdfAnnotationUiTest {
             sharedPdfInteractionDockItems(tools = listOf(PdfInkTool.TEXT))
         )
     }
+
+    @Test
+    fun `tool settings palette matches highlighter colors by rgb`() {
+        val paletteColor = Color(0xFFFFEB3B).copy(alpha = 0.55f).toArgb()
+        val selectedColor = Color(0xFFFFEB3B).copy(alpha = 0.25f).toArgb()
+
+        assertEquals(
+            0,
+            sharedPdfSettingsSelectedPaletteIndex(
+                activePalette = listOf(paletteColor),
+                selectedColor = selectedColor,
+                matchRgbOnly = true
+            )
+        )
+        assertEquals(
+            -1,
+            sharedPdfSettingsSelectedPaletteIndex(
+                activePalette = listOf(paletteColor),
+                selectedColor = selectedColor,
+                matchRgbOnly = false
+            )
+        )
+    }
+
+    @Test
+    fun `tool settings slider display percent clamps like android popup`() {
+        val range = 0.01f..0.06f
+
+        assertEquals(1, sharedPdfSettingsDisplayPercent(0.0f, range))
+        assertEquals(50, sharedPdfSettingsDisplayPercent(0.035f, range))
+        assertEquals(100, sharedPdfSettingsDisplayPercent(0.10f, range))
+    }
+
+    @Test
+    fun `ink preview reveal progress clamps to animation range`() {
+        assertEquals(0f, sharedPdfInkPreviewRevealProgress(-0.5f))
+        assertEquals(0.45f, sharedPdfInkPreviewRevealProgress(0.45f))
+        assertEquals(1f, sharedPdfInkPreviewRevealProgress(1.5f))
+    }
 }

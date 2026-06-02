@@ -63,17 +63,20 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -700,13 +703,11 @@ private fun SharedPdfAnnotationToolSettingsPanel(
         penPalette.ifEmpty { SharedPdfAnnotationDefaults.penPalette }
     }
     val selectedPaletteIndex = remember(activePalette, selectedColor, isHighlighter) {
-        activePalette.indexOfFirst { paletteColor ->
-            if (isHighlighter) {
-                Color(paletteColor).copy(alpha = 1f) == Color(selectedColor).copy(alpha = 1f)
-            } else {
-                paletteColor == selectedColor
-            }
-        }
+        sharedPdfSettingsSelectedPaletteIndex(
+            activePalette = activePalette,
+            selectedColor = selectedColor,
+            matchRgbOnly = isHighlighter
+        )
     }
 
     fun colorPickerPalette(): List<Int> {
@@ -809,6 +810,8 @@ private fun SharedPdfAnnotationToolSettingsPanel(
                     }
                 }
             }
+
+            Spacer(Modifier.height(16.dp))
 
             if (isHighlighter) {
                 Row(
@@ -978,6 +981,20 @@ private fun SharedPdfAnnotationToolSettingsPanel(
     }
 }
 
+internal fun sharedPdfSettingsSelectedPaletteIndex(
+    activePalette: List<Int>,
+    selectedColor: Int,
+    matchRgbOnly: Boolean
+): Int {
+    return activePalette.indexOfFirst { paletteColor ->
+        if (matchRgbOnly) {
+            (paletteColor and 0x00FFFFFF) == (selectedColor and 0x00FFFFFF)
+        } else {
+            paletteColor == selectedColor
+        }
+    }
+}
+
 @Composable
 private fun SharedPdfHighlighterPalettePreview(
     colors: List<Int>,
@@ -1076,10 +1093,7 @@ private fun SharedPdfStyledPropertySlider(
     thumbColor: Color,
     activeColor: Color
 ) {
-    val displayValue = remember(value, valueRange) {
-        val fraction = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
-        (fraction * 100f).roundToInt().coerceIn(1, 100)
-    }
+    val displayValue = remember(value, valueRange) { sharedPdfSettingsDisplayPercent(value, valueRange) }
     val onePercentDelta = (valueRange.endInclusive - valueRange.start) / 100f
     val canDecrease = value > valueRange.start + 0.0001f
     val canIncrease = value < valueRange.endInclusive - 0.0001f
@@ -1097,7 +1111,7 @@ private fun SharedPdfStyledPropertySlider(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "-",
+                text = "\u2014",
                 color = if (canDecrease) Color.White else Color.White.copy(alpha = 0.3f),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
@@ -1137,36 +1151,66 @@ private fun SharedPdfStyledPropertySlider(
                         }
                     }
                 },
-                track = { sliderState ->
-                    val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
-                    val fraction = if (range == 0f) {
-                        0f
-                    } else {
-                        ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
-                    }
-                    val activeTrackColor = when {
-                        isOpacity -> activeColor.copy(alpha = 1f)
-                        activeColor.luminance() < 0.18f -> Color.White.copy(alpha = 0.88f)
-                        else -> activeColor.copy(alpha = 0.95f)
-                    }
-                    val inactiveTrackColor = if (isOpacity) {
-                        Color.White.copy(alpha = 0.24f)
-                    } else {
-                        trackColor.copy(alpha = 0.85f)
-                    }
-                    Box(
+                track = { _ ->
+                    Canvas(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(4.dp)
-                            .background(inactiveTrackColor, RoundedCornerShape(2.dp)),
-                        contentAlignment = Alignment.CenterStart
+                            .height(16.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(fraction)
-                                .height(4.dp)
-                                .background(activeTrackColor, RoundedCornerShape(2.dp))
-                        )
+                        val trackHeight = size.height
+                        val cornerRadius = CornerRadius(trackHeight / 2f)
+                        if (isOpacity) {
+                            drawRoundRect(
+                                color = Color.Gray,
+                                size = size,
+                                cornerRadius = cornerRadius
+                            )
+                            val roundedClipPath = Path().apply {
+                                addRoundRect(
+                                    RoundRect(
+                                        rect = Rect(Offset.Zero, size),
+                                        cornerRadius = cornerRadius
+                                    )
+                                )
+                            }
+                            clipPath(roundedClipPath) {
+                                val boxSize = 12f
+                                val columns = (size.width / boxSize).toInt() + 1
+                                val rows = (size.height / boxSize).toInt() + 1
+                                for (column in 0 until columns) {
+                                    for (row in 0 until rows) {
+                                        drawRect(
+                                            color = if ((column + row) % 2 == 0) {
+                                                Color(0xFF555555)
+                                            } else {
+                                                Color(0xFF333333)
+                                            },
+                                            topLeft = Offset(column * boxSize, row * boxSize),
+                                            size = Size(boxSize, boxSize)
+                                        )
+                                    }
+                                }
+                                drawRect(color = activeColor)
+                            }
+                        } else {
+                            drawRoundRect(
+                                color = trackColor.copy(alpha = 0.5f),
+                                size = size,
+                                cornerRadius = cornerRadius
+                            )
+                            val dotRadius = 1.5.dp.toPx()
+                            val padding = trackHeight / 2f
+                            val availableWidth = size.width - (padding * 2f)
+                            val dotCount = 8
+                            val spacing = availableWidth / (dotCount - 1)
+                            for (index in 0 until dotCount) {
+                                drawCircle(
+                                    color = Color.White.copy(alpha = 0.2f),
+                                    radius = dotRadius,
+                                    center = Offset(padding + (index * spacing), size.height / 2f)
+                                )
+                            }
+                        }
                     }
                 }
             )
@@ -1190,6 +1234,15 @@ private fun SharedPdfStyledPropertySlider(
             )
         }
     }
+}
+
+internal fun sharedPdfSettingsDisplayPercent(
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>
+): Int {
+    val range = valueRange.endInclusive - valueRange.start
+    val fraction = if (range == 0f) 0f else (value - valueRange.start) / range
+    return (fraction * 100f).roundToInt().coerceIn(1, 100)
 }
 
 @Composable
@@ -2174,7 +2227,7 @@ private fun SharedPdfPenIcon(
     val animatedInkColor by animateColorAsState(targetValue = inkColor, label = "shared_ink_color")
     val inkProgress by animateFloatAsState(
         targetValue = if (isSelected) 1f else 0f,
-        animationSpec = tween(durationMillis = 450, easing = LinearEasing),
+        animationSpec = tween(durationMillis = 600, easing = LinearEasing),
         label = "shared_ink_progress"
     )
 
@@ -2211,12 +2264,18 @@ private fun SharedPdfPenIcon(
         }
 
         if (inkProgress > 0.01f) {
+            val tipY = when (tool) {
+                PdfInkTool.HIGHLIGHTER -> topPadding
+                PdfInkTool.HIGHLIGHTER_ROUND -> topPadding + tipHeight * 0.15f
+                else -> topPadding
+            }
             drawInkPreview(
                 tool = tool,
                 color = animatedInkColor,
                 progress = inkProgress,
-                startPoint = Offset(size.width / 2f, topPadding - 1f),
-                strokeWidth = strokeWidth
+                startPoint = Offset(size.width / 2f, tipY),
+                strokeWidth = strokeWidth,
+                isStraight = showHighlighterSnap
             )
         }
         if (showHighlighterSnap && tool.isDesktopHighlighter) {
@@ -2545,23 +2604,59 @@ private fun DrawScope.drawInkPreview(
     color: Color,
     progress: Float,
     startPoint: Offset,
-    strokeWidth: Float
+    strokeWidth: Float,
+    isStraight: Boolean = false
 ) {
+    val x = startPoint.x
+    val y = startPoint.y - 2f
     val path = Path().apply {
-        moveTo(startPoint.x, startPoint.y)
+        moveTo(x, y)
         if (tool.isHighlighter) {
-            val waveWidth = 46f
-            cubicTo(startPoint.x + waveWidth * 0.35f, startPoint.y - 12f, startPoint.x + waveWidth * 0.65f, startPoint.y + 12f, startPoint.x + waveWidth, startPoint.y)
+            val waveWidth = 70f
+            if (isStraight) {
+                lineTo(x + waveWidth, y)
+            } else {
+                val amplitude = 20f
+                cubicTo(
+                    x + waveWidth * 0.35f,
+                    y - amplitude,
+                    x + waveWidth * 0.65f,
+                    y + amplitude,
+                    x + waveWidth,
+                    y
+                )
+            }
         } else {
-            cubicTo(startPoint.x + 22f, startPoint.y - 24f, startPoint.x - 22f, startPoint.y - 52f, startPoint.x - 9f, startPoint.y - 28f)
-            cubicTo(startPoint.x - 3f, startPoint.y - 8f, startPoint.x + 32f, startPoint.y - 16f, startPoint.x + 44f, startPoint.y - 34f)
+            cubicTo(
+                x + 16f,
+                y - 18f,
+                x - 18f,
+                y - 34f,
+                x - 7f,
+                y - 21f
+            )
+            cubicTo(
+                x - 2f,
+                y - 5f,
+                x + 22f,
+                y - 11f,
+                x + 31f,
+                y - 26f
+            )
         }
     }
+    val revealProgress = sharedPdfInkPreviewRevealProgress(progress)
+    val pathMeasure = PathMeasure()
+    pathMeasure.setPath(path, false)
+    val revealedPath = Path()
+    val targetLength = pathMeasure.length * revealProgress
+    if (targetLength <= 0f || !pathMeasure.getSegment(0f, targetLength, revealedPath, true)) return
+
     val width = SharedPdfInkRenderer.effectiveStrokeWidthPx(strokeWidth, pageWidthPx = 700f)
         .coerceIn(if (tool.isHighlighter) 5f else 1.2f, if (tool.isHighlighter) 16f else 5f)
     drawPath(
-        path = path,
-        color = color.copy(alpha = color.alpha * progress),
+        path = revealedPath,
+        color = color,
         style = Stroke(
             width = width,
             cap = if (tool == PdfInkTool.HIGHLIGHTER) StrokeCap.Butt else StrokeCap.Round,
@@ -2569,6 +2664,10 @@ private fun DrawScope.drawInkPreview(
         ),
         blendMode = if (tool.isHighlighter) BlendMode.SrcOver else BlendMode.SrcOver
     )
+}
+
+internal fun sharedPdfInkPreviewRevealProgress(progress: Float): Float {
+    return progress.coerceIn(0f, 1f)
 }
 
 private val PdfInkTool.isDesktopPenTool: Boolean

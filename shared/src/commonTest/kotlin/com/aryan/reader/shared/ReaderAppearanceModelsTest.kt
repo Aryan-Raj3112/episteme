@@ -78,9 +78,9 @@ class ReaderAppearanceModelsTest {
 
     @Test
     fun `pdf highlighter defaults follow android pdf highlight slots`() {
-        val expectedPdfColors = SharedPdfAndroidHighlightColors.palette.take(4)
+        val expectedPdfColors = SharedPdfAndroidHighlightColors.palette.take(5)
 
-        assertEquals(4, SharedPdfHighlighterPalette.MaxColors)
+        assertEquals(5, SharedPdfHighlighterPalette.MaxColors)
         assertEquals(expectedPdfColors, SharedPdfHighlighterPalette.defaultColors)
         assertEquals(expectedPdfColors[0], SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb)
         assertEquals(expectedPdfColors[1], SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER_ROUND).colorArgb)
@@ -88,7 +88,7 @@ class ReaderAppearanceModelsTest {
         val custom = SharedPdfHighlighterPalette(
             colors = expectedPdfColors + listOf(0xFFFF00FF.toInt())
         ).sanitized()
-        assertEquals(4, custom.colors.size)
+        assertEquals(5, custom.colors.size)
         assertEquals(expectedPdfColors, custom.colors)
     }
 

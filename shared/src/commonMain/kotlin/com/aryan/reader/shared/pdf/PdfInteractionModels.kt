@@ -194,7 +194,7 @@ object SharedPdfAnnotationDefaults {
         0xFFFFFFFF.toInt()
     )
 
-    val highlighterPalette: List<Int> = SharedPdfAndroidHighlightColors.palette.take(4)
+    val highlighterPalette: List<Int> = SharedPdfAndroidHighlightColors.palette.take(5)
 
     fun configFor(tool: PdfInkTool): PdfToolConfig {
         return when (tool) {
@@ -235,7 +235,7 @@ data class SharedPdfHighlighterPalette(
 
     companion object {
         const val DefaultAlpha: Int = 0x8C
-        const val MaxColors: Int = 4
+        const val MaxColors: Int = 5
         val defaultColors: List<Int>
             get() = SharedPdfAnnotationDefaults.highlighterPalette
                 .take(MaxColors)

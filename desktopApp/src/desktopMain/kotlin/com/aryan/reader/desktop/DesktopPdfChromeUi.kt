@@ -84,72 +84,74 @@ internal fun DesktopPdfFullscreenBottomChrome(
     val chromeContent = MaterialTheme.colorScheme.onSurface
     val sliderActive = MaterialTheme.colorScheme.primary
     val sliderInactive = chromeContent.copy(alpha = if (chromeBackground.luminance() > 0.5f) 0.44f else 0.52f)
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth(),
-        shape = RoundedCornerShape(0.dp),
-        color = chromeBackground,
-        contentColor = chromeContent,
-        tonalElevation = 0.dp,
-        shadowElevation = 1.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            extraContent()
-            val hasJumpTargets = jumpBackPage != null || jumpForwardPage != null
-            DesktopPdfJumpHistoryControls(
-                visible = showJumpHistory,
-                backPage = jumpBackPage,
-                forwardPage = jumpForwardPage,
-                onBack = onJumpBack,
-                onForward = onJumpForward,
-                onClear = onClearJumpHistory
-            )
-            if (showJumpHistory && hasJumpTargets) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ReaderTooltipIconButton(
-                    tooltip = readerString("desktop_previous_page", "Previous page"),
-                    onClick = onPrevious,
-                    enabled = canGoPrevious
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = readerString("desktop_previous_page", "Previous page"),
-                        tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
-                    )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        extraContent()
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(),
+            shape = RoundedCornerShape(0.dp),
+            color = chromeBackground,
+            contentColor = chromeContent,
+            tonalElevation = 0.dp,
+            shadowElevation = 1.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                val hasJumpTargets = jumpBackPage != null || jumpForwardPage != null
+                DesktopPdfJumpHistoryControls(
+                    visible = showJumpHistory,
+                    backPage = jumpBackPage,
+                    forwardPage = jumpForwardPage,
+                    onBack = onJumpBack,
+                    onForward = onJumpForward,
+                    onClear = onClearJumpHistory
+                )
+                if (showJumpHistory && hasJumpTargets) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                Text(
-                    pageLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = chromeContent.copy(alpha = 0.72f)
-                )
-                ReaderMinimalSlider(
-                    value = pageIndex.toFloat(),
-                    onValueChange = onPageScrub,
-                    onValueChangeFinished = onPageScrubFinished,
-                    valueRange = 0f..(pageCount - 1).coerceAtLeast(0).toFloat(),
-                    enabled = pageCount > 1,
-                    activeColor = sliderActive,
-                    inactiveColor = sliderInactive,
-                    thumbColor = sliderActive,
-                    modifier = Modifier.weight(1f)
-                )
-                ReaderTooltipIconButton(
-                    tooltip = readerString("desktop_next_page", "Next page"),
-                    onClick = onNext,
-                    enabled = canGoNext
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = readerString("desktop_next_page", "Next page"),
-                        tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                    ReaderTooltipIconButton(
+                        tooltip = readerString("desktop_previous_page", "Previous page"),
+                        onClick = onPrevious,
+                        enabled = canGoPrevious
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.NavigateBefore,
+                            contentDescription = readerString("desktop_previous_page", "Previous page"),
+                            tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+                        )
+                    }
+                    Text(
+                        pageLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = chromeContent.copy(alpha = 0.72f)
                     )
+                    ReaderMinimalSlider(
+                        value = pageIndex.toFloat(),
+                        onValueChange = onPageScrub,
+                        onValueChangeFinished = onPageScrubFinished,
+                        valueRange = 0f..(pageCount - 1).coerceAtLeast(0).toFloat(),
+                        enabled = pageCount > 1,
+                        activeColor = sliderActive,
+                        inactiveColor = sliderInactive,
+                        thumbColor = sliderActive,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ReaderTooltipIconButton(
+                        tooltip = readerString("desktop_next_page", "Next page"),
+                        onClick = onNext,
+                        enabled = canGoNext
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.NavigateNext,
+                            contentDescription = readerString("desktop_next_page", "Next page"),
+                            tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                        )
+                    }
                 }
             }
         }
@@ -180,78 +182,80 @@ internal fun DesktopPdfBottomChrome(
     val chromeContent = MaterialTheme.colorScheme.onSurface
     val sliderActive = MaterialTheme.colorScheme.primary
     val sliderInactive = chromeContent.copy(alpha = if (chromeBackground.luminance() > 0.5f) 0.44f else 0.52f)
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(0.dp),
-        color = chromeBackground,
-        contentColor = chromeContent,
-        tonalElevation = 0.dp,
-        shadowElevation = 1.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            extraContent()
-            DesktopPdfJumpHistoryControls(
-                visible = showJumpHistory,
-                backPage = jumpBackPage,
-                forwardPage = jumpForwardPage,
-                onBack = onJumpBack,
-                onForward = onJumpForward,
-                onClear = onClearJumpHistory
-            )
-            if (showJumpHistory && (jumpBackPage != null || jumpForwardPage != null)) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ReaderTooltipIconButton(
-                    tooltip = readerString("desktop_previous_page", "Previous page"),
-                    onClick = onPrevious,
-                    enabled = canGoPrevious
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = readerString("desktop_previous_page", "Previous page"),
-                        tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
-                    )
-                }
-                Text(
-                    pageLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = chromeContent.copy(alpha = 0.72f)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        extraContent()
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(0.dp),
+            color = chromeBackground,
+            contentColor = chromeContent,
+            tonalElevation = 0.dp,
+            shadowElevation = 1.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                DesktopPdfJumpHistoryControls(
+                    visible = showJumpHistory,
+                    backPage = jumpBackPage,
+                    forwardPage = jumpForwardPage,
+                    onBack = onJumpBack,
+                    onForward = onJumpForward,
+                    onClear = onClearJumpHistory
                 )
-                if (pageCount > 1) {
-                    ReaderMinimalSlider(
-                        value = pageIndex.toFloat(),
-                        onValueChange = onPageScrub,
-                        onValueChangeFinished = onPageScrubFinished,
-                        valueRange = 0f..(pageCount - 1).toFloat(),
-                        activeColor = sliderActive,
-                        inactiveColor = sliderInactive,
-                        thumbColor = sliderActive,
-                        modifier = Modifier.weight(1f)
-                    )
-                } else {
-                    Spacer(Modifier.weight(1f))
+                if (showJumpHistory && (jumpBackPage != null || jumpForwardPage != null)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                Text(
-                    "${progressPercent.toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = chromeContent.copy(alpha = 0.72f)
-                )
-                ReaderTooltipIconButton(
-                    tooltip = readerString("desktop_next_page", "Next page"),
-                    onClick = onNext,
-                    enabled = canGoNext
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = readerString("desktop_next_page", "Next page"),
-                        tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                    ReaderTooltipIconButton(
+                        tooltip = readerString("desktop_previous_page", "Previous page"),
+                        onClick = onPrevious,
+                        enabled = canGoPrevious
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.NavigateBefore,
+                            contentDescription = readerString("desktop_previous_page", "Previous page"),
+                            tint = chromeContent.copy(alpha = if (canGoPrevious) 0.78f else 0.32f)
+                        )
+                    }
+                    Text(
+                        pageLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = chromeContent.copy(alpha = 0.72f)
                     )
+                    if (pageCount > 1) {
+                        ReaderMinimalSlider(
+                            value = pageIndex.toFloat(),
+                            onValueChange = onPageScrub,
+                            onValueChangeFinished = onPageScrubFinished,
+                            valueRange = 0f..(pageCount - 1).toFloat(),
+                            activeColor = sliderActive,
+                            inactiveColor = sliderInactive,
+                            thumbColor = sliderActive,
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    Text(
+                        "${progressPercent.toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = chromeContent.copy(alpha = 0.72f)
+                    )
+                    ReaderTooltipIconButton(
+                        tooltip = readerString("desktop_next_page", "Next page"),
+                        onClick = onNext,
+                        enabled = canGoNext
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.NavigateNext,
+                            contentDescription = readerString("desktop_next_page", "Next page"),
+                            tint = chromeContent.copy(alpha = if (canGoNext) 0.78f else 0.32f)
+                        )
+                    }
                 }
             }
         }
