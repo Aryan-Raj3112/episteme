@@ -52,4 +52,88 @@
         <item quantity="one">(%1$d Stück)</item>
         <item quantity="other">(%1$d Stücke)</item>
     </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">Import %1$d Buch… Es wird in Kürze in Ihrer Bibliothek erscheinen.</item>
+        <item quantity="other">Import %1$d Bücher… Sie werden in Kürze in Ihrer Bibliothek erscheinen.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">Importiert %1$d Buch. Sie finden es auf der Registerkarte „Bibliothek“.</item>
+        <item quantity="other">Importiert %1$d Bücher. Sie finden sie auf der Registerkarte „Bibliothek“.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d Buch zum Regal hinzugefügt.</item>
+        <item quantity="other">%1$d Bücher zum Regal hinzugefügt.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d Buch mit dem Tag „%2$s“.</item>
+        <item quantity="other">%1$d Bücher mit dem Tag „%2$s“.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">Ordner „%1$s“ entfernt und %2$d Buchen Sie über die App.</item>
+        <item quantity="other">Ordner „%1$s“ entfernt und %2$d Bücher aus der App.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d Datei</item>
+        <item quantity="other">%1$d Dateien</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">Zum Importieren %1$d ablegen Datei</item>
+        <item quantity="other">Zum Importieren %1$d ablegen Dateien</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d Nicht unterstützte Dateien werden übersprungen.</item>
+        <item quantity="other">%1$d Nicht unterstützte Dateien werden übersprungen.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">Import %1$d Datei…</item>
+        <item quantity="other">Import %1$d Dateien…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">Importiert %1$d Datei.</item>
+        <item quantity="other">Importiert %1$d Dateien.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">Importiert %1$d Datei. Die Reader-Unterstützung kommt später.</item>
+        <item quantity="other">Importiert %1$d Dateien. Die Reader-Unterstützung kommt später.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">%1$d konnte nicht importiert werden Datei.</item>
+        <item quantity="other">%1$d konnte nicht importiert werden Dateien.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">Übersprungen %1$d Datei.</item>
+        <item quantity="other">Übersprungen %1$d Dateien.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">Entfernen Sie „%1$s“ und sein %2$d über die App buchen? Dateien auf der Festplatte werden nicht gelöscht.</item>
+        <item quantity="other">Entfernen Sie „%1$s“ und sein %2$d Bücher aus der App? Dateien auf der Festplatte werden nicht gelöscht.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">Ordnersynchronisierung für %1$d fehlgeschlagen Ordner.</item>
+        <item quantity="other">Ordnersynchronisierung für %1$d fehlgeschlagen Ordner.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Ordnersynchronisierung mit %1$d abgeschlossen Ordner übersprungen.</item>
+        <item quantity="other">Ordnersynchronisierung mit %1$d abgeschlossen Ordner übersprungen.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">Entfernt %1$d gestreamt OPDS Buch aus diesem Katalog.</item>
+        <item quantity="other">Entfernt %1$d gestreamt OPDS Bücher aus diesem Katalog.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">Alle Bücher %1$d</item>
+        <item quantity="other">Alle Bücher %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Regale %1$d</item>
+        <item quantity="other">Regale %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Schlagworte %1$d</item>
+        <item quantity="other">Schlagworte %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Ordner %1$d</item>
+        <item quantity="other">Ordner %1$d</item>
+    </plurals>
 </resources>

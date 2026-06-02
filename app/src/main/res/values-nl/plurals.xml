@@ -52,4 +52,88 @@
         <item quantity="one">(%1$d segment)</item>
         <item quantity="other">(%1$d segmenten)</item>
     </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">%1$d importeren boek... Het zal binnenkort in uw bibliotheek verschijnen.</item>
+        <item quantity="other">%1$d importeren boeken... Ze verschijnen binnenkort in uw bibliotheek.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">Geïmporteerd %1$d boek. Je vindt het onder het tabblad Bibliotheek.</item>
+        <item quantity="other">Geïmporteerd %1$d boeken. Je vindt ze onder het tabblad Bibliotheek.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d boek toegevoegd aan de plank.</item>
+        <item quantity="other">%1$d boeken toegevoegd aan de plank.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d boek getagd met &quot;%2$s&quot;.</item>
+        <item quantity="other">%1$d boeken getagd met &quot;%2$s&quot;.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">Map &quot;%1$s&quot; verwijderd en %2$d boek vanuit de app.</item>
+        <item quantity="other">Map &quot;%1$s&quot; verwijderd en %2$d boeken uit de app.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d bestand</item>
+        <item quantity="other">%1$d bestanden</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">Ga naar import %1$d bestand</item>
+        <item quantity="other">Ga naar import %1$d bestanden</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d niet-ondersteund bestand wordt overgeslagen.</item>
+        <item quantity="other">%1$d niet-ondersteunde bestanden worden overgeslagen.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">%1$d importeren bestand…</item>
+        <item quantity="other">%1$d importeren bestanden…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">Geïmporteerd %1$d bestand.</item>
+        <item quantity="other">Geïmporteerd %1$d bestanden.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">Geïmporteerd %1$d bestand. Ondersteuning voor lezers komt later.</item>
+        <item quantity="other">Geïmporteerd %1$d bestanden. Ondersteuning voor lezers komt later.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">Kan %1$d niet importeren bestand.</item>
+        <item quantity="other">Kan %1$d niet importeren bestanden.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">%1$d overgeslagen bestand.</item>
+        <item quantity="other">%1$d overgeslagen bestanden.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">Verwijder &quot;%1$s&quot; en zijn %2$d boeken vanuit de app? Bestanden op schijf worden niet verwijderd.</item>
+        <item quantity="other">Verwijder &quot;%1$s&quot; en zijn %2$d boeken uit de app? Bestanden op schijf worden niet verwijderd.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">Mapsynchronisatie mislukt voor %1$d map.</item>
+        <item quantity="other">Mapsynchronisatie mislukt voor %1$d mappen.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Mapsynchronisatie voltooid met %1$d map overgeslagen.</item>
+        <item quantity="other">Mapsynchronisatie voltooid met %1$d mappen overgeslagen.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">%1$d verwijderd gestreamd OPDS boek uit die catalogus.</item>
+        <item quantity="other">%1$d verwijderd gestreamd OPDS boeken uit die catalogus.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">Alle boeken %1$d</item>
+        <item quantity="other">Alle boeken %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Planken %1$d</item>
+        <item quantity="other">Planken %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Labels %1$d</item>
+        <item quantity="other">Labels %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Mappen %1$d</item>
+        <item quantity="other">Mappen %1$d</item>
+    </plurals>
 </resources>

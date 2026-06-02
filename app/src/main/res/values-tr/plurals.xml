@@ -21,15 +21,15 @@
         <item quantity="other">Dosyaları Kalıcı Olarak Sil</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
-        <item quantity="one">Seçilmiş dosyayı cihazınızdan kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.</item>
+        <item quantity="one">%1$d seçilmiş dosyayı cihazınızdan kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.</item>
         <item quantity="other">%1$d seçilmiş dosyayı cihazınızdan kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
-        <item quantity="one">Seçilmiş dosyayı son dosyalar listesinden silmek istediğinize emin misiniz? Dosyayı kütüphaneden tekrar açarsanız yeniden burada gözükecektir.</item>
+        <item quantity="one">%1$d seçilmiş dosyayı son dosyalar listesinden silmek istediğinize emin misiniz? Dosyayı kütüphaneden tekrar açarsanız yeniden burada gözükecektir.</item>
         <item quantity="other">%1$d seçilmiş dosyayı son dosyalar listesinden silmek istediğinize emin misiniz? Dosyayı kütüphaneden tekrar açarsanız yeniden burada gözükecektir.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
-        <item quantity="one">Kitabı \'%2$s\' rafından kaldırmak istediğinize emin misiniz? Kitap, kütüphanenizde kalmaya devam edecek ve Rafta Değil olarak gözükecektir.</item>
+        <item quantity="one">%1$d kitabı \'%2$s\' rafından kaldırmak istediğinize emin misiniz? Kitap, kütüphanenizde kalmaya devam edecek ve Rafta Değil olarak gözükecektir.</item>
         <item quantity="other">%1$d kitabı \'%2$s\' rafından kaldırmak istediğinize emin misiniz? Kitap, kütüphanenizde kalmaya devam edecek ve Rafta Değil olarak gözükecektir.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
@@ -51,5 +51,89 @@
     <plurals name="tts_cache_chunk_count_parenthetical">
         <item quantity="one">(%1$d yığın)</item>
         <item quantity="other">(%1$d yığın)</item>
+    </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">İçe aktarılıyor %1$d kitap… Kısa süre içinde Kütüphanenizde görünecek.</item>
+        <item quantity="other">İçe aktarılıyor %1$d kitaplar… Kısa süre içinde Kitaplığınızda görünecekler.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">İthal %1$d kitap. Kütüphane sekmesinde bulabilirsiniz.</item>
+        <item quantity="other">İthal %1$d kitaplar. Bunları Kitaplık sekmesinde bulabilirsiniz.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d kitap rafa eklendi.</item>
+        <item quantity="other">%1$d Kitaplar rafa eklendi.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d kitap &quot;%2$s&quot; ile etiketlendi.</item>
+        <item quantity="other">%1$d &quot;%2$s&quot; ile etiketlenen kitaplar.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">&quot;%1$s&quot; klasörü kaldırıldı ve %2$d uygulamadan rezervasyon yapın.</item>
+        <item quantity="other">&quot;%1$s&quot; klasörü kaldırıldı ve %2$d Uygulamadan kitaplar.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d dosya</item>
+        <item quantity="other">%1$d dosyalar</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">İçe aktarmak için bırakın %1$d dosya</item>
+        <item quantity="other">İçe aktarmak için bırakın %1$d dosyalar</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d desteklenmeyen dosya atlanacak.</item>
+        <item quantity="other">%1$d desteklenmeyen dosyalar atlanacak.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">İçe aktarılıyor %1$d dosya…</item>
+        <item quantity="other">İçe aktarılıyor %1$d dosyalar…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">İthal %1$d dosya.</item>
+        <item quantity="other">İthal %1$d dosyalar.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">İthal %1$d dosya. Okuyucu desteği daha sonra gelir.</item>
+        <item quantity="other">İthal %1$d dosyalar. Okuyucu desteği daha sonra gelir.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">%1$d içe aktarılamadı dosya.</item>
+        <item quantity="other">%1$d içe aktarılamadı dosyalar.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">Atlandı %1$d dosya.</item>
+        <item quantity="other">Atlandı %1$d dosyalar.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">&quot;%1$s&quot;\'yi kaldır ve %2$d uygulamadan rezervasyon yaptırılsın mı? Diskteki dosyalar silinmeyecektir.</item>
+        <item quantity="other">&quot;%1$s&quot;\'yi kaldır ve %2$d uygulamadan kitaplar? Diskteki dosyalar silinmeyecektir.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">%1$d için klasör senkronizasyonu başarısız oldu dosya.</item>
+        <item quantity="other">%1$d için klasör senkronizasyonu başarısız oldu klasörler.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Klasör senkronizasyonu %1$d ile tamamlandı klasör atlandı.</item>
+        <item quantity="other">Klasör senkronizasyonu %1$d ile tamamlandı klasörler atlandı.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">Kaldırıldı %1$d akış OPDS o katalogdan kitap.</item>
+        <item quantity="other">Kaldırıldı %1$d akış OPDS o katalogdaki kitaplar.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">Tüm Kitaplar %1$d</item>
+        <item quantity="other">Tüm Kitaplar %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Raflar %1$d</item>
+        <item quantity="other">Raflar %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Etiketler %1$d</item>
+        <item quantity="other">Etiketler %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Klasörler %1$d</item>
+        <item quantity="other">Klasörler %1$d</item>
     </plurals>
 </resources>

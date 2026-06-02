@@ -2,41 +2,138 @@
 <resources>
     <plurals name="book_count">
         <item quantity="other">책 %1$d권</item>
+        <item quantity="one">%1$d 책</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="other">책</item>
+        <item quantity="one">책</item>
     </plurals>
     <plurals name="shelf_count">
         <item quantity="other">책장 %1$d개</item>
+        <item quantity="one">%1$d 선반</item>
     </plurals>
     <plurals name="search_results_count">
         <item quantity="other">결과 %1$d개 발견</item>
+        <item quantity="one">%1$d 결과를 찾았습니다</item>
     </plurals>
     <plurals name="search_matches_count">
         <item quantity="other">일치 항목 %1$d개 발견</item>
+        <item quantity="one">%1$d 일치하는 항목을 찾았습니다.</item>
     </plurals>
     <plurals name="dialog_delete_permanently">
         <item quantity="other">파일 영구 삭제</item>
+        <item quantity="one">파일을 영구적으로 삭제</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
         <item quantity="other">선택한 파일 %1$d개를 기기에서 영구적으로 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.</item>
+        <item quantity="one">%1$d을(를) 영구적으로 삭제하시겠습니까? 장치에서 파일을 선택하셨나요? 이 작업은 취소할 수 없습니다.</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
         <item quantity="other">선택한 파일 %1$d개를 최근 파일 목록에서 제거하시겠습니까? 라이브러리에서 다시 열면 다시 표시됩니다.</item>
+        <item quantity="one">%1$d을(를) 제거하시겠습니까? 최근 파일 목록에서 선택한 파일은 무엇입니까? 라이브러리에서 다시 열면 다시 나타납니다.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
         <item quantity="other">책 %1$d권을 “%2$s” 책장에서 제거하시겠습니까? 책은 라이브러리에 남아 미분류로 표시됩니다.</item>
+        <item quantity="one">%1$d을(를) 제거하시겠습니까? \'%2$s\' 선반? 책은 라이브러리에 남아 있으며 Unshelved 아래에 표시됩니다.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="other">책 %1$d권을 라이브러리에서 제거했습니다.</item>
+        <item quantity="one">%1$d 도서관에서 책이 제거되었습니다.</item>
     </plurals>
     <plurals name="folder_count">
         <item quantity="other">폴더 %1$d개</item>
+        <item quantity="one">%1$d 폴더</item>
     </plurals>
     <plurals name="tag_count">
         <item quantity="other">태그 %1$d개</item>
+        <item quantity="one">%1$d 태그</item>
     </plurals>
     <plurals name="tts_cache_chunk_count_parenthetical">
         <item quantity="other">(%1$d개 청크)</item>
+        <item quantity="one">(%1$d 청크)</item>
+    </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="other">가져오는 중 %1$d 책… 곧 라이브러리에 표시됩니다.</item>
+        <item quantity="one">가져오는 중 %1$d 책… 곧 라이브러리에 표시됩니다.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="other">가져옴 %1$d 서적. 라이브러리 탭에서 찾을 수 있습니다.</item>
+        <item quantity="one">가져옴 %1$d 책. 라이브러리 탭에서 찾을 수 있습니다.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="other">%1$d 책장에 책이 추가되었습니다.</item>
+        <item quantity="one">%1$d 책이 서가에 추가되었습니다.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="other">%1$d &quot;%2$s&quot; 태그가 붙은 책.</item>
+        <item quantity="one">%1$d &quot;%2$s&quot; 태그가 붙은 책입니다.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="other">&quot;%1$s&quot; 폴더가 제거되었습니다. 그리고 %2$d 앱에서 책을 읽습니다.</item>
+        <item quantity="one">&quot;%1$s&quot; 폴더가 제거되었습니다. 그리고 %2$d 앱에서 예약하세요.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="other">%1$d 파일</item>
+        <item quantity="one">%1$d 파일</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="other">가져오기로 드롭 %1$d 파일</item>
+        <item quantity="one">가져오기로 드롭 %1$d 파일</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="other">%1$d 지원되지 않는 파일은 건너뜁니다.</item>
+        <item quantity="one">%1$d 지원되지 않는 파일은 건너뜁니다.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="other">가져오는 중 %1$d 파일…</item>
+        <item quantity="one">가져오는 중 %1$d 파일…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="other">가져옴 %1$d 파일.</item>
+        <item quantity="one">가져옴 %1$d 파일.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="other">가져옴 %1$d 파일. 독자 지원은 나중에 제공됩니다.</item>
+        <item quantity="one">가져옴 %1$d 파일. 독자 지원은 나중에 제공됩니다.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="other">%1$d가져올 수 없습니다. 파일.</item>
+        <item quantity="one">%1$d가져올 수 없습니다. 파일.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="other">건너뛰었습니다 %1$d 파일.</item>
+        <item quantity="one">건너뛰었습니다 %1$d 파일.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="other">&quot;%1$s&quot; 제거 그리고 %2$d 앱에서 책을? 디스크에 있는 파일은 삭제되지 않습니다.</item>
+        <item quantity="one">&quot;%1$s&quot; 제거 그리고 %2$d 앱에서 예약하시겠어요? 디스크에 있는 파일은 삭제되지 않습니다.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="other">%1$d에 대한 폴더 동기화가 실패했습니다. 폴더.</item>
+        <item quantity="one">%1$d에 대한 폴더 동기화가 실패했습니다. 접는 사람.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="other">%1$d로 폴더 동기화가 완료되었습니다. 폴더를 건너뛰었습니다.</item>
+        <item quantity="one">%1$d로 폴더 동기화가 완료되었습니다. 폴더를 건너뛰었습니다.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="other">제거됨 %1$d 스트리밍됨 OPDS 그 카탈로그의 책들.</item>
+        <item quantity="one">제거됨 %1$d 스트리밍됨 OPDS 그 카탈로그에서 책을 읽으세요.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="other">모든 책 %1$d</item>
+        <item quantity="one">모든 책 %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="other">선반 %1$d</item>
+        <item quantity="one">선반 %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="other">태그 %1$d</item>
+        <item quantity="one">태그 %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="other">폴더 %1$d</item>
+        <item quantity="one">폴더 %1$d</item>
     </plurals>
 </resources>

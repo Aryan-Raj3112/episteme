@@ -2,41 +2,138 @@
 <resources>
     <plurals name="book_count">
         <item quantity="other">%1$d冊の本</item>
+        <item quantity="one">%1$d本</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="other">本</item>
+        <item quantity="one">本</item>
     </plurals>
     <plurals name="shelf_count">
         <item quantity="other">%1$d個の本棚</item>
+        <item quantity="one">%1$d棚</item>
     </plurals>
     <plurals name="search_results_count">
         <item quantity="other">%1$d件の結果が見つかりました</item>
+        <item quantity="one">%1$d結果が見つかりました</item>
     </plurals>
     <plurals name="search_matches_count">
         <item quantity="other">%1$d件の一致が見つかりました</item>
+        <item quantity="one">%1$d一致が見つかりました</item>
     </plurals>
     <plurals name="dialog_delete_permanently">
         <item quantity="other">ファイルを完全に削除</item>
+        <item quantity="one">ファイルを完全に削除</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
         <item quantity="other">選択した%1$d個のファイルをデバイスから完全に削除しますか？この操作は元に戻せません。</item>
+        <item quantity="one">%1$d を完全に削除しますか?デバイスからファイルを選択しましたか?この操作は元に戻すことができません。</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
         <item quantity="other">選択した%1$d個のファイルを最近使ったファイルから削除しますか？ライブラリからもう一度開くと再表示されます。</item>
+        <item quantity="one">%1$d を削除しますか?最近使用したファイルのリストからファイルを選択しましたか?ライブラリから再度開くと再び表示されます。</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
         <item quantity="other">%1$d冊の本を本棚「%2$s」から削除しますか？本はライブラリに残り、本棚未設定に表示されます。</item>
+        <item quantity="one">%1$d 削除してもよろしいですか? \'%2$s\' の本棚？この本はライブラリに残り、「未棚」の下に表示されます。</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="other">%1$d冊の本をライブラリから削除しました。</item>
+        <item quantity="one">%1$d図書館から削除された本。</item>
     </plurals>
     <plurals name="folder_count">
         <item quantity="other">%1$d個のフォルダー</item>
+        <item quantity="one">%1$dフォルダ</item>
     </plurals>
     <plurals name="tag_count">
         <item quantity="other">%1$d個のタグ</item>
+        <item quantity="one">%1$dタグ</item>
     </plurals>
     <plurals name="tts_cache_chunk_count_parenthetical">
         <item quantity="other">(%1$dチャンク)</item>
+        <item quantity="one">(%1$d チャンク)</item>
+    </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="other">インポート中 %1$d本… すぐにライブラリに表示されます。</item>
+        <item quantity="one">インポート中 %1$d本…まもなくライブラリに表示されます。</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="other">輸入品 %1$d本。これらは「ライブラリ」タブで見つけることができます。</item>
+        <item quantity="one">輸入品 %1$d本。 [ライブラリ]タブで見つけることができます。</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="other">%1$d本が棚に追加されました。</item>
+        <item quantity="one">%1$d本が棚に追加されました。</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="other">%1$d 「%2$s」のタグが付けられた本。</item>
+        <item quantity="one">%1$d 「%2$s」のタグが付けられた本。</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="other">フォルダー「%1$s」を削除しましたそして %2$dアプリから本を。</item>
+        <item quantity="one">フォルダー「%1$s」を削除しましたそして %2$dアプリから予約します。</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="other">%1$dファイル</item>
+        <item quantity="one">%1$dファイル</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="other">ドロップしてインポート %1$dファイル</item>
+        <item quantity="one">ドロップしてインポート %1$dファイル</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="other">%1$dサポートされていないファイルはスキップされます。</item>
+        <item quantity="one">%1$dサポートされていないファイルはスキップされます。</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="other">インポート中 %1$dファイル…</item>
+        <item quantity="one">インポート中 %1$dファイル…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="other">輸入品 %1$dファイル。</item>
+        <item quantity="one">輸入品 %1$dファイル。</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="other">輸入品 %1$dファイル。読者サポートは後で提供されます。</item>
+        <item quantity="one">輸入品 %1$dファイル。読者サポートは後で提供されます。</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="other">%1$d をインポートできませんでしたファイル。</item>
+        <item quantity="one">%1$d をインポートできませんでしたファイル。</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="other">スキップされました %1$dファイル。</item>
+        <item quantity="one">スキップされました %1$dファイル。</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="other">「%1$s」を削除しますそしてその %2$dアプリから本を？ディスク上のファイルは削除されません。</item>
+        <item quantity="one">「%1$s」を削除しますそしてその %2$dアプリから予約しますか？ディスク上のファイルは削除されません。</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="other">%1$d のフォルダー同期が失敗しましたフォルダー。</item>
+        <item quantity="one">%1$d のフォルダー同期が失敗しましたフォルダ。</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="other">フォルダーの同期は %1$d で終了しましたフォルダーはスキップされました。</item>
+        <item quantity="one">フォルダーの同期は %1$d で終了しましたフォルダがスキップされました。</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="other">削除されました %1$dストリーミング OPDSそのカタログからの本。</item>
+        <item quantity="one">削除されました %1$dストリーミング OPDSそのカタログからの本。</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="other">すべての書籍 %1$d</item>
+        <item quantity="one">すべての書籍 %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="other">棚 %1$d</item>
+        <item quantity="one">棚 %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="other">タグ %1$d</item>
+        <item quantity="one">タグ %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="other">フォルダー %1$d</item>
+        <item quantity="one">フォルダー %1$d</item>
     </plurals>
 </resources>

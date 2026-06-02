@@ -2,41 +2,138 @@
 <resources>
     <plurals name="book_count">
         <item quantity="other">%1$d buku</item>
+        <item quantity="one">%1$d buku</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="other">buku</item>
+        <item quantity="one">buku</item>
     </plurals>
     <plurals name="shelf_count">
         <item quantity="other">%1$d rak</item>
+        <item quantity="one">%1$d rak</item>
     </plurals>
     <plurals name="search_results_count">
         <item quantity="other">%1$d ditemukan</item>
+        <item quantity="one">%1$d hasil ditemukan</item>
     </plurals>
     <plurals name="search_matches_count">
         <item quantity="other">%1$d cocok</item>
+        <item quantity="one">%1$d kecocokan ditemukan</item>
     </plurals>
     <plurals name="dialog_delete_permanently">
         <item quantity="other">Berkas dihapus permanen</item>
+        <item quantity="one">Hapus File Secara Permanen</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
         <item quantity="other">Anda ingin menghapus secara permanen %1$d file yang dipilih dari perangkat Anda? Tindakan ini tidak dapat dibatalkan.</item>
+        <item quantity="one">Apakah Anda ingin menghapus %1$d secara permanen file yang dipilih dari perangkat Anda? Tindakan ini tidak dapat dibatalkan.</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
         <item quantity="other">Apakah Anda ingin menghapus %1$d file yang dipilih dari daftar file terbaru? File tersebut akan muncul kembali jika Anda membukanya lagi dari perpustakaan.</item>
+        <item quantity="one">Apakah Anda ingin menghapus %1$d file yang dipilih dari daftar file terbaru? Ini akan muncul kembali jika Anda membukanya lagi dari perpustakaan.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
         <item quantity="other">Apakah Anda yakin ingin mengeluarkan %1$d buku dari rak \'%2$s\'? Buku-buku tersebut akan tetap berada di perpustakaan Anda dan muncul di bawah Tanpa rak.</item>
+        <item quantity="one">Apakah Anda yakin ingin menghapus %1$d buku dari \'%2$s\' rak? Buku tersebut akan tetap ada di perpustakaan Anda dan muncul di bawah Unshelved.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="other">%1$d buku dikeluarkan dari perpustakaan.</item>
+        <item quantity="one">%1$d buku dihapus dari perpustakaan.</item>
     </plurals>
     <plurals name="folder_count">
         <item quantity="other">%1$d folder</item>
+        <item quantity="one">%1$d map</item>
     </plurals>
     <plurals name="tag_count">
         <item quantity="other">%1$d tagar</item>
+        <item quantity="one">%1$d menandai</item>
     </plurals>
     <plurals name="tts_cache_chunk_count_parenthetical">
         <item quantity="other">(%1$d Potongan)</item>
+        <item quantity="one">(%1$d potongan)</item>
+    </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="other">Mengimpor %1$d buku… Buku itu akan segera muncul di Perpustakaan Anda.</item>
+        <item quantity="one">Mengimpor %1$d buku… Ini akan segera muncul di Perpustakaan Anda.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="other">Impor %1$d buku. Anda dapat menemukannya di tab Perpustakaan.</item>
+        <item quantity="one">Impor %1$d buku. Anda dapat menemukannya di tab Perpustakaan.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="other">%1$d buku ditambahkan ke rak.</item>
+        <item quantity="one">%1$d buku ditambahkan ke rak.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="other">%1$d buku yang diberi tag &quot;%2$s&quot;.</item>
+        <item quantity="one">%1$d buku yang diberi tag &quot;%2$s&quot;.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="other">Folder &quot;%1$s&quot; dihapus dan %2$d buku dari aplikasi.</item>
+        <item quantity="one">Folder &quot;%1$s&quot; dihapus dan %2$d buku dari aplikasi.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="other">%1$d file</item>
+        <item quantity="one">%1$d mengajukan</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="other">Jatuhkan untuk mengimpor %1$d file</item>
+        <item quantity="one">Jatuhkan untuk mengimpor %1$d mengajukan</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="other">%1$d file yang tidak didukung akan dilewati.</item>
+        <item quantity="one">%1$d file yang tidak didukung akan dilewati.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="other">Mengimpor %1$d file…</item>
+        <item quantity="one">Mengimpor %1$d mengajukan…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="other">Impor %1$d file.</item>
+        <item quantity="one">Impor %1$d mengajukan.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="other">Impor %1$d file. Dukungan pembaca datang kemudian.</item>
+        <item quantity="one">Impor %1$d mengajukan. Dukungan pembaca datang kemudian.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="other">Tidak dapat mengimpor %1$d file.</item>
+        <item quantity="one">Tidak dapat mengimpor %1$d mengajukan.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="other">Dilewati %1$d file.</item>
+        <item quantity="one">Dilewati %1$d mengajukan.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="other">Hapus &quot;%1$s&quot; dan %2$dnya buku dari aplikasi? File di disk tidak akan dihapus.</item>
+        <item quantity="one">Hapus &quot;%1$s&quot; dan %2$dnya pesan dari aplikasi? File di disk tidak akan dihapus.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="other">Sinkronisasi folder gagal untuk %1$d folder.</item>
+        <item quantity="one">Sinkronisasi folder gagal untuk %1$d map.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="other">Sinkronisasi folder selesai dengan %1$d folder dilewati.</item>
+        <item quantity="one">Sinkronisasi folder selesai dengan %1$d folder dilewati.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="other">Dihapus %1$d streaming OPDS buku dari katalog itu.</item>
+        <item quantity="one">Dihapus %1$d streaming OPDS buku dari katalog itu.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="other">Semua Buku %1$d</item>
+        <item quantity="one">Semua Buku %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="other">Rak %1$d</item>
+        <item quantity="one">Rak %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="other">Tag %1$d</item>
+        <item quantity="one">Tag %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="other">Folder %1$d</item>
+        <item quantity="one">Folder %1$d</item>
     </plurals>
 </resources>

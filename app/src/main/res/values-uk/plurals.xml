@@ -78,4 +78,130 @@
         <item quantity="many">(%1$d фрагментів)</item>
         <item quantity="other">(%1$d фрагментів)</item>
     </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">Імпорт %1$d книга… Незабаром вона з’явиться у вашій бібліотеці.</item>
+        <item quantity="few">Імпорт %1$d книги… Вони незабаром з’являться у вашій бібліотеці.</item>
+        <item quantity="many">Імпорт %1$d книги… Вони незабаром з’являться у вашій бібліотеці.</item>
+        <item quantity="other">Імпорт %1$d книги… Вони незабаром з’являться у вашій бібліотеці.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">Імпортований %1$d книга. Ви можете знайти його на вкладці «Бібліотека».</item>
+        <item quantity="few">Імпортований %1$d книги. Ви можете знайти їх у вкладці «Бібліотека».</item>
+        <item quantity="many">Імпортований %1$d книги. Ви можете знайти їх у вкладці «Бібліотека».</item>
+        <item quantity="other">Імпортований %1$d книги. Ви можете знайти їх у вкладці «Бібліотека».</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d книгу додано на полицю.</item>
+        <item quantity="few">%1$d книг додано на полицю.</item>
+        <item quantity="many">%1$d книг додано на полицю.</item>
+        <item quantity="other">%1$d книг додано на полицю.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d книга з тегом &quot;%2$s&quot;.</item>
+        <item quantity="few">%1$d книги з тегом «%2$s».</item>
+        <item quantity="many">%1$d книги з тегом «%2$s».</item>
+        <item quantity="other">%1$d книги з тегом «%2$s».</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">Видалено папку &quot;%1$s&quot; та %2$d книга з додатку.</item>
+        <item quantity="few">Видалено папку &quot;%1$s&quot; та %2$d книги з програми.</item>
+        <item quantity="many">Видалено папку &quot;%1$s&quot; та %2$d книги з програми.</item>
+        <item quantity="other">Видалено папку &quot;%1$s&quot; та %2$d книги з програми.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d файл</item>
+        <item quantity="few">%1$d файли</item>
+        <item quantity="many">%1$d файли</item>
+        <item quantity="other">%1$d файли</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">Відпустіть, щоб імпортувати %1$d файл</item>
+        <item quantity="few">Відпустіть, щоб імпортувати %1$d файли</item>
+        <item quantity="many">Відпустіть, щоб імпортувати %1$d файли</item>
+        <item quantity="other">Відпустіть, щоб імпортувати %1$d файли</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d непідтримуваний файл буде пропущено.</item>
+        <item quantity="few">%1$d непідтримувані файли будуть пропущені.</item>
+        <item quantity="many">%1$d непідтримувані файли будуть пропущені.</item>
+        <item quantity="other">%1$d непідтримувані файли будуть пропущені.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">Імпорт %1$d файл…</item>
+        <item quantity="few">Імпорт %1$d файли…</item>
+        <item quantity="many">Імпорт %1$d файли…</item>
+        <item quantity="other">Імпорт %1$d файли…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">Імпортований %1$d файл.</item>
+        <item quantity="few">Імпортований %1$d файли.</item>
+        <item quantity="many">Імпортований %1$d файли.</item>
+        <item quantity="other">Імпортований %1$d файли.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">Імпортований %1$d файл. Підтримка Reader з’явиться пізніше.</item>
+        <item quantity="few">Імпортований %1$d файли. Підтримка Reader з’явиться пізніше.</item>
+        <item quantity="many">Імпортований %1$d файли. Підтримка Reader з’явиться пізніше.</item>
+        <item quantity="other">Імпортований %1$d файли. Підтримка Reader з’явиться пізніше.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">Не вдалося імпортувати %1$d файл.</item>
+        <item quantity="few">Не вдалося імпортувати %1$d файли.</item>
+        <item quantity="many">Не вдалося імпортувати %1$d файли.</item>
+        <item quantity="other">Не вдалося імпортувати %1$d файли.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">Пропущено %1$d файл.</item>
+        <item quantity="few">Пропущено %1$d файли.</item>
+        <item quantity="many">Пропущено %1$d файли.</item>
+        <item quantity="other">Пропущено %1$d файли.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">Видалити &quot;%1$s&quot; та його %2$d книга з програми? Файли на диску не будуть видалені.</item>
+        <item quantity="few">Видалити &quot;%1$s&quot; та його %2$d книги з програми? Файли на диску не будуть видалені.</item>
+        <item quantity="many">Видалити &quot;%1$s&quot; та його %2$d книги з програми? Файли на диску не будуть видалені.</item>
+        <item quantity="other">Видалити &quot;%1$s&quot; та його %2$d книги з програми? Файли на диску не будуть видалені.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">Помилка синхронізації папки для %1$d папку.</item>
+        <item quantity="few">Помилка синхронізації папки для %1$d папки.</item>
+        <item quantity="many">Помилка синхронізації папки для %1$d папки.</item>
+        <item quantity="other">Помилка синхронізації папки для %1$d папки.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Синхронізацію папки завершено з %1$d папку пропущено.</item>
+        <item quantity="few">Синхронізацію папки завершено з %1$d папок пропущено.</item>
+        <item quantity="many">Синхронізацію папки завершено з %1$d папок пропущено.</item>
+        <item quantity="other">Синхронізацію папки завершено з %1$d папок пропущено.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">Видалено %1$d потокове OPDS книга з цього каталогу.</item>
+        <item quantity="few">Видалено %1$d потокове OPDS книг з цього каталогу.</item>
+        <item quantity="many">Видалено %1$d потокове OPDS книг з цього каталогу.</item>
+        <item quantity="other">Видалено %1$d потокове OPDS книг з цього каталогу.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">Усі книги %1$d</item>
+        <item quantity="few">Усі книги %1$d</item>
+        <item quantity="many">Усі книги %1$d</item>
+        <item quantity="other">Усі книги %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Полиці %1$d</item>
+        <item quantity="few">Полиці %1$d</item>
+        <item quantity="many">Полиці %1$d</item>
+        <item quantity="other">Полиці %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Теги %1$d</item>
+        <item quantity="few">Теги %1$d</item>
+        <item quantity="many">Теги %1$d</item>
+        <item quantity="other">Теги %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Папки %1$d</item>
+        <item quantity="few">Папки %1$d</item>
+        <item quantity="many">Папки %1$d</item>
+        <item quantity="other">Папки %1$d</item>
+    </plurals>
 </resources>

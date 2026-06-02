@@ -20,4 +20,120 @@
         <item quantity="one">Kustuta fail jäädavalt</item>
         <item quantity="other">Kustuta failid jäädavalt</item>
     </plurals>
+    <plurals name="shelf_count">
+        <item quantity="one">%1$d riiul</item>
+        <item quantity="other">%1$d riiulid</item>
+    </plurals>
+    <plurals name="dialog_permanently_delete_desc">
+        <item quantity="one">Kas soovite %1$d jäädavalt kustutada valitud faili oma seadmest? Seda toimingut ei saa tagasi võtta.</item>
+        <item quantity="other">Kas soovite %1$d jäädavalt kustutada teie seadmest valitud failid? Seda toimingut ei saa tagasi võtta.</item>
+    </plurals>
+    <plurals name="dialog_remove_recents_desc">
+        <item quantity="one">Kas soovite eemaldada %1$d valitud faili viimaste failide loendist? See kuvatakse uuesti, kui avate selle uuesti raamatukogust.</item>
+        <item quantity="other">Kas soovite eemaldada %1$d valitud failid viimaste failide loendist? See kuvatakse uuesti, kui avate selle uuesti raamatukogust.</item>
+    </plurals>
+    <plurals name="dialog_remove_from_shelf_desc">
+        <item quantity="one">Kas soovite kindlasti eemaldada %1$d raamat \'%2$s\' riiul? Raamat jääb teie kogusse ja kuvatakse jaotises Riiulita.</item>
+        <item quantity="other">Kas soovite kindlasti eemaldada %1$d raamatud \'%2$s\' riiul? Raamatud jäävad teie kogusse ja kuvatakse jaotises Riiulita.</item>
+    </plurals>
+    <plurals name="banner_books_removed_library">
+        <item quantity="one">%1$d raamat raamatukogust eemaldatud.</item>
+        <item quantity="other">%1$d raamatud raamatukogust eemaldatud.</item>
+    </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">Importimine %1$d raamat… See ilmub peagi teie teegis.</item>
+        <item quantity="other">Importimine %1$d raamatud… Need ilmuvad peagi teie kogusse.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">Imporditud %1$d raamat. Selle leiate vahekaardilt Raamatukogu.</item>
+        <item quantity="other">Imporditud %1$d raamatuid. Leiate need vahekaardilt Raamatukogu.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d raamat lisatud riiulile.</item>
+        <item quantity="other">%1$d raamatud lisatud riiulile.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d raamat sildiga &quot;%2$s&quot;.</item>
+        <item quantity="other">%1$d raamatud sildiga &quot;%2$s&quot;.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">Eemaldatud kaust &quot;%1$s&quot; ja %2$d raamat rakendusest.</item>
+        <item quantity="other">Eemaldatud kaust &quot;%1$s&quot; ja %2$d raamatud rakendusest.</item>
+    </plurals>
+    <plurals name="folder_count">
+        <item quantity="one">%1$d kausta</item>
+        <item quantity="other">%1$d kaustad</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d faili</item>
+        <item quantity="other">%1$d failid</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">Langetage import %1$d faili</item>
+        <item quantity="other">Langetage import %1$d failid</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d toetamata fail jäetakse vahele.</item>
+        <item quantity="other">%1$d toetamata failid jäetakse vahele.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">Importimine %1$d fail…</item>
+        <item quantity="other">Importimine %1$d failid…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">Imporditud %1$d faili.</item>
+        <item quantity="other">Imporditud %1$d failid.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">Imporditud %1$d faili. Lugeja tugi tuleb hiljem.</item>
+        <item quantity="other">Imporditud %1$d failid. Lugeja tugi tuleb hiljem.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">Ei saanud importida %1$d faili.</item>
+        <item quantity="other">Ei saanud importida %1$d failid.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">Vahele jäetud %1$d faili.</item>
+        <item quantity="other">Vahele jäetud %1$d failid.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">Eemalda &quot;%1$s&quot; ja selle %2$d raamatut rakendusest? Ketta faile ei kustutata.</item>
+        <item quantity="other">Eemalda &quot;%1$s&quot; ja selle %2$d raamatud rakendusest? Ketta faile ei kustutata.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">Kausta sünkroonimine ebaõnnestus %1$d kausta.</item>
+        <item quantity="other">Kausta sünkroonimine ebaõnnestus %1$d kaustad.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Kausta sünkroonimine on lõpetatud %1$d kaust jäi vahele.</item>
+        <item quantity="other">Kausta sünkroonimine on lõpetatud %1$d kaustad vahele jäetud.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">Eemaldatud %1$d voogesitatud OPDS raamat sellest kataloogist.</item>
+        <item quantity="other">Eemaldatud %1$d voogesitatud OPDS raamatud sellest kataloogist.</item>
+    </plurals>
+    <plurals name="tag_count">
+        <item quantity="one">%1$d tag</item>
+        <item quantity="other">%1$d sildid</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">Kõik raamatud %1$d</item>
+        <item quantity="other">Kõik raamatud %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Riiulid %1$d</item>
+        <item quantity="other">Riiulid %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Sildid %1$d</item>
+        <item quantity="other">Sildid %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Kaustad %1$d</item>
+        <item quantity="other">Kaustad %1$d</item>
+    </plurals>
+    <plurals name="tts_cache_chunk_count_parenthetical">
+        <item quantity="one">(%1$d tükk)</item>
+        <item quantity="other">(%1$d tükid)</item>
+    </plurals>
 </resources>

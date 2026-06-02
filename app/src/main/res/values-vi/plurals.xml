@@ -2,41 +2,138 @@
 <resources>
     <plurals name="book_count">
         <item quantity="other">%1$d sách</item>
+        <item quantity="one">%1$d cuốn sách</item>
     </plurals>
     <plurals name="book_word">
         <item quantity="other">sách</item>
+        <item quantity="one">cuốn sách</item>
     </plurals>
     <plurals name="shelf_count">
         <item quantity="other">%1$d kệ sách</item>
+        <item quantity="one">%1$d kệ</item>
     </plurals>
     <plurals name="search_results_count">
         <item quantity="other">Tìm thấy %1$d kết quả</item>
+        <item quantity="one">%1$d kết quả được tìm thấy</item>
     </plurals>
     <plurals name="search_matches_count">
         <item quantity="other">Tìm thấy %1$d kết quả khớp</item>
+        <item quantity="one">%1$d trận đấu được tìm thấy</item>
     </plurals>
     <plurals name="dialog_delete_permanently">
         <item quantity="other">Xóa vĩnh viễn tệp</item>
+        <item quantity="one">Xóa tập tin vĩnh viễn</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
         <item quantity="other">Bạn có muốn xóa vĩnh viễn %1$d tệp đã chọn khỏi thiết bị không? Không thể hoàn tác thao tác này.</item>
+        <item quantity="one">Bạn có muốn xóa vĩnh viễn %1$d tập tin đã chọn từ thiết bị của bạn? Không thể hoàn tác hành động này.</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
         <item quantity="other">Bạn có muốn xóa %1$d tệp đã chọn khỏi danh sách tệp gần đây không? Tệp sẽ xuất hiện lại nếu bạn mở lại từ thư viện.</item>
+        <item quantity="one">Bạn có muốn xóa %1$d tập tin đã chọn từ danh sách tập tin gần đây? Nó sẽ xuất hiện lại nếu bạn mở lại từ thư viện.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
         <item quantity="other">Bạn có chắc muốn xóa %1$d sách khỏi kệ \"%2$s\" không? Sách vẫn nằm trong thư viện và xuất hiện trong Chưa xếp kệ.</item>
+        <item quantity="one">Bạn có chắc chắn muốn xóa %1$d cuốn sách từ \'%2$s\' cái kệ? Sách sẽ vẫn còn trong thư viện của bạn và xuất hiện dưới mục Chưa được lưu trữ.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="other">Đã xóa %1$d sách khỏi thư viện.</item>
+        <item quantity="one">%1$d cuốn sách bị xóa khỏi thư viện.</item>
     </plurals>
     <plurals name="folder_count">
         <item quantity="other">%1$d thư mục</item>
+        <item quantity="one">%1$d thư mục</item>
     </plurals>
     <plurals name="tag_count">
         <item quantity="other">%1$d thẻ</item>
+        <item quantity="one">%1$d gắn thẻ</item>
     </plurals>
     <plurals name="tts_cache_chunk_count_parenthetical">
         <item quantity="other">(%1$d đoạn)</item>
+        <item quantity="one">(%1$d đoạn)</item>
+    </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="other">Đang nhập %1$d sách… Chúng sẽ sớm xuất hiện trong Thư viện của bạn.</item>
+        <item quantity="one">Đang nhập %1$d sách… Nó sẽ sớm xuất hiện trong Thư viện của bạn.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="other">Nhập khẩu %1$d sách. Bạn có thể tìm thấy chúng trong tab Thư viện.</item>
+        <item quantity="one">Nhập khẩu %1$d sách. Bạn có thể tìm thấy nó trong tab Thư viện.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="other">%1$d sách được thêm vào kệ.</item>
+        <item quantity="one">%1$d cuốn sách được thêm vào kệ.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="other">%1$d sách được gắn thẻ &quot;%2$s&quot;.</item>
+        <item quantity="one">%1$d cuốn sách được gắn thẻ &quot;%2$s&quot;.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="other">Đã xóa thư mục &quot;%1$s&quot; và %2$d sách từ ứng dụng.</item>
+        <item quantity="one">Đã xóa thư mục &quot;%1$s&quot; và %2$d cuốn sách từ ứng dụng.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="other">%1$d tập tin</item>
+        <item quantity="one">%1$d tập tin</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="other">Thả để nhập %1$d tập tin</item>
+        <item quantity="one">Thả để nhập %1$d tập tin</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="other">%1$d các tập tin không được hỗ trợ sẽ bị bỏ qua.</item>
+        <item quantity="one">%1$d tập tin không được hỗ trợ sẽ bị bỏ qua.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="other">Đang nhập %1$d tập tin…</item>
+        <item quantity="one">Đang nhập %1$d tập tin…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="other">Nhập khẩu %1$d tập tin.</item>
+        <item quantity="one">Nhập khẩu %1$d tài liệu.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="other">Nhập khẩu %1$d tập tin. Hỗ trợ người đọc đến sau.</item>
+        <item quantity="one">Nhập khẩu %1$d tài liệu. Hỗ trợ người đọc đến sau.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="other">Không thể nhập %1$d tập tin.</item>
+        <item quantity="one">Không thể nhập %1$d tài liệu.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="other">Đã bỏ qua %1$d tập tin.</item>
+        <item quantity="one">Đã bỏ qua %1$d tài liệu.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="other">Xóa &quot;%1$s&quot; và %2$d của nó sách từ ứng dụng? Các tập tin trên đĩa sẽ không bị xóa.</item>
+        <item quantity="one">Xóa &quot;%1$s&quot; và %2$d của nó cuốn sách từ ứng dụng? Các tập tin trên đĩa sẽ không bị xóa.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="other">Đồng bộ hóa thư mục không thành công cho %1$d thư mục.</item>
+        <item quantity="one">Đồng bộ hóa thư mục không thành công cho %1$d thư mục.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="other">Đồng bộ hóa thư mục đã hoàn tất với %1$d các thư mục bị bỏ qua.</item>
+        <item quantity="one">Đồng bộ hóa thư mục đã hoàn tất với %1$d thư mục bị bỏ qua.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="other">Đã xóa %1$d đã phát trực tuyến OPDS sách từ danh mục đó.</item>
+        <item quantity="one">Đã xóa %1$d đã phát trực tuyến OPDS cuốn sách từ danh mục đó.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="other">Tất cả sách %1$d</item>
+        <item quantity="one">Tất cả sách %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="other">Kệ %1$d</item>
+        <item quantity="one">Kệ %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="other">Thẻ %1$d</item>
+        <item quantity="one">Thẻ %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="other">Thư mục %1$d</item>
+        <item quantity="one">Thư mục %1$d</item>
     </plurals>
 </resources>

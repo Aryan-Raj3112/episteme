@@ -78,4 +78,130 @@
         <item quantity="many">(%1$d fragmentów)</item>
         <item quantity="other">(%1$d fragmentu)</item>
     </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">Importowanie %1$d książka… Wkrótce pojawi się w Twojej bibliotece.</item>
+        <item quantity="few">Importowanie %1$d książki… Wkrótce pojawią się w Twojej bibliotece.</item>
+        <item quantity="many">Importowanie %1$d książki… Wkrótce pojawią się w Twojej bibliotece.</item>
+        <item quantity="other">Importowanie %1$d książki… Wkrótce pojawią się w Twojej bibliotece.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">Zaimportowano %1$d książka. Znajdziesz ją w zakładce Biblioteka.</item>
+        <item quantity="few">Zaimportowano %1$d książki. Znajdziesz je w zakładce Biblioteka.</item>
+        <item quantity="many">Zaimportowano %1$d książki. Znajdziesz je w zakładce Biblioteka.</item>
+        <item quantity="other">Zaimportowano %1$d książki. Znajdziesz je w zakładce Biblioteka.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d książka dodana do półki.</item>
+        <item quantity="few">%1$d książki dodane do półki.</item>
+        <item quantity="many">%1$d książki dodane do półki.</item>
+        <item quantity="other">%1$d książki dodane do półki.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d książka oznaczona tagiem „%2$s”.</item>
+        <item quantity="few">%1$d książki oznaczone tagiem „%2$s”.</item>
+        <item quantity="many">%1$d książki oznaczone tagiem „%2$s”.</item>
+        <item quantity="other">%1$d książki oznaczone tagiem „%2$s”.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">Usunięto folder „%1$s” i %2$d zarezerwuj z aplikacji.</item>
+        <item quantity="few">Usunięto folder „%1$s” i %2$d książki z aplikacji.</item>
+        <item quantity="many">Usunięto folder „%1$s” i %2$d książki z aplikacji.</item>
+        <item quantity="other">Usunięto folder „%1$s” i %2$d książki z aplikacji.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d plik</item>
+        <item quantity="few">%1$d akta</item>
+        <item quantity="many">%1$d akta</item>
+        <item quantity="other">%1$d akta</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">Przejdź do importu %1$d plik</item>
+        <item quantity="few">Przejdź do importu %1$d akta</item>
+        <item quantity="many">Przejdź do importu %1$d akta</item>
+        <item quantity="other">Przejdź do importu %1$d akta</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d nieobsługiwany plik zostanie pominięty.</item>
+        <item quantity="few">%1$d nieobsługiwane pliki zostaną pominięte.</item>
+        <item quantity="many">%1$d nieobsługiwane pliki zostaną pominięte.</item>
+        <item quantity="other">%1$d nieobsługiwane pliki zostaną pominięte.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">Importowanie %1$d plik…</item>
+        <item quantity="few">Importowanie %1$d akta…</item>
+        <item quantity="many">Importowanie %1$d akta…</item>
+        <item quantity="other">Importowanie %1$d akta…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">Zaimportowano %1$d plik.</item>
+        <item quantity="few">Zaimportowano %1$d akta.</item>
+        <item quantity="many">Zaimportowano %1$d akta.</item>
+        <item quantity="other">Zaimportowano %1$d akta.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">Zaimportowano %1$d plik. Wsparcie czytelników pojawi się później.</item>
+        <item quantity="few">Zaimportowano %1$d akta. Wsparcie czytelników pojawi się później.</item>
+        <item quantity="many">Zaimportowano %1$d akta. Wsparcie czytelników pojawi się później.</item>
+        <item quantity="other">Zaimportowano %1$d akta. Wsparcie czytelników pojawi się później.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">Nie można zaimportować %1$d plik.</item>
+        <item quantity="few">Nie można zaimportować %1$d akta.</item>
+        <item quantity="many">Nie można zaimportować %1$d akta.</item>
+        <item quantity="other">Nie można zaimportować %1$d akta.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">Pominięte %1$d plik.</item>
+        <item quantity="few">Pominięte %1$d akta.</item>
+        <item quantity="many">Pominięte %1$d akta.</item>
+        <item quantity="other">Pominięte %1$d akta.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">Usuń „%1$s” i jego %2$d zarezerwować z aplikacji? Pliki na dysku nie zostaną usunięte.</item>
+        <item quantity="few">Usuń „%1$s” i jego %2$d książki z aplikacji? Pliki na dysku nie zostaną usunięte.</item>
+        <item quantity="many">Usuń „%1$s” i jego %2$d książki z aplikacji? Pliki na dysku nie zostaną usunięte.</item>
+        <item quantity="other">Usuń „%1$s” i jego %2$d książki z aplikacji? Pliki na dysku nie zostaną usunięte.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">Synchronizacja folderu nie powiodła się dla %1$d falcówka.</item>
+        <item quantity="few">Synchronizacja folderu nie powiodła się dla %1$d lornetka składana.</item>
+        <item quantity="many">Synchronizacja folderu nie powiodła się dla %1$d lornetka składana.</item>
+        <item quantity="other">Synchronizacja folderu nie powiodła się dla %1$d lornetka składana.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Synchronizacja folderów zakończona %1$d folder pominięty.</item>
+        <item quantity="few">Synchronizacja folderów zakończona %1$d foldery pominięte.</item>
+        <item quantity="many">Synchronizacja folderów zakończona %1$d foldery pominięte.</item>
+        <item quantity="other">Synchronizacja folderów zakończona %1$d foldery pominięte.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">Usunięto %1$d przesyłane strumieniowo OPDS książka z tego katalogu.</item>
+        <item quantity="few">Usunięto %1$d przesyłane strumieniowo OPDS książki z tego katalogu.</item>
+        <item quantity="many">Usunięto %1$d przesyłane strumieniowo OPDS książki z tego katalogu.</item>
+        <item quantity="other">Usunięto %1$d przesyłane strumieniowo OPDS książki z tego katalogu.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">Wszystkie książki %1$d</item>
+        <item quantity="few">Wszystkie książki %1$d</item>
+        <item quantity="many">Wszystkie książki %1$d</item>
+        <item quantity="other">Wszystkie książki %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Półki %1$d</item>
+        <item quantity="few">Półki %1$d</item>
+        <item quantity="many">Półki %1$d</item>
+        <item quantity="other">Półki %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Tagi %1$d</item>
+        <item quantity="few">Tagi %1$d</item>
+        <item quantity="many">Tagi %1$d</item>
+        <item quantity="other">Tagi %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Foldery %1$d</item>
+        <item quantity="few">Foldery %1$d</item>
+        <item quantity="many">Foldery %1$d</item>
+        <item quantity="other">Foldery %1$d</item>
+    </plurals>
 </resources>

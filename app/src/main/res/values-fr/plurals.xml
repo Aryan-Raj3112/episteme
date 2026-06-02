@@ -60,4 +60,114 @@
         <item quantity="many">(%1$d morceaux)</item>
         <item quantity="other">(%1$d morceaux)</item>
     </plurals>
+    <plurals name="search_matches_count">
+        <item quantity="one">%1$d correspondance trouvée</item>
+        <item quantity="many">%1$d correspondances trouvées</item>
+        <item quantity="other">%1$d correspondances trouvées</item>
+    </plurals>
+    <plurals name="banner_importing_books_count">
+        <item quantity="one">Importation %1$d livre… Il apparaîtra bientôt dans votre bibliothèque.</item>
+        <item quantity="many">Importation %1$d livres… Ils apparaîtront bientôt dans votre bibliothèque.</item>
+        <item quantity="other">Importation %1$d livres… Ils apparaîtront bientôt dans votre bibliothèque.</item>
+    </plurals>
+    <plurals name="banner_books_imported_library_tab">
+        <item quantity="one">Importé %1$d livre. Vous pouvez le trouver dans l\'onglet Bibliothèque.</item>
+        <item quantity="many">Importé %1$d livres. Vous pouvez les trouver dans l\'onglet Bibliothèque.</item>
+        <item quantity="other">Importé %1$d livres. Vous pouvez les trouver dans l\'onglet Bibliothèque.</item>
+    </plurals>
+    <plurals name="banner_books_added_to_shelf">
+        <item quantity="one">%1$d livre ajouté à l\'étagère.</item>
+        <item quantity="many">%1$d livres ajoutés à l\'étagère.</item>
+        <item quantity="other">%1$d livres ajoutés à l\'étagère.</item>
+    </plurals>
+    <plurals name="banner_books_tagged_with_tag">
+        <item quantity="one">%1$d livre étiqueté &quot;%2$s&quot;.</item>
+        <item quantity="many">%1$d livres étiquetés avec &quot;%2$s&quot;.</item>
+        <item quantity="other">%1$d livres étiquetés avec &quot;%2$s&quot;.</item>
+    </plurals>
+    <plurals name="banner_folder_removed_with_book_count">
+        <item quantity="one">Dossier supprimé &quot;%1$s&quot; et %2$d réserver depuis l\'application.</item>
+        <item quantity="many">Dossier supprimé &quot;%1$s&quot; et %2$d livres depuis l\'application.</item>
+        <item quantity="other">Dossier supprimé &quot;%1$s&quot; et %2$d livres depuis l\'application.</item>
+    </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d fichier</item>
+        <item quantity="many">%1$d fichiers</item>
+        <item quantity="other">%1$d fichiers</item>
+    </plurals>
+    <plurals name="desktop_drop_import_file_count">
+        <item quantity="one">Déposer pour importer %1$d fichier</item>
+        <item quantity="many">Déposer pour importer %1$d fichiers</item>
+        <item quantity="other">Déposer pour importer %1$d fichiers</item>
+    </plurals>
+    <plurals name="desktop_unsupported_import_file_count">
+        <item quantity="one">%1$d les fichiers non pris en charge seront ignorés.</item>
+        <item quantity="many">%1$d les fichiers non pris en charge seront ignorés.</item>
+        <item quantity="other">%1$d les fichiers non pris en charge seront ignorés.</item>
+    </plurals>
+    <plurals name="desktop_importing_file_count">
+        <item quantity="one">Importation %1$d fichier…</item>
+        <item quantity="many">Importation %1$d fichiers…</item>
+        <item quantity="other">Importation %1$d fichiers…</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count">
+        <item quantity="one">Importé %1$d déposer.</item>
+        <item quantity="many">Importé %1$d fichiers.</item>
+        <item quantity="other">Importé %1$d fichiers.</item>
+    </plurals>
+    <plurals name="desktop_imported_file_count_reader_support_later">
+        <item quantity="one">Importé %1$d déposer. Le support des lecteurs vient plus tard.</item>
+        <item quantity="many">Importé %1$d fichiers. Le support des lecteurs vient plus tard.</item>
+        <item quantity="other">Importé %1$d fichiers. Le support des lecteurs vient plus tard.</item>
+    </plurals>
+    <plurals name="desktop_import_failed_file_count">
+        <item quantity="one">Impossible d\'importer %1$d déposer.</item>
+        <item quantity="many">Impossible d\'importer %1$d fichiers.</item>
+        <item quantity="other">Impossible d\'importer %1$d fichiers.</item>
+    </plurals>
+    <plurals name="desktop_skipped_file_count">
+        <item quantity="one">Ignoré %1$d déposer.</item>
+        <item quantity="many">Ignoré %1$d fichiers.</item>
+        <item quantity="other">Ignoré %1$d fichiers.</item>
+    </plurals>
+    <plurals name="desktop_remove_folder_desc_with_book_count">
+        <item quantity="one">Supprimer &quot;%1$s&quot; et son %2$d réserver depuis l\'application ? Les fichiers sur le disque ne seront pas supprimés.</item>
+        <item quantity="many">Supprimer &quot;%1$s&quot; et son %2$d des livres depuis l\'application ? Les fichiers sur le disque ne seront pas supprimés.</item>
+        <item quantity="other">Supprimer &quot;%1$s&quot; et son %2$d des livres depuis l\'application ? Les fichiers sur le disque ne seront pas supprimés.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_failed_folder_count">
+        <item quantity="one">La synchronisation du dossier a échoué pour %1$d dossier.</item>
+        <item quantity="many">La synchronisation du dossier a échoué pour %1$d dossiers.</item>
+        <item quantity="other">La synchronisation du dossier a échoué pour %1$d dossiers.</item>
+    </plurals>
+    <plurals name="desktop_folder_sync_skipped_folder_count">
+        <item quantity="one">Synchronisation des dossiers terminée avec %1$d dossier ignoré.</item>
+        <item quantity="many">Synchronisation des dossiers terminée avec %1$d dossiers ignorés.</item>
+        <item quantity="other">Synchronisation des dossiers terminée avec %1$d dossiers ignorés.</item>
+    </plurals>
+    <plurals name="desktop_opds_removed_stream_book_count">
+        <item quantity="one">Supprimé %1$d diffusé OPDS livre de ce catalogue.</item>
+        <item quantity="many">Supprimé %1$d diffusé OPDS livres de ce catalogue.</item>
+        <item quantity="other">Supprimé %1$d diffusé OPDS livres de ce catalogue.</item>
+    </plurals>
+    <plurals name="desktop_library_tab_books_count">
+        <item quantity="one">Tous les livres %1$d</item>
+        <item quantity="many">Tous les livres %1$d</item>
+        <item quantity="other">Tous les livres %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_shelves_count">
+        <item quantity="one">Étagères %1$d</item>
+        <item quantity="many">Étagères %1$d</item>
+        <item quantity="other">Étagères %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_tags_count">
+        <item quantity="one">Balises %1$d</item>
+        <item quantity="many">Balises %1$d</item>
+        <item quantity="other">Balises %1$d</item>
+    </plurals>
+    <plurals name="desktop_library_tab_folders_count">
+        <item quantity="one">Dossiers %1$d</item>
+        <item quantity="many">Dossiers %1$d</item>
+        <item quantity="other">Dossiers %1$d</item>
+    </plurals>
 </resources>
