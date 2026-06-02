@@ -1,6 +1,8 @@
 package com.aryan.reader.shared.reader
 
 import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -136,6 +138,33 @@ class SharedMeasuredEpubPaginatorTest {
             split.second.style.paragraphStyle.textIndent
         )
         assertEquals(0.dp, split.second.style.blockStyle.margin.top)
+    }
+
+    @Test
+    fun `measurement paragraph style keeps css indent hyphenation and android justify rule`() {
+        val paragraph = SemanticParagraph(
+            text = "Indented paragraph",
+            spans = emptyList(),
+            style = CssStyle(
+                paragraphStyle = ParagraphStyle(
+                    textAlign = TextAlign.Justify,
+                    textIndent = TextIndent(firstLine = 20.sp, restLine = 4.sp)
+                ),
+                hyphens = "auto"
+            ),
+            elementId = null,
+            cfi = null,
+            startCharOffsetInSource = 0,
+            blockIndex = 1
+        )
+
+        val defaultAlignStyle = paragraph.toMeasurementParagraphStyleForPagination(TextAlign.Start)
+        val forcedJustifyStyle = paragraph.toMeasurementParagraphStyleForPagination(TextAlign.Justify)
+
+        assertEquals(TextAlign.Left, defaultAlignStyle.textAlign)
+        assertEquals(TextAlign.Justify, forcedJustifyStyle.textAlign)
+        assertEquals(TextIndent(firstLine = 20.sp, restLine = 4.sp), defaultAlignStyle.textIndent)
+        assertEquals(Hyphens.Auto, defaultAlignStyle.hyphens)
     }
 
     @Test

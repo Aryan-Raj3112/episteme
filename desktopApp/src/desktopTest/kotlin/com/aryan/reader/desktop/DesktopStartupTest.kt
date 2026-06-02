@@ -1,6 +1,9 @@
 package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -57,6 +60,33 @@ class DesktopStartupTest {
         assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(), macos))
         assertTrue(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(initialized = true), linux))
         assertFalse(desktopEpubWebViewCanRender(DesktopWebViewRuntimeState(initialized = true), other))
+    }
+
+    @Test
+    fun `desktop vertical epub native reader is Linux only`() {
+        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+        val macos = DesktopPlatform(DesktopOperatingSystem.MACOS, DesktopArchitecture.ARM64)
+        val other = DesktopPlatform(DesktopOperatingSystem.OTHER, DesktopArchitecture.X64)
+
+        assertTrue(desktopShouldUseNativeVerticalEpubReader(linux))
+        assertFalse(desktopShouldUseNativeVerticalEpubReader(windows))
+        assertFalse(desktopShouldUseNativeVerticalEpubReader(macos))
+        assertFalse(desktopShouldUseNativeVerticalEpubReader(other))
+    }
+
+    @Test
+    fun `desktop vertical epub load keeps semantic blocks for Linux native reader`() {
+        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+        val macos = DesktopPlatform(DesktopOperatingSystem.MACOS, DesktopArchitecture.ARM64)
+        val verticalSettings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+        val paginatedSettings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
+
+        assertEquals(SharedJvmBookLoadSemanticMode.FULL, desktopEpubBookLoadSemanticMode(verticalSettings, linux))
+        assertEquals(SharedJvmBookLoadSemanticMode.SKIP, desktopEpubBookLoadSemanticMode(verticalSettings, windows))
+        assertEquals(SharedJvmBookLoadSemanticMode.SKIP, desktopEpubBookLoadSemanticMode(verticalSettings, macos))
+        assertEquals(SharedJvmBookLoadSemanticMode.FULL, desktopEpubBookLoadSemanticMode(paginatedSettings, windows))
     }
 
     @Test

@@ -62,6 +62,7 @@ import com.aryan.reader.shared.ui.DesktopEpubNativeImage
 import com.aryan.reader.shared.ui.ReaderContentRenderPlan
 import com.aryan.reader.shared.ui.SharedNativePaginatedReader
 import com.aryan.reader.shared.ui.SharedNativeReaderSelectionAction
+import com.aryan.reader.shared.ui.SharedNativeVerticalReader
 import com.aryan.reader.shared.ui.SharedReaderScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -627,6 +628,7 @@ internal fun DesktopReaderScreen(
         },
         readerCustomTextureIds = readerCustomTextureIds,
         onImportReaderTexture = onImportReaderTexture,
+        preferNativeVerticalReader = desktopShouldUseNativeVerticalEpubReader(),
         bottomChromeExtraContent = bottomChromeExtraContent,
         useDetachedChromeLayer = useDetachedChromeLayer,
         useDetachedPanelLayer = useDetachedPanelLayer
@@ -634,7 +636,7 @@ internal fun DesktopReaderScreen(
         val renderPlanModeKey = renderPlan.desktopReaderSurfaceModeKey()
         val readerSurfaceKey = renderPlan.desktopReaderSurfaceContentKey(paginatedLayoutReady)
         val readerModeSwitchLayoutModifier =
-            if (renderPlan is ReaderContentRenderPlan.NativePaginatedPages) {
+            if (renderPlan.desktopReaderUsesNativeComposeSurface()) {
                 Modifier.onGloballyPositioned { coordinates ->
                     val bounds = coordinates.boundsInWindow()
                     logReaderModeSwitch(
@@ -713,7 +715,7 @@ internal fun DesktopReaderScreen(
                     "htmlChars=${(renderPlan as? ReaderContentRenderPlan.WebDocument)?.html?.length ?: 0} " +
                     "paginatedReady=$paginatedLayoutReady"
             }
-            if (renderPlan is ReaderContentRenderPlan.NativePaginatedPages) {
+            if (renderPlan.desktopReaderUsesNativeComposeSurface()) {
                 cleanupRetiredDesktopWebView2InteropHosts(
                     readerAwtWindow,
                     "native_surface_state_ready_$paginatedLayoutReady"
@@ -900,6 +902,67 @@ internal fun DesktopReaderScreen(
                             )
                         }
                     }
+                    is ReaderContentRenderPlan.NativeVerticalPages -> {
+                        LaunchedEffect(renderPlan.book.id, renderPlan.pages, renderPlan.currentPageIndex) {
+                            logReaderModeSwitch(
+                                "native_vertical_reader_render currentPage=${renderPlan.currentPageIndex + 1} " +
+                                    "pages=${renderPlan.pages.size} chapters=${renderPlan.book.chapters.size} " +
+                                    "semanticBlocks=${renderPlan.book.chapters.sumOf { it.semanticBlocks.size }} " +
+                                    "background=${renderPlan.background} foreground=${renderPlan.foreground}"
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .onGloballyPositioned { coordinates ->
+                                    val bounds = coordinates.boundsInWindow()
+                                    logReaderModeSwitch(
+                                        "native_vertical_reader_content_layout size=${coordinates.size.width}x${coordinates.size.height} " +
+                                            "windowBounds=${bounds.left.formatLogFloat()},${bounds.top.formatLogFloat()} " +
+                                            "${bounds.width.formatLogFloat()}x${bounds.height.formatLogFloat()} " +
+                                            "currentPage=${renderPlan.currentPageIndex + 1}"
+                                    )
+                                }
+                        ) {
+                            SharedNativeVerticalReader(
+                                renderPlan = renderPlan,
+                                readerFontFamily = renderPlan.settings.toDesktopReaderFontFamily(),
+                                searchHighlight = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f),
+                                onVisiblePageChanged = onVisiblePageChanged,
+                                enabledSelectionActions = nativeSelectionActions,
+                                onCopyText = { text -> clipboardManager.setText(AnnotatedString(text)) },
+                                onSelectionAction = handleNativeSelectionAction,
+                                onOpenHighlightPaletteManager = onOpenHighlightPaletteManager,
+                                onHighlightCreated = { highlight ->
+                                    logDesktopHighlightMap(
+                                        "native_vertical_state_reduce_start id=${highlight.id.logPreview(80)} before=${session.highlights.size} " +
+                                            "color=${highlight.color.id} chapter=${highlight.chapterIndex} " +
+                                            "page=${highlight.locator.pageIndex} offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
+                                            "block=${highlight.locator.blockIndex} char=${highlight.locator.charOffset} " +
+                                            "textChars=${highlight.text.length} cfi=\"${highlight.cfi.logPreview(160)}\""
+                                    )
+                                    val nextSession = session.reduce(ReaderAction.HighlightCreated(highlight), readerEngine)
+                                    logDesktopHighlightMap(
+                                        "native_vertical_state_reduce_done id=${highlight.id.logPreview(80)} after=${nextSession.highlights.size} " +
+                                            "contains=${nextSession.highlights.any { it.id == highlight.id }}"
+                                    )
+                                    onSessionChange(nextSession)
+                                },
+                                onHighlightSelected = onHighlightSelected,
+                                onLinkClicked = { link ->
+                                    handleDesktopEpubLinkClicked(link.toDesktopEpubLinkClick())
+                                },
+                                onReaderTap = onChromeActivity,
+                                imageContent = { image, imageModifier ->
+                                    DesktopEpubNativeImage(
+                                        image = image,
+                                        modifier = imageModifier
+                                    )
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -933,6 +996,7 @@ private fun ReaderContentRenderPlan.desktopReaderSurfaceModeKey(): String {
     return when (this) {
         is ReaderContentRenderPlan.WebDocument -> "desktop-reader-web"
         is ReaderContentRenderPlan.NativePaginatedPages -> "desktop-reader-native"
+        is ReaderContentRenderPlan.NativeVerticalPages -> "desktop-reader-native-vertical"
     }
 }
 
@@ -940,6 +1004,7 @@ private fun ReaderContentRenderPlan.desktopReaderSurfaceModeLabel(): String {
     return when (this) {
         is ReaderContentRenderPlan.WebDocument -> "web"
         is ReaderContentRenderPlan.NativePaginatedPages -> "native"
+        is ReaderContentRenderPlan.NativeVerticalPages -> "native-vertical"
     }
 }
 
@@ -948,7 +1013,13 @@ private fun ReaderContentRenderPlan.desktopReaderSurfaceContentKey(paginatedLayo
         is ReaderContentRenderPlan.WebDocument -> "desktop-reader-web"
         is ReaderContentRenderPlan.NativePaginatedPages ->
             "desktop-reader-native-${if (paginatedLayoutReady) "ready" else "preparing"}"
+        is ReaderContentRenderPlan.NativeVerticalPages -> "desktop-reader-native-vertical"
     }
+}
+
+private fun ReaderContentRenderPlan.desktopReaderUsesNativeComposeSurface(): Boolean {
+    return this is ReaderContentRenderPlan.NativePaginatedPages ||
+        this is ReaderContentRenderPlan.NativeVerticalPages
 }
 
 private fun Window?.requestDesktopReaderModeSwitchRepaint(reason: String) {

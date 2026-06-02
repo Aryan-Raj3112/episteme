@@ -32,11 +32,24 @@ class DesktopAuthStoreTest {
     }
 
     @Test
-    fun `save fails without leaving a partial account file when secure storage is unavailable`() {
+    fun `save falls back to session only without leaving a partial account file when secure storage is unavailable`() {
         val settingsFile = Files.createTempDirectory("reader-auth-store-unavailable")
             .resolve("auth.properties")
             .toFile()
         val store = DesktopAuthStore(settingsFile, ThrowingSecretCodec)
+
+        store.save(testSession())
+
+        assertFalse(settingsFile.exists())
+        assertEquals(null, store.load())
+    }
+
+    @Test
+    fun `save still surfaces secure storage write failures when storage is available`() {
+        val settingsFile = Files.createTempDirectory("reader-auth-store-available-write-failure")
+            .resolve("auth.properties")
+            .toFile()
+        val store = DesktopAuthStore(settingsFile, AvailableThrowingSecretCodec)
 
         assertFailsWith<IllegalStateException> {
             store.save(testSession())
@@ -78,6 +91,16 @@ class DesktopAuthStoreTest {
 
         override fun protect(value: String): String {
             throw IllegalStateException("Secure storage unavailable")
+        }
+
+        override fun unprotect(value: String): String = ""
+    }
+
+    private object AvailableThrowingSecretCodec : DesktopSecretCodec {
+        override val isAvailable: Boolean = true
+
+        override fun protect(value: String): String {
+            throw IllegalStateException("Secure storage write failed")
         }
 
         override fun unprotect(value: String): String = ""

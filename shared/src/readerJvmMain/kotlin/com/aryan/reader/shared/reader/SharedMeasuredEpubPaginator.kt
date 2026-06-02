@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.reader
 
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
@@ -8,6 +9,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -401,13 +404,7 @@ class SharedMeasuredEpubPaginator(
                 settings = settings,
                 includeTrailingBottomMargin = true
             )
-            is SemanticWrappingBlock -> measureBlockStack(
-                blocks = listOf(block.floatedImage) + block.paragraphsToWrap,
-                geometry = geometry,
-                baseStyle = baseStyle,
-                settings = settings,
-                includeTrailingBottomMargin = true
-            )
+            is SemanticWrappingBlock -> measureWrapping(block, geometry, baseStyle, settings)
             is SemanticImage -> measureImage(block, geometry, settings)
             is SemanticMath -> measureMath(block, geometry, baseStyle, settings)
             is SemanticSpacer -> if (block.isExplicitLineBreak) 8 else 16
@@ -445,7 +442,7 @@ class SharedMeasuredEpubPaginator(
     ): Int {
         currentCoroutineContext().ensureActive()
         val style = block.textStyle(baseStyle, settings)
-        val annotated = block.toAnnotatedString(style.fontSize.value)
+        val annotated = block.toAnnotatedString(style.fontSize.value, style.textAlign)
         val minimumLineHeight = style.lineHeight.takeIfSpecified()
             ?.let { lineHeight -> with(density) { lineHeight.toPx().roundToInt() } }
             ?: with(density) { (settings.fontSize * settings.lineSpacing).sp.toPx().roundToInt() }
@@ -494,6 +491,110 @@ class SharedMeasuredEpubPaginator(
         }
     }
 
+    private suspend fun measureWrapping(
+        block: SemanticWrappingBlock,
+        geometry: MeasuredPageGeometry,
+        baseStyle: TextStyle,
+        settings: ReaderSettings
+    ): Int {
+        val contentWidth = block.measuredTextContentWidthPx(geometry)
+        val imageSize = measureImageSize(block.floatedImage, geometry, settings, maxWidthPx = contentWidth)
+        if (imageSize.first <= 0 || imageSize.second <= 0) {
+            return measureBlockStack(
+                blocks = block.paragraphsToWrap,
+                geometry = geometry,
+                baseStyle = baseStyle,
+                settings = settings,
+                includeTrailingBottomMargin = true
+            )
+        }
+
+        val wrappingWidth = (contentWidth - imageSize.first).coerceAtLeast(0)
+        if (wrappingWidth <= 0) {
+            val paragraphHeight = measureBlockStack(
+                blocks = block.paragraphsToWrap,
+                geometry = geometry,
+                baseStyle = baseStyle,
+                settings = settings,
+                includeTrailingBottomMargin = true
+            )
+            return (imageSize.second + paragraphHeight).coerceAtLeast(1)
+        }
+
+        var currentY = 0f
+        block.paragraphsToWrap.forEachIndexed { index, paragraph ->
+            val style = paragraph.textStyle(baseStyle, settings)
+            val annotated = paragraph.toAnnotatedString(style.fontSize.value, style.textAlign)
+            currentY = measureWrappedParagraphLines(
+                text = annotated,
+                style = style,
+                fullWidthPx = contentWidth,
+                wrappingWidthPx = wrappingWidth,
+                currentY = currentY,
+                imageHeightPx = imageSize.second
+            )
+            if (index < block.paragraphsToWrap.lastIndex) {
+                currentY += block.paragraphsToWrap.measuredCollapsedParagraphGapPx(index, settings)
+            }
+        }
+        return maxOf(currentY.roundToInt(), imageSize.second).coerceAtLeast(1)
+    }
+
+    private suspend fun measureWrappedParagraphLines(
+        text: AnnotatedString,
+        style: TextStyle,
+        fullWidthPx: Int,
+        wrappingWidthPx: Int,
+        currentY: Float,
+        imageHeightPx: Int
+    ): Float {
+        if (text.text.isBlank()) {
+            return currentY + (style.lineHeight.takeIfSpecified()?.let { with(density) { it.toPx() } } ?: 1f)
+        }
+        var y = currentY
+        var textOffset = 0
+        while (textOffset < text.length) {
+            currentCoroutineContext().ensureActive()
+            val isBesideImage = y < imageHeightPx
+            val currentMaxWidth = if (isBesideImage) wrappingWidthPx else fullWidthPx
+            if (currentMaxWidth <= 0) {
+                if (isBesideImage) {
+                    y = imageHeightPx.toFloat()
+                    continue
+                }
+                break
+            }
+            val remaining = text.subSequence(textOffset, text.length)
+            val measuredRemaining = measureTextLayout(remaining, style, currentMaxWidth)
+            val firstLineEndOffset = measuredRemaining.getLineEnd(0, visibleEnd = true)
+            if (firstLineEndOffset == 0 && remaining.length > 0) {
+                textOffset++
+                continue
+            }
+            if (firstLineEndOffset == 0) break
+            val lineText = remaining.subSequence(0, firstLineEndOffset)
+            y += measureTextLayout(lineText, style, currentMaxWidth).size.height
+            textOffset += firstLineEndOffset
+            while (textOffset < text.length && text.text[textOffset].isWhitespace()) {
+                textOffset++
+            }
+        }
+        return y
+    }
+
+    private fun List<SemanticParagraph>.measuredCollapsedParagraphGapPx(
+        index: Int,
+        settings: ReaderSettings
+    ): Int {
+        val current = getOrNull(index) ?: return 0
+        val next = getOrNull(index + 1) ?: return 0
+        val explicitGap = maxOf(
+            current.style.blockStyle.margin.bottom.toPxIfSpecified(),
+            next.style.blockStyle.margin.top.toPxIfSpecified()
+        )
+        return explicitGap.takeIf { it != 0 } ?: settings.renderedDefaultBlockSpacingPx()
+    }
+
     private suspend fun measureMath(
         block: SemanticMath,
         geometry: MeasuredPageGeometry,
@@ -518,13 +619,23 @@ class SharedMeasuredEpubPaginator(
     }
 
     private fun measureImage(block: SemanticImage, geometry: MeasuredPageGeometry, settings: ReaderSettings): Int {
+        return measureImageSize(block, geometry, settings, maxWidthPx = geometry.pageWidthPx)
+            .second
+    }
+
+    private fun measureImageSize(
+        block: SemanticImage,
+        geometry: MeasuredPageGeometry,
+        settings: ReaderSettings,
+        maxWidthPx: Int
+    ): Pair<Int, Int> {
         val width = block.intrinsicWidth?.takeIf { it > 0f }
         val height = block.intrinsicHeight?.takeIf { it > 0f }
         val imageScale = settings.imageScale.coerceIn(0.5f, 2.0f)
-        val measured = when {
+        when {
             width != null && height != null -> {
                 val style = block.style.blockStyle
-                val contentMaxWidth = geometry.pageWidthPx.toFloat()
+                val contentMaxWidth = maxWidthPx.toFloat()
                 val baseWidth = if (style.width.isSpecified && style.width > 0.dp) {
                     style.width.toPxInt().toFloat()
                 } else {
@@ -535,12 +646,30 @@ class SharedMeasuredEpubPaginator(
                     scaledWidth = scaledWidth.coerceAtMost(style.maxWidth.toPxInt() * imageScale)
                 }
                 scaledWidth = scaledWidth.coerceAtMost(contentMaxWidth)
-                (scaledWidth * (height / width)).roundToInt()
+                val measuredWidth = scaledWidth.roundToInt().coerceAtLeast(1)
+                val measuredHeight = (scaledWidth * (height / width)).roundToInt()
+                return measuredWidth to measuredHeight.coerceIn(
+                    24,
+                    (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
+                )
             }
-            block.style.blockStyle.height.isSpecified && block.style.blockStyle.height > 0.dp -> block.style.blockStyle.height.toPxInt()
-            else -> with(density) { (settings.fontSize * 8f).sp.toPx().roundToInt() }
         }
-        return measured.coerceIn(24, (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24))
+        val style = block.style.blockStyle
+        val measuredWidth = when {
+            style.width.isSpecified && style.width > 0.dp -> style.width.toPxInt()
+            style.maxWidth.isSpecified && style.maxWidth > 0.dp -> minOf(maxWidthPx, style.maxWidth.toPxInt())
+            else -> maxWidthPx
+        }.coerceAtLeast(1)
+        val measuredHeight = if (style.height.isSpecified && style.height > 0.dp) {
+            style.height.toPxInt()
+        } else {
+            with(density) { (settings.fontSize * 8f).sp.toPx().roundToInt() }
+        }
+        val coercedHeight = measuredHeight.coerceIn(
+            24,
+            (geometry.pageHeightPx * 0.86f).roundToInt().coerceAtLeast(24)
+        )
+        return measuredWidth to coercedHeight
     }
 
     private suspend fun splitBlock(
@@ -579,7 +708,7 @@ class SharedMeasuredEpubPaginator(
         if (availableTextHeight <= 0) return null
 
         val layoutResult = measureTextLayout(
-            text = block.toAnnotatedString(style.fontSize.value),
+            text = block.toAnnotatedString(style.fontSize.value, style.textAlign),
             style = style,
             widthPx = contentWidth
         )
@@ -598,7 +727,7 @@ class SharedMeasuredEpubPaginator(
         val remaining = splitSemanticTextBlockAtOffsetForPagination(block, splitOffset)?.second
         if (remaining != null && remaining.text.isNotBlank()) {
             val remainingLayout = measureTextLayout(
-                text = remaining.toAnnotatedString(style.fontSize.value),
+                text = remaining.toAnnotatedString(style.fontSize.value, style.textAlign),
                 style = style,
                 widthPx = contentWidth
             )
@@ -957,17 +1086,58 @@ private fun SemanticBlock.textBlocks(): List<SemanticTextBlock> {
     }
 }
 
-private fun SemanticTextBlock.toAnnotatedString(blockFontSizeSp: Float): AnnotatedString {
+private fun SemanticTextBlock.toAnnotatedString(
+    blockFontSizeSp: Float,
+    fallbackTextAlign: TextAlign
+): AnnotatedString {
     return buildAnnotatedString {
-        append(text)
+        withStyle(toMeasurementParagraphStyleForPagination(fallbackTextAlign)) {
+            append(text)
+        }
         spans.forEach { span ->
             val start = span.start.coerceIn(0, text.length)
             val end = span.end.coerceIn(start, text.length)
             if (start < end) {
                 addStyle(span.style.toMeasurementSpanStyle(blockFontSizeSp), start, end)
+                addMeasurementWordSpacing(
+                    text = text,
+                    start = start,
+                    end = end,
+                    wordSpacing = span.style.wordSpacing
+                )
             }
         }
     }
+}
+
+internal fun SemanticTextBlock.toMeasurementParagraphStyleForPagination(fallbackTextAlign: TextAlign): ParagraphStyle {
+    return ParagraphStyle(
+        textAlign = resolveSharedReaderTextAlign(
+            cssTextAlign = style.paragraphStyle.textAlign,
+            fallbackTextAlign = fallbackTextAlign
+        ),
+        textIndent = style.paragraphStyle.textIndent,
+        lineBreak = LineBreak.Paragraph,
+        hyphens = style.toMeasurementHyphens()
+    )
+}
+
+private fun AnnotatedString.Builder.addMeasurementWordSpacing(
+    text: String,
+    start: Int,
+    end: Int,
+    wordSpacing: TextUnit
+) {
+    if (!wordSpacing.isSpecified || wordSpacing.value == 0f) return
+    for (index in start until end) {
+        if (text[index] == ' ') {
+            addStyle(SpanStyle(letterSpacing = wordSpacing), index, index + 1)
+        }
+    }
+}
+
+private fun CssStyle.toMeasurementHyphens(): Hyphens {
+    return if (hyphens == "auto") Hyphens.Auto else Hyphens.None
 }
 
 private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSettings): TextStyle {
@@ -989,7 +1159,10 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
         fontSize = fontSize,
         lineHeight = lineHeight,
         fontWeight = if (this is SemanticHeader) FontWeight.Bold else baseStyle.fontWeight,
-        textAlign = style.paragraphStyle.textAlign.takeUnless { it == TextAlign.Unspecified } ?: baseStyle.textAlign
+        textAlign = resolveSharedReaderTextAlign(
+            cssTextAlign = style.paragraphStyle.textAlign,
+            fallbackTextAlign = baseStyle.textAlign
+        )
     ).withAndroidPaginationTextMetrics()
 }
 
@@ -1023,11 +1196,13 @@ private fun TextUnit.resolveLineHeightSp(fontSizeSp: Float): TextUnit {
 private fun CssStyle.toMeasurementSpanStyle(parentFontSizeSp: Float): SpanStyle {
     val resolvedFontSize = (spanStyle.fontSize.takeIfSpecified() ?: fontSize.takeIfSpecified())
         ?.resolveFontSizeSp(parentFontSizeSp)
-    return if (resolvedFontSize == null) {
-        spanStyle
-    } else {
-        spanStyle.copy(fontSize = resolvedFontSize)
-    }
+    return spanStyle.copy(
+        fontSize = resolvedFontSize ?: spanStyle.fontSize,
+        fontFeatureSettings = resolveSharedReaderFontFeatureSettings(
+            existingSettings = spanStyle.fontFeatureSettings,
+            fontVariantNumeric = fontVariantNumeric
+        )
+    )
 }
 
 private fun headerScale(level: Int): Float {

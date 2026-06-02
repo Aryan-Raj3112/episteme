@@ -8,6 +8,7 @@ import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedEpubBook
 
 data class ReaderContentNavigationTarget(
     val locator: ReaderLocator?,
@@ -35,6 +36,20 @@ sealed interface ReaderContentRenderPlan {
 
     data class NativePaginatedPages(
         val visiblePages: List<ReaderPage>,
+        val settings: ReaderSettings,
+        val searchQuery: String,
+        val searchOptions: ReaderSearchOptions,
+        val highlightPalette: ReaderHighlightPalette,
+        override val background: Color,
+        override val foreground: Color,
+        override val navigationTarget: ReaderContentNavigationTarget,
+        override val highlights: List<UserHighlight>
+    ) : ReaderContentRenderPlan
+
+    data class NativeVerticalPages(
+        val book: SharedEpubBook,
+        val pages: List<ReaderPage>,
+        val currentPageIndex: Int,
         val settings: ReaderSettings,
         val searchQuery: String,
         val searchOptions: ReaderSearchOptions,

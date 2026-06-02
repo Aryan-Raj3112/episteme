@@ -370,17 +370,34 @@ internal class DesktopAuthStore(
     }
 
     fun save(session: DesktopAuthSession) {
-        val protectedRefreshToken = protectRequired(RefreshTokenKey, session.refreshToken)
-        val protectedGoogleRefreshToken = session.googleRefreshToken
-            .takeIf { it.isNotBlank() }
-            ?.let { protectRequired(GoogleRefreshTokenKey, it) }
+        if (session.refreshToken.isBlank()) {
+            throw IllegalArgumentException("Cannot save a desktop account without a refresh token.")
+        }
+        val protectedTokens = runCatching {
+            ProtectedDesktopAuthTokens(
+                refreshToken = protectRequired(RefreshTokenKey, session.refreshToken),
+                googleRefreshToken = session.googleRefreshToken
+                    .takeIf { it.isNotBlank() }
+                    ?.let { protectRequired(GoogleRefreshTokenKey, it) }
+            )
+        }.getOrElse { error ->
+            if (secretCodec.isAvailable) {
+                throw error
+            }
+            logDesktopCloudSync {
+                "desktop.auth.persist_skipped reason=secure_storage_unavailable codec=${secretCodec.name} " +
+                    "error=\"${error.desktopTtsSummary()}\""
+            }
+            clear()
+            return
+        }
         val properties = Properties().apply {
             setProperty("uid", session.user.uid)
             setProperty("displayName", session.user.displayName.orEmpty())
             setProperty("photoUrl", session.user.photoUrl.orEmpty())
             setProperty("email", session.user.email.orEmpty())
-            setProperty(RefreshTokenKey, protectedRefreshToken)
-            protectedGoogleRefreshToken?.let { setProperty(GoogleRefreshTokenKey, it) }
+            setProperty(RefreshTokenKey, protectedTokens.refreshToken)
+            protectedTokens.googleRefreshToken?.let { setProperty(GoogleRefreshTokenKey, it) }
         }
         settingsFile.storePropertiesAtomically(properties, "Episteme desktop account")
     }
@@ -396,10 +413,12 @@ internal class DesktopAuthStore(
         const val GoogleRefreshTokenKey = "googleRefreshTokenProtected"
     }
 
+    private data class ProtectedDesktopAuthTokens(
+        val refreshToken: String,
+        val googleRefreshToken: String?
+    )
+
     private fun protectRequired(keyName: String, value: String): String {
-        if (value.isBlank()) {
-            throw IllegalArgumentException("Cannot save a desktop account without a refresh token.")
-        }
         val protectedValue = secretCodec.protect(keyName, value)
         if (protectedValue.isBlank()) {
             throw IllegalStateException("Desktop secure key storage returned an empty value for $keyName.")

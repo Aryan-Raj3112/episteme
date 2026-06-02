@@ -242,6 +242,7 @@ fun SharedReaderScreen(
     readerTexturePreviewContent: (@Composable (String, Modifier) -> Unit)? = null,
     readerCustomTextureIds: List<String> = emptyList(),
     onImportReaderTexture: ((ReaderSettings) -> ReaderSettings?)? = null,
+    preferNativeVerticalReader: Boolean = false,
     bottomChromeExtraContent: @Composable ColumnScope.() -> Unit = {},
     useDetachedChromeLayer: Boolean = true,
     useDetachedPanelLayer: Boolean = true,
@@ -597,6 +598,21 @@ fun SharedReaderScreen(
                 ttsRequestId = ttsRequestId
             )
             val renderPlan = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+                if (preferNativeVerticalReader) {
+                    ReaderContentRenderPlan.NativeVerticalPages(
+                        book = readerState.book,
+                        pages = readerState.pages,
+                        currentPageIndex = readerState.currentPageIndex,
+                        settings = settings,
+                        searchQuery = session.searchQuery,
+                        searchOptions = session.searchOptions,
+                        highlightPalette = highlightPalette,
+                        background = background,
+                        foreground = foreground,
+                        navigationTarget = navigationTarget,
+                        highlights = session.highlights
+                    )
+                } else {
                 val lastChapterIndex = readerState.book.chapters.lastIndex
                 val activeChapterIndex = if (lastChapterIndex >= 0) {
                     readerState.currentPage?.chapterIndex?.takeIf { it in 0..lastChapterIndex }
@@ -761,6 +777,7 @@ fun SharedReaderScreen(
                     navigationTarget = navigationTarget,
                     highlights = session.highlights
                 )
+                }
             } else {
                 ReaderContentRenderPlan.NativePaginatedPages(
                     visiblePages = readerState.visiblePages,

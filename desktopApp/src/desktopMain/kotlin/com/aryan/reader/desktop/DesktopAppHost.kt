@@ -38,6 +38,9 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.aryan.reader.shared.AppContrastOption
 import com.aryan.reader.shared.AppThemeMode
+import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.readerString
 import kotlinx.coroutines.Dispatchers
@@ -627,6 +630,26 @@ internal fun desktopEpubWebViewUsesWebView2(
     platform: DesktopPlatform = currentDesktopPlatform()
 ): Boolean {
     return desktopEpubWebViewBackend(platform) == DesktopEpubWebViewBackend.WINDOWS_WEBVIEW2
+}
+
+internal fun desktopShouldUseNativeVerticalEpubReader(
+    platform: DesktopPlatform = currentDesktopPlatform()
+): Boolean {
+    return platform.os == DesktopOperatingSystem.LINUX
+}
+
+internal fun desktopEpubBookLoadSemanticMode(
+    settings: ReaderSettings,
+    platform: DesktopPlatform = currentDesktopPlatform()
+): SharedJvmBookLoadSemanticMode {
+    return if (
+        settings.readingMode == ReaderReadingMode.VERTICAL &&
+        !desktopShouldUseNativeVerticalEpubReader(platform)
+    ) {
+        SharedJvmBookLoadSemanticMode.SKIP
+    } else {
+        SharedJvmBookLoadSemanticMode.FULL
+    }
 }
 
 internal fun desktopEpubWebViewCanRender(
