@@ -3,6 +3,7 @@ package com.aryan.reader.desktop
 import com.aryan.reader.shared.DEFAULT_CLOUD_TTS_SPEAKER_ID
 import com.aryan.reader.shared.GEMINI_CLOUD_TTS_MODEL_ID
 import com.aryan.reader.shared.ReaderAiByokSettings
+import com.sun.jna.Library
 import com.sun.jna.Memory
 import com.sun.jna.Native
 import com.sun.jna.Pointer
@@ -18,6 +19,15 @@ import java.util.concurrent.TimeUnit
 private const val WINDOWS_CRED_TYPE_GENERIC = 1
 private const val WINDOWS_CRED_PERSIST_LOCAL_MACHINE = 2
 private const val WINDOWS_ERROR_NOT_FOUND = 1168
+private const val LINUX_SECRET_SCHEMA_DONT_MATCH_NAME = 2
+private const val LINUX_SECRET_SCHEMA_ATTRIBUTE_STRING = 0
+private const val LINUX_SECRET_SCHEMA_NAME = "com.aryan.reader.Secret"
+private const val LINUX_SECRET_COLLECTION_DEFAULT = "default"
+private const val LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE = "application"
+private const val LINUX_SECRET_SERVICE_APPLICATION_VALUE = "Episteme.Reader"
+private const val LINUX_SECRET_SERVICE_KEY_ATTRIBUTE = "key"
+private const val LINUX_LIBSECRET_PREFIX = "linux-libsecret:"
+private const val LINUX_SECRET_TOOL_PREFIX = "secret-tool:"
 
 internal class DesktopAiByokStore(
     private val settingsFile: File = defaultSettingsFile(),
@@ -174,7 +184,7 @@ internal interface DesktopSecretCodec {
             val osName = System.getProperty("os.name").orEmpty()
             val codec = when {
                 osName.startsWith("Windows", ignoreCase = true) -> WindowsSecretCodec
-                osName.contains("Linux", ignoreCase = true) -> LinuxSecretToolCodec()
+                osName.contains("Linux", ignoreCase = true) -> LinuxSecretServiceCodec()
                 else -> UnavailableDesktopSecretCodec
             }
             logDesktopTts("settings_platform os=\"${osName.desktopTtsPreview()}\" codec=${codec.name}")
@@ -241,6 +251,329 @@ private object DesktopProcessSecretCommandRunner : DesktopSecretCommandRunner {
     }
 }
 
+internal class LinuxSecretServiceCodec(
+    private val libsecretCodec: DesktopSecretCodec = LinuxLibsecretCodec(),
+    private val secretToolCodec: DesktopSecretCodec = LinuxSecretToolCodec()
+) : DesktopSecretCodec {
+    private val codecs: List<DesktopSecretCodec> = listOf(libsecretCodec, secretToolCodec)
+
+    private val selectedCodec: DesktopSecretCodec? by lazy {
+        codecs.firstOrNull { codec ->
+            runCatching { codec.isAvailable }
+                .onFailure { error ->
+                    logDesktopTts("settings_linux_secret_service_probe_failed codec=${codec.name} error=\"${error.desktopTtsSummary()}\"")
+                }
+                .getOrDefault(false)
+        }
+    }
+
+    override val name: String = "linux-secret-service"
+
+    override val isAvailable: Boolean
+        get() = selectedCodec != null
+
+    override fun protect(value: String): String {
+        return protect("secret", value)
+    }
+
+    override fun unprotect(value: String): String {
+        return unprotect("secret", value)
+    }
+
+    override fun protect(keyName: String, value: String): String {
+        val codec = selectedCodec ?: throw IllegalStateException(
+            "Linux Secret Service is unavailable. Install gnome-keyring or another Secret Service provider."
+        )
+        return codec.protect(keyName, value)
+    }
+
+    override fun unprotect(keyName: String, value: String): String {
+        val orderedCodecs = when {
+            value.startsWith(LINUX_LIBSECRET_PREFIX) -> listOf(libsecretCodec, secretToolCodec)
+            value.startsWith(LINUX_SECRET_TOOL_PREFIX) -> listOf(libsecretCodec, secretToolCodec)
+            else -> codecs
+        }
+        for (codec in orderedCodecs) {
+            val secret = runCatching {
+                if (!codec.isAvailable) "" else codec.unprotect(keyName, value)
+            }.onFailure { error ->
+                logDesktopTts(
+                    "settings_linux_secret_service_read_failed codec=${codec.name} key=$keyName " +
+                        "error=\"${error.desktopTtsSummary()}\""
+                )
+            }.getOrDefault("")
+            if (secret.isNotBlank()) return secret
+        }
+        return ""
+    }
+
+    override fun delete(keyName: String) {
+        codecs.forEach { codec ->
+            runCatching { codec.delete(keyName) }
+                .onFailure { error ->
+                    logDesktopTts(
+                        "settings_linux_secret_service_delete_failed codec=${codec.name} key=$keyName " +
+                            "error=\"${error.desktopTtsSummary()}\""
+                    )
+                }
+        }
+    }
+}
+
+internal interface LinuxSecretServiceClient {
+    val isAvailable: Boolean
+    fun store(key: String, label: String, password: String)
+    fun lookup(key: String): String?
+    fun clear(key: String)
+}
+
+internal class LinuxLibsecretCodec(
+    private val client: LinuxSecretServiceClient = JnaLinuxSecretServiceClient
+) : DesktopSecretCodec {
+    override val name: String = "linux-libsecret"
+
+    override val isAvailable: Boolean by lazy {
+        val available = if (!client.isAvailable) {
+            false
+        } else {
+            val probeKey = linuxSecretKey("probe")
+            val probeSecret = "episteme-linux-libsecret-probe"
+            runCatching {
+                client.store(probeKey, "Episteme secure storage probe", probeSecret)
+                client.lookup(probeKey) == probeSecret
+            }.onFailure { error ->
+                logDesktopTts("settings_linux_libsecret_unavailable error=\"${error.desktopTtsSummary()}\"")
+            }.also {
+                runCatching { client.clear(probeKey) }
+            }.getOrDefault(false)
+        }
+        logDesktopTts("settings_linux_libsecret_available available=$available")
+        available
+    }
+
+    override fun protect(value: String): String {
+        return protect("secret", value)
+    }
+
+    override fun unprotect(value: String): String {
+        return unprotect("secret", value)
+    }
+
+    override fun protect(keyName: String, value: String): String {
+        if (!isAvailable) {
+            throw IllegalStateException(
+                "Linux Secret Service is unavailable. Install gnome-keyring or another Secret Service provider."
+            )
+        }
+        val key = linuxSecretKey(keyName)
+        logDesktopTts("settings_linux_libsecret_write_start key=$keyName valueChars=${value.length}")
+        client.store(key, "Episteme $keyName", value)
+        logDesktopTts("settings_linux_libsecret_write_result key=$keyName")
+        return LINUX_LIBSECRET_PREFIX + key
+    }
+
+    override fun unprotect(keyName: String, value: String): String {
+        if (!isAvailable) return ""
+        val key = linuxSecretReferenceKey(keyName, value)
+        logDesktopTts("settings_linux_libsecret_read_start key=$keyName")
+        val secret = client.lookup(key).orEmpty()
+        logDesktopTts("settings_linux_libsecret_read_result key=$keyName chars=${secret.length}")
+        return secret
+    }
+
+    override fun delete(keyName: String) {
+        if (!client.isAvailable) return
+        val key = linuxSecretKey(keyName)
+        runCatching { client.clear(key) }
+            .onFailure { error ->
+                logDesktopTts("settings_linux_libsecret_delete_failed key=$keyName error=\"${error.desktopTtsSummary()}\"")
+            }
+    }
+}
+
+private object JnaLinuxSecretServiceClient : LinuxSecretServiceClient {
+    override val isAvailable: Boolean by lazy {
+        runCatching {
+            LinuxLibsecretNative.INSTANCE
+            LinuxGlibNative.INSTANCE
+            true
+        }.onFailure { error ->
+            logDesktopTts("settings_linux_libsecret_load_failed error=\"${error.desktopTtsSummary()}\"")
+        }.getOrDefault(false)
+    }
+
+    private val schema: Pointer by lazy {
+        LinuxLibsecretNative.INSTANCE.secret_schema_new(
+            LINUX_SECRET_SCHEMA_NAME,
+            LINUX_SECRET_SCHEMA_DONT_MATCH_NAME,
+            LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE,
+            LINUX_SECRET_SCHEMA_ATTRIBUTE_STRING,
+            LINUX_SECRET_SERVICE_KEY_ATTRIBUTE,
+            LINUX_SECRET_SCHEMA_ATTRIBUTE_STRING,
+            null
+        ) ?: throw IllegalStateException("Linux Secret Service schema creation failed.")
+    }
+
+    override fun store(key: String, label: String, password: String) {
+        val error = PointerByReference()
+        val stored = LinuxLibsecretNative.INSTANCE.secret_password_store_sync(
+            schema,
+            LINUX_SECRET_COLLECTION_DEFAULT,
+            label,
+            password,
+            null,
+            error,
+            LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE,
+            LINUX_SECRET_SERVICE_APPLICATION_VALUE,
+            LINUX_SECRET_SERVICE_KEY_ATTRIBUTE,
+            key,
+            null
+        )
+        takeLibsecretError(error)?.let { message ->
+            throw IllegalStateException("Linux Secret Service write failed: $message")
+        }
+        if (!stored) {
+            throw IllegalStateException("Linux Secret Service write failed: libsecret returned false.")
+        }
+    }
+
+    override fun lookup(key: String): String? {
+        val error = PointerByReference()
+        val passwordPointer = LinuxLibsecretNative.INSTANCE.secret_password_lookup_sync(
+            schema,
+            null,
+            error,
+            LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE,
+            LINUX_SECRET_SERVICE_APPLICATION_VALUE,
+            LINUX_SECRET_SERVICE_KEY_ATTRIBUTE,
+            key,
+            null
+        )
+        val errorMessage = takeLibsecretError(error)
+        if (errorMessage != null) {
+            passwordPointer?.let { pointer -> LinuxLibsecretNative.INSTANCE.secret_password_free(pointer) }
+            throw IllegalStateException("Linux Secret Service read failed: $errorMessage")
+        }
+        return passwordPointer?.let { pointer ->
+            try {
+                pointer.getString(0, Charsets.UTF_8.name())
+            } finally {
+                LinuxLibsecretNative.INSTANCE.secret_password_free(pointer)
+            }
+        }
+    }
+
+    override fun clear(key: String) {
+        val error = PointerByReference()
+        LinuxLibsecretNative.INSTANCE.secret_password_clear_sync(
+            schema,
+            null,
+            error,
+            LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE,
+            LINUX_SECRET_SERVICE_APPLICATION_VALUE,
+            LINUX_SECRET_SERVICE_KEY_ATTRIBUTE,
+            key,
+            null
+        )
+        takeLibsecretError(error)?.let { message ->
+            throw IllegalStateException("Linux Secret Service delete failed: $message")
+        }
+    }
+
+    private fun takeLibsecretError(error: PointerByReference): String? {
+        val errorPointer = error.value ?: return null
+        return try {
+            LinuxGError(errorPointer).message
+                ?.getString(0, Charsets.UTF_8.name())
+                ?.ifBlank { null }
+                ?: "unknown libsecret error"
+        } finally {
+            LinuxGlibNative.INSTANCE.g_error_free(errorPointer)
+        }
+    }
+}
+
+private interface LinuxLibsecretNative : Library {
+    fun secret_schema_new(name: String, flags: Int, vararg attributes: Any?): Pointer?
+
+    fun secret_password_store_sync(
+        schema: Pointer,
+        collection: String,
+        label: String,
+        password: String,
+        cancellable: Pointer?,
+        error: PointerByReference,
+        vararg attributes: Any?
+    ): Boolean
+
+    fun secret_password_lookup_sync(
+        schema: Pointer,
+        cancellable: Pointer?,
+        error: PointerByReference,
+        vararg attributes: Any?
+    ): Pointer?
+
+    fun secret_password_clear_sync(
+        schema: Pointer,
+        cancellable: Pointer?,
+        error: PointerByReference,
+        vararg attributes: Any?
+    ): Boolean
+
+    fun secret_password_free(password: Pointer?)
+
+    companion object {
+        val INSTANCE: LinuxLibsecretNative by lazy {
+            loadLinuxNativeLibrary(
+                LinuxLibsecretNative::class.java,
+                "secret-1",
+                "libsecret-1.so.0"
+            )
+        }
+    }
+}
+
+private interface LinuxGlibNative : Library {
+    fun g_error_free(error: Pointer?)
+
+    companion object {
+        val INSTANCE: LinuxGlibNative by lazy {
+            loadLinuxNativeLibrary(
+                LinuxGlibNative::class.java,
+                "glib-2.0",
+                "libglib-2.0.so.0"
+            )
+        }
+    }
+}
+
+@Structure.FieldOrder("domain", "code", "message")
+internal class LinuxGError(pointer: Pointer) : Structure(pointer) {
+    @JvmField
+    var domain: Int = 0
+
+    @JvmField
+    var code: Int = 0
+
+    @JvmField
+    var message: Pointer? = null
+
+    init {
+        read()
+    }
+}
+
+private fun <T : Library> loadLinuxNativeLibrary(type: Class<T>, vararg names: String): T {
+    var lastError: Throwable? = null
+    for (name in names) {
+        val loaded = runCatching { Native.load(name, type) as T }
+            .onFailure { error -> lastError = error }
+            .getOrNull()
+        if (loaded != null) return loaded
+    }
+    throw IllegalStateException("Could not load Linux native library ${names.joinToString(" or ")}.", lastError)
+}
+
 internal class LinuxSecretToolCodec(
     private val commandRunner: DesktopSecretCommandRunner = DesktopProcessSecretCommandRunner
 ) : DesktopSecretCodec {
@@ -277,9 +610,9 @@ internal class LinuxSecretToolCodec(
                 "store",
                 "--label",
                 "Episteme $keyName",
-                SecretToolApplicationAttribute,
-                SecretToolApplicationValue,
-                SecretToolKeyAttribute,
+                LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE,
+                LINUX_SECRET_SERVICE_APPLICATION_VALUE,
+                LINUX_SECRET_SERVICE_KEY_ATTRIBUTE,
                 key
             ),
             input = value,
@@ -289,20 +622,20 @@ internal class LinuxSecretToolCodec(
         if (!result.isSuccess) {
             throw IllegalStateException("Linux Secret Service write failed: ${result.errorSummary}")
         }
-        return Prefix + key
+        return LINUX_SECRET_TOOL_PREFIX + key
     }
 
     override fun unprotect(keyName: String, value: String): String {
         if (!isAvailable) return ""
-        val key = value.removePrefix(Prefix).takeIf { value.startsWith(Prefix) } ?: linuxSecretKey(keyName)
+        val key = linuxSecretReferenceKey(keyName, value)
         logDesktopTts("settings_linux_secret_tool_read_start key=$keyName")
         val result = commandRunner.run(
             command = listOf(
                 SecretToolCommand,
                 "lookup",
-                SecretToolApplicationAttribute,
-                SecretToolApplicationValue,
-                SecretToolKeyAttribute,
+                LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE,
+                LINUX_SECRET_SERVICE_APPLICATION_VALUE,
+                LINUX_SECRET_SERVICE_KEY_ATTRIBUTE,
                 key
             ),
             timeoutMillis = 8_000L
@@ -321,9 +654,9 @@ internal class LinuxSecretToolCodec(
                 command = listOf(
                     SecretToolCommand,
                     "clear",
-                    SecretToolApplicationAttribute,
-                    SecretToolApplicationValue,
-                    SecretToolKeyAttribute,
+                    LINUX_SECRET_SERVICE_APPLICATION_ATTRIBUTE,
+                    LINUX_SECRET_SERVICE_APPLICATION_VALUE,
+                    LINUX_SECRET_SERVICE_KEY_ATTRIBUTE,
                     key
                 ),
                 timeoutMillis = 8_000L
@@ -333,17 +666,21 @@ internal class LinuxSecretToolCodec(
         }
     }
 
-    private fun linuxSecretKey(keyName: String): String {
-        return "Episteme.Reader.$keyName"
-    }
-
     private companion object {
-        const val Prefix = "secret-tool:"
         const val SecretToolCommand = "secret-tool"
-        const val SecretToolApplicationAttribute = "application"
-        const val SecretToolApplicationValue = "Episteme.Reader"
-        const val SecretToolKeyAttribute = "key"
     }
+}
+
+private fun linuxSecretKey(keyName: String): String {
+    return "Episteme.Reader.$keyName"
+}
+
+private fun linuxSecretReferenceKey(keyName: String, reference: String): String {
+    return when {
+        reference.startsWith(LINUX_LIBSECRET_PREFIX) -> reference.removePrefix(LINUX_LIBSECRET_PREFIX)
+        reference.startsWith(LINUX_SECRET_TOOL_PREFIX) -> reference.removePrefix(LINUX_SECRET_TOOL_PREFIX)
+        else -> ""
+    }.ifBlank { linuxSecretKey(keyName) }
 }
 
 private object WindowsSecretCodec : DesktopSecretCodec {
