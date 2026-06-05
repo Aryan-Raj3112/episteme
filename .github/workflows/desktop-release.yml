@@ -197,6 +197,11 @@ jobs:
           org.gradle.workers.max=2
           EOF
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
@@ -211,6 +216,7 @@ jobs:
           set -euo pipefail
           docker run --rm \
             -v "$PWD:/workspace" \
+            -v "$JAVA_HOME:/host-jdk-21:ro" \
             -w /workspace \
             -e DESKTOP_FIREBASE_PROJECT_ID \
             -e DESKTOP_FIREBASE_WEB_API_KEY \
@@ -218,12 +224,8 @@ jobs:
             -e DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET \
             fedora:44 bash -lc '
               set -euo pipefail
-              dnf install -y findutils git java-21-openjdk-devel rpm-build unzip which
-              if [ -d /usr/lib/jvm/java-21-openjdk ]; then
-                export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
-              else
-                export JAVA_HOME="$(dirname "$(dirname "$(find /usr/lib/jvm -path '*java-21-openjdk*/bin/java' -print -quit)")")"
-              fi
+              dnf install -y findutils git rpm-build unzip which
+              export JAVA_HOME=/host-jdk-21
               export PATH="$JAVA_HOME/bin:$PATH"
               JPACKAGE_HOME="$JAVA_HOME"
               ./gradlew \
@@ -299,9 +301,13 @@ jobs:
               set -euo pipefail
               pacman -Syu --noconfirm
               pacman -S --needed --noconfirm base-devel git jdk21-openjdk unzip
+              export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+              export PATH="$JAVA_HOME/bin:$PATH"
               useradd -m builder
               chown -R builder:builder /workspace
               runuser -u builder -- env \
+                JAVA_HOME="$JAVA_HOME" \
+                PATH="$PATH" \
                 DESKTOP_FIREBASE_PROJECT_ID="$DESKTOP_FIREBASE_PROJECT_ID" \
                 DESKTOP_FIREBASE_WEB_API_KEY="$DESKTOP_FIREBASE_WEB_API_KEY" \
                 DESKTOP_GOOGLE_OAUTH_CLIENT_ID="$DESKTOP_GOOGLE_OAUTH_CLIENT_ID" \
@@ -312,7 +318,10 @@ jobs:
                 -PdesktopVersion=${{ inputs.version }} \
                 -PdesktopPackageVersion=${{ inputs.version }} \
                 -PdesktopAurPackageRelease=1 \
-                :desktopApp:packageAur && \
+                :desktopApp:prepareAurPackage && \
+                cd desktopApp/build/aur/${{ matrix.flavor.aur }} && \
+                makepkg -sf --cleanbuild --nodeps && \
+                cd /workspace && \
                 mkdir -p release-assets && \
                 cp \$(find desktopApp/build/aur/${{ matrix.flavor.aur }} -maxdepth 1 -name '*.pkg.tar.zst' -print -quit) \
                   release-assets/${{ matrix.flavor.aur }}-${{ inputs.version }}-1-x86_64.pkg.tar.zst && \
