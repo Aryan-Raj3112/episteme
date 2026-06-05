@@ -106,6 +106,9 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
       - name: Install packaging tools
         run: sudo apt-get update && sudo apt-get install -y fakeroot dpkg-dev binutils
 
@@ -153,6 +156,9 @@ jobs:
             gradle: oss
     steps:
       - uses: actions/checkout@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
 
       - name: Download Pdfium
         shell: pwsh
@@ -212,6 +218,9 @@ jobs:
             aur: episteme-oss-bin
     steps:
       - uses: actions/checkout@v4
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
 
       - name: Download Pdfium
         shell: pwsh
