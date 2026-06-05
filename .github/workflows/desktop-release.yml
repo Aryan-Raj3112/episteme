@@ -48,6 +48,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure Gradle
+        shell: pwsh
+        run: |
+          @'
+          kotlin.code.style=official
+          kotlin.daemon.jvmargs=-Xmx4096M -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.mpp.applyDefaultHierarchyTemplate=false
+          org.gradle.caching=true
+          org.gradle.configuration-cache=true
+          org.gradle.jvmargs=-Xmx2048M -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          '@ | Set-Content -Path gradle.properties -NoNewline -Encoding UTF8
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -105,6 +118,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure Gradle
+        run: |
+          cat > gradle.properties <<'EOF'
+          kotlin.code.style=official
+          kotlin.daemon.jvmargs=-Xmx4096M -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.mpp.applyDefaultHierarchyTemplate=false
+          org.gradle.caching=true
+          org.gradle.configuration-cache=true
+          org.gradle.jvmargs=-Xmx2048M -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          EOF
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -160,6 +185,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure Gradle
+        run: |
+          cat > gradle.properties <<'EOF'
+          kotlin.code.style=official
+          kotlin.daemon.jvmargs=-Xmx4096M -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.mpp.applyDefaultHierarchyTemplate=false
+          org.gradle.caching=true
+          org.gradle.configuration-cache=true
+          org.gradle.jvmargs=-Xmx2048M -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          EOF
+
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
@@ -181,8 +218,14 @@ jobs:
             -e DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET \
             fedora:44 bash -lc '
               set -euo pipefail
-              dnf install -y findutils git java-devel rpm-build unzip which
-              JPACKAGE_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v jpackage)")")")"
+              dnf install -y findutils git java-21-openjdk-devel rpm-build unzip which
+              if [ -d /usr/lib/jvm/java-21-openjdk ]; then
+                export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+              else
+                export JAVA_HOME="$(dirname "$(dirname "$(find /usr/lib/jvm -path '*java-21-openjdk*/bin/java' -print -quit)")")"
+              fi
+              export PATH="$JAVA_HOME/bin:$PATH"
+              JPACKAGE_HOME="$JAVA_HOME"
               ./gradlew \
                 -PdesktopOnly=true \
                 -PdesktopFlavor=${{ matrix.flavor.gradle }} \
@@ -220,6 +263,18 @@ jobs:
             aur: episteme-oss-bin
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure Gradle
+        run: |
+          cat > gradle.properties <<'EOF'
+          kotlin.code.style=official
+          kotlin.daemon.jvmargs=-Xmx4096M -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.mpp.applyDefaultHierarchyTemplate=false
+          org.gradle.caching=true
+          org.gradle.configuration-cache=true
+          org.gradle.jvmargs=-Xmx2048M -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          EOF
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
