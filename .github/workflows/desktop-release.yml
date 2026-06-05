@@ -224,9 +224,15 @@ jobs:
             -e DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET \
             fedora:44 bash -lc '
               set -euo pipefail
-              dnf install -y findutils git rpm-build unzip which
+              dnf install -y ca-certificates findutils git rpm-build unzip which
+              update-ca-trust
               export JAVA_HOME=/host-jdk-21
               export PATH="$JAVA_HOME/bin:$PATH"
+              if [ -f /etc/pki/java/cacerts ]; then
+                export JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/etc/pki/java/cacerts ${JAVA_TOOL_OPTIONS:-}"
+              elif [ -f /etc/pki/ca-trust/extracted/java/cacerts ]; then
+                export JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStore=/etc/pki/ca-trust/extracted/java/cacerts ${JAVA_TOOL_OPTIONS:-}"
+              fi
               JPACKAGE_HOME="$JAVA_HOME"
               ./gradlew \
                 -PdesktopOnly=true \
