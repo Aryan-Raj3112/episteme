@@ -23,6 +23,20 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Reader"
-include(":app")
+
+fun isDesktopOnlyBuild(): Boolean {
+    providers.gradleProperty("desktopOnly").orNull
+        ?.let { return it.equals("true", ignoreCase = true) }
+
+    val requestedTasks = gradle.startParameter.taskNames
+    return requestedTasks.isNotEmpty() && requestedTasks.all { taskName ->
+        val normalized = taskName.removePrefix(":")
+        normalized.startsWith("desktopApp:")
+    }
+}
+
+if (!isDesktopOnlyBuild()) {
+    include(":app")
+}
 include(":shared")
 include(":desktopApp")

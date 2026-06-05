@@ -1,19 +1,27 @@
 import org.gradle.api.GradleException
 import org.gradle.api.DefaultTask
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.bundling.Compression
+import org.gradle.api.tasks.bundling.Tar
 import org.gradle.jvm.tasks.Jar
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
+import java.security.MessageDigest
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -133,6 +141,238 @@ abstract class VerifyDesktopNativePackagingTask : DefaultTask() {
                     "-PdesktopAllowUnconfiguredStandardServices=true for a local non-GA package."
             )
         }
+    }
+}
+
+@DisableCachingByDefault(because = "Generates AUR package metadata from the local Linux distributable.")
+abstract class PrepareDesktopAurPackageTask : DefaultTask() {
+    @get:Input
+    abstract val aurPackageName: Property<String>
+
+    @get:Input
+    abstract val providedPackageName: Property<String>
+
+    @get:Input
+    abstract val packageVersion: Property<String>
+
+    @get:Input
+    abstract val packageRelease: Property<String>
+
+    @get:Input
+    abstract val packageDescription: Property<String>
+
+    @get:Input
+    abstract val appDisplayName: Property<String>
+
+    @get:Input
+    abstract val installDirectoryName: Property<String>
+
+    @get:Input
+    abstract val launcherName: Property<String>
+
+    @get:Input
+    abstract val executableName: Property<String>
+
+    @get:Input
+    abstract val sourceUrl: Property<String>
+
+    @get:Input
+    abstract val projectUrl: Property<String>
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val linuxTarFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        val output = outputDirectory.get().asFile
+        val sourceTar = linuxTarFile.get().asFile
+        if (!sourceTar.isFile) {
+            throw GradleException("Missing Linux tarball for AUR packaging: ${sourceTar.absolutePath}")
+        }
+
+        output.deleteRecursively()
+        output.mkdirs()
+
+        val stagedTar = output.resolve(sourceTar.name)
+        sourceTar.copyTo(stagedTar, overwrite = true)
+        val sha256 = stagedTar.sha256()
+        val configuredSourceUrl = sourceUrl.get().trim()
+        val sourceEntry = if (configuredSourceUrl.isBlank()) {
+            stagedTar.name
+        } else {
+            "${stagedTar.name}::$configuredSourceUrl"
+        }
+
+        output.resolve("PKGBUILD").writeText(
+            aurPkgbuild(
+                pkgname = aurPackageName.get(),
+                providedPackage = providedPackageName.get(),
+                pkgver = packageVersion.get(),
+                pkgrel = packageRelease.get(),
+                pkgdesc = packageDescription.get(),
+                appName = appDisplayName.get(),
+                installDir = installDirectoryName.get(),
+                launcher = launcherName.get(),
+                executable = executableName.get(),
+                source = sourceEntry,
+                sha256 = sha256,
+                projectUrl = projectUrl.get()
+            )
+        )
+        output.resolve(".SRCINFO").writeText(
+            aurSrcInfo(
+                pkgname = aurPackageName.get(),
+                providedPackage = providedPackageName.get(),
+                pkgver = packageVersion.get(),
+                pkgrel = packageRelease.get(),
+                pkgdesc = packageDescription.get(),
+                source = sourceEntry,
+                sha256 = sha256,
+                projectUrl = projectUrl.get()
+            )
+        )
+    }
+
+    private fun File.sha256(): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun shellSingleQuoted(value: String): String {
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+    }
+
+    private fun archRuntimeDependencies(): List<String> {
+        return listOf(
+            "alsa-lib",
+            "atk",
+            "cairo",
+            "dbus",
+            "expat",
+            "fontconfig",
+            "freetype2",
+            "gcc-libs",
+            "gdk-pixbuf2",
+            "glib2",
+            "glibc",
+            "gtk3",
+            "libcups",
+            "libsecret",
+            "libx11",
+            "libxcomposite",
+            "libxdamage",
+            "libxext",
+            "libxi",
+            "libxrandr",
+            "libxrender",
+            "libxtst",
+            "nss",
+            "pango",
+            "zlib"
+        )
+    }
+
+    private fun aurPkgbuild(
+        pkgname: String,
+        providedPackage: String,
+        pkgver: String,
+        pkgrel: String,
+        pkgdesc: String,
+        appName: String,
+        installDir: String,
+        launcher: String,
+        executable: String,
+        source: String,
+        sha256: String,
+        projectUrl: String
+    ): String {
+        val desktopFile = "$providedPackage.desktop"
+        val iconName = providedPackage
+        val depends = archRuntimeDependencies()
+        return """
+pkgname=${shellSingleQuoted(pkgname)}
+pkgver=${shellSingleQuoted(pkgver)}
+pkgrel=${shellSingleQuoted(pkgrel)}
+pkgdesc=${shellSingleQuoted(pkgdesc)}
+arch=('x86_64')
+url=${shellSingleQuoted(projectUrl)}
+license=('custom')
+depends=(${depends.joinToString(" ") { shellSingleQuoted(it) }})
+provides=(${shellSingleQuoted(providedPackage)})
+conflicts=(${shellSingleQuoted(providedPackage)})
+source=(${shellSingleQuoted(source)})
+sha256sums=(${shellSingleQuoted(sha256)})
+options=('!debug')
+
+package() {
+  install -dm755 "${'$'}pkgdir/opt/$installDir"
+  cp -a "$installDir/." "${'$'}pkgdir/opt/$installDir/"
+  chmod 755 "${'$'}pkgdir/opt/$installDir/bin/$executable"
+
+  install -dm755 "${'$'}pkgdir/usr/bin"
+  ln -sf "/opt/$installDir/bin/$executable" "${'$'}pkgdir/usr/bin/$launcher"
+
+  local icon_path
+  icon_path="${'$'}(find "${'$'}pkgdir/opt/$installDir" -name 'episteme_icon.png' -print -quit)"
+  if [[ -n "${'$'}icon_path" ]]; then
+    install -Dm644 "${'$'}icon_path" "${'$'}pkgdir/usr/share/icons/hicolor/512x512/apps/$iconName.png"
+    install -Dm644 "${'$'}icon_path" "${'$'}pkgdir/usr/share/pixmaps/$iconName.png"
+  fi
+
+  install -Dm644 /dev/stdin "${'$'}pkgdir/usr/share/applications/$desktopFile" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=$appName
+Comment=$pkgdesc
+Exec=$launcher %F
+Icon=$iconName
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/pdf;application/epub+zip;application/vnd.openxmlformats-officedocument.presentationml.presentation;
+EOF
+}
+""".trimIndent() + "\n"
+    }
+
+    private fun aurSrcInfo(
+        pkgname: String,
+        providedPackage: String,
+        pkgver: String,
+        pkgrel: String,
+        pkgdesc: String,
+        source: String,
+        sha256: String,
+        projectUrl: String
+    ): String {
+        val depends = archRuntimeDependencies()
+        return """
+pkgbase = $pkgname
+	pkgdesc = $pkgdesc
+	pkgver = $pkgver
+	pkgrel = $pkgrel
+	url = $projectUrl
+	arch = x86_64
+	license = custom
+${depends.joinToString("\n") { "\tdepends = $it" }}
+	provides = $providedPackage
+	conflicts = $providedPackage
+	source = $source
+	sha256sums = $sha256
+
+pkgname = $pkgname
+""".trimIndent() + "\n"
     }
 }
 
@@ -565,15 +805,24 @@ val desktopPackageVersion = providers.gradleProperty("desktopPackageVersion")
     .orElse(desktopResolvedVersionName)
     .map(::normalizeDesktopPackageVersion)
 val desktopPackageName = if (isOssOfflineDesktop) "Episteme oss" else "Episteme"
+val desktopLinuxPackageName = if (isOssOfflineDesktop) "episteme-oss" else "episteme"
 val desktopPackageDescription = if (isOssOfflineDesktop) {
     "Episteme oss offline desktop reader"
 } else {
     "Episteme desktop reader"
 }
 val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan")
+val desktopProjectUrl = providers.gradleProperty("desktopProjectUrl")
+    .orElse("https://github.com/Aryan-Raj3112/episteme")
 val desktopOsName = System.getProperty("os.name")
 val desktopOsArch = System.getProperty("os.arch")
 val desktopPackageArchitecture = normalizeDesktopPackageArchitecture(desktopOsArch)
+val desktopAurPackageName = providers.gradleProperty("desktopAurPackageName")
+    .orElse(if (isOssOfflineDesktop) "episteme-oss-bin" else "episteme-bin")
+val desktopAurPackageRelease = providers.gradleProperty("desktopAurPackageRelease")
+    .orElse("1")
+val desktopAurSourceUrl = providers.gradleProperty("desktopAurSourceUrl")
+    .orElse("")
 val desktopPackageTargetFormats = providers.gradleProperty("desktopPackageFormats")
     .orElse(desktopDefaultPackageFormats(desktopOsName))
     .map { normalizeDesktopPackageFormats(it, desktopOsName) }
@@ -688,6 +937,56 @@ val verifyDesktopNativePackaging by tasks.registering(VerifyDesktopNativePackagi
     missingStandardServiceConfig.set(desktopMissingStandardServiceConfig)
 }
 
+val desktopDistributableAppDir = layout.buildDirectory.dir("compose/binaries/main/app/$desktopPackageName")
+val desktopLinuxTarFileName = "${desktopLinuxPackageName}-${desktopPackageVersion.get()}-linux-$desktopPackageArchitecture.tar.gz"
+val desktopAurOutputDir = layout.buildDirectory.dir("aur/${desktopAurPackageName.get()}")
+
+val packageLinuxTar by tasks.registering(Tar::class) {
+    group = "distribution"
+    description = "Packages the Linux desktop distributable as a tar.gz for Arch/AUR packaging."
+    dependsOn("createDistributable")
+
+    archiveFileName.set(desktopLinuxTarFileName)
+    destinationDirectory.set(layout.buildDirectory.dir("compose/binaries/main/linux-tar"))
+    compression = Compression.GZIP
+
+    from(desktopDistributableAppDir) {
+        into(desktopLinuxPackageName)
+    }
+    from(desktopLinuxIconFile) {
+        into("$desktopLinuxPackageName/share")
+    }
+}
+
+val prepareAurPackage by tasks.registering(PrepareDesktopAurPackageTask::class) {
+    group = "distribution"
+    description = "Generates a local AUR package directory with PKGBUILD and .SRCINFO."
+    dependsOn(packageLinuxTar)
+
+    aurPackageName.set(desktopAurPackageName)
+    providedPackageName.set(desktopLinuxPackageName)
+    packageVersion.set(desktopPackageVersion)
+    packageRelease.set(desktopAurPackageRelease)
+    packageDescription.set(desktopPackageDescription)
+    appDisplayName.set(desktopPackageName)
+    installDirectoryName.set(desktopLinuxPackageName)
+    launcherName.set(desktopLinuxPackageName)
+    executableName.set(desktopPackageName)
+    sourceUrl.set(desktopAurSourceUrl)
+    projectUrl.set(desktopProjectUrl)
+    linuxTarFile.set(packageLinuxTar.flatMap { it.archiveFile })
+    outputDirectory.set(desktopAurOutputDir)
+}
+
+tasks.register<Exec>("packageAur") {
+    group = "distribution"
+    description = "Builds the generated AUR package with makepkg. Run this on Arch Linux."
+    dependsOn(prepareAurPackage)
+
+    commandLine("makepkg", "-sf", "--cleanbuild")
+    workingDir = desktopAurOutputDir.get().asFile
+}
+
 kotlin {
     jvm("desktop")
     jvmToolchain(21)
@@ -771,7 +1070,7 @@ compose.desktop {
             }
             linux {
                 iconFile.set(desktopLinuxIconFile)
-                packageName = if (isOssOfflineDesktop) "episteme-oss" else "episteme"
+                packageName = desktopLinuxPackageName
                 debMaintainer = "epistemereader@gmail.com"
                 menuGroup = "Office"
                 appCategory = "Office"
@@ -857,6 +1156,9 @@ tasks.matching {
         "packageReleaseDeb",
         "packageRpm",
         "packageReleaseRpm",
+        "packageLinuxTar",
+        "prepareAurPackage",
+        "packageAur",
         "runDistributable",
         "runReleaseDistributable"
     )

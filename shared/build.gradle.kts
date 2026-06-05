@@ -1,20 +1,40 @@
+import com.android.build.api.dsl.LibraryExtension
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    id("com.android.library")
+    alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kover)
 }
 
+fun isDesktopOnlyBuild(): Boolean {
+    providers.gradleProperty("desktopOnly").orNull
+        ?.let { return it.equals("true", ignoreCase = true) }
+
+    val requestedTasks = gradle.startParameter.taskNames
+    return requestedTasks.isNotEmpty() && requestedTasks.all { taskName ->
+        val normalized = taskName.removePrefix(":")
+        normalized.startsWith("desktopApp:")
+    }
+}
+
+val desktopOnlyBuild = isDesktopOnlyBuild()
+
+if (!desktopOnlyBuild) {
+    apply(plugin = "com.android.library")
+}
+
 kotlin {
-    androidTarget()
+    if (!desktopOnlyBuild) {
+        androidTarget()
+    }
     jvm("desktop")
     jvmToolchain(21)
 
     sourceSets {
         val commonMain by getting
-        val androidMain by getting
         val desktopMain by getting
         val readerJvmMain by creating {
             dependsOn(commonMain)
@@ -22,7 +42,10 @@ kotlin {
                 implementation("org.jsoup:jsoup:1.17.2")
             }
         }
-        androidMain.dependsOn(readerJvmMain)
+        if (!desktopOnlyBuild) {
+            val androidMain by getting
+            androidMain.dependsOn(readerJvmMain)
+        }
         desktopMain.dependsOn(readerJvmMain)
 
         commonMain.dependencies {
@@ -40,15 +63,17 @@ kotlin {
     }
 }
 
-android {
-    namespace = "com.aryan.reader.shared"
-    compileSdk = 36
+if (!desktopOnlyBuild) {
+    extensions.configure<LibraryExtension>("android") {
+        namespace = "com.aryan.reader.shared"
+        compileSdk = 36
 
-    defaultConfig {
-        minSdk = 26
-    }
+        defaultConfig {
+            minSdk = 26
+        }
 
-    buildFeatures {
-        buildConfig = true
+        buildFeatures {
+            buildConfig = true
+        }
     }
 }
