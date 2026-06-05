@@ -383,18 +383,27 @@ class SharedEpubPaginationCache(
 
     private fun cleanupOldConfigurations(bookHash: String) {
         val bookDir = File(cacheRoot, bookHash)
-        val files = bookDir.listFiles { file -> file.isFile && file.name.endsWith(".pages.pb") }
-            ?.sortedByDescending { it.lastModified() }
-            .orEmpty()
+        val files = pageCacheFiles(bookDir)
         files.drop(3).forEach { file ->
             file.delete()
             File(bookDir, file.name.removeSuffix(".pages.pb") + ".chapters").deleteRecursively()
         }
         val activeConfigNames = files.take(3).map { it.name.removeSuffix(".pages.pb") }.toSet()
-        bookDir.listFiles { file -> file.isDirectory && file.name.endsWith(".chapters") }
-            .orEmpty()
+        chapterCacheDirs(bookDir)
             .filterNot { dir -> dir.name.removeSuffix(".chapters") in activeConfigNames }
             .forEach { it.deleteRecursively() }
+    }
+
+    private fun pageCacheFiles(bookDir: File): List<File> {
+        val files = bookDir.listFiles() ?: return emptyList()
+        return files
+            .filter { file -> file.isFile && file.name.endsWith(".pages.pb") }
+            .sortedByDescending { file -> file.lastModified() }
+    }
+
+    private fun chapterCacheDirs(bookDir: File): List<File> {
+        val files = bookDir.listFiles() ?: return emptyList()
+        return files.filter { file -> file.isDirectory && file.name.endsWith(".chapters") }
     }
 
     private fun CachedReaderPages.matches(key: SharedEpubPaginationCacheKey): Boolean {

@@ -218,6 +218,48 @@ class SharedEpubPaginationCacheTest {
         }
     }
 
+    @Test
+    fun `saving more than three configurations removes oldest page cache`() = runBlocking {
+        val root = Files.createTempDirectory("reader-page-cache").toFile()
+        try {
+            val book = cacheBook()
+            val settings = ReaderSettings()
+            val pages = listOf(
+                ReaderPage(
+                    pageIndex = 0,
+                    chapterIndex = 0,
+                    chapterTitle = "One",
+                    text = "Cached page",
+                    startOffset = 0,
+                    endOffset = 11
+                )
+            )
+            val viewports = listOf(
+                ReaderViewportSpec(widthPx = 900, heightPx = 700),
+                ReaderViewportSpec(widthPx = 901, heightPx = 700),
+                ReaderViewportSpec(widthPx = 902, heightPx = 700),
+                ReaderViewportSpec(widthPx = 903, heightPx = 700)
+            )
+            val writer = SharedEpubPaginationCache(root)
+
+            viewports.take(3).forEachIndexed { index, viewport ->
+                writer.save(book, settings, viewport, pages)
+                val key = writer.keyFor(book, settings, viewport)
+                val file = root
+                    .resolve(key.bookHash)
+                    .resolve("${key.configHash.toUInt().toString(16)}.pages.pb")
+                file.setLastModified((index + 1) * 1_000L)
+            }
+            writer.save(book, settings, viewports.last(), pages)
+            val reader = SharedEpubPaginationCache(root)
+
+            assertNull(reader.load(book, settings, viewports.first()))
+            assertNotNull(reader.load(book, settings, viewports.last()))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun cacheBook(): SharedEpubBook {
         return SharedEpubBook(
             id = "book-id",

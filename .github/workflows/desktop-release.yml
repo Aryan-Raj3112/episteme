@@ -65,13 +65,18 @@ jobs:
 
       - name: Build MSI
         shell: pwsh
-        run: >
-          ./gradlew.bat
-          -PdesktopOnly=true
-          -PdesktopFlavor=${{ matrix.flavor.gradle }}
-          -PdesktopVersion=${{ inputs.version }}
-          -PdesktopPackageVersion=${{ inputs.version }}
-          :desktopApp:packageMsi
+        env:
+          DESKTOP_FLAVOR: ${{ matrix.flavor.gradle }}
+          DESKTOP_VERSION: ${{ inputs.version }}
+        run: |
+          $gradleArgs = @(
+            "-PdesktopOnly=true",
+            "-PdesktopFlavor=$env:DESKTOP_FLAVOR",
+            "-PdesktopVersion=$env:DESKTOP_VERSION",
+            "-PdesktopPackageVersion=$env:DESKTOP_VERSION",
+            ":desktopApp:packageMsi"
+          )
+          ./gradlew.bat @gradleArgs
 
       - name: Stage MSI
         shell: pwsh
