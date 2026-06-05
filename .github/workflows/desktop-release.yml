@@ -72,7 +72,6 @@ jobs:
           -PdesktopVersion=${{ inputs.version }}
           -PdesktopPackageVersion=${{ inputs.version }}
           :desktopApp:packageMsi
-          -x test
 
       - name: Stage MSI
         shell: pwsh
@@ -127,7 +126,6 @@ jobs:
           -PdesktopPackageVersion=${{ inputs.version }}
           :desktopApp:packageDeb
           :desktopApp:packageLinuxTar
-          -x test
 
       - name: Stage DEB and tarball
         run: |
@@ -186,8 +184,7 @@ jobs:
                 -PdesktopVersion=${{ inputs.version }} \
                 -PdesktopPackageVersion=${{ inputs.version }} \
                 -PdesktopPackagingJavaHome="$JPACKAGE_HOME" \
-                :desktopApp:packageRpm \
-                -x test
+                :desktopApp:packageRpm
             '
           sudo chown -R "$USER:$USER" desktopApp/build
 
@@ -255,8 +252,7 @@ jobs:
                 -PdesktopVersion=${{ inputs.version }} \
                 -PdesktopPackageVersion=${{ inputs.version }} \
                 -PdesktopAurPackageRelease=1 \
-                :desktopApp:packageAur \
-                -x test && \
+                :desktopApp:packageAur && \
                 mkdir -p release-assets && \
                 cp \$(find desktopApp/build/aur/${{ matrix.flavor.aur }} -maxdepth 1 -name '*.pkg.tar.zst' -print -quit) \
                   release-assets/${{ matrix.flavor.aur }}-${{ inputs.version }}-1-x86_64.pkg.tar.zst && \
@@ -267,8 +263,7 @@ jobs:
                 -PdesktopPackageVersion=${{ inputs.version }} \
                 -PdesktopAurPackageRelease=1 \
                 -PdesktopAurSourceUrl=https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x64.tar.gz \
-                :desktopApp:prepareAurPackage \
-                -x test"
+                :desktopApp:prepareAurPackage"
             '
           sudo chown -R "$USER:$USER" desktopApp/build release-assets
 

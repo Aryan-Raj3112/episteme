@@ -8,3 +8,21 @@ plugins {
     alias(libs.plugins.compose.multiplatform) apply false
     alias(libs.plugins.kover) apply false
 }
+
+val test by tasks.registering {
+    group = "verification"
+    description = "Runs available unit tests for the included projects."
+}
+
+subprojects {
+    val rootTest = rootProject.tasks.named("test")
+    tasks.matching {
+        it.name == "allTests" ||
+            it.name == "desktopTest" ||
+            it.name.endsWith("DebugUnitTest")
+    }.configureEach {
+        rootTest.configure {
+            dependsOn(this@configureEach)
+        }
+    }
+}
