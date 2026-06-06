@@ -306,7 +306,7 @@ jobs:
             archlinux:latest bash -lc '
               set -euo pipefail
               pacman -Syu --noconfirm
-              pacman -S --needed --noconfirm base-devel git jdk21-openjdk unzip
+              pacman -S --needed --noconfirm base-devel desktop-file-utils git jdk21-openjdk namcap unzip
               export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
               export PATH="$JAVA_HOME/bin:$PATH"
               useradd -m builder
@@ -327,6 +327,16 @@ jobs:
                 :desktopApp:prepareAurPackage && \
                 cd desktopApp/build/aur/${{ matrix.flavor.aur }} && \
                 makepkg -sf --cleanbuild --nodeps && \
+                makepkg --printsrcinfo > .SRCINFO.generated && \
+                cmp -s .SRCINFO .SRCINFO.generated && \
+                pkgfile=\$(find . -maxdepth 1 -name '*.pkg.tar.zst' -print -quit) && \
+                desktop_file=${{ matrix.flavor.aur }} && \
+                desktop_file=\${desktop_file%-bin}.desktop && \
+                tmpdir=\$(mktemp -d) && \
+                bsdtar -xOf \"\$pkgfile\" \"usr/share/applications/\$desktop_file\" > \"\$tmpdir/\$desktop_file\" && \
+                desktop-file-validate \"\$tmpdir/\$desktop_file\" && \
+                namcap PKGBUILD && \
+                namcap \"\$pkgfile\" && \
                 cd /workspace && \
                 mkdir -p release-assets && \
                 cp \$(find desktopApp/build/aur/${{ matrix.flavor.aur }} -maxdepth 1 -name '*.pkg.tar.zst' -print -quit) \
@@ -338,7 +348,10 @@ jobs:
                 -PdesktopPackageVersion=${{ inputs.version }} \
                 -PdesktopAurPackageRelease=1 \
                 -PdesktopAurSourceUrl=https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x64.tar.gz \
-                :desktopApp:prepareAurPackage"
+                :desktopApp:prepareAurPackage && \
+                cd desktopApp/build/aur/${{ matrix.flavor.aur }} && \
+                makepkg --printsrcinfo > .SRCINFO.generated && \
+                cmp -s .SRCINFO .SRCINFO.generated"
             '
           sudo chown -R "$USER:$USER" desktopApp/build release-assets
 

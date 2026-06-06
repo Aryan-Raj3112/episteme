@@ -513,6 +513,7 @@ abstract class PrepareDesktopAurPackageTask : DefaultTask() {
             "glibc",
             "gtk3",
             "libcups",
+            "libarchive",
             "libsecret",
             "libx11",
             "libxcomposite",
@@ -545,6 +546,7 @@ abstract class PrepareDesktopAurPackageTask : DefaultTask() {
         val desktopFile = "$providedPackage.desktop"
         val iconName = providedPackage
         val depends = archRuntimeDependencies()
+        val mimeTypes = archDesktopMimeTypes()
         return """
 pkgname=${shellSingleQuoted(pkgname)}
 pkgver=${shellSingleQuoted(pkgver)}
@@ -552,7 +554,7 @@ pkgrel=${shellSingleQuoted(pkgrel)}
 pkgdesc=${shellSingleQuoted(pkgdesc)}
 arch=('x86_64')
 url=${shellSingleQuoted(projectUrl)}
-license=('custom')
+license=('AGPL-3.0-only')
 depends=(${depends.joinToString(" ") { shellSingleQuoted(it) }})
 provides=(${shellSingleQuoted(providedPackage)})
 conflicts=(${shellSingleQuoted(providedPackage)})
@@ -567,6 +569,8 @@ package() {
 
   install -dm755 "${'$'}pkgdir/usr/bin"
   ln -sf "/opt/$installDir/bin/$executable" "${'$'}pkgdir/usr/bin/$launcher"
+
+  install -Dm644 "${'$'}pkgdir/opt/$installDir/share/licenses/LICENSE" "${'$'}pkgdir/usr/share/licenses/${'$'}pkgname/LICENSE"
 
   local icon_path
   icon_path="${'$'}(find "${'$'}pkgdir/opt/$installDir" -name 'episteme_icon.png' -print -quit)"
@@ -584,7 +588,7 @@ Exec=$launcher %F
 Icon=$iconName
 Terminal=false
 Categories=Office;Viewer;
-MimeType=application/pdf;application/epub+zip;application/vnd.openxmlformats-officedocument.presentationml.presentation;
+MimeType=${mimeTypes.joinToString(";")};
 EOF
 }
 """.trimIndent() + "\n"
@@ -608,7 +612,7 @@ pkgbase = $pkgname
 	pkgrel = $pkgrel
 	url = $projectUrl
 	arch = x86_64
-	license = custom
+	license = AGPL-3.0-only
 ${depends.joinToString("\n") { "\tdepends = $it" }}
 	provides = $providedPackage
 	conflicts = $providedPackage
@@ -617,6 +621,39 @@ ${depends.joinToString("\n") { "\tdepends = $it" }}
 
 pkgname = $pkgname
 """.trimIndent() + "\n"
+    }
+
+    private fun archDesktopMimeTypes(): List<String> {
+        return listOf(
+            "application/pdf",
+            "application/epub+zip",
+            "application/x-mobipocket-ebook",
+            "application/vnd.amazon.ebook",
+            "application/vnd.amazon.mobi8-ebook",
+            "text/markdown",
+            "text/x-markdown",
+            "text/plain",
+            "text/html",
+            "application/xhtml+xml",
+            "application/x-fictionbook+xml",
+            "application/x-zip-compressed-fb2",
+            "application/zip",
+            "application/vnd.comicbook+zip",
+            "application/x-cbz",
+            "application/vnd.comicbook-rar",
+            "application/x-cbr",
+            "application/x-rar-compressed",
+            "application/x-cb7",
+            "application/x-7z-compressed",
+            "application/vnd.comicbook+tar",
+            "application/x-cbt",
+            "application/x-tar",
+            "application/tar",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.oasis.opendocument.text",
+            "application/x-vnd.oasis.opendocument.text-flat-xml"
+        )
     }
 }
 
@@ -1300,6 +1337,9 @@ val packageLinuxTar by tasks.registering(Tar::class) {
     }
     from(desktopLinuxIconFile) {
         into("$desktopLinuxPackageName/share")
+    }
+    from(rootProject.layout.projectDirectory.file("LICENSE")) {
+        into("$desktopLinuxPackageName/share/licenses")
     }
 }
 

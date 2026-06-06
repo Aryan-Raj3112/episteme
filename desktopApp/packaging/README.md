@@ -123,6 +123,50 @@ For publish-ready AUR metadata, pass the release tarball URL:
 
 Then publish the generated `PKGBUILD` and `.SRCINFO` from the AUR directory.
 
+The generated AUR recipes use `license=('AGPL-3.0-only')` and install the root
+`LICENSE` file into `/usr/share/licenses/$pkgname/`.
+
+## AUR repository setup
+
+Create an account at:
+
+```text
+https://aur.archlinux.org/register/
+```
+
+Add your public SSH key in the account settings, then confirm SSH works:
+
+```bash
+ssh aur@aur.archlinux.org
+```
+
+The command should authenticate and print AUR help text. It will not open a
+normal shell.
+
+Create the package repos by cloning their not-yet-existing names:
+
+```bash
+git clone ssh://aur@aur.archlinux.org/episteme-bin.git
+git clone ssh://aur@aur.archlinux.org/episteme-oss-bin.git
+```
+
+If a name already exists, inspect it first. If it is abandoned, follow the AUR
+orphan/adoption process instead of creating a duplicate package name.
+
+For each release, extract the matching `aur-<package>-<version>.tar.gz` metadata
+archive from the GitHub release, copy `PKGBUILD` and `.SRCINFO` into the matching
+AUR clone, then commit and push:
+
+```bash
+tar -xzf aur-episteme-bin-1.0.1.tar.gz -C episteme-bin
+cd episteme-bin
+git add PKGBUILD .SRCINFO
+git commit -m "Update to 1.0.1"
+git push
+```
+
+Repeat the same flow for `episteme-oss-bin`.
+
 ## CI release workflow
 
 `Desktop release` in GitHub Actions builds desktop artifacts for standard and
