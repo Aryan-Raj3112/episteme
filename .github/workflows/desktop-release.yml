@@ -87,7 +87,7 @@ jobs:
             "-PdesktopFlavor=$env:DESKTOP_FLAVOR",
             "-PdesktopVersion=$env:DESKTOP_VERSION",
             "-PdesktopPackageVersion=$env:DESKTOP_VERSION",
-            ":desktopApp:packageMsi"
+            ":desktopApp:packageReleaseMsi"
           )
           ./gradlew.bat @gradleArgs
 
@@ -95,7 +95,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force release-assets | Out-Null
-          $source = Get-ChildItem desktopApp/build/compose/binaries/main/msi -Filter *.msi | Select-Object -First 1
+          $source = Get-ChildItem desktopApp/build/compose/binaries/main-release/msi -Filter *.msi | Select-Object -First 1
           if ($null -eq $source) { throw "MSI output not found" }
           Copy-Item $source.FullName "release-assets/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-windows-x64.msi"
 

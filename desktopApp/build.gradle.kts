@@ -8,6 +8,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.OutputFile
@@ -18,10 +19,13 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.bundling.Compression
 import org.gradle.api.tasks.bundling.Tar
 import org.gradle.jvm.tasks.Jar
+import org.gradle.process.ExecOperations
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
 import java.security.MessageDigest
+import java.awt.RenderingHints
+import java.awt.image.BufferedImage
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -29,6 +33,8 @@ import java.util.Properties
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
+import javax.imageio.ImageIO
+import javax.inject.Inject
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -85,6 +91,244 @@ abstract class RenameDesktopMsiOutputTask : DefaultTask() {
         }
         if (!source.renameTo(target)) {
             throw GradleException("Could not rename MSI from ${source.absolutePath} to ${target.absolutePath}.")
+        }
+    }
+}
+
+@DisableCachingByDefault(because = "Generates an MSIX manifest from package metadata.")
+abstract class GenerateDesktopMsixManifestTask : DefaultTask() {
+    @get:Input
+    abstract val identityName: Property<String>
+
+    @get:Input
+    abstract val publisher: Property<String>
+
+    @get:Input
+    abstract val publisherDisplayName: Property<String>
+
+    @get:Input
+    abstract val packageName: Property<String>
+
+    @get:Input
+    abstract val packageDescription: Property<String>
+
+    @get:Input
+    abstract val packageVersion: Property<String>
+
+    @get:Input
+    abstract val architecture: Property<String>
+
+    @get:Input
+    abstract val executablePath: Property<String>
+
+    @get:OutputFile
+    abstract val outputFile: RegularFileProperty
+
+    @TaskAction
+    fun generate() {
+        fun xmlEscaped(value: String): String {
+            return value.replace("&", "&amp;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+        }
+
+        val file = outputFile.get().asFile
+        file.parentFile.mkdirs()
+        file.writeText(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package
+              xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+              xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+              xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+              IgnorableNamespaces="uap rescap">
+              <Identity
+                Name="${xmlEscaped(identityName.get())}"
+                Publisher="${xmlEscaped(publisher.get())}"
+                Version="${xmlEscaped(packageVersion.get())}"
+                ProcessorArchitecture="${xmlEscaped(architecture.get())}" />
+              <Properties>
+                <DisplayName>${xmlEscaped(packageName.get())}</DisplayName>
+                <PublisherDisplayName>${xmlEscaped(publisherDisplayName.get())}</PublisherDisplayName>
+                <Logo>Assets\StoreLogo.png</Logo>
+              </Properties>
+              <Resources>
+                <Resource Language="en-us" />
+              </Resources>
+              <Dependencies>
+                <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22621.0" />
+              </Dependencies>
+              <Applications>
+                <Application Id="Episteme" Executable="${xmlEscaped(executablePath.get())}" EntryPoint="Windows.FullTrustApplication">
+                  <uap:VisualElements
+                    DisplayName="${xmlEscaped(packageName.get())}"
+                    Description="${xmlEscaped(packageDescription.get())}"
+                    BackgroundColor="transparent"
+                    Square44x44Logo="Assets\Square44x44Logo.png"
+                    Square150x150Logo="Assets\Square150x150Logo.png" />
+                </Application>
+              </Applications>
+              <Capabilities>
+                <rescap:Capability Name="runFullTrust" />
+              </Capabilities>
+            </Package>
+            """.trimIndent() + "\n",
+            Charsets.UTF_8
+        )
+    }
+}
+
+@DisableCachingByDefault(because = "Generates fixed-size MSIX logo assets from the desktop icon.")
+abstract class GenerateDesktopMsixAssetsTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val sourceIconFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val source = ImageIO.read(sourceIconFile.get().asFile)
+            ?: throw GradleException("Could not read MSIX source icon ${sourceIconFile.get().asFile.absolutePath}.")
+        val output = outputDirectory.get().asFile
+        output.mkdirs()
+        writePng(source, output.resolve("Square44x44Logo.png"), 44)
+        writePng(source, output.resolve("Square150x150Logo.png"), 150)
+        writePng(source, output.resolve("StoreLogo.png"), 50)
+    }
+
+    private fun writePng(source: BufferedImage, target: File, size: Int) {
+        val image = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
+        val graphics = image.createGraphics()
+        try {
+            graphics.setRenderingHint(
+                RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BICUBIC
+            )
+            graphics.setRenderingHint(
+                RenderingHints.KEY_RENDERING,
+                RenderingHints.VALUE_RENDER_QUALITY
+            )
+            graphics.drawImage(source, 0, 0, size, size, null)
+        } finally {
+            graphics.dispose()
+        }
+        ImageIO.write(image, "png", target)
+    }
+}
+
+@DisableCachingByDefault(because = "Packages the staged MSIX app image with Windows SDK makeappx.")
+abstract class PackageDesktopMsixTask @Inject constructor(
+    private val execOperations: ExecOperations
+) : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val packageRootDirectory: DirectoryProperty
+
+    @get:OutputFile
+    abstract val outputFile: RegularFileProperty
+
+    @get:Input
+    abstract val makeAppxPath: Property<String>
+
+    @get:Input
+    abstract val hostOsId: Property<String>
+
+    @get:Input
+    abstract val hostArchId: Property<String>
+
+    @TaskAction
+    fun packageMsix() {
+        if (hostOsId.get() != "windows" || hostArchId.get() != "x64") {
+            throw GradleException(
+                "MSIX packaging requires a Windows x64 packaging host. " +
+                    "Current host: ${hostOsId.get()} ${hostArchId.get()}."
+            )
+        }
+
+        val makeAppx = File(makeAppxPath.get())
+        if (!makeAppx.isFile) {
+            throw GradleException(
+                "Windows SDK makeappx.exe was not found at ${makeAppx.absolutePath}. " +
+                    "Install the Windows SDK MSIX packaging tools or set " +
+                    "-PdesktopMakeAppxPath=<path-to-makeappx.exe>."
+            )
+        }
+
+        val output = outputFile.get().asFile
+        output.parentFile.mkdirs()
+        if (output.exists() && !output.delete()) {
+            throw GradleException("Could not replace existing MSIX at ${output.absolutePath}.")
+        }
+
+        execOperations.exec {
+            executable = makeAppx.absolutePath
+            args(
+                "pack",
+                "/d",
+                packageRootDirectory.get().asFile.absolutePath,
+                "/p",
+                output.absolutePath,
+                "/o"
+            )
+        }
+    }
+}
+
+@DisableCachingByDefault(because = "Signs the MSIX package with Windows SDK signtool.")
+abstract class SignDesktopMsixTask @Inject constructor(
+    private val execOperations: ExecOperations
+) : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val unsignedMsixFile: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val certificateFile: RegularFileProperty
+
+    @get:Input
+    abstract val signToolPath: Property<String>
+
+    @get:Input
+    abstract val certificatePassword: Property<String>
+
+    @get:Input
+    abstract val timestampUrl: Property<String>
+
+    @TaskAction
+    fun signMsix() {
+        val signTool = File(signToolPath.get())
+        if (!signTool.isFile) {
+            throw GradleException(
+                "Windows SDK signtool.exe was not found at ${signTool.absolutePath}. " +
+                    "Install the Windows SDK or set -PdesktopSignToolPath=<path-to-signtool.exe>."
+            )
+        }
+
+        val signArgs = mutableListOf(
+            "sign",
+            "/fd",
+            "SHA256",
+            "/f",
+            certificateFile.get().asFile.absolutePath
+        )
+        val password = certificatePassword.get().trim()
+        if (password.isNotEmpty()) {
+            signArgs += listOf("/p", password)
+        }
+        val timestamp = timestampUrl.get().trim()
+        if (timestamp.isNotEmpty()) {
+            signArgs += listOf("/tr", timestamp, "/td", "SHA256")
+        }
+        signArgs += unsignedMsixFile.get().asFile.absolutePath
+
+        execOperations.exec {
+            executable = signTool.absolutePath
+            args(signArgs)
         }
     }
 }
@@ -786,6 +1030,79 @@ fun normalizeDesktopPackageFormats(
     return formats
 }
 
+fun normalizeDesktopMsixVersion(rawVersion: String): String {
+    val parts = rawVersion.trim().split('.')
+    if (parts.size !in 3..4 || parts.any { it.isBlank() || it.all(Char::isDigit).not() }) {
+        throw GradleException(
+            "desktopMsixVersion must be a numeric Windows package version with three or four parts, " +
+                "for example 1.0.1 or 1.0.1.0."
+        )
+    }
+    val normalized = if (parts.size == 3) parts + "0" else parts
+    normalized.forEach { part ->
+        val value = part.toIntOrNull()
+        if (value == null || value !in 0..65535) {
+            throw GradleException("desktopMsixVersion part '$part' is outside the MSIX range 0..65535.")
+        }
+    }
+    return normalized.joinToString(".")
+}
+
+fun normalizeDesktopMsixIdentityName(rawName: String): String {
+    val normalized = rawName.trim()
+    if (!Regex("[A-Za-z0-9][A-Za-z0-9.-]{2,49}").matches(normalized)) {
+        throw GradleException(
+            "desktopMsixIdentityName must be 3-50 characters using letters, numbers, dots, or hyphens."
+        )
+    }
+    return normalized
+}
+
+fun desktopMsixArchitecture(osArch: String = System.getProperty("os.arch")): String {
+    return when (desktopArchId(osArch)) {
+        "x64" -> "x64"
+        "arm64" -> "arm64"
+        "x86" -> "x86"
+        else -> "neutral"
+    }
+}
+
+fun latestExistingFile(candidates: List<File>): File? {
+    return candidates.filter { it.isFile }.maxByOrNull { it.absolutePath }
+}
+
+fun windowsSdkToolCandidates(toolName: String): List<File> {
+    val roots = listOfNotNull(
+        System.getenv("WindowsSdkDir")?.let(::File),
+        File("C:/Program Files (x86)/Windows Kits/10"),
+        File("C:/Program Files/Windows Kits/10"),
+        File("C:/Program Files (x86)/Windows Kits/10/App Certification Kit"),
+        File("C:/Program Files/Windows Kits/10/App Certification Kit")
+    ).distinctBy { it.absolutePath.lowercase() }
+    val sdkBins = roots.flatMap { root ->
+        safeChildDirectories(root.resolve("bin")).flatMap { versionDir ->
+            listOf(
+                versionDir.resolve("x64/$toolName.exe"),
+                versionDir.resolve("x86/$toolName.exe"),
+                versionDir.resolve(toolName)
+            )
+        }
+    }
+    val directBins = roots.map { root -> root.resolve("$toolName.exe") }
+    val pathBins = (System.getenv("PATH") ?: "")
+        .split(File.pathSeparator)
+        .filter { it.isNotBlank() }
+        .map { File(it).resolve("$toolName.exe") }
+    return sdkBins + directBins + pathBins
+}
+
+fun findWindowsSdkTool(toolName: String, explicitPath: String?): File {
+    val explicit = explicitPath?.trim()?.takeIf { it.isNotEmpty() }?.let(::File)
+    if (explicit != null) return explicit
+    return latestExistingFile(windowsSdkToolCandidates(toolName))
+        ?: File(rootProject.projectDir, "__missing_windows_sdk_tool__/$toolName.exe")
+}
+
 val desktopVersionName = "1.0.1"
 val desktopFlavor = providers.gradleProperty("desktopFlavor")
     .orElse("standard")
@@ -812,6 +1129,7 @@ val desktopPackageDescription = if (isOssOfflineDesktop) {
     "Episteme desktop reader"
 }
 val desktopVendor = providers.gradleProperty("desktopVendor").orElse("Aryan")
+val desktopVendorName = desktopVendor.get()
 val desktopProjectUrl = providers.gradleProperty("desktopProjectUrl")
     .orElse("https://github.com/Aryan-Raj3112/episteme")
 val desktopOsName = System.getProperty("os.name")
@@ -827,6 +1145,26 @@ val desktopPackageTargetFormats = providers.gradleProperty("desktopPackageFormat
     .orElse(desktopDefaultPackageFormats(desktopOsName))
     .map { normalizeDesktopPackageFormats(it, desktopOsName) }
     .get()
+val desktopMsixIdentityName = providers.gradleProperty("desktopMsixIdentityName")
+    .orElse(if (isOssOfflineDesktop) "Aryan.EpistemeOss" else "Aryan.Episteme")
+    .map(::normalizeDesktopMsixIdentityName)
+    .get()
+val desktopMsixPublisher = providers.gradleProperty("desktopMsixPublisher")
+    .orElse("CN=$desktopVendorName")
+val desktopMsixPublisherDisplayName = providers.gradleProperty("desktopMsixPublisherDisplayName")
+    .orElse(desktopVendor)
+val desktopMsixVersion = providers.gradleProperty("desktopMsixVersion")
+    .orElse(desktopPackageVersion)
+    .map(::normalizeDesktopMsixVersion)
+    .get()
+val desktopMsixArchitecture = desktopMsixArchitecture(desktopOsArch)
+val desktopMakeAppxPath = providers.gradleProperty("desktopMakeAppxPath").orNull
+val desktopSignToolPath = providers.gradleProperty("desktopSignToolPath").orNull
+val desktopMsixCertificatePath = providers.gradleProperty("desktopMsixCertificatePath").orNull
+val desktopMsixCertificatePassword = providers.gradleProperty("desktopMsixCertificatePassword")
+    .orElse("")
+val desktopMsixTimestampUrl = providers.gradleProperty("desktopMsixTimestampUrl")
+    .orElse("http://timestamp.digicert.com")
 val desktopNativePackageSupportedHost = desktopOsId(desktopOsName) in setOf("windows", "linux") &&
     desktopArchId(desktopOsArch) == "x64"
 val desktopReleaseProguardEnabled = providers.gradleProperty("desktopReleaseProguard")
@@ -938,8 +1276,15 @@ val verifyDesktopNativePackaging by tasks.registering(VerifyDesktopNativePackagi
 }
 
 val desktopDistributableAppDir = layout.buildDirectory.dir("compose/binaries/main/app/$desktopPackageName")
+val desktopReleaseDistributableAppDir = layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName")
 val desktopLinuxTarFileName = "${desktopLinuxPackageName}-${desktopPackageVersion.get()}-linux-$desktopPackageArchitecture.tar.gz"
 val desktopAurOutputDir = layout.buildDirectory.dir("aur/${desktopAurPackageName.get()}")
+val desktopMsixPackageDir = layout.buildDirectory.dir("msix/package")
+val desktopMsixAssetsDir = layout.buildDirectory.dir("msix/generated/assets")
+val desktopMsixManifestFile = layout.buildDirectory.file("msix/generated/AppxManifest.xml")
+val desktopMsixOutputFile = layout.buildDirectory.file(
+    "compose/binaries/main-release/msix/${desktopLinuxPackageName}-${desktopPackageVersion.get()}-windows-$desktopPackageArchitecture.msix"
+)
 
 val packageLinuxTar by tasks.registering(Tar::class) {
     group = "distribution"
@@ -985,6 +1330,67 @@ tasks.register<Exec>("packageAur") {
 
     commandLine("makepkg", "-sf", "--cleanbuild")
     workingDir = desktopAurOutputDir.get().asFile
+}
+
+val generateDesktopMsixManifest by tasks.registering(GenerateDesktopMsixManifestTask::class) {
+    identityName.set(desktopMsixIdentityName)
+    publisher.set(desktopMsixPublisher)
+    publisherDisplayName.set(desktopMsixPublisherDisplayName)
+    packageName.set(desktopPackageName)
+    packageDescription.set(desktopPackageDescription)
+    packageVersion.set(desktopMsixVersion)
+    architecture.set(desktopMsixArchitecture)
+    executablePath.set("$desktopPackageName.exe")
+    outputFile.set(desktopMsixManifestFile)
+}
+
+val generateDesktopMsixAssets by tasks.registering(GenerateDesktopMsixAssetsTask::class) {
+    sourceIconFile.set(desktopLinuxIconFile)
+    outputDirectory.set(desktopMsixAssetsDir)
+}
+
+val prepareReleaseMsixPackage by tasks.registering(Sync::class) {
+    group = "distribution"
+    description = "Stages the release Windows app image and MSIX metadata for makeappx."
+    dependsOn("createReleaseDistributable", generateDesktopMsixManifest, generateDesktopMsixAssets)
+
+    from(desktopReleaseDistributableAppDir)
+    from(desktopMsixManifestFile)
+    from(desktopMsixAssetsDir) {
+        into("Assets")
+    }
+    into(desktopMsixPackageDir)
+}
+
+val packageReleaseMsix by tasks.registering(PackageDesktopMsixTask::class) {
+    group = "distribution"
+    description = "Packages the release Windows app image as an MSIX using Windows SDK makeappx."
+    dependsOn(prepareReleaseMsixPackage)
+
+    val makeAppx = findWindowsSdkTool("makeappx", desktopMakeAppxPath)
+    packageRootDirectory.set(desktopMsixPackageDir)
+    outputFile.set(desktopMsixOutputFile)
+    makeAppxPath.set(makeAppx.absolutePath)
+    hostOsId.set(desktopOsId(desktopOsName))
+    hostArchId.set(desktopArchId(desktopOsArch))
+}
+
+val signReleaseMsix = desktopMsixCertificatePath?.trim()?.takeIf { it.isNotEmpty() }?.let { certificatePath ->
+    tasks.register<SignDesktopMsixTask>("signReleaseMsix") {
+        group = "distribution"
+        description = "Signs the release MSIX with signtool when -PdesktopMsixCertificatePath is configured."
+        dependsOn(packageReleaseMsix)
+
+        val signTool = findWindowsSdkTool("signtool", desktopSignToolPath)
+        val resolvedCertificateFile = File(certificatePath).let { file ->
+            if (file.isAbsolute) file else project.file(certificatePath)
+        }
+        unsignedMsixFile.set(desktopMsixOutputFile)
+        certificateFile.set(resolvedCertificateFile)
+        signToolPath.set(signTool.absolutePath)
+        certificatePassword.set(desktopMsixCertificatePassword)
+        timestampUrl.set(desktopMsixTimestampUrl)
+    }
 }
 
 kotlin {
@@ -1117,6 +1523,7 @@ tasks.matching {
         "packageReleaseDistributionForCurrentOS",
         "packageReleaseExe",
         "packageReleaseMsi",
+        "packageReleaseMsix",
         "packageReleaseDeb",
         "packageReleaseRpm",
         "runReleaseDistributable"
@@ -1152,6 +1559,9 @@ tasks.matching {
         "packageReleaseExe",
         "packageMsi",
         "packageReleaseMsi",
+        "prepareReleaseMsixPackage",
+        "packageReleaseMsix",
+        "signReleaseMsix",
         "packageDeb",
         "packageReleaseDeb",
         "packageRpm",

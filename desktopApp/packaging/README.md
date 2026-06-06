@@ -9,6 +9,57 @@ cd ~/Reader
 ./gradlew :desktopApp:packageAur -x test
 ```
 
+Build a Windows MSIX locally on Windows with the Windows SDK installed:
+
+```powershell
+cd C:\Users\aryan\Desktop\Reader
+.\gradlew.bat -PdesktopOnly=true -PdesktopAllowUnconfiguredStandardServices=true :desktopApp:packageReleaseMsix -x test
+```
+
+Copy the newest generated MSIX to your desktop:
+
+```powershell
+$msix = Get-ChildItem .\desktopApp\build\compose\binaries\main-release\msix -Filter *.msix | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Copy-Item -Force $msix.FullName "$env:USERPROFILE\Desktop\"
+```
+
+The MSIX task is separate from MSI packaging. It stages the release app image at
+`desktopApp/build/msix/package`, packages it with Windows SDK `makeappx.exe`, and
+writes the MSIX to:
+
+```text
+desktopApp/build/compose/binaries/main-release/msix
+```
+
+For Microsoft Store submission, set the package identity values from Partner
+Center so `AppxManifest.xml` matches the reserved app identity:
+
+```powershell
+.\gradlew.bat `
+  -PdesktopOnly=true `
+  -PdesktopMsixIdentityName=<Partner Center package identity name> `
+  -PdesktopMsixPublisher=<Partner Center publisher CN> `
+  -PdesktopMsixPublisherDisplayName=<Publisher display name> `
+  :desktopApp:packageReleaseMsix -x test
+```
+
+If Windows SDK tools are not on `PATH`, pass them explicitly:
+
+```powershell
+.\gradlew.bat `
+  -PdesktopMakeAppxPath="C:\Program Files (x86)\Windows Kits\10\bin\<sdk-version>\x64\makeappx.exe" `
+  :desktopApp:packageReleaseMsix -x test
+```
+
+Local signing is optional and separate:
+
+```powershell
+.\gradlew.bat `
+  -PdesktopMsixCertificatePath=C:\path\to\certificate.pfx `
+  -PdesktopMsixCertificatePassword=<password> `
+  :desktopApp:signReleaseMsix -x test
+```
+
 Recommended VM split:
 
 - Ubuntu: `./gradlew :desktopApp:packageDeb -x test`
