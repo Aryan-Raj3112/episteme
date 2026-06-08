@@ -457,19 +457,17 @@ class EpubParser(private val context: Context) {
         var pageTargets: List<EpubPageTarget> = emptyList()
         val ncxMetadataMap = mutableMapOf<String, NcxMetadata>()
         val extractionRoot = File(extractionBasePath)
+        val tocFileItem = if (shouldUseToc) resolveTocFileItem(document.spine, manifestItems) else null
+        val tocDocumentNode = tocFileItem?.let { item ->
+            val ncxData = filesContentMap[item.absPath]?.data?.takeIf { it.isNotEmpty() }
+                ?: File(extractionRoot, item.absPath).takeIf { it.exists() }?.readBytes()
+            ncxData?.let { parseXMLFile(it) }
+        }
+        val ncxParentDir = tocFileItem?.let { File(it.absPath).parentFile ?: File("") }
 
         if (shouldUseToc) {
             Timber.d("shouldUseToc is true. Attempting to parse NCX.")
-            val tocFileItem = manifestItems.values.firstOrNull {
-                it.absPath.endsWith(".ncx", ignoreCase = true)
-            }
-            if (tocFileItem != null) {
-                val ncxParentDir = File(tocFileItem.absPath).parentFile ?: File("")
-                val ncxData = filesContentMap[tocFileItem.absPath]?.data?.takeIf { it.isNotEmpty() }
-                    ?: File(extractionRoot, tocFileItem.absPath).takeIf { it.exists() }?.readBytes()
-
-                val tocDocumentNode = ncxData?.let { parseXMLFile(it) }
-
+            if (tocFileItem != null && ncxParentDir != null) {
                 if (tocDocumentNode != null) {
                     Timber.d("Successfully parsed NCX file: ${tocFileItem.absPath}")
                     val pageListElement = tocDocumentNode.selectFirstTag("pageList") as Element?
@@ -495,15 +493,8 @@ class EpubParser(private val context: Context) {
         Timber.d("Parsing chapters based on OPF spine for rendering order. NCX titles/depth will be used if available.")
 
         val tableOfContents = if (shouldUseToc) {
-            val tocFileItem = manifestItems.values.firstOrNull {
-                it.absPath.endsWith(".ncx", ignoreCase = true)
-            }
-            if (tocFileItem != null) {
-                val ncxParentDir = File(tocFileItem.absPath).parentFile ?: File("")
-                val ncxData = filesContentMap[tocFileItem.absPath]?.data?.takeIf { it.isNotEmpty() }
-                    ?: File(extractionRoot, tocFileItem.absPath).takeIf { it.exists() }?.readBytes()
-                val tocDocumentNode = ncxData?.let { parseXMLFile(it) }
-                val navMapElement = tocDocumentNode?.selectFirstTag("navMap") as Element?
+            if (tocDocumentNode != null && ncxParentDir != null) {
+                val navMapElement = tocDocumentNode.selectFirstTag("navMap") as Element?
 
                 if (navMapElement != null) {
                     parseTableOfContents(navMapElement, ncxParentDir)
@@ -592,6 +583,21 @@ class EpubParser(private val context: Context) {
         return result
     }
 
+    private fun resolveTocFileItem(
+        spine: Node,
+        manifestItems: Map<String, EpubManifestItem>
+    ): EpubManifestItem? {
+        spine.getAttributeValue("toc")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { tocId -> manifestItems[tocId] }
+            ?.let { return it }
+
+        return manifestItems.values.firstOrNull {
+            it.mediaType.equals("application/x-dtbncx+xml", ignoreCase = true)
+        } ?: manifestItems.values.firstOrNull {
+            it.absPath.endsWith(".ncx", ignoreCase = true)
+        }
+    }
 
     @Throws(EpubParserException::class)
     private fun createEpubDocument(files: Map<String, EpubFile>): EpubDocument {

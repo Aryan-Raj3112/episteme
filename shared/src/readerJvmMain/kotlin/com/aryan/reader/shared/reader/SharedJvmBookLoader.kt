@@ -224,7 +224,7 @@ object SharedJvmBookLoader {
                     "skipped=${!parseSemanticBlocks}"
             }
             val tocStartedAt = System.nanoTime()
-            val tableOfContents = parseEpubTableOfContents(zip, manifest, basePath)
+            val tableOfContents = parseEpubTableOfContents(zip, opf, manifest, basePath)
             logJvmBookOpenTrace {
                 "event=epub_toc_loaded file=\"${file.name.jvmBookOpenTracePreview(120)}\" " +
                     "durationMs=${tocStartedAt.jvmBookOpenTraceElapsedMs()} entries=${tableOfContents.size}"
@@ -1302,10 +1302,11 @@ object SharedJvmBookLoader {
 
     private fun parseEpubTableOfContents(
         zip: ZipFile,
+        opf: String,
         manifest: Map<String, String>,
         basePath: String
     ): List<SharedEpubTocEntry> {
-        val manifestNcxHref = manifest.values.firstOrNull { it.endsWith(".ncx", ignoreCase = true) }
+        val manifestNcxHref = resolveEpubNcxHref(opf, manifest)
         val ncxPath = manifestNcxHref
             ?.let { normalizeZipPath(basePath + it) }
             ?: zip.entries().asSequence()
@@ -1354,6 +1355,18 @@ object SharedJvmBookLoader {
 
         visit(navMap, depth = 0)
         return entries
+    }
+
+    private fun resolveEpubNcxHref(opf: String, manifest: Map<String, String>): String? {
+        Regex("<(?:[^:>]+:)?spine\\b[^>]*>", RegexOption.IGNORE_CASE)
+            .find(opf)
+            ?.value
+            ?.attr("toc")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { tocId -> manifest[tocId] }
+            ?.let { return it }
+
+        return manifest.values.firstOrNull { it.endsWith(".ncx", ignoreCase = true) }
     }
 
     private fun loadEpubCss(zip: ZipFile, manifest: Map<String, String>, basePath: String): Map<String, String> {

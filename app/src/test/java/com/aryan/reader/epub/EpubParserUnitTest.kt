@@ -105,6 +105,30 @@ class EpubParserUnitTest {
     }
 
     @Test
+    fun `createEpubBook uses spine toc id when manifest contains volume ncx files first`() = runTest {
+        val cacheDir = temp.newFolder("cache-merged-toc")
+        val extractionDir = temp.newFolder("extract-merged-toc")
+        val parser = EpubParser(contextWithCache(cacheDir))
+
+        val book = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(mergedVolumeTocEpubBytes()),
+            bookId = "book-id",
+            shouldUseToc = true,
+            originalBookNameHint = "merged.epub",
+            parseContent = true,
+            extractionDirOverride = extractionDir
+        )
+
+        assertEquals(
+            listOf("Volume 1", "Chapter 1", "Volume 2", "Chapter 2"),
+            book.tableOfContents.map { it.label }
+        )
+        assertEquals(listOf(0, 1, 0, 1), book.tableOfContents.map { it.depth })
+        assertEquals("Volume 2", book.chapters[2].title)
+        assertEquals("Chapter 2", book.chapters[3].title)
+    }
+
+    @Test
     fun `metadata only extraction streams images to disk without retaining image bytes`() {
         val cacheDir = temp.newFolder("cache-metadata-stream")
         val extractionDir = temp.newFolder("extract-metadata-stream")
@@ -447,6 +471,50 @@ class EpubParserUnitTest {
         "OEBPS/styles/extra.css" to "p { margin: 0; }",
         "OEBPS/images/picture.jpg" to "not-real-image",
         "OEBPS/images/unlisted.png" to "not-real-image"
+    )
+
+    private fun mergedVolumeTocEpubBytes(): ByteArray = zipBytes(
+        "META-INF/container.xml" to """
+            <container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>
+        """.trimIndent(),
+        "OEBPS/content.opf" to """
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Merged Volumes</dc:title></metadata>
+                <manifest>
+                    <item id="v1title" href="1/title.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v1c1" href="1/chapter1.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v2title" href="2/title.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v2c1" href="2/chapter1.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v1ncx" href="1/toc.ncx" media-type="application/x-dtbncx+xml"/>
+                    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                </manifest>
+                <spine toc="ncx">
+                    <itemref idref="v1title"/>
+                    <itemref idref="v1c1"/>
+                    <itemref idref="v2title"/>
+                    <itemref idref="v2c1"/>
+                </spine>
+            </package>
+        """.trimIndent(),
+        "OEBPS/1/toc.ncx" to """
+            <ncx><navMap>
+                <navPoint><navLabel><text>Volume 1</text></navLabel><content src="title.xhtml"/></navPoint>
+            </navMap></ncx>
+        """.trimIndent(),
+        "OEBPS/toc.ncx" to """
+            <ncx><navMap>
+                <navPoint><navLabel><text>Volume 1</text></navLabel><content src="1/title.xhtml"/>
+                    <navPoint><navLabel><text>Chapter 1</text></navLabel><content src="1/chapter1.xhtml"/></navPoint>
+                </navPoint>
+                <navPoint><navLabel><text>Volume 2</text></navLabel><content src="2/title.xhtml"/>
+                    <navPoint><navLabel><text>Chapter 2</text></navLabel><content src="2/chapter1.xhtml"/></navPoint>
+                </navPoint>
+            </navMap></ncx>
+        """.trimIndent(),
+        "OEBPS/1/title.xhtml" to "<html><body><h1>HTML Volume 1</h1><p>Volume one.</p></body></html>",
+        "OEBPS/1/chapter1.xhtml" to "<html><body><h1>HTML Chapter 1</h1><p>Chapter one.</p></body></html>",
+        "OEBPS/2/title.xhtml" to "<html><body><h1>HTML Volume 2</h1><p>Volume two.</p></body></html>",
+        "OEBPS/2/chapter1.xhtml" to "<html><body><h1>HTML Chapter 2</h1><p>Chapter two.</p></body></html>"
     )
 
     private fun minimalEpubBytesWithoutOptionalMetadata(): ByteArray = zipBytes(

@@ -223,6 +223,22 @@ class SharedJvmBookLoaderTest {
         assertTrue(!css.contains("data:font/woff2"))
     }
 
+    @Test
+    fun `epub loader uses spine toc id when manifest contains volume ncx files first`() = withTempDir { dir ->
+        val file = File(dir, "merged-volumes.epub")
+        writeMergedVolumeTocEpub(file)
+
+        val book = SharedJvmBookLoader.loadEpub(file)
+
+        assertEquals(
+            listOf("Volume 1", "Chapter 1", "Volume 2", "Chapter 2"),
+            book.tableOfContents.map { it.label }
+        )
+        assertEquals(listOf(0, 1, 0, 1), book.tableOfContents.map { it.depth })
+        assertEquals("2/title.xhtml", book.tableOfContents[2].href)
+        assertEquals(4, book.chapters.size)
+    }
+
     private fun withTempDir(block: (File) -> Unit) {
         val dir = Files.createTempDirectory("reader-shared-loader").toFile()
         try {
@@ -302,6 +318,70 @@ class SharedJvmBookLoaderTest {
             )
             bytes("OPS/images/pixel.png", onePixelPng)
             bytes("OPS/styles/fonts/reader.woff2", byteArrayOf(0, 1, 2, 3))
+        }
+    }
+
+    private fun writeMergedVolumeTocEpub(file: File) {
+        writeZip(file) {
+            text(
+                "META-INF/container.xml",
+                """
+                <container>
+                  <rootfiles>
+                    <rootfile full-path="content.opf"/>
+                  </rootfiles>
+                </container>
+                """.trimIndent()
+            )
+            text(
+                "content.opf",
+                """
+                <package>
+                  <metadata>
+                    <dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Merged Volumes</dc:title>
+                  </metadata>
+                  <manifest>
+                    <item id="v1title" href="1/title.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v1c1" href="1/chapter1.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v2title" href="2/title.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v2c1" href="2/chapter1.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="v1ncx" href="1/toc.ncx" media-type="application/x-dtbncx+xml"/>
+                    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                  </manifest>
+                  <spine toc="ncx">
+                    <itemref idref="v1title"/>
+                    <itemref idref="v1c1"/>
+                    <itemref idref="v2title"/>
+                    <itemref idref="v2c1"/>
+                  </spine>
+                </package>
+                """.trimIndent()
+            )
+            text(
+                "1/toc.ncx",
+                """
+                <ncx><navMap>
+                  <navPoint><navLabel><text>Volume 1</text></navLabel><content src="title.xhtml"/></navPoint>
+                </navMap></ncx>
+                """.trimIndent()
+            )
+            text(
+                "toc.ncx",
+                """
+                <ncx><navMap>
+                  <navPoint><navLabel><text>Volume 1</text></navLabel><content src="1/title.xhtml"/>
+                    <navPoint><navLabel><text>Chapter 1</text></navLabel><content src="1/chapter1.xhtml"/></navPoint>
+                  </navPoint>
+                  <navPoint><navLabel><text>Volume 2</text></navLabel><content src="2/title.xhtml"/>
+                    <navPoint><navLabel><text>Chapter 2</text></navLabel><content src="2/chapter1.xhtml"/></navPoint>
+                  </navPoint>
+                </navMap></ncx>
+                """.trimIndent()
+            )
+            text("1/title.xhtml", "<html><body><h1>Volume 1</h1><p>Volume one.</p></body></html>")
+            text("1/chapter1.xhtml", "<html><body><h1>Chapter 1</h1><p>Chapter one.</p></body></html>")
+            text("2/title.xhtml", "<html><body><h1>Volume 2</h1><p>Volume two.</p></body></html>")
+            text("2/chapter1.xhtml", "<html><body><h1>Chapter 2</h1><p>Chapter two.</p></body></html>")
         }
     }
 
