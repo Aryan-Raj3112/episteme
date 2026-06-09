@@ -72,7 +72,8 @@ internal fun pdfOverflowMenuSections(
     hasHiddenToolbarTools: Boolean,
     isPro: Boolean,
     effectiveFileType: FileType,
-    hasFileInfo: Boolean = true
+    hasFileInfo: Boolean = true,
+    canPrintDocument: Boolean = true
 ): List<PdfOverflowMenuSection> = buildList {
     add(PdfOverflowMenuSection.CUSTOMIZE_TOOLBAR)
     if (hasHiddenToolbarTools) add(PdfOverflowMenuSection.HIDDEN_TOOLS)
@@ -96,7 +97,7 @@ internal fun pdfOverflowMenuSections(
     if (
         !hiddenTools.contains(PdfReaderTool.SHARE.name) ||
         (effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)) ||
-        (effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.PRINT.name))
+        (effectiveFileType == FileType.PDF && canPrintDocument && !hiddenTools.contains(PdfReaderTool.PRINT.name))
     ) {
         add(PdfOverflowMenuSection.FILE_ACTIONS)
     }
@@ -136,6 +137,7 @@ internal fun PdfTopBar(
     isReflowingThisBook: Boolean,
     hasReflowFile: Boolean,
     isPdfDocumentLoaded: Boolean,
+    canPrintDocument: Boolean = true,
     isTabsEnabled: Boolean,
     openTabs: List<RecentFileItem>,
     activeTabBookId: String?,
@@ -395,12 +397,13 @@ internal fun PdfTopBar(
                                 val showTtsReplacements = !hiddenTools.contains(PdfReaderTool.TTS_REPLACEMENTS.name)
                                 val showShareAction = !hiddenTools.contains(PdfReaderTool.SHARE.name)
                                 val showSaveCopyAction = effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.SAVE_COPY.name)
-                                val showPrintAction = effectiveFileType == FileType.PDF && !hiddenTools.contains(PdfReaderTool.PRINT.name)
+                                val showPrintAction = effectiveFileType == FileType.PDF && canPrintDocument && !hiddenTools.contains(PdfReaderTool.PRINT.name)
                                 pdfOverflowMenuSections(
                                     hiddenTools = hiddenTools,
                                     hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
                                     isPro = BuildConfig.IS_PRO,
-                                    effectiveFileType = effectiveFileType
+                                    effectiveFileType = effectiveFileType,
+                                    canPrintDocument = canPrintDocument
                                 ).forEachIndexed { index, section ->
                                     if (index > 0) HorizontalDivider()
                                     when (section) {

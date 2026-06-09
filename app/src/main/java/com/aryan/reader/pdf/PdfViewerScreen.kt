@@ -378,7 +378,6 @@ fun PdfViewerScreen(
     var screenOrientationMode by remember { mutableStateOf(loadReaderScreenOrientationMode(context)) }
     var rightToLeftPagination by remember { mutableStateOf(loadPdfRightToLeftPagination(context)) }
     var showScreenOrientationSheet by remember { mutableStateOf(false) }
-    var documentPassword by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRestorePage by rememberSaveable { mutableStateOf(initialPage) }
     var isScrollLocked by remember { mutableStateOf(false) }
     var lockedState by remember { mutableStateOf<Triple<Float, Float, Float>?>(null) }
@@ -454,6 +453,8 @@ fun PdfViewerScreen(
     val uiState by viewModel.uiState.collectAsState()
     val effectivePdfUri = uiState.selectedPdfUri ?: pdfUri
     val effectiveFileType = uiState.selectedFileType ?: FileType.PDF
+    var documentPassword by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf<String?>(null) }
+    var isPrintBlockedForPasswordProtectedPdf by rememberSaveable(effectivePdfUri.toString()) { mutableStateOf(false) }
     val isComicFile = effectiveFileType in COMIC_ARCHIVE_FILE_TYPES
 
     var showNewTabSheet by remember { mutableStateOf(false) }
@@ -598,7 +599,11 @@ fun PdfViewerScreen(
         isAutoScrollLocal = loadPdfAutoScrollLocalMode(context, bookId)
     }
 
-    val onPrintDocument: () -> Unit = {
+    val onPrintDocument: () -> Unit = onPrintDocument@{
+        if (isPrintBlockedForPasswordProtectedPdf) {
+            showBanner(context.getString(R.string.error_print_password_protected), isError = true)
+            return@onPrintDocument
+        }
         val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
         val jobName = "${context.getString(R.string.app_name)} - $originalFileName"
 
@@ -3518,6 +3523,7 @@ fun PdfViewerScreen(
         isDocumentReady = false
         errorMessage = null
         documentMetadataTitle = null
+        isPrintBlockedForPasswordProtectedPdf = false
         currentBookId = null
         areAnnotationsLoaded = false
         loadedSidecarBookId = null
@@ -3591,6 +3597,7 @@ fun PdfViewerScreen(
             totalPages = cachedItem.totalPages
             pageAspectRatios = cachedItem.pageAspectRatios
             flatTableOfContents = cachedItem.flatTableOfContents
+            isPrintBlockedForPasswordProtectedPdf = cachedItem.isPasswordProtectedPdf
 
             val mapPage = tabStateMap[currentBookId!!]
             val uiPage = uiState.initialPageInBook
@@ -3634,6 +3641,8 @@ fun PdfViewerScreen(
 
                 val selectedDocumentType = uiState.selectedFileType ?: FileType.PDF
                 val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, pdfiumCore)
+                val loadedPasswordProtectedPdf = selectedDocumentType == FileType.PDF &&
+                    (documentPassword != null || isPdfLikelyEncryptedForPrint(context, effectivePdfUri))
 
                 if (!isActive) {
                     doc.close()
@@ -3641,6 +3650,7 @@ fun PdfViewerScreen(
                 }
 
                 pdfDocument = doc
+                isPrintBlockedForPasswordProtectedPdf = loadedPasswordProtectedPdf
                 documentMetadataTitle = (doc as? PdfDocumentWrapper)?.let { wrapper ->
                     PdfiumEngineProvider.withPdfium {
                         wrapper.pdfDocument.getDocumentMeta().title?.takeIf { it.isNotBlank() }
@@ -3737,7 +3747,8 @@ fun PdfViewerScreen(
                             pfd = null,
                             totalPages = pagesCount,
                             pageAspectRatios = ratios,
-                            flatTableOfContents = flatTableOfContents
+                            flatTableOfContents = flatTableOfContents,
+                            isPasswordProtectedPdf = loadedPasswordProtectedPdf
                         )
                     )
 
@@ -6278,6 +6289,7 @@ fun PdfViewerScreen(
                     isReflowingThisBook = isReflowingThisBook,
                     hasReflowFile = hasReflowFile,
                     isPdfDocumentLoaded = pdfDocument != null,
+                    canPrintDocument = !isPrintBlockedForPasswordProtectedPdf,
                     isTabsEnabled = isPdfTabStripVisible,
                     openTabs = openTabs,
                     activeTabBookId = activeTabBookId,

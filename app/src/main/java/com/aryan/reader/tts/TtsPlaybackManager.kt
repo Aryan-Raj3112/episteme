@@ -55,6 +55,15 @@ import com.aryan.reader.paginatedreader.TtsChunk
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
+internal fun stableSortedIntSnapshot(values: Collection<Int>): List<Int> {
+    return try {
+        values.toTypedArray().sorted()
+    } catch (e: RuntimeException) {
+        Timber.tag(TTS_CHUNK_NAV_DIAG_TAG).w(e, "Failed to snapshot TTS cache keys")
+        emptyList()
+    }
+}
+
 val START_TTS_COMMAND: SessionCommand
     get() = ttsSessionCommand("com.aryan.reader.tts.START")
 val STOP_TTS_COMMAND: SessionCommand
@@ -346,7 +355,7 @@ class TtsPlaybackManager(
     }
 
     private fun cancelPrefetchWork() {
-        logChunkNav("prefetch-cancel", "activePrefetching=${prefetchingJobs.keys.sorted()} lastPrefetch=$lastPrefetchIndex")
+        logChunkNav("prefetch-cancel", "activePrefetching=${stableSortedIntSnapshot(prefetchingJobs.keys)} lastPrefetch=$lastPrefetchIndex")
         prefetchLoopJob?.cancel()
         prefetchingJobs.values.forEach { it.cancel() }
         prefetchingJobs.clear()
@@ -386,7 +395,7 @@ class TtsPlaybackManager(
     }
 
     private fun cacheSnapshot(): String {
-        return "generation=${currentPlaybackGeneration()} deferredTransitionPrefetch=${deferredTransitionPrefetchGeneration.get()} lastPrefetch=$lastPrefetchIndex loaded=${loadedChunks.sorted()} audio=${audioFiles.keys.sorted()} streams=${chunkStreamIds.keys.sorted()} prefetching=${prefetchingJobs.keys.sorted()}"
+        return "generation=${currentPlaybackGeneration()} deferredTransitionPrefetch=${deferredTransitionPrefetchGeneration.get()} lastPrefetch=$lastPrefetchIndex loaded=${stableSortedIntSnapshot(loadedChunks)} audio=${stableSortedIntSnapshot(audioFiles.keys)} streams=${stableSortedIntSnapshot(chunkStreamIds.keys)} prefetching=${stableSortedIntSnapshot(prefetchingJobs.keys)}"
     }
 
     override fun onConnect(

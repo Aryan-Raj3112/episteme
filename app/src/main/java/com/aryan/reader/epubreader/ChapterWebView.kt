@@ -22,8 +22,6 @@ package com.aryan.reader.epubreader
 
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -86,6 +84,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.core.net.toUri
 import com.aryan.reader.R
+import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.getReaderTextureDataUri
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
@@ -578,10 +577,14 @@ fun ChapterWebView(
                         showExternalLinkDialog = null
                     }) { Text(stringResource(R.string.action_open)) }
                     TextButton(onClick = {
-                        val clipboard =
-                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_link), urlToShow)
-                        clipboard.setPrimaryClip(clip)
+                        val copied = copyPlainTextToClipboard(
+                            context = context,
+                            label = context.getString(R.string.clip_label_copied_link),
+                            text = urlToShow
+                        )
+                        if (!copied) {
+                            Toast.makeText(context, context.getString(R.string.error_copy_to_clipboard), Toast.LENGTH_SHORT).show()
+                        }
                         showExternalLinkDialog = null
                     }) { Text(stringResource(R.string.action_copy)) }
                 }
@@ -1304,10 +1307,14 @@ fun ChapterWebView(
                         ) {
                             PaginatedTextSelectionMenu(
                                 onCopy = {
-                                val clipboard =
-                                    context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), state.selectedText)
-                                clipboard.setPrimaryClip(clip)
+                                val copied = copyPlainTextToClipboard(
+                                    context = context,
+                                    label = context.getString(R.string.clip_label_copied_text),
+                                    text = state.selectedText
+                                )
+                                if (!copied) {
+                                    Toast.makeText(context, context.getString(R.string.error_copy_to_clipboard), Toast.LENGTH_SHORT).show()
+                                }
                                 state.finishActionModeCallback()
                                 localWebViewRef?.clearFocus()
                                 localWebViewRef?.evaluateJavascript(

@@ -5,14 +5,13 @@ package com.aryan.reader.paginatedreader
 
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.copyPlainTextToClipboard
 import androidx.compose.ui.unit.isSpecified
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -3644,11 +3643,14 @@ fun NativeVerticalReaderScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = {
-                        val clipboardManager =
-                            context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboardManager.setPrimaryClip(
-                            ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), urlToShow)
+                        val copied = copyPlainTextToClipboard(
+                            context = context,
+                            label = context.getString(R.string.clip_label_copied_text),
+                            text = urlToShow
                         )
+                        if (!copied) {
+                            Toast.makeText(context, context.getString(R.string.error_copy_to_clipboard), Toast.LENGTH_SHORT).show()
+                        }
                         showExternalLinkDialog = null
                     }) { Text(stringResource(R.string.action_copy)) }
                 }
@@ -3820,11 +3822,14 @@ fun NativeVerticalReaderScreen(
                     ) {
                         PaginatedTextSelectionMenu(
                             onCopy = {
-                                val clipboardManager =
-                                    context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboardManager.setPrimaryClip(
-                                    ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), sel.text)
+                                val copied = copyPlainTextToClipboard(
+                                    context = context,
+                                    label = context.getString(R.string.clip_label_copied_text),
+                                    text = sel.text
                                 )
+                                if (!copied) {
+                                    Toast.makeText(context, context.getString(R.string.error_copy_to_clipboard), Toast.LENGTH_SHORT).show()
+                                }
                                 activeSelection = null
                             },
                             onSelectAll = null,
@@ -5806,10 +5811,14 @@ internal fun PaginatedReaderContent(
                 Row(horizontalArrangement = Arrangement.End) {
                     TextButton(
                         onClick = {
-                            val clipboard =
-                                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_link), urlToShow)
-                            clipboard.setPrimaryClip(clip)
+                            val copied = copyPlainTextToClipboard(
+                                context = context,
+                                label = context.getString(R.string.clip_label_copied_link),
+                                text = urlToShow
+                            )
+                            if (!copied) {
+                                Toast.makeText(context, context.getString(R.string.error_copy_to_clipboard), Toast.LENGTH_SHORT).show()
+                            }
                             showExternalLinkDialog = null
                         }) { Text(stringResource(R.string.action_copy)) }
                     TextButton(
@@ -7535,10 +7544,14 @@ internal fun PaginatedReaderContent(
                         ) {
                             PaginatedTextSelectionMenu(
                                 onCopy = {
-                                    val clipboardManager =
-                                        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), sel.text)
-                                    clipboardManager.setPrimaryClip(clip)
+                                    val copied = copyPlainTextToClipboard(
+                                        context = context,
+                                        label = context.getString(R.string.clip_label_copied_text),
+                                        text = sel.text
+                                    )
+                                    if (!copied) {
+                                        Toast.makeText(context, context.getString(R.string.error_copy_to_clipboard), Toast.LENGTH_SHORT).show()
+                                    }
                                     activeSelection = null
                                 },
                                 onSelectAll = null,

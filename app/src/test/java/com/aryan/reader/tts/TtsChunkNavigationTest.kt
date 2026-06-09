@@ -7,6 +7,7 @@ import org.junit.Test
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 
 class TtsChunkNavigationTest {
     @Test
@@ -148,6 +149,16 @@ class TtsChunkNavigationTest {
         assertEquals(1_500L, estimateTtsNotificationDurationMs(text = "one two"))
         assertEquals(5_000L, estimateTtsNotificationDurationMs(text = "one", currentPositionMs = 3_000L))
         assertNull(estimateTtsNotificationDurationMs(text = "   "))
+    }
+
+    @Test
+    fun `stable sorted snapshot copies concurrent cache keys`() {
+        val cache = ConcurrentHashMap<Int, String>()
+        cache[3] = "three"
+        cache[1] = "one"
+        cache[2] = "two"
+
+        assertEquals(listOf(1, 2, 3), stableSortedIntSnapshot(cache.keys))
     }
 
     @Test

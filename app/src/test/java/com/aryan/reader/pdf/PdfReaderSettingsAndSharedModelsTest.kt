@@ -282,6 +282,23 @@ class PdfReaderSettingsAndSharedModelsTest {
     }
 
     @Test
+    fun `pdf overflow sections hide file actions when only unavailable print remains`() {
+        val sections = pdfOverflowMenuSections(
+            hiddenTools = setOf(
+                PdfReaderTool.SHARE.name,
+                PdfReaderTool.SAVE_COPY.name
+            ),
+            hasHiddenToolbarTools = false,
+            isPro = false,
+            effectiveFileType = FileType.PDF,
+            hasFileInfo = false,
+            canPrintDocument = false
+        )
+
+        assertFalse(PdfOverflowMenuSection.FILE_ACTIONS in sections)
+    }
+
+    @Test
     fun `pdf overflow sections expose file info only when available and visible`() {
         val visibleSections = pdfOverflowMenuSections(
             hiddenTools = emptySet(),

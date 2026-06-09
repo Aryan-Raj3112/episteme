@@ -1054,6 +1054,8 @@
 
     <!-- PdfViewerScreen & General Reader -->
     <string name="error_open_print_settings">Could not open print settings</string>
+    <string name="error_copy_to_clipboard">Could not copy to clipboard</string>
+    <string name="error_print_password_protected">Password protected PDF files cannot be printed</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="loading_pdf">Loading PDF…</string>
     <!-- PDF = file format name — do not translate. -->

@@ -112,6 +112,20 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `pdf encrypt marker detection matches trailer encrypt entry`() {
+        val bytes = "%PDF-1.7\ntrailer\n<< /Size 4 /Encrypt 2 0 R >>".toByteArray(Charsets.US_ASCII)
+
+        assertTrue(pdfBytesContainEncryptMarker(bytes))
+    }
+
+    @Test
+    fun `pdf encrypt marker detection ignores longer pdf names`() {
+        val bytes = "<< /EncryptMetadata false /Size 4 >>".toByteArray(Charsets.US_ASCII)
+
+        assertFalse(pdfBytesContainEncryptMarker(bytes))
+    }
+
+    @Test
     fun `getFastFileId uses stable file name and length for file uris`() {
         val file = File("build/test-tmp/pdf-reader/fast-id-${System.nanoTime()}.pdf").apply {
             parentFile?.mkdirs()

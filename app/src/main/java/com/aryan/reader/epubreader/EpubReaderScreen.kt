@@ -27,8 +27,6 @@ package com.aryan.reader.epubreader
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioManager
@@ -154,6 +152,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
+import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.BookWordReplacementsSheet
 import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.MainViewModel
@@ -7059,9 +7058,14 @@ fun EpubReaderHost(
                                 highlightToNoteCfi = null
                             },
                             onCopy = {
-                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText(context.getString(R.string.clip_label_copied_text), targetHighlight.text)
-                                clipboardManager.setPrimaryClip(clip)
+                                val copied = copyPlainTextToClipboard(
+                                    context = context,
+                                    label = context.getString(R.string.clip_label_copied_text),
+                                    text = targetHighlight.text
+                                )
+                                if (!copied) {
+                                    Toast.makeText(context, context.getString(R.string.error_copy_to_clipboard), Toast.LENGTH_SHORT).show()
+                                }
                                 highlightToNoteCfi = null
                             },
                             onDictionary = {
