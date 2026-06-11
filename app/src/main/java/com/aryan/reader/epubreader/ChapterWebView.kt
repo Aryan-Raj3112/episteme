@@ -513,6 +513,7 @@ fun ChapterWebView(
     onFootnoteRequested: (String) -> Unit,
     currentFontFamily: ReaderFont,
     customFontPath: String? = null,
+    epubFontFaceCss: String = "",
     currentTextAlign: ReaderTextAlign,
     onHighlightClicked: () -> Unit,
     onAutoScrollChapterEnd: () -> Unit = {},
@@ -933,10 +934,13 @@ fun ChapterWebView(
                             val customFontCss = if (customFontPath != null) {
                                 "@font-face { font-family: 'CustomFont'; src: url('file://$customFontPath'); }"
                             } else ""
-                            val combinedCss = "$fontCss $customFontCss"
+                            val combinedCss = listOf(fontCss, customFontCss, epubFontFaceCss)
+                                .filter { it.isNotBlank() }
+                                .joinToString(separator = " ")
+                            val escapedCombinedCss = escapeJsString(combinedCss)
 
                             val injectFontJs =
-                                "var style = document.createElement('style'); style.id='injectedFonts'; style.innerHTML = \"$combinedCss\"; document.head.appendChild(style);"
+                                "var style = document.createElement('style'); style.id='injectedFonts'; style.innerHTML = \"$escapedCombinedCss\"; document.head.appendChild(style);"
                             view?.evaluateJavascript("javascript:$injectFontJs") {
                                 Timber.d("CSS Injection result: $it")
                             }
@@ -1131,7 +1135,9 @@ fun ChapterWebView(
                     val customFontCss = if (customFontPath != null) {
                         "@font-face { font-family: 'CustomFont'; src: url('file://$customFontPath'); }"
                     } else ""
-                    val combinedCss = "$fontCss $customFontCss"
+                    val combinedCss = listOf(fontCss, customFontCss, epubFontFaceCss)
+                        .filter { it.isNotBlank() }
+                        .joinToString(separator = " ")
                     val fontNameForJs = if (customFontPath != null) {
                         "CustomFont"
                     } else if (currentFontFamily == ReaderFont.ORIGINAL) {
@@ -1169,8 +1175,9 @@ fun ChapterWebView(
 
                     if (fontCssChanged) {
                         runtimeApplierState.fontCss = combinedCss
+                        val escapedCombinedCss = escapeJsString(combinedCss)
                         val injectFontJs =
-                            "var style = document.getElementById('injectedFonts'); if(!style) { style = document.createElement('style'); style.id='injectedFonts'; document.head.appendChild(style); } style.innerHTML = \"$combinedCss\";"
+                            "var style = document.getElementById('injectedFonts'); if(!style) { style = document.createElement('style'); style.id='injectedFonts'; document.head.appendChild(style); } style.innerHTML = \"$escapedCombinedCss\";"
                         webView.evaluateJavascript("javascript:$injectFontJs", null)
                     }
 

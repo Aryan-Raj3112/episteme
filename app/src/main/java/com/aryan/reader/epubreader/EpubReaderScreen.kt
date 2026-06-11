@@ -138,6 +138,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -190,6 +191,7 @@ import com.aryan.reader.loadTtsReplacementPreferences
 import com.aryan.reader.readerSliderBookmarkPosition
 import com.aryan.reader.readerSliderChromeColors
 import com.aryan.reader.readerSliderToggleState
+import com.aryan.reader.paginatedreader.CssParser
 import com.aryan.reader.paginatedreader.BookPaginator
 import com.aryan.reader.paginatedreader.HeaderBlock
 import com.aryan.reader.paginatedreader.IPaginator
@@ -203,6 +205,7 @@ import com.aryan.reader.paginatedreader.ParagraphBlock
 import com.aryan.reader.paginatedreader.QuoteBlock
 import com.aryan.reader.paginatedreader.TextContentBlock
 import com.aryan.reader.paginatedreader.TtsChunk
+import com.aryan.reader.paginatedreader.buildEpubFontFaceCss
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.nativeVerticalProgressForCompatPage
 import com.aryan.reader.paginatedreader.semanticBlockModule
@@ -242,6 +245,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
+import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -1126,6 +1130,20 @@ fun EpubReaderHost(
     var chapterChunkElementStartIndices by remember(currentChapterIndex) { mutableStateOf<List<Int>>(emptyList()) }
     var chapterChunkElementCounts by remember(currentChapterIndex) { mutableStateOf<List<Int>>(emptyList()) }
     var chapterHead by remember(currentChapterIndex) { mutableStateOf("") }
+    val epubFontFaceCss = remember(epubBook.css, epubBook.extractionBasePath) {
+        val fontFaces = epubBook.css.flatMap { (path, content) ->
+            CssParser.parse(
+                cssContent = content,
+                cssPath = path,
+                baseFontSizeSp = 16f,
+                density = 1f,
+                constraints = Constraints(maxWidth = 1, maxHeight = 1),
+                isDarkTheme = false,
+                adaptThemeColors = false
+            ).fontFaces
+        }
+        buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
+    }
     var isChapterParsing by remember(currentChapterIndex) { mutableStateOf(true) }
 
     var cfiToLoad by remember { mutableStateOf(initialCfi) }
@@ -4612,6 +4630,27 @@ fun EpubReaderHost(
                                         """.trimIndent()
 
                                         val chapterToRender = chapters[targetChapterIndex]
+                                        val chapterFontFaceCss = remember(
+                                            chapterHead,
+                                            chapterToRender.absPath,
+                                            epubBook.extractionBasePath
+                                        ) {
+                                            val fontFaces = Jsoup.parse("<head>$chapterHead</head>")
+                                                .head()
+                                                .getElementsByTag("style")
+                                                .flatMap { styleElement ->
+                                                    CssParser.parse(
+                                                        cssContent = styleElement.data(),
+                                                        cssPath = chapterToRender.absPath,
+                                                        baseFontSizeSp = 16f,
+                                                        density = 1f,
+                                                        constraints = Constraints(maxWidth = 1, maxHeight = 1),
+                                                        isDarkTheme = false,
+                                                        adaptThemeColors = false
+                                                    ).fontFaces
+                                                }
+                                            buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
+                                        }
                                         fun isCurrentRenderedChapter(): Boolean =
                                             targetChapterIndex == currentChapterIndex
 
@@ -4974,6 +5013,9 @@ fun EpubReaderHost(
                                             currentVerticalMargin = currentVerticalMargin,
                                             currentFontFamily = currentFontFamily,
                                             customFontPath = currentCustomFontPath,
+                                            epubFontFaceCss = listOf(epubFontFaceCss, chapterFontFaceCss)
+                                                .filter { it.isNotBlank() }
+                                                .joinToString(separator = " "),
                                             currentTextAlign = currentTextAlign,
                                             activeTextureId = activeTextureId,
                                             activeTextureAlpha = activeTextureAlpha,

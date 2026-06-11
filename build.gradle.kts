@@ -25,4 +25,7 @@ subprojects {
             dependsOn(this@configureEach)
         }
     }
+    tasks.withType<Test>().configureEach {
+        maxHeapSize = "4g"
+    }
 }

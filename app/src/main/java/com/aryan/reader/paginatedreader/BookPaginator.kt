@@ -202,6 +202,7 @@ class BookPaginator(
     private val chapterTextRangeIndex = ConcurrentHashMap<Int, List<TextRangeIndex>>()
     private val chapterPageNavigationIndex = ConcurrentHashMap<Int, List<PageNavigationEntry>>()
     private val chapterAnchorPageIndex = ConcurrentHashMap<Int, Map<String, Int>>()
+    private val expandedAllFontFaces = expandFontFacesWithSiblings(allFontFaces, extractionBasePath)
 
     private var pageCountsAreAccurate by mutableStateOf(false)
     private val finalizedChapterCounts = ConcurrentHashMap.newKeySet<Int>()
@@ -385,7 +386,7 @@ class BookPaginator(
             append("-pageCache:$LATEST_PAGE_CACHE_VERSION")
             append("-ua:${userAgentStylesheet.hashCode()}")
             append("-css:${bookCss.hashCode()}")
-            append("-fonts:${allFontFaces.hashCode()}")
+            append("-fonts:${expandedAllFontFaces.hashCode()}")
         }
         val hash = configString.hashCode()
         return hash
@@ -872,7 +873,7 @@ class BookPaginator(
             density = density.density,
             constraintsMaxWidth = constraints.maxWidth,
             constraintsMaxHeight = constraints.maxHeight,
-            fontFaces = this.allFontFaces,
+            fontFaces = expandedAllFontFaces,
             styleConfigHash = currentConfigHash,
             bookReplacementPreferencesJson = ReaderBookReplacementPreferencesJson.encode(
                 bookReplacementPreferences.scopedToFile(bookReplacementFileId),

@@ -1512,4 +1512,6 @@
     <string name="tts_replacements_replace_only_spoken">Chỉ thay thế nội dung được đọc</string>
     <string name="tts_replacements_replace_only_spoken_desc">Văn bản trình đọc, tô sáng và vị trí vẫn không đổi.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
+    <string name="error_copy_to_clipboard">Không thể sao chép vào khay nhớ tạm</string>
+    <string name="error_print_password_protected">Không thể in tệp PDF được bảo vệ bằng mật khẩu</string>
 </resources>

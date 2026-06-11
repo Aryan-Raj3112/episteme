@@ -41,7 +41,8 @@ fun loadFontFamilies(fontFaces: List<FontFaceInfo>, extractionPath: String): Map
     if (fontFaces.isEmpty()) {
         return emptyMap()
     }
-    Timber.d("Loading ${fontFaces.size} font faces from extraction path: $extractionPath")
+    val expandedFontFaces = expandFontFacesWithSiblings(fontFaces, extractionPath)
+    Timber.d("Loading ${expandedFontFaces.size} font faces from extraction path: $extractionPath")
 
     // 1. Define a stable, global font cache directory.
     // This assumes the parent of the extraction path is a stable base directory for epubs.
@@ -55,7 +56,7 @@ fun loadFontFamilies(fontFaces: List<FontFaceInfo>, extractionPath: String): Map
     // e.g., "d0e205bf-65cc-4ab4-93cc-cd2d613a7bb3.epub" from a longer temp path.
     val bookId = File(extractionPath).name.substringBeforeLast("_")
 
-    val fontsByFamily = fontFaces.groupBy {
+    val fontsByFamily = expandedFontFaces.groupBy {
         it.fontFamily.trim().removeSurrounding("'").removeSurrounding("\"").lowercase()
     }
     Timber.d("Grouped font faces by normalized family: ${fontsByFamily.keys}")
@@ -64,7 +65,9 @@ fun loadFontFamilies(fontFaces: List<FontFaceInfo>, extractionPath: String): Map
         val fontList = fontInfos.mapNotNull { fontInfo ->
             try {
                 Timber.d("Attempting to load font '$familyName' from resolved src path: '${fontInfo.src}'")
-                var fontFile = File(extractionPath, fontInfo.src)
+                var fontFile = File(fontInfo.src).let { source ->
+                    if (source.isAbsolute) source else File(extractionPath, fontInfo.src)
+                }
 
                 if (!fontFile.exists()) {
                     Timber.w("Font file not found at: ${fontFile.absolutePath}")
