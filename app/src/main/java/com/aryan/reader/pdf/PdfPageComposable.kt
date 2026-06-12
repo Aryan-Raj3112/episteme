@@ -166,7 +166,7 @@ private fun Throwable.readablePdfErrorDetail(): String {
 
 private const val PDF_TILE_SIZE_DP = 256
 private const val PDF_MAX_TILE_BITMAP_SIZE_PX = 3072
-private const val PDF_TILE_SCALE_TOLERANCE = 0.06f
+private const val PDF_TILE_SCALE_TOLERANCE = 0.03f
 private const val PDF_TILE_IDLE_RENDER_DELAY_MS = 60L
 private const val PDF_TILE_RENDER_IDLE_COOLDOWN_MS = 220L
 private const val PDF_PAGINATION_PAN_FLING_MIN_VELOCITY = 600f
@@ -462,7 +462,13 @@ internal fun PdfPageComposable(
     var actualBitmapHeightPx by remember(targetPageId) { mutableIntStateOf(0) }
     var currentPageRotation by remember(targetPageId) { mutableIntStateOf(0) }
 
-    val needsTilingNow = (effectiveScale > 1f || actualBitmapWidthPx > 3000 || actualBitmapHeightPx > 3000) && (isVerticalScroll || isActivePage)
+    val needsTilingNow = shouldRenderPdfHighResTiles(
+        effectiveScale = effectiveScale,
+        targetWidthPx = actualBitmapWidthPx,
+        targetHeightPx = actualBitmapHeightPx,
+        isVerticalScroll = isVerticalScroll,
+        isActivePage = isActivePage
+    )
 
     val canvasWidthPx = remember { mutableFloatStateOf(0f) }
     val canvasHeightPx = remember { mutableFloatStateOf(0f) }
@@ -1241,7 +1247,7 @@ internal fun PdfPageComposable(
                     }
                 }
 
-                if (latestShouldPauseHighResTileRendering && renderScale > 1f) {
+                if (latestShouldPauseHighResTileRendering) {
                     if (shouldLogTileSample) {
                         PdfVerticalPerfLog.d(
                             "tile-render-paused mode=$tileLogMode page=$pageIndex reason=motion scale=${PdfVerticalPerfLog.f(renderScale)} " +
@@ -1260,7 +1266,7 @@ internal fun PdfPageComposable(
                         }
                         delay(PDF_TILE_IDLE_RENDER_DELAY_MS)
                         if (!isActive) return@collectLatest
-                        if (latestShouldPauseHighResTileRendering && latestEffectiveScale > 1f) {
+                        if (latestShouldPauseHighResTileRendering) {
                             if (shouldLogHighResTile) {
                                 PdfVerticalPerfLog.d(
                                     "tile-render-canceled mode=$tileLogMode page=$pageIndex reason=motion-resumed missing=${tilesToRenderIds.size} scale=${PdfVerticalPerfLog.f(latestEffectiveScale)}"
@@ -1323,7 +1329,7 @@ internal fun PdfPageComposable(
                                         )
                                     }
                                     if (!isActive) return@withLock
-                                    if (latestShouldPauseHighResTileRendering && latestEffectiveScale > 1f) {
+                                    if (latestShouldPauseHighResTileRendering) {
                                         if (shouldLogHighResTile) {
                                             PdfVerticalPerfLog.d(
                                                 "tile-render-canceled mode=$tileLogMode page=$pageIndex reason=motion-started-before-native tile=$tileId scale=${PdfVerticalPerfLog.f(latestEffectiveScale)}"
@@ -1380,7 +1386,7 @@ internal fun PdfPageComposable(
                             }
                             return@collectLatest
                         }
-                        if (renderedTiles.isNotEmpty() && latestShouldPauseHighResTileRendering && latestEffectiveScale > 1f) {
+                        if (renderedTiles.isNotEmpty() && latestShouldPauseHighResTileRendering) {
                             if (shouldLogHighResTile) {
                                 PdfVerticalPerfLog.d(
                                     "tile-render-discarded mode=$tileLogMode page=$pageIndex reason=motion-before-commit rendered=${renderedTiles.size} scale=${PdfVerticalPerfLog.f(latestEffectiveScale)}"
@@ -4040,9 +4046,9 @@ internal fun PdfPageComposable(
                     val stableTiles = remember(tiles) { StableHolder(tiles) }
                     val stableColorFilter = remember(colorFilter) { StableHolder(colorFilter) }
                     val stableImageRects = remember(imageScreenRects) { StableHolder(imageScreenRects) }
-                    val shouldDrawHighResTiles = !shouldPauseHighResTileRendering
+                    val shouldDrawHighResTiles = !shouldPauseHighResTileRendering && needsTilingNow
                     LaunchedEffect(shouldDrawHighResTiles, stableTiles.item.size, effectiveScale) {
-                        if (stableTiles.item.isNotEmpty() && effectiveScale > 1f) {
+                        if (stableTiles.item.isNotEmpty() && shouldDrawHighResTiles) {
                             PdfVerticalPerfLog.d(
                                 "tile-display mode=${if (isVerticalScroll) "vertical" else "pagination"} page=$pageIndex " +
                                     "visible=$shouldDrawHighResTiles tiles=${stableTiles.item.size} pause=$shouldPauseHighResTileRendering " +
@@ -4513,8 +4519,7 @@ private fun PdfBitmapLayer(
                         }
                     }
 
-                    val needsTiling = effectiveScale > 1f || targetWidth > 3000 || targetHeight > 3000
-                    if (needsTiling && shouldDrawHighResTiles) {
+                    if (shouldDrawHighResTiles) {
                         tiles.forEach { tile ->
                             if (
                                 tile.bitmap.isCanvasSafeBitmap(
@@ -5353,7 +5358,7 @@ private fun PdfPageRenderer(
                 ) {
                     MagnifierComposable(
                         sourceBitmap = staticData.bitmap.item.asImageBitmap(),
-                        tiles = if (effectiveScale > 1f) staticData.tiles.item else emptyList(),
+                        tiles = if (staticData.shouldDrawHighResTiles) staticData.tiles.item else emptyList(),
                         currentScale = effectiveScale,
                         magnifierCenterOnBitmap = magnifierCenterTarget,
                         contentWidthPx = staticData.targetWidth,

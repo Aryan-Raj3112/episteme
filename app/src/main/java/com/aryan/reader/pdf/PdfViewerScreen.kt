@@ -2428,8 +2428,9 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(currentPageScale) {
-        if (currentPageScale != 1f) {
+    val zoomIndicatorPercentage = pdfZoomIndicatorPercent(currentPageScale)
+    LaunchedEffect(zoomIndicatorPercentage) {
+        if (shouldShowPdfZoomIndicator(zoomIndicatorPercentage)) {
             showZoomIndicator = true
             delay(1500)
             showZoomIndicator = false
@@ -7128,9 +7129,8 @@ fun PdfViewerScreen(
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
-                    val percentage = (currentPageScale * 100).roundToInt()
                     ZoomPercentageIndicator(
-                        percentage = percentage,
+                        percentage = zoomIndicatorPercentage,
                         onResetZoomClick = {
                             resetZoomTrigger = System.currentTimeMillis()
                         }

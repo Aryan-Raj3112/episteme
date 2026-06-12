@@ -3,6 +3,7 @@ package com.aryan.reader.pdf
 import androidx.compose.ui.geometry.Offset
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.reader.ReaderSettings
+import kotlin.math.roundToInt
 
 internal fun resolveEraserStrokeWidth(
     isEraserOverride: Boolean,
@@ -155,3 +156,32 @@ internal fun shouldResetPdfZoomAfterBubbleZoomCleanup(
         isZoomEnabled &&
         !isScrollLocked
 }
+
+internal fun shouldRenderPdfHighResTiles(
+    effectiveScale: Float,
+    targetWidthPx: Int,
+    targetHeightPx: Int,
+    isVerticalScroll: Boolean,
+    isActivePage: Boolean,
+    largePageThresholdPx: Int = 3000,
+    verticalScaleTolerance: Float = 0.01f
+): Boolean {
+    val hasLargePage = targetWidthPx > largePageThresholdPx || targetHeightPx > largePageThresholdPx
+    val isPageEligible = isVerticalScroll || isActivePage
+    if (!isPageEligible) return false
+    if (hasLargePage) return true
+
+    val safeScale = effectiveScale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    return if (isVerticalScroll) {
+        kotlin.math.abs(safeScale - 1f) > verticalScaleTolerance
+    } else {
+        safeScale > 1f
+    }
+}
+
+internal fun pdfZoomIndicatorPercent(scale: Float): Int {
+    val safeScale = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    return (safeScale * 100f).roundToInt()
+}
+
+internal fun shouldShowPdfZoomIndicator(percentage: Int): Boolean = percentage != 100

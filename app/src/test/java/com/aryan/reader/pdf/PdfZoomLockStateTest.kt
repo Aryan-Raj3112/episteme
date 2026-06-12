@@ -97,6 +97,86 @@ class PdfZoomLockStateTest {
     }
 
     @Test
+    fun `vertical pdf high res tiles render for settled zoom below one hundred percent`() {
+        assertTrue(
+            shouldRenderPdfHighResTiles(
+                effectiveScale = 0.82f,
+                targetWidthPx = 1080,
+                targetHeightPx = 1600,
+                isVerticalScroll = true,
+                isActivePage = true
+            )
+        )
+    }
+
+    @Test
+    fun `vertical pdf high res tiles skip exact one hundred percent unless page is large`() {
+        assertFalse(
+            shouldRenderPdfHighResTiles(
+                effectiveScale = 1f,
+                targetWidthPx = 1080,
+                targetHeightPx = 1600,
+                isVerticalScroll = true,
+                isActivePage = true
+            )
+        )
+        assertTrue(
+            shouldRenderPdfHighResTiles(
+                effectiveScale = 1f,
+                targetWidthPx = 3200,
+                targetHeightPx = 1600,
+                isVerticalScroll = true,
+                isActivePage = true
+            )
+        )
+    }
+
+    @Test
+    fun `paginated pdf high res tiles keep existing zoom threshold`() {
+        assertFalse(
+            shouldRenderPdfHighResTiles(
+                effectiveScale = 0.82f,
+                targetWidthPx = 1080,
+                targetHeightPx = 1600,
+                isVerticalScroll = false,
+                isActivePage = true
+            )
+        )
+        assertTrue(
+            shouldRenderPdfHighResTiles(
+                effectiveScale = 1.25f,
+                targetWidthPx = 1080,
+                targetHeightPx = 1600,
+                isVerticalScroll = false,
+                isActivePage = true
+            )
+        )
+        assertFalse(
+            shouldRenderPdfHighResTiles(
+                effectiveScale = 1.25f,
+                targetWidthPx = 1080,
+                targetHeightPx = 1600,
+                isVerticalScroll = false,
+                isActivePage = false
+            )
+        )
+    }
+
+    @Test
+    fun `zoom indicator percent rounds displayed scale`() {
+        assertEquals(82, pdfZoomIndicatorPercent(0.824f))
+        assertEquals(83, pdfZoomIndicatorPercent(0.826f))
+        assertEquals(100, pdfZoomIndicatorPercent(0.996f))
+    }
+
+    @Test
+    fun `zoom indicator hides only at displayed one hundred percent`() {
+        assertFalse(shouldShowPdfZoomIndicator(100))
+        assertTrue(shouldShowPdfZoomIndicator(99))
+        assertTrue(shouldShowPdfZoomIndicator(125))
+    }
+
+    @Test
     fun `page change preserves locked zoom scale only in paginated lock mode`() {
         val lockedState = Triple(2.25f, -12f, 32f)
 
