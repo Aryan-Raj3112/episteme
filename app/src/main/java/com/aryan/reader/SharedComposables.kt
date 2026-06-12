@@ -87,6 +87,7 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Policy
@@ -142,6 +143,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import androidx.core.text.HtmlCompat
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLegalLinks
 import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.data.BookMetadataEdit
@@ -274,6 +276,8 @@ fun ContextualTopAppBar(
     selectedItemCount: Int,
     onNavIconClick: () -> Unit,
     onInfoClick: (() -> Unit)? = null,
+    onSaveClick: (() -> Unit)? = null,
+    onShareClick: (() -> Unit)? = null,
     onTagClick: (() -> Unit)? = null,
     onSelectAllClick: (() -> Unit)? = null,
     onPinClick: (() -> Unit)? = null,
@@ -300,6 +304,16 @@ fun ContextualTopAppBar(
             if (selectedItemCount == 1 && onInfoClick != null) {
                 IconButton(onClick = onInfoClick) {
                     Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.info))
+                }
+            }
+            if (selectedItemCount == 1 && onSaveClick != null) {
+                IconButton(onClick = onSaveClick) {
+                    Icon(Icons.Filled.Save, contentDescription = stringResource(R.string.action_save_copy_to_device))
+                }
+            }
+            if (selectedItemCount == 1 && onShareClick != null) {
+                IconButton(onClick = onShareClick) {
+                    Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.action_share))
                 }
             }
             if (onSelectAllClick != null) {
@@ -1582,6 +1596,31 @@ fun RecentFileItem.progressFraction(): Float {
 
 fun RecentFileItem.isOpdsStream(): Boolean {
     return uriString?.startsWith("opds-pse://") == true
+}
+
+fun RecentFileItem.canExportOriginalFile(): Boolean {
+    return uriString != null && !isOpdsStream()
+}
+
+fun RecentFileItem.suggestedOriginalFileName(): String {
+    val fallbackExtension = SharedFileCapabilities.primaryExtensionFor(type)
+    val baseName = displayName
+        .takeIf { it.isNotBlank() }
+        ?: title?.takeIf { it.isNotBlank() }
+        ?: "book"
+    val sanitized = baseName
+        .replace(Regex("""[\\/:*?"<>|]+"""), "_")
+        .trim()
+        .take(120)
+        .ifBlank { "book" }
+    return if (
+        fallbackExtension != null &&
+        !sanitized.endsWith(".$fallbackExtension", ignoreCase = true)
+    ) {
+        "$sanitized.$fallbackExtension"
+    } else {
+        sanitized
+    }
 }
 
 @Composable

@@ -638,6 +638,23 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun saveDesktopOriginalFile(book: BookItem) {
+        val source = book.path?.let(::File)
+        if (source?.isFile != true) {
+            updateState(state.withBanner("Original file is not available.", isError = true))
+            return
+        }
+        val target = chooseSaveBookFile(book.desktopSuggestedOriginalFileName()) ?: return
+        runCatching {
+            target.parentFile?.mkdirs()
+            source.copyTo(target, overwrite = true)
+        }.onSuccess {
+            updateState(state.withBanner("Saved ${target.name}."))
+        }.onFailure { error ->
+            updateState(state.withBanner(error.message ?: "Could not save file.", isError = true))
+        }
+    }
+
     fun clearDesktopBookCache() {
         scope.launch {
             withContext(Dispatchers.IO) {
@@ -4200,7 +4217,8 @@ internal fun EpistemeDesktopApp(
                             onManageShelfBooks = { shelfToManageBooks = it },
                             onSyncFolderMetadata = { syncFolderMetadata() },
                             onScanFolders = { scanSyncedFolders() },
-                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) },
+                            onSaveOriginalFile = ::saveDesktopOriginalFile
                         )
 
                         SharedAppTab.SHELVES -> LibraryScreen(
@@ -4249,7 +4267,8 @@ internal fun EpistemeDesktopApp(
                             onManageShelfBooks = { shelfToManageBooks = it },
                             onSyncFolderMetadata = { syncFolderMetadata() },
                             onScanFolders = { scanSyncedFolders() },
-                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) }
+                            onTogglePinned = { book -> updateState(state.reduce(AppAction.LibraryPinToggled(book.id))) },
+                            onSaveOriginalFile = ::saveDesktopOriginalFile
                         )
 
                         SharedAppTab.CATALOGS -> {

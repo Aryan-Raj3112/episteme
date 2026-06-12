@@ -74,12 +74,21 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `desktop book overflow exposes add to shelf action without changing android`() {
+    fun `book overflow exposes platform save and share actions`() {
         assertEquals(
-            setOf(NonReaderBookOverflowAction.ADD_TO_SHELF),
+            setOf(
+                NonReaderBookOverflowAction.ADD_TO_SHELF,
+                NonReaderBookOverflowAction.SAVE_ORIGINAL
+            ),
             bookOverflowActionsForPlatform(ReaderPlatform.DESKTOP)
         )
-        assertEquals(emptySet<NonReaderBookOverflowAction>(), bookOverflowActionsForPlatform(ReaderPlatform.ANDROID))
+        assertEquals(
+            setOf(
+                NonReaderBookOverflowAction.SAVE_ORIGINAL,
+                NonReaderBookOverflowAction.SHARE_ORIGINAL
+            ),
+            bookOverflowActionsForPlatform(ReaderPlatform.ANDROID)
+        )
     }
 
     @Test

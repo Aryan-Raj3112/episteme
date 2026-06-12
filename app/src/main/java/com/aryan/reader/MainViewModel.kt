@@ -2093,6 +2093,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun saveOriginalFile(sourceUri: Uri, destUri: Uri) {
+        viewModelScope.launch {
+            _internalState.update {
+                it.copy(isLoading = true, bannerMessage = BannerMessage(appContext.getString(R.string.banner_saving_original_file)))
+            }
+            try {
+                withContext(Dispatchers.IO) {
+                    copyUriBytes(sourceUri, destUri)
+                }
+                showBanner(appContext.getString(R.string.banner_original_file_saved))
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to save original file")
+                showBanner(appContext.getString(R.string.error_saving_file, e.localizedMessage ?: e.message.orEmpty()), isError = true)
+            } finally {
+                _internalState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+
     fun togglePinForContextualItems(isHome: Boolean) {
         if (_internalState.value.contextualActionItems.isEmpty()) return
 
@@ -2208,6 +2227,68 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 showBanner(appContext.getString(R.string.error_share_failed, e.localizedMessage), isError = true)
             }
         }
+    }
+
+    suspend fun shareOriginalFile(
+        activityContext: Context,
+        sourceUri: Uri,
+        fileType: FileType,
+        filename: String
+    ) {
+        withContext(Dispatchers.IO) {
+            try {
+                val shareDir = File(appContext.cacheDir, "shared_files")
+                if (shareDir.exists()) {
+                    shareDir.listFiles()?.forEach { file ->
+                        try {
+                            file.delete()
+                        } catch (_: Exception) {
+                            Timber.w("Failed to delete temp share file: ${file.name}")
+                        }
+                    }
+                } else {
+                    shareDir.mkdirs()
+                }
+
+                val destFile = File(shareDir, filename)
+                FileOutputStream(destFile).use { output ->
+                    appContext.contentResolver.openInputStream(sourceUri)?.use { input ->
+                        input.copyTo(output)
+                    } ?: error("Could not open source file.")
+                }
+
+                val authority = "${appContext.packageName}.provider"
+                val contentUri = androidx.core.content.FileProvider.getUriForFile(
+                    appContext, authority, destFile
+                )
+                val mimeType = SharedFileCapabilities.mimeTypeFor(fileType) ?: "application/octet-stream"
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = mimeType
+                    putExtra(Intent.EXTRA_STREAM, contentUri)
+                    putExtra(Intent.EXTRA_TITLE, filename)
+                    putExtra(Intent.EXTRA_SUBJECT, appContext.getString(R.string.share_subject, filename))
+                    clipData = ClipData.newRawUri(filename, contentUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = Intent.createChooser(shareIntent, appContext.getString(R.string.share_file_chooser_title))
+                if (activityContext !is android.app.Activity) {
+                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                withContext(Dispatchers.Main) { activityContext.startActivity(chooser) }
+            } catch (e: Exception) {
+                Timber.e(e, "Share original file failed")
+                showBanner(appContext.getString(R.string.error_share_failed, e.localizedMessage ?: e.message.orEmpty()), isError = true)
+            }
+        }
+    }
+
+    private fun copyUriBytes(sourceUri: Uri, destUri: Uri) {
+        val contentResolver = appContext.contentResolver
+        contentResolver.openInputStream(sourceUri)?.use { input ->
+            contentResolver.openOutputStream(destUri)?.use { output ->
+                input.copyTo(output)
+            } ?: error("Could not open destination file.")
+        } ?: error("Could not open source file.")
     }
 
     private fun queueCloudMetadataUpload(bookId: String, reason: String, debounce: Boolean = true) {

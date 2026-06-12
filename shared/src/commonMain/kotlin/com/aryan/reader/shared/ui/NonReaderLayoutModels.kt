@@ -239,7 +239,9 @@ internal enum class NonReaderLibraryPrimaryAction {
 }
 
 internal enum class NonReaderBookOverflowAction {
-    ADD_TO_SHELF
+    ADD_TO_SHELF,
+    SAVE_ORIGINAL,
+    SHARE_ORIGINAL
 }
 
 internal fun visibleNonReaderLibraryTabs(
@@ -266,8 +268,14 @@ internal fun bookOverflowActionsForPlatform(
     platform: ReaderPlatform = ReaderPlatform.ANDROID
 ): Set<NonReaderBookOverflowAction> {
     return when (platform) {
-        ReaderPlatform.DESKTOP -> setOf(NonReaderBookOverflowAction.ADD_TO_SHELF)
-        ReaderPlatform.ANDROID -> emptySet()
+        ReaderPlatform.DESKTOP -> setOf(
+            NonReaderBookOverflowAction.ADD_TO_SHELF,
+            NonReaderBookOverflowAction.SAVE_ORIGINAL
+        )
+        ReaderPlatform.ANDROID -> setOf(
+            NonReaderBookOverflowAction.SAVE_ORIGINAL,
+            NonReaderBookOverflowAction.SHARE_ORIGINAL
+        )
     }
 }
 

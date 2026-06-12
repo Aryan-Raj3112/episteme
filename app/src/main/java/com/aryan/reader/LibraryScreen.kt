@@ -133,6 +133,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.util.UnstableApi
@@ -271,6 +272,36 @@ fun LibraryScreen(
     var showDeleteShelvesDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
+    var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
+
+    val saveOriginalLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val item = pendingSaveOriginalItem
+        pendingSaveOriginalItem = null
+        if (uri != null && item?.uriString != null) {
+            viewModel.saveOriginalFile(item.uriString.toUri(), uri)
+        }
+    }
+
+    fun saveOriginalItem(item: RecentFileItem) {
+        if (!item.canExportOriginalFile()) return
+        pendingSaveOriginalItem = item
+        saveOriginalLauncher.launch(item.suggestedOriginalFileName())
+    }
+
+    fun shareOriginalItem(item: RecentFileItem) {
+        val uriString = item.uriString ?: return
+        if (!item.canExportOriginalFile()) return
+        scope.launch {
+            viewModel.shareOriginalFile(
+                activityContext = context,
+                sourceUri = uriString.toUri(),
+                fileType = item.type,
+                filename = item.suggestedOriginalFileName()
+            )
+        }
+    }
 
     BackHandler(enabled = isContextualModeActive) {
         viewModel.clearContextualAction()
@@ -317,6 +348,12 @@ fun LibraryScreen(
                     showInfoDialog = true
                 }
             },
+            onSaveClick = selectedItems.singleOrNull()
+                ?.takeIf { it.canExportOriginalFile() }
+                ?.let { item -> { saveOriginalItem(item) } },
+            onShareClick = selectedItems.singleOrNull()
+                ?.takeIf { it.canExportOriginalFile() }
+                ?.let { item -> { shareOriginalItem(item) } },
             onDeleteClick = { showDeleteConfirmDialog = true },
             onSelectAllClick = { viewModel.selectAllLibraryFiles() },
             onShelfClick = viewModel::onShelfClick,
@@ -425,10 +462,42 @@ fun ShelfScreen(
     val sortOrder = uiState.sortOrder
     val showRenameDialogFor = uiState.showRenameShelfDialogFor
     val showDeleteDialogFor = uiState.showDeleteShelfDialogFor
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var showRemoveFromShelfDialog by remember { mutableStateOf(false) }
     var showInfoDialog by remember { mutableStateOf(false) }
     var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
+    var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
+
+    val saveOriginalLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val item = pendingSaveOriginalItem
+        pendingSaveOriginalItem = null
+        if (uri != null && item?.uriString != null) {
+            viewModel.saveOriginalFile(item.uriString.toUri(), uri)
+        }
+    }
+
+    fun saveOriginalItem(item: RecentFileItem) {
+        if (!item.canExportOriginalFile()) return
+        pendingSaveOriginalItem = item
+        saveOriginalLauncher.launch(item.suggestedOriginalFileName())
+    }
+
+    fun shareOriginalItem(item: RecentFileItem) {
+        val uriString = item.uriString ?: return
+        if (!item.canExportOriginalFile()) return
+        scope.launch {
+            viewModel.shareOriginalFile(
+                activityContext = context,
+                sourceUri = uriString.toUri(),
+                fileType = item.type,
+                filename = item.suggestedOriginalFileName()
+            )
+        }
+    }
 
     BackHandler(enabled = true) {
         when {
@@ -480,6 +549,12 @@ fun ShelfScreen(
                             showInfoDialog = true
                         }
                     },
+                    onSaveClick = selectedItems.singleOrNull()
+                        ?.takeIf { it.canExportOriginalFile() }
+                        ?.let { item -> { saveOriginalItem(item) } },
+                    onShareClick = selectedItems.singleOrNull()
+                        ?.takeIf { it.canExportOriginalFile() }
+                        ?.let { item -> { shareOriginalItem(item) } },
                     onDeleteClick = { showRemoveFromShelfDialog = true },
                     onRenameShelf = { viewModel.showRenameShelfDialog(currentShelf.id) },
                     onDeleteShelf = { viewModel.showDeleteShelfDialog(currentShelf.id) },
@@ -562,6 +637,8 @@ fun LibraryScreenContent(
     onItemClick: (RecentFileItem) -> Unit,
     onItemLongClick: (RecentFileItem) -> Unit,
     onInfoClick: () -> Unit,
+    onSaveClick: (() -> Unit)?,
+    onShareClick: (() -> Unit)?,
     onDeleteClick: () -> Unit,
     onSelectAllClick: () -> Unit,
     onShelfClick: (Shelf) -> Unit,
@@ -624,6 +701,8 @@ fun LibraryScreenContent(
                         onTagClick = onTagClick,
                         onPinClick = onPinClick,
                         onInfoClick = onInfoClick,
+                        onSaveClick = onSaveClick,
+                        onShareClick = onShareClick,
                         onDeleteClick = onDeleteClick,
                         onSelectAllClick = onSelectAllClick
                     )
@@ -1030,6 +1109,8 @@ private fun ShelfDetailScreen(
     onClearSelection: () -> Unit,
     onTagClick: () -> Unit,
     onInfoClick: () -> Unit,
+    onSaveClick: (() -> Unit)?,
+    onShareClick: (() -> Unit)?,
     onDeleteClick: () -> Unit,
     onRenameShelf: () -> Unit,
     onDeleteShelf: () -> Unit,
@@ -1112,6 +1193,8 @@ private fun ShelfDetailScreen(
                     onNavIconClick = onClearSelection,
                     onTagClick = onTagClick,
                     onInfoClick = onInfoClick,
+                    onSaveClick = onSaveClick,
+                    onShareClick = onShareClick,
                     onDeleteClick = onDeleteClick
                 )
             } else if (isSearchActive) {

@@ -63,6 +63,24 @@ internal fun String.toDesktopSafeFileName(): String {
     return replace(Regex("[^A-Za-z0-9._-]"), "_").take(120).ifBlank { "book" }
 }
 
+internal fun BookItem.desktopSuggestedOriginalFileName(): String {
+    val extension = path
+        ?.let(::File)
+        ?.extension
+        ?.takeIf { it.isNotBlank() }
+        ?: SharedFileCapabilities.primaryExtensionFor(type)
+    val safeName = displayName
+        .takeIf { it.isNotBlank() }
+        ?: title?.takeIf { it.isNotBlank() }
+        ?: "book"
+    val sanitized = safeName.toDesktopSafeFileName()
+    return if (extension != null && !sanitized.endsWith(".$extension", ignoreCase = true)) {
+        "$sanitized.$extension"
+    } else {
+        sanitized
+    }
+}
+
 internal fun BookItem.withDesktopImportMetadata(
     enriched: BookItem,
     original: BookItem?
@@ -203,7 +221,8 @@ internal fun LibraryScreen(
     onImportFolder: () -> Unit,
     onSyncFolderMetadata: () -> Unit,
     onScanFolders: () -> Unit,
-    onTogglePinned: (BookItem) -> Unit
+    onTogglePinned: (BookItem) -> Unit,
+    onSaveOriginalFile: (BookItem) -> Unit = {}
 ) {
     SharedLibraryScreen(
         state = state,
@@ -231,6 +250,7 @@ internal fun LibraryScreen(
         onSyncFolderMetadata = onSyncFolderMetadata,
         onScanFolders = onScanFolders,
         onTogglePinned = onTogglePinned,
+        onSaveOriginalFile = onSaveOriginalFile,
         platform = ReaderPlatform.DESKTOP,
         useImportEmptyStateWhenLibraryEmpty = true
     )

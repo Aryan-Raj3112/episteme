@@ -77,6 +77,16 @@ internal fun chooseSaveImageFile(defaultFileName: String): File? {
     return File(directory, file)
 }
 
+internal fun chooseSaveBookFile(defaultFileName: String): File? {
+    val dialog = FileDialog(null as Frame?, desktopDialogString("action_save_copy_to_device", "Save copy to device"), FileDialog.SAVE).apply {
+        file = defaultFileName
+        isVisible = true
+    }
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(directory, file)
+}
+
 internal fun chooseFolder(): File? {
     val chooser = JFileChooser().apply {
         dialogTitle = desktopDialogString("desktop_import_folder", "Import folder")

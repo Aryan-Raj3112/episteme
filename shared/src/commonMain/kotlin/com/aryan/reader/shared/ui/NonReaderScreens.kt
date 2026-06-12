@@ -56,6 +56,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material3.AssistChip
@@ -165,6 +167,8 @@ fun SharedHomeScreen(
     onRemoveSelected: () -> Unit,
     onShowBookInfo: (BookItem) -> Unit = {},
     onEditBook: (BookItem) -> Unit = {},
+    onSaveOriginalFile: (BookItem) -> Unit = {},
+    onShareOriginalFile: (BookItem) -> Unit = {},
     onTagSelectedBooks: () -> Unit = {},
     onAddSelectedBooksToShelf: () -> Unit = {},
     onOpenTab: (BookItem) -> Unit = onOpenBook,
@@ -173,6 +177,7 @@ fun SharedHomeScreen(
     onRecentLimitChange: (Int) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    platform: ReaderPlatform = ReaderPlatform.ANDROID,
     showActiveTabs: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -187,6 +192,16 @@ fun SharedHomeScreen(
         state.rawLibraryBooks
     ) {
         state.toNonReaderHomeLayoutModel()
+    }
+    val saveOriginalFileAction = if (NonReaderBookOverflowAction.SAVE_ORIGINAL in bookOverflowActionsForPlatform(platform)) {
+        onSaveOriginalFile
+    } else {
+        null
+    }
+    val shareOriginalFileAction = if (NonReaderBookOverflowAction.SHARE_ORIGINAL in bookOverflowActionsForPlatform(platform)) {
+        onShareOriginalFile
+    } else {
+        null
     }
     NonReaderScreenScaffold(
         title = readerString("nav_home", "Home"),
@@ -268,6 +283,8 @@ fun SharedHomeScreen(
                             onOpenBook = { onOpenBook(book) },
                             onShowBookInfo = { onShowBookInfo(book) },
                             onEditBook = { onEditBook(book) },
+                            onSaveOriginalFile = saveOriginalFileAction?.let { save -> { save(book) } },
+                            onShareOriginalFile = shareOriginalFileAction?.let { share -> { share(book) } },
                             onTogglePinned = { onTogglePinned(book) }
                         )
                     }
@@ -294,6 +311,8 @@ fun SharedHomeScreen(
                             onToggleSelection = onToggleSelection,
                             onShowBookInfo = onShowBookInfo,
                             onEditBook = onEditBook,
+                            onSaveOriginalFile = saveOriginalFileAction,
+                            onShareOriginalFile = shareOriginalFileAction,
                             onTogglePinned = onTogglePinned
                         )
                     }
@@ -309,6 +328,8 @@ fun SharedHomeScreen(
                             onToggleSelection = onToggleSelection,
                             onShowBookInfo = onShowBookInfo,
                             onEditBook = onEditBook,
+                            onSaveOriginalFile = saveOriginalFileAction,
+                            onShareOriginalFile = shareOriginalFileAction,
                             onTogglePinned = onTogglePinned
                         )
                     }
@@ -331,6 +352,8 @@ fun SharedLibraryScreen(
     onRemoveSelected: () -> Unit,
     onShowBookInfo: (BookItem) -> Unit = {},
     onEditBook: (BookItem) -> Unit = {},
+    onSaveOriginalFile: (BookItem) -> Unit = {},
+    onShareOriginalFile: (BookItem) -> Unit = {},
     onCreateShelf: () -> Unit = {},
     onCreateShelfWithBooks: (String, Set<String>) -> Unit = { _, _ -> },
     onCreateSmartShelf: () -> Unit = {},
@@ -446,6 +469,8 @@ fun SharedLibraryScreen(
                                 onToggleSelection = onToggleSelection,
                                 onShowBookInfo = onShowBookInfo,
                                 onEditBook = onEditBook,
+                                onSaveOriginalFile = onSaveOriginalFile,
+                                onShareOriginalFile = onShareOriginalFile,
                                 onTogglePinned = onTogglePinned,
                                 onAddBooksToShelf = onAddBooksToShelf,
                                 onManageShelfBooks = onManageShelfBooks,
@@ -495,6 +520,8 @@ fun SharedLibraryScreen(
                             onToggleSelection = onToggleSelection,
                             onShowBookInfo = onShowBookInfo,
                             onEditBook = onEditBook,
+                            onSaveOriginalFile = onSaveOriginalFile,
+                            onShareOriginalFile = onShareOriginalFile,
                             onTogglePinned = onTogglePinned,
                             onAddBooksToShelf = onAddBooksToShelf,
                             onManageShelfBooks = onManageShelfBooks,
@@ -601,8 +628,11 @@ private fun ContinueReadingCard(
     onOpenBook: () -> Unit,
     onShowBookInfo: () -> Unit,
     onEditBook: () -> Unit,
+    onSaveOriginalFile: (() -> Unit)?,
+    onShareOriginalFile: (() -> Unit)?,
     onTogglePinned: () -> Unit
 ) {
+    val canUseOriginalFileActions = !book.isOpdsStream() && book.path != null
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(SharedUiTokens.surfaceRadius),
@@ -643,6 +673,16 @@ private fun ContinueReadingCard(
                     IconButton(onClick = onEditBook) {
                         Icon(Icons.Default.Edit, contentDescription = readerString("action_edit", "Edit"))
                     }
+                    if (canUseOriginalFileActions && onSaveOriginalFile != null) {
+                        IconButton(onClick = onSaveOriginalFile) {
+                            Icon(Icons.Default.Save, contentDescription = readerString("action_save_copy_to_device", "Save copy to device"))
+                        }
+                    }
+                    if (canUseOriginalFileActions && onShareOriginalFile != null) {
+                        IconButton(onClick = onShareOriginalFile) {
+                            Icon(Icons.Default.Share, contentDescription = readerString("action_share", "Share"))
+                        }
+                    }
                 }
             }
         }
@@ -659,6 +699,8 @@ private fun HomeBookShelf(
     onToggleSelection: (String) -> Unit,
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
+    onSaveOriginalFile: ((BookItem) -> Unit)?,
+    onShareOriginalFile: ((BookItem) -> Unit)?,
     onTogglePinned: (BookItem) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -674,6 +716,8 @@ private fun HomeBookShelf(
                     onToggleSelection = { onToggleSelection(book.id) },
                     onShowInfo = { onShowBookInfo(book) },
                     onEdit = { onEditBook(book) },
+                    onSaveOriginalFile = onSaveOriginalFile?.let { save -> { save(book) } },
+                    onShareOriginalFile = onShareOriginalFile?.let { share -> { share(book) } },
                     onTogglePinned = { onTogglePinned(book) },
                     modifier = Modifier.width(168.dp)
                 )
@@ -1226,6 +1270,8 @@ private fun LibraryContent(
     onToggleSelection: (String) -> Unit,
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
+    onSaveOriginalFile: (BookItem) -> Unit,
+    onShareOriginalFile: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
     onAddBooksToShelf: (Set<String>) -> Unit,
     onManageShelfBooks: ((Shelf) -> Unit)?,
@@ -1259,6 +1305,16 @@ private fun LibraryContent(
         }
         val addToShelfFromBookAction = if (NonReaderBookOverflowAction.ADD_TO_SHELF in bookOverflowActionsForPlatform(platform)) {
             onAddBooksToShelf
+        } else {
+            null
+        }
+        val saveOriginalFileAction = if (NonReaderBookOverflowAction.SAVE_ORIGINAL in bookOverflowActionsForPlatform(platform)) {
+            onSaveOriginalFile
+        } else {
+            null
+        }
+        val shareOriginalFileAction = if (NonReaderBookOverflowAction.SHARE_ORIGINAL in bookOverflowActionsForPlatform(platform)) {
+            onShareOriginalFile
         } else {
             null
         }
@@ -1314,6 +1370,8 @@ private fun LibraryContent(
                         onToggleSelection = onToggleSelection,
                         onShowBookInfo = onShowBookInfo,
                         onEditBook = onEditBook,
+                        onSaveOriginalFile = saveOriginalFileAction,
+                        onShareOriginalFile = shareOriginalFileAction,
                         onTogglePinned = onTogglePinned,
                         onAddToShelf = addToShelfFromBookAction?.let { addToShelf -> { book -> addToShelf(setOf(book.id)) } },
                         modifier = Modifier.weight(1f)
@@ -1347,6 +1405,8 @@ private fun LibraryContent(
                         onToggleSelection = onToggleSelection,
                         onShowBookInfo = onShowBookInfo,
                         onEditBook = onEditBook,
+                        onSaveOriginalFile = saveOriginalFileAction,
+                        onShareOriginalFile = shareOriginalFileAction,
                         onTogglePinned = onTogglePinned,
                         onAddBooksToShelf = addToShelfFromBookAction,
                         onManageShelfBooks = manageShelfBooksAction,
@@ -1370,6 +1430,8 @@ private fun LibraryContent(
                 onToggleSelection = onToggleSelection,
                 onShowBookInfo = onShowBookInfo,
                 onEditBook = onEditBook,
+                onSaveOriginalFile = saveOriginalFileAction,
+                onShareOriginalFile = shareOriginalFileAction,
                 onTogglePinned = onTogglePinned,
                 onAddBooksToShelf = addToShelfFromBookAction,
                 onRenameShelf = onRenameShelf,
@@ -1387,6 +1449,8 @@ private fun LibraryContent(
                 onToggleSelection = onToggleSelection,
                 onShowBookInfo = onShowBookInfo,
                 onEditBook = onEditBook,
+                onSaveOriginalFile = saveOriginalFileAction,
+                onShareOriginalFile = shareOriginalFileAction,
                 onTogglePinned = onTogglePinned,
                 onAddBooksToShelf = addToShelfFromBookAction,
                 emptyTitle = readerString("desktop_no_tags_yet", "No tags yet"),
@@ -1409,6 +1473,8 @@ private fun LibraryContent(
                         onToggleSelection = onToggleSelection,
                         onShowBookInfo = onShowBookInfo,
                         onEditBook = onEditBook,
+                        onSaveOriginalFile = saveOriginalFileAction,
+                        onShareOriginalFile = shareOriginalFileAction,
                         onTogglePinned = onTogglePinned,
                         onAddBooksToShelf = addToShelfFromBookAction,
                         onOpenShelf = { shelf -> onStateChange(state.copy(viewingShelfId = shelf.id)) },
@@ -1431,6 +1497,8 @@ private fun LibraryContent(
                             onToggleSelection = onToggleSelection,
                             onShowBookInfo = onShowBookInfo,
                             onEditBook = onEditBook,
+                            onSaveOriginalFile = saveOriginalFileAction,
+                            onShareOriginalFile = shareOriginalFileAction,
                             onTogglePinned = onTogglePinned,
                             onAddBooksToShelf = addToShelfFromBookAction,
                             onRemoveFolder = onRemoveFolder,
@@ -1690,6 +1758,8 @@ private fun BookGrid(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onSaveOriginalFile: ((BookItem) -> Unit)? = null,
+    onShareOriginalFile: ((BookItem) -> Unit)? = null,
     onAddToShelf: ((BookItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1710,6 +1780,8 @@ private fun BookGrid(
                     onShowInfo = { onShowBookInfo(book) },
                     onEdit = { onEditBook(book) },
                     onTogglePinned = { onTogglePinned(book) },
+                    onSaveOriginalFile = onSaveOriginalFile?.let { save -> { save(book) } },
+                    onShareOriginalFile = onShareOriginalFile?.let { share -> { share(book) } },
                     onAddToShelf = onAddToShelf?.let { addToShelf -> { addToShelf(book) } }
                 )
             }
@@ -1733,6 +1805,8 @@ private fun BookGrid(
                     onShowInfo = { onShowBookInfo(book) },
                     onEdit = { onEditBook(book) },
                     onTogglePinned = { onTogglePinned(book) },
+                    onSaveOriginalFile = onSaveOriginalFile?.let { save -> { save(book) } },
+                    onShareOriginalFile = onShareOriginalFile?.let { share -> { share(book) } },
                     onAddToShelf = onAddToShelf?.let { addToShelf -> { addToShelf(book) } }
                 )
             }
@@ -1752,6 +1826,8 @@ private fun BookTile(
     onShowInfo: () -> Unit,
     onEdit: () -> Unit,
     onTogglePinned: () -> Unit,
+    onSaveOriginalFile: (() -> Unit)? = null,
+    onShareOriginalFile: (() -> Unit)? = null,
     onAddToShelf: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -1803,6 +1879,8 @@ private fun BookTile(
                         onShowInfo = onShowInfo,
                         onEdit = onEdit,
                         onToggleSelection = onToggleSelection,
+                        onSaveOriginalFile = onSaveOriginalFile.takeIf { !book.isOpdsStream() && book.path != null },
+                        onShareOriginalFile = onShareOriginalFile.takeIf { !book.isOpdsStream() && book.path != null },
                         onAddToShelf = onAddToShelf
                     )
                 }
@@ -1839,6 +1917,8 @@ private fun BookListItem(
     onShowInfo: () -> Unit,
     onEdit: () -> Unit,
     onTogglePinned: () -> Unit,
+    onSaveOriginalFile: (() -> Unit)? = null,
+    onShareOriginalFile: (() -> Unit)? = null,
     onAddToShelf: (() -> Unit)? = null
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -1881,6 +1961,8 @@ private fun BookListItem(
                     onShowInfo = onShowInfo,
                     onEdit = onEdit,
                     onToggleSelection = onToggleSelection,
+                    onSaveOriginalFile = onSaveOriginalFile.takeIf { !book.isOpdsStream() && book.path != null },
+                    onShareOriginalFile = onShareOriginalFile.takeIf { !book.isOpdsStream() && book.path != null },
                     onAddToShelf = onAddToShelf
                 )
             }
@@ -1898,6 +1980,8 @@ private fun BookActionMenu(
     onShowInfo: () -> Unit,
     onEdit: () -> Unit,
     onToggleSelection: () -> Unit,
+    onSaveOriginalFile: (() -> Unit)? = null,
+    onShareOriginalFile: (() -> Unit)? = null,
     onAddToShelf: (() -> Unit)? = null
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
@@ -1925,6 +2009,26 @@ private fun BookActionMenu(
                 onEdit()
             }
         )
+        if (onSaveOriginalFile != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
+                text = { Text(readerString("action_save_copy_to_device", "Save copy to device")) },
+                onClick = {
+                    onDismiss()
+                    onSaveOriginalFile()
+                }
+            )
+        }
+        if (onShareOriginalFile != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                text = { Text(readerString("action_share", "Share")) },
+                onClick = {
+                    onDismiss()
+                    onShareOriginalFile()
+                }
+            )
+        }
         if (onAddToShelf != null) {
             DropdownMenuItem(
                 leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
@@ -2112,6 +2216,8 @@ private fun ShelfCollection(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onSaveOriginalFile: ((BookItem) -> Unit)? = null,
+    onShareOriginalFile: ((BookItem) -> Unit)? = null,
     onAddBooksToShelf: ((Set<String>) -> Unit)? = null,
     onManageShelfBooks: ((Shelf) -> Unit)? = null,
     onRenameShelf: (Shelf) -> Unit = {},
@@ -2151,6 +2257,8 @@ private fun ShelfCollection(
                 onShowBookInfo = onShowBookInfo,
                 onEditBook = onEditBook,
                 onTogglePinned = onTogglePinned,
+                onSaveOriginalFile = onSaveOriginalFile,
+                onShareOriginalFile = onShareOriginalFile,
                 onAddBooksToShelf = onAddBooksToShelf,
                 onManageShelfBooks = onManageShelfBooks,
                 onRenameShelf = onRenameShelf,
@@ -2172,6 +2280,8 @@ private fun ShelfSection(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onSaveOriginalFile: ((BookItem) -> Unit)?,
+    onShareOriginalFile: ((BookItem) -> Unit)?,
     onAddBooksToShelf: ((Set<String>) -> Unit)?,
     onManageShelfBooks: ((Shelf) -> Unit)?,
     onRenameShelf: (Shelf) -> Unit,
@@ -2258,6 +2368,8 @@ private fun ShelfSection(
                             onShowInfo = { onShowBookInfo(book) },
                             onEdit = { onEditBook(book) },
                             onTogglePinned = { onTogglePinned(book) },
+                            onSaveOriginalFile = onSaveOriginalFile?.let { save -> { save(book) } },
+                            onShareOriginalFile = onShareOriginalFile?.let { share -> { share(book) } },
                             onAddToShelf = onAddBooksToShelf?.let { addToShelf -> { addToShelf(setOf(book.id)) } },
                             modifier = Modifier.width(148.dp)
                         )
@@ -2279,6 +2391,8 @@ private fun FolderShelfDetail(
     onShowBookInfo: (BookItem) -> Unit,
     onEditBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onSaveOriginalFile: ((BookItem) -> Unit)? = null,
+    onShareOriginalFile: ((BookItem) -> Unit)? = null,
     onAddBooksToShelf: ((Set<String>) -> Unit)? = null,
     onOpenShelf: (Shelf) -> Unit,
     onBack: () -> Unit,
@@ -2345,6 +2459,8 @@ private fun FolderShelfDetail(
                             onShowInfo = { onShowBookInfo(book) },
                             onEdit = { onEditBook(book) },
                             onTogglePinned = { onTogglePinned(book) },
+                            onSaveOriginalFile = onSaveOriginalFile?.let { save -> { save(book) } },
+                            onShareOriginalFile = onShareOriginalFile?.let { share -> { share(book) } },
                             onAddToShelf = onAddBooksToShelf?.let { addToShelf -> { addToShelf(setOf(book.id)) } }
                         )
                     }

@@ -139,6 +139,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.os.LocaleListCompat
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
@@ -193,6 +194,7 @@ fun HomeScreen(
         var showAboutDialog by remember { mutableStateOf(false) }
         var showInfoDialog by remember { mutableStateOf(false) }
         var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
+        var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
         var showBehaviorDialog by remember { mutableStateOf(false) }
         var showStrictFilterDialog by remember { mutableStateOf(false) }
         var showClearBookCacheDialog by remember { mutableStateOf(false) }
@@ -218,6 +220,35 @@ fun HomeScreen(
             } else {
                 Timber.w("Google Sign In for Drive failed with result code: ${result.resultCode}")
                 viewModel.onDrivePermissionFlowCancelled()
+            }
+        }
+
+        val saveOriginalLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+        ) { uri ->
+            val item = pendingSaveOriginalItem
+            pendingSaveOriginalItem = null
+            if (uri != null && item?.uriString != null) {
+                viewModel.saveOriginalFile(item.uriString.toUri(), uri)
+            }
+        }
+
+        fun saveOriginalItem(item: RecentFileItem) {
+            if (!item.canExportOriginalFile()) return
+            pendingSaveOriginalItem = item
+            saveOriginalLauncher.launch(item.suggestedOriginalFileName())
+        }
+
+        fun shareOriginalItem(item: RecentFileItem) {
+            val uriString = item.uriString ?: return
+            if (!item.canExportOriginalFile()) return
+            scope.launch {
+                viewModel.shareOriginalFile(
+                    activityContext = context,
+                    sourceUri = uriString.toUri(),
+                    fileType = item.type,
+                    filename = item.suggestedOriginalFileName()
+                )
             }
         }
 
@@ -390,6 +421,12 @@ fun HomeScreen(
                                         showInfoDialog = true
                                     }
                                 },
+                                onSaveClick = selectedContextItems.singleOrNull()
+                                    ?.takeIf { it.canExportOriginalFile() }
+                                    ?.let { item -> { saveOriginalItem(item) } },
+                                onShareClick = selectedContextItems.singleOrNull()
+                                    ?.takeIf { it.canExportOriginalFile() }
+                                    ?.let { item -> { shareOriginalItem(item) } },
                                 onPinClick = { viewModel.togglePinForContextualItems(isHome = true) },
                                 onDeleteClick = { showDeleteConfirmDialog = true },
                                 onSelectAllClick = { viewModel.selectAllRecentFiles() })

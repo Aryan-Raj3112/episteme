@@ -480,10 +480,14 @@
     <string name="banner_saving_original_pdf">Saving original PDF…</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="banner_original_pdf_saved">Original PDF saved successfully.</string>
+    <string name="banner_saving_original_file">Saving original file...</string>
+    <string name="banner_original_file_saved">Original file saved successfully.</string>
+    <string name="error_saving_file">Error saving file: %1$s</string>
     <!-- Email/share subject line. %1$s = the name of the file being shared. Example: "Sharing: Dracula.pdf". -->
     <string name="share_subject">Sharing: %1$s</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="share_chooser_title">Share PDF</string>
+    <string name="share_file_chooser_title">Share file</string>
     <!-- Share failure banner. %1$s = error reason string from the system. Example: "Share failed: No app found". -->
     <string name="error_share_failed">Share failed: %1$s</string>
     <!-- Folder sync limit error. %1$d = the maximum number of folders allowed. Example: "Limit reached: Maximum 3 folders allowed." -->
