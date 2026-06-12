@@ -25,12 +25,15 @@ import android.provider.OpenableColumns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import com.aryan.reader.ReaderFontDiagnosticsTag
+import com.aryan.reader.readerFontDiagnosticSummary
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 
 private const val FONTS_DIR = "custom_fonts"
+private const val MAX_IMPORTED_FONT_BASENAME_LENGTH = 120
 
 class FontsRepository(private val context: Context) {
     private val fontDao = AppDatabase.getDatabase(context).customFontDao()
@@ -73,22 +76,29 @@ class FontsRepository(private val context: Context) {
             val contentResolver = context.contentResolver
             val originalName = getFileName(uri) ?: "unknown.ttf"
             val extension = originalName.substringAfterLast('.', "").lowercase()
+            val displayName = originalName.substringBeforeLast('.')
+
+            Timber.tag(ReaderFontDiagnosticsTag).i(
+                "import.start originalName='$originalName' extension='$extension' " +
+                    readerFontDiagnosticSummary(displayName)
+            )
 
             if (extension !in listOf("ttf", "otf", "woff2")) {
+                Timber.tag(ReaderFontDiagnosticsTag).w(
+                    "import.unsupported originalName='$originalName' extension='$extension'"
+                )
                 return@withContext Result.failure(Exception("Unsupported font format. Please use TTF, OTF, or WOFF2."))
             }
 
             val fontId = UUID.randomUUID().toString()
-            val internalFileName = "font_${fontId}.$extension"
-            val destinationFile = File(fontsDir, internalFileName)
+            val destinationFile = uniqueImportedFontFile(displayName, extension, fontId)
+            val internalFileName = destinationFile.name
 
             contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(destinationFile).use { output ->
                     input.copyTo(output)
                 }
             }
-
-            val displayName = originalName.substringBeforeLast('.')
 
             val entity = CustomFontEntity(
                 id = fontId,
@@ -100,10 +110,16 @@ class FontsRepository(private val context: Context) {
             )
 
             fontDao.insertFont(entity)
+            Timber.tag(ReaderFontDiagnosticsTag).i(
+                "import.saved displayName='$displayName' internalFileName='$internalFileName' " +
+                    "exists=${destinationFile.exists()} bytes=${destinationFile.length()} " +
+                    "path='${destinationFile.absolutePath}'"
+            )
             Timber.d("Imported font: $displayName to ${destinationFile.absolutePath}")
 
             Result.success(entity)
         } catch (e: Exception) {
+            Timber.tag(ReaderFontDiagnosticsTag).e(e, "import.failed uri='$uri'")
             Timber.e(e, "Failed to import font")
             Result.failure(e)
         }
@@ -130,6 +146,18 @@ class FontsRepository(private val context: Context) {
         fontDao.deletePermanently(fontId)
     }
 
+    private fun uniqueImportedFontFile(displayName: String, extension: String, fontId: String): File {
+        val preferredFileName = importedFontFileName(displayName, extension)
+        val preferredFile = File(fontsDir, preferredFileName)
+        if (!preferredFile.exists()) return preferredFile
+
+        val fallbackFileName = importedFontFileName(
+            displayName = "${displayName}_${fontId.take(8)}",
+            extension = extension
+        )
+        return File(fontsDir, fallbackFileName)
+    }
+
     private fun getFileName(uri: Uri): String? {
         var result: String? = null
         if (uri.scheme == "content") {
@@ -152,4 +180,18 @@ class FontsRepository(private val context: Context) {
         }
         return result
     }
+}
+
+internal fun importedFontFileName(displayName: String, extension: String): String {
+    val safeBaseName = displayName
+        .replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), "_")
+        .replace(Regex("""\s+"""), " ")
+        .trim(' ', '.')
+        .take(MAX_IMPORTED_FONT_BASENAME_LENGTH)
+        .ifBlank { "font" }
+    val safeExtension = extension
+        .lowercase()
+        .replace(Regex("""[^a-z0-9]"""), "")
+        .ifBlank { "ttf" }
+    return "$safeBaseName.$safeExtension"
 }

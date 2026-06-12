@@ -107,8 +107,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
 import com.aryan.reader.R
+import com.aryan.reader.ReaderFontDiagnosticsTag
 import com.aryan.reader.data.CustomFontEntity
+import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.supportedFontMimeTypes
+import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.detectFontVariant
+import com.aryan.reader.shared.fontFaceSummary
+import com.aryan.reader.shared.familyFilenameSignature
+import com.aryan.reader.shared.groupByFamily
+import com.aryan.reader.shared.hasVariableWeightFace
+import com.aryan.reader.shared.supportsVariableWeightAxis
+import timber.log.Timber
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -412,8 +422,64 @@ fun getComposeFontFamily(
 ): FontFamily {
     if (customFontPath != null) {
         return try {
-            FontFamily(Font(File(customFontPath)))
-        } catch (_: Exception) {
+            val baseFile = File(customFontPath)
+            val signature = baseFile.nameWithoutExtension.familyFilenameSignature()
+            val siblings = baseFile.parentFile?.listFiles()?.filter {
+                it.isFile && it.extension.lowercase() in setOf("ttf", "otf", "woff", "woff2") &&
+                    it.nameWithoutExtension.familyFilenameSignature() == signature
+            } ?: listOf(baseFile)
+
+            Timber.tag(ReaderFontDiagnosticsTag).i(
+                "compose.custom.start basePath='${baseFile.absolutePath}' " +
+                    "exists=${baseFile.exists()} bytes=${baseFile.length()} " +
+                    readerFontDiagnosticSummary(baseFile.nameWithoutExtension) +
+                    " siblings=${siblings.joinToString { it.name }}"
+            )
+
+            val seenVariants = mutableSetOf<String>()
+            val fontList = siblings.flatMap { sibling ->
+                try {
+                    val variant = sibling.nameWithoutExtension.detectFontVariant()
+                    val weights = if (sibling.nameWithoutExtension.supportsVariableWeightAxis()) {
+                        variableReaderFontWeights
+                    } else {
+                        listOf(variant?.weight ?: FontWeight.Normal)
+                    }
+                    Timber.tag(ReaderFontDiagnosticsTag).i(
+                        "compose.custom.candidate file='${sibling.name}' " +
+                            readerFontDiagnosticSummary(sibling.nameWithoutExtension) +
+                            " style=${variant?.style ?: androidx.compose.ui.text.font.FontStyle.Normal} " +
+                            "weights=${weights.joinToString { it.weight.toString() }}"
+                    )
+                    weights.mapNotNull { weight ->
+                        val style = variant?.style ?: androidx.compose.ui.text.font.FontStyle.Normal
+                        if (seenVariants.add("${weight.weight}|$style")) {
+                            Font(sibling, weight, style)
+                        } else {
+                            Timber.tag(ReaderFontDiagnosticsTag).i(
+                                "compose.custom.skipDuplicate file='${sibling.name}' weight=${weight.weight} style=$style"
+                            )
+                            null
+                        }
+                    }
+                } catch (e: Exception) {
+                    Timber.tag(ReaderFontDiagnosticsTag).e(e, "compose.custom.candidateFailed file='${sibling.name}'")
+                    emptyList()
+                }
+            }
+            if (fontList.isNotEmpty()) {
+                Timber.tag(ReaderFontDiagnosticsTag).i(
+                    "compose.custom.loaded base='${baseFile.name}' registeredVariants=${seenVariants.joinToString()}"
+                )
+                FontFamily(fontList)
+            } else {
+                Timber.tag(ReaderFontDiagnosticsTag).w(
+                    "compose.custom.fallbackSingle base='${baseFile.name}' no inferred variants loaded"
+                )
+                FontFamily(Font(baseFile))
+            }
+        } catch (e: Exception) {
+            Timber.tag(ReaderFontDiagnosticsTag).e(e, "compose.custom.failed path='$customFontPath'")
             FontFamily.Default
         }
     }
@@ -435,6 +501,18 @@ fun getComposeFontFamily(
 
     return FontFamily.Default
 }
+
+private val variableReaderFontWeights = listOf(
+    FontWeight.Thin,
+    FontWeight.ExtraLight,
+    FontWeight.Light,
+    FontWeight.Normal,
+    FontWeight.Medium,
+    FontWeight.SemiBold,
+    FontWeight.Bold,
+    FontWeight.ExtraBold,
+    FontWeight.Black
+)
 
 fun saveReaderSettings(
     context: Context,
@@ -853,16 +931,56 @@ fun FontSelectionSheetContent(
                                 )
                             }
                         } else {
+                            val customFontFamilies = remember(customFonts) {
+                                val grouped = customFonts
+                                    .filterNot { it.isDeleted }
+                                    .map { it.toSharedCustomFontItem() }
+                                    .groupByFamily()
+                                Timber.tag(ReaderFontDiagnosticsTag).i(
+                                    "picker.grouped count=${grouped.size} families=${
+                                        grouped.joinToString { family ->
+                                            "${family.familyName} -> [" +
+                                                family.variants.joinToString { variantItem ->
+                                                    val font = variantItem.font
+                                                    "${font.displayName}:${variantItem.variant}"
+                                                } + "]"
+                                        }
+                                    }"
+                                )
+                                grouped
+                            }
                             LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
-                                items(customFonts) { fontEntity ->
-                                    val isSelected = currentCustomFontPath == fontEntity.path
-                                    val fontFamily = remember(fontEntity.path) {
-                                        try { FontFamily(Font(File(fontEntity.path))) } catch(_:Exception) { FontFamily.Default }
+                                items(customFontFamilies) { family ->
+                                    val baseFont = family.variants.firstOrNull {
+                                        val variant = it.variant
+                                        variant != null &&
+                                            variant.weight == FontWeight.Normal &&
+                                            variant.style == androidx.compose.ui.text.font.FontStyle.Normal
+                                    }?.font ?: family.variants.first().font
+                                    val isSelected = family.variants.any { it.font.path == currentCustomFontPath }
+                                    val fontFamily = remember(baseFont.path) {
+                                        getComposeFontFamily(ReaderFont.ORIGINAL, baseFont.path)
                                     }
+                                    Timber.tag(ReaderFontDiagnosticsTag).i(
+                                        "picker.row family='${family.familyName}' base='${baseFont.displayName}' " +
+                                            "selected=$isSelected variants=${
+                                                family.variants.joinToString { "${it.font.displayName}:${it.variant}" }
+                                            }"
+                                    )
 
                                     ListItem(
                                         headlineContent = {
-                                            Text(fontEntity.displayName, fontFamily = fontFamily)
+                                            Text(family.familyName, fontFamily = fontFamily)
+                                        },
+                                        supportingContent = {
+                                            Text(
+                                                buildString {
+                                                    append(family.fontFaceSummary())
+                                                    if (family.hasVariableWeightFace()) append(" - Variable weight")
+                                                },
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         },
                                         trailingContent = {
                                             if (isSelected) {
@@ -873,7 +991,12 @@ fun FontSelectionSheetContent(
                                                 )
                                             }
                                         },
-                                        modifier = Modifier.clickable { onFontSelected(ReaderFont.ORIGINAL, fontEntity.path) },
+                                        modifier = Modifier.clickable {
+                                            Timber.tag(ReaderFontDiagnosticsTag).i(
+                                                "picker.selected family='${family.familyName}' base='${baseFont.displayName}' path='${baseFont.path}'"
+                                            )
+                                            onFontSelected(ReaderFont.ORIGINAL, baseFont.path)
+                                        },
                                         colors = if (isSelected) ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)) else ListItemDefaults.colors()
                                     )
                                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -885,6 +1008,18 @@ fun FontSelectionSheetContent(
             }
         }
     }
+}
+
+private fun CustomFontEntity.toSharedCustomFontItem(): CustomFontItem {
+    return CustomFontItem(
+        id = id,
+        displayName = displayName,
+        fileName = fileName,
+        fileExtension = fileExtension,
+        path = path,
+        timestamp = timestamp,
+        isDeleted = isDeleted
+    )
 }
 
 private const val REMOVE_EDGE_PADDING_KEY = "reader_remove_edge_padding"

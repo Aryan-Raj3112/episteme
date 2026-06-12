@@ -2,16 +2,25 @@ package com.aryan.reader.paginatedreader
 
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import com.aryan.reader.ReaderFontDiagnosticsTag
+import com.aryan.reader.readerFontDiagnosticSummary
+import com.aryan.reader.shared.detectFontVariant
+import com.aryan.reader.shared.familyFilenameSignature
+import com.aryan.reader.shared.fontWeightCssDescriptor
+import timber.log.Timber
 import java.io.File
 
 private val supportedEpubFontExtensions = setOf("ttf", "otf", "woff", "woff2")
-private val filenameSeparatorsRegex = Regex("""[\s._-]+""")
 
 fun expandFontFacesWithSiblings(
     fontFaces: List<FontFaceInfo>,
     extractionPath: String
 ): List<FontFaceInfo> {
     if (fontFaces.isEmpty()) return emptyList()
+
+    Timber.tag(ReaderFontDiagnosticsTag).i(
+        "epub.siblings.start inputCount=${fontFaces.size} extractionPath='$extractionPath'"
+    )
 
     val result = fontFaces.toMutableList()
     val existingKeys = result.mapTo(mutableSetOf()) { it.variantKey() }
@@ -23,15 +32,28 @@ fun expandFontFacesWithSiblings(
         if (sourceSignature.isBlank()) return@forEach
         val parent = sourceFile.parentFile ?: return@forEach
 
+        Timber.tag(ReaderFontDiagnosticsTag).i(
+            "epub.siblings.source family='${fontFace.fontFamily}' src='${fontFace.src}' " +
+                "file='${sourceFile.name}' " +
+                readerFontDiagnosticSummary(sourceFile.nameWithoutExtension)
+        )
+
         parent.listFiles()
             ?.asSequence()
             ?.filter { candidate ->
                 candidate.isFile &&
                     candidate.extension.lowercase() in supportedEpubFontExtensions &&
-                    candidate.familyFilenameSignature() == sourceSignature
+                    candidate.nameWithoutExtension.familyFilenameSignature() == sourceSignature
             }
             ?.forEach { candidate ->
-                val variant = candidate.detectFontVariant() ?: return@forEach
+                val variant = candidate.nameWithoutExtension.detectFontVariant()
+                if (variant == null) {
+                    Timber.tag(ReaderFontDiagnosticsTag).w(
+                        "epub.siblings.skipNoVariant file='${candidate.name}' " +
+                            readerFontDiagnosticSummary(candidate.nameWithoutExtension)
+                    )
+                    return@forEach
+                }
                 val src = candidate.toFontFaceSrc(extractionRoot)
                 val inferred = fontFace.copy(
                     src = src,
@@ -39,11 +61,19 @@ fun expandFontFacesWithSiblings(
                     fontStyle = variant.style
                 )
                 if (existingKeys.add(inferred.variantKey())) {
+                    Timber.tag(ReaderFontDiagnosticsTag).i(
+                        "epub.siblings.add family='${fontFace.fontFamily}' src='$src' variant=$variant"
+                    )
                     result += inferred
+                } else {
+                    Timber.tag(ReaderFontDiagnosticsTag).i(
+                        "epub.siblings.skipDuplicate family='${fontFace.fontFamily}' src='$src' variant=$variant"
+                    )
                 }
             }
     }
 
+    Timber.tag(ReaderFontDiagnosticsTag).i("epub.siblings.done outputCount=${result.size}")
     return result
 }
 
@@ -58,17 +88,16 @@ fun buildEpubFontFaceCss(
             val file = fontFace.resolvedFile(extractionRoot).takeIf { it.isFile } ?: return@mapNotNull null
             val family = fontFace.fontFamily.cssString()
             val url = file.toURI().toString().cssUrlString()
-            val weight = fontFace.fontWeight?.weight ?: FontWeight.Normal.weight
+            val weight = file.nameWithoutExtension.fontWeightCssDescriptor(fontFace.fontWeight ?: FontWeight.Normal)
             val style = if (fontFace.fontStyle == FontStyle.Italic) "italic" else "normal"
+            Timber.tag(ReaderFontDiagnosticsTag).i(
+                "epub.css.face family='$family' file='${file.name}' fontWeight='$weight' fontStyle='$style' " +
+                    readerFontDiagnosticSummary(file.nameWithoutExtension)
+            )
             "@font-face { font-family: '$family'; src: url('$url'); font-weight: $weight; font-style: $style; }"
         }
         .joinToString(separator = " ")
 }
-
-private data class FontVariant(
-    val weight: FontWeight,
-    val style: FontStyle
-)
 
 private fun FontFaceInfo.resolvedFile(extractionRoot: File): File {
     val source = File(src)
@@ -95,61 +124,8 @@ private fun File.toFontFaceSrc(extractionRoot: File): String {
 }
 
 private fun File.familyFilenameSignature(): String {
-    val tokens = filenameTokens()
-        .filter { token ->
-            token.isNotBlank() && token !in fontVariantTokens
-        }
-    return tokens.joinToString(separator = "")
+    return nameWithoutExtension.familyFilenameSignature()
 }
-
-private fun File.detectFontVariant(): FontVariant? {
-    val tokens = filenameTokens()
-        .filter { it.isNotBlank() }
-    if (tokens.isEmpty()) return null
-
-    val style = if (tokens.any { it in italicTokens || it in compoundItalicTokens }) FontStyle.Italic else FontStyle.Normal
-    val weight = tokens.asSequence()
-        .mapNotNull { tokenWeightMap[it] ?: compoundTokenWeightMap[it] }
-        .maxByOrNull { it.weight }
-        ?: FontWeight.Normal
-
-    return FontVariant(weight = weight, style = style)
-}
-
-private fun File.filenameTokens(): List<String> {
-    return nameWithoutExtension
-        .replace(Regex("""(?<=[a-z])(?=[A-Z])"""), "-")
-        .lowercase()
-        .split(filenameSeparatorsRegex)
-}
-
-private val italicTokens = setOf("italic", "ital", "oblique", "obliq", "it")
-
-private val tokenWeightMap = mapOf(
-    "thin" to FontWeight.Thin,
-    "hairline" to FontWeight.Thin,
-    "extralight" to FontWeight.ExtraLight,
-    "ultralight" to FontWeight.ExtraLight,
-    "light" to FontWeight.Light,
-    "regular" to FontWeight.Normal,
-    "normal" to FontWeight.Normal,
-    "roman" to FontWeight.Normal,
-    "book" to FontWeight.Normal,
-    "medium" to FontWeight.Medium,
-    "semibold" to FontWeight.SemiBold,
-    "demibold" to FontWeight.SemiBold,
-    "bold" to FontWeight.Bold,
-    "extrabold" to FontWeight.ExtraBold,
-    "ultrabold" to FontWeight.ExtraBold,
-    "black" to FontWeight.Black,
-    "heavy" to FontWeight.Black
-)
-
-private val compoundItalicTokens = setOf("bolditalic", "boldital", "boldoblique", "boldobliq")
-private val compoundTokenWeightMap = compoundItalicTokens.associateWith { FontWeight.Bold }
-
-private val fontVariantTokens = italicTokens + tokenWeightMap.keys +
-    compoundItalicTokens
 
 private fun String.cssString(): String = replace("\\", "\\\\").replace("'", "\\'")
 

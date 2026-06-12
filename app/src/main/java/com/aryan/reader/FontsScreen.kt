@@ -64,10 +64,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.CustomFontFamilyItem
+import com.aryan.reader.shared.CustomFontVariantItem
+import com.aryan.reader.shared.fontFaceLabel
+import com.aryan.reader.shared.fontFaceSummary
+import com.aryan.reader.shared.groupByFamily
+import com.aryan.reader.shared.hasVariableWeightFace
 import com.aryan.reader.shared.ui.SharedAppFontSelector
 import com.aryan.reader.shared.ui.SharedFontSettingsSection
 import com.aryan.reader.shared.ui.SharedFontSettingsTabs
@@ -97,6 +104,7 @@ fun FontsScreen(
     val selectedFonts = remember(fonts, selectedFontIds) {
         fonts.filter { it.id in selectedFontIds }
     }
+    val fontEntitiesById = remember(fonts) { fonts.associateBy { it.id } }
     val isFontSelectionMode = selectedSection == SharedFontSettingsSection.READER_FONTS && selectedFonts.isNotEmpty()
 
     LaunchedEffect(fonts) {
@@ -172,6 +180,7 @@ fun FontsScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             val sharedFonts = remember(fonts) { fonts.toSharedCustomFontItems() }
+            val fontFamilies = remember(sharedFonts) { sharedFonts.groupByFamily() }
             Column(modifier = Modifier.fillMaxSize()) {
                 SharedFontSettingsTabs(
                     selectedSection = selectedSection,
@@ -202,16 +211,20 @@ fun FontsScreen(
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 88.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                items(fonts, key = { it.id }) { font ->
-                                    FontListItem(
-                                        font = font,
-                                        isSelected = font.id in selectedFontIds,
+                                items(fontFamilies, key = { family -> family.variants.joinToString("|") { it.font.id } }) { family ->
+                                    FontFamilyListItem(
+                                        family = family,
+                                        selectedFontIds = selectedFontIds,
                                         isSelectionMode = isFontSelectionMode,
-                                        onSelectionToggle = {
-                                            selectedFontIds = selectedFontIds.toggle(font.id)
+                                        fontEntityForId = { id -> fontEntitiesById[id] },
+                                        onVariantSelectionToggle = { id ->
+                                            selectedFontIds = selectedFontIds.toggle(id)
                                         },
-                                        onDelete = {
-                                            fontsPendingDelete = listOf(font)
+                                        onFamilySelectionToggle = {
+                                            selectedFontIds = selectedFontIds.toggleAll(family.variants.map { it.font.id })
+                                        },
+                                        onDeleteVariant = { id ->
+                                            fontEntitiesById[id]?.let { fontsPendingDelete = listOf(it) }
                                         }
                                     )
                                 }
@@ -531,6 +544,188 @@ fun FontListItem(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun FontFamilyListItem(
+    family: CustomFontFamilyItem,
+    selectedFontIds: Set<String>,
+    isSelectionMode: Boolean,
+    fontEntityForId: (String) -> CustomFontEntity?,
+    onVariantSelectionToggle: (String) -> Unit,
+    onFamilySelectionToggle: () -> Unit,
+    onDeleteVariant: (String) -> Unit
+) {
+    val baseFont = remember(family) {
+        family.variants.firstOrNull { it.fontFaceLabel() == "Regular" }?.font ?: family.variants.first().font
+    }
+    val customTypeface = remember(baseFont.path) {
+        try {
+            FontFamily(Font(File(baseFont.path)))
+        } catch (_: Exception) {
+            null
+        }
+    }
+    val familyFontIds = remember(family) { family.variants.map { it.font.id }.toSet() }
+    val isSelected = familyFontIds.any { it in selectedFontIds }
+    val allSelected = familyFontIds.all { it in selectedFontIds }
+    val faceSummary = remember(family) {
+        buildString {
+            append(family.fontFaceSummary())
+            if (family.hasVariableWeightFace()) append(" - Variable weight")
+            append(" - ${family.variants.size} file")
+            if (family.variants.size != 1) append("s")
+        }
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {
+                    if (isSelectionMode) {
+                        onFamilySelectionToggle()
+                    }
+                },
+                onLongClick = onFamilySelectionToggle
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isSelectionMode) {
+                    Checkbox(
+                        checked = allSelected,
+                        onCheckedChange = { onFamilySelectionToggle() },
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = family.familyName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = faceSummary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), MaterialTheme.shapes.small)
+                    .padding(12.dp)
+            ) {
+                if (customTypeface != null) {
+                    Text(
+                        text = stringResource(R.string.font_preview_text),
+                        fontFamily = customTypeface,
+                        fontSize = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                } else {
+                    Text(
+                        text = stringResource(R.string.font_preview_error),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            family.variants.forEachIndexed { index, variant ->
+                FontVariantRow(
+                    variant = variant,
+                    entity = fontEntityForId(variant.font.id),
+                    isSelected = variant.font.id in selectedFontIds,
+                    isSelectionMode = isSelectionMode,
+                    onSelectionToggle = { onVariantSelectionToggle(variant.font.id) },
+                    onDelete = { onDeleteVariant(variant.font.id) }
+                )
+                if (index != family.variants.lastIndex) {
+                    HorizontalDivider(modifier = Modifier.padding(start = if (isSelectionMode) 48.dp else 0.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FontVariantRow(
+    variant: CustomFontVariantItem,
+    entity: CustomFontEntity?,
+    isSelected: Boolean,
+    isSelectionMode: Boolean,
+    onSelectionToggle: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(enabled = isSelectionMode) { onSelectionToggle() }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (isSelectionMode) {
+            Checkbox(
+                checked = isSelected,
+                onCheckedChange = { onSelectionToggle() },
+                modifier = Modifier.padding(end = 8.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = variant.fontFaceLabel(),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = entity?.fileName ?: variant.font.fileName,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Text(
+            text = variant.font.fileExtension.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+        if (!isSelectionMode) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = stringResource(R.string.action_delete),
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+
 private fun List<CustomFontEntity>.toSharedCustomFontItems(): List<CustomFontItem> {
     return filterNot { it.isDeleted }
         .sortedBy { it.displayName.lowercase() }
@@ -590,4 +785,9 @@ fun DeleteFontsConfirmationDialog(
 
 private fun Set<String>.toggle(id: String): Set<String> {
     return if (id in this) this - id else this + id
+}
+
+private fun Set<String>.toggleAll(ids: List<String>): Set<String> {
+    val idSet = ids.toSet()
+    return if (containsAll(idSet)) this - idSet else this + idSet
 }

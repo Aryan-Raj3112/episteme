@@ -117,6 +117,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.aryan.reader.shared.BuiltInReaderThemes
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.fontFaceSummary
+import com.aryan.reader.shared.groupByFamily
+import com.aryan.reader.shared.hasVariableWeightFace
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
@@ -1740,28 +1743,46 @@ fun SharedReaderFormatControls(
                     }
                 }
 
-                val activeCustomFonts = customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() }
-                if (activeCustomFonts.isNotEmpty()) {
+                val activeCustomFontFamilies = customFonts.filterNot { it.isDeleted }.groupByFamily()
+                if (activeCustomFontFamilies.isNotEmpty()) {
                     Text(
                         readerString("desktop_imported_fonts", "Imported fonts"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     SharedReaderChoiceRow {
-                        activeCustomFonts.forEach { font ->
+                        activeCustomFontFamilies.forEach { family ->
+                            val isSelected = family.variants.any { it.font.path == settings.customFontPath }
                             FilterChip(
-                                selected = settings.customFontPath == font.path,
+                                selected = isSelected,
                                 onClick = {
+                                    val baseFont = family.variants.firstOrNull { it.variant?.weight == FontWeight.Normal && it.variant?.style == androidx.compose.ui.text.font.FontStyle.Normal }?.font ?: family.variants.first().font
                                     onReaderAction(
                                         ReaderAction.SettingsChanged(
                                             settings.copy(
-                                                fontFamily = font.displayName,
-                                                customFontPath = font.path
+                                                fontFamily = family.familyName,
+                                                customFontPath = baseFont.path
                                             )
                                         )
                                     )
                                 },
-                                label = { Text(font.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                label = {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(family.familyName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        val variantsStr = buildString {
+                                            append(family.fontFaceSummary())
+                                            if (family.hasVariableWeightFace()) append(" - Variable weight")
+                                        }
+                                        if (variantsStr.isNotBlank()) {
+                                            Text(
+                                                "($variantsStr)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
                             )
                         }
                     }

@@ -1,6 +1,8 @@
 package com.aryan.reader.paginatedreader
 
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
@@ -96,15 +98,53 @@ class HtmlParserLinkTest {
         })
     }
 
-    private fun parse(html: String): List<SemanticBlock> {
+    @Test
+    fun `css font family resolves onto block and inline span styles`() {
+        val cssRules = CssParser.parse(
+            cssContent = """
+                p { font-family: "BodyFace"; }
+                i { font-style: italic; }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false
+        ).rules
+
+        val blocks = parse(
+            html = """
+            <html>
+              <body>
+                <p>plain <i>italic</i></p>
+              </body>
+            </html>
+            """.trimIndent(),
+            cssRules = cssRules,
+            fontFamilyMap = mapOf("bodyface" to FontFamily.Serif)
+        )
+
+        val paragraph = blocks.single() as SemanticParagraph
+        val italicSpan = paragraph.spans.single { it.tag == "i" }
+
+        assertEquals(FontFamily.Serif, paragraph.style.spanStyle.fontFamily)
+        assertEquals(FontFamily.Serif, italicSpan.style.spanStyle.fontFamily)
+        assertEquals(FontStyle.Italic, italicSpan.style.spanStyle.fontStyle)
+    }
+
+    private fun parse(
+        html: String,
+        cssRules: OptimizedCssRules = OptimizedCssRules(),
+        fontFamilyMap: Map<String, FontFamily> = emptyMap()
+    ): List<SemanticBlock> {
         return htmlToSemanticBlocks(
             html = html,
-            cssRules = OptimizedCssRules(),
+            cssRules = cssRules,
             textStyle = TextStyle(fontSize = 16.sp),
             chapterAbsPath = "OEBPS/chapter1.xhtml",
             extractionBasePath = "",
             density = Density(1f),
-            fontFamilyMap = emptyMap(),
+            fontFamilyMap = fontFamilyMap,
             constraints = Constraints(maxWidth = 400, maxHeight = 800)
         )
     }

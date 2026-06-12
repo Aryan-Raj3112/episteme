@@ -1158,6 +1158,7 @@ private fun SemanticTextBlock.textStyle(baseStyle: TextStyle, settings: ReaderSe
     return baseStyle.copy(
         fontSize = fontSize,
         lineHeight = lineHeight,
+        fontFamily = style.spanStyle.fontFamily ?: baseStyle.fontFamily,
         fontWeight = if (this is SemanticHeader) FontWeight.Bold else baseStyle.fontWeight,
         textAlign = resolveSharedReaderTextAlign(
             cssTextAlign = style.paragraphStyle.textAlign,

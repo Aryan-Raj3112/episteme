@@ -213,7 +213,7 @@ private class SemanticHtmlParser(
         }
 
         val body = document.body()
-        return parseContainer(body, getElementStyle(body))
+        return parseContainer(body, getElementStyle(body).withResolvedFontFamily())
     }
 
     private inline fun Element.anyChildElement(predicate: (Element) -> Boolean): Boolean {
@@ -295,7 +295,7 @@ private class SemanticHtmlParser(
             textEmphasis = elementOwnStyle.textEmphasis ?: inheritedStyle.textEmphasis,
             whiteSpace = elementOwnStyle.whiteSpace ?: inheritedStyle.whiteSpace,
             customProperties = inheritedStyle.customProperties + elementOwnStyle.customProperties
-        )
+        ).withResolvedFontFamily()
 
         if (finalStyle.display == "none") return emptyList()
 
@@ -364,7 +364,19 @@ private class SemanticHtmlParser(
         val pseudoStyle = rulesForElement(element, pseudoElement).fold(CssStyle()) { acc, rule ->
             acc.merge(rule.style)
         }
-        return inheritedStyle.merge(pseudoStyle)
+        return inheritedStyle.merge(pseudoStyle).withResolvedFontFamily()
+    }
+
+    private fun CssStyle.withResolvedFontFamily(): CssStyle {
+        if (spanStyle.fontFamily != null) return this
+        val resolvedFontFamily = fontFamilies.asSequence()
+            .mapNotNull { name ->
+                val normalized = name.trim().lowercase()
+                currentFontFamilyMap[normalized] ?: FontFamilyMapper.nameToFontFamily(normalized)
+            }
+            .firstOrNull()
+            ?: return this
+        return copy(spanStyle = spanStyle.copy(fontFamily = resolvedFontFamily))
     }
 
     private fun firstCssUrl(value: String): String? {
@@ -805,7 +817,7 @@ private class SemanticHtmlParser(
                         appendText("\n"); return
                     }
                     val currentElementStyle = getElementStyle(node, inheritedStyle.customProperties)
-                    val newStyle = inheritedStyle.merge(currentElementStyle)
+                    val newStyle = inheritedStyle.merge(currentElementStyle).withResolvedFontFamily()
                     if (newStyle.display == "none") return
                     val tag = node.tagName().lowercase()
                     val href = node.linkHrefOrNull()
@@ -969,7 +981,10 @@ private class SemanticHtmlParser(
         val isOrdered = listElement.tagName().lowercase() == "ol"
         val items = listElement.children().mapNotNull { child ->
             if (child.tagName().lowercase() != "li") return@mapNotNull null
-            val itemStyle = listStyle.merge(getElementStyle(child, listStyle.customProperties)).withResolvedBlockResources()
+            val itemStyle = listStyle
+                .merge(getElementStyle(child, listStyle.customProperties))
+                .withResolvedFontFamily()
+                .withResolvedBlockResources()
             val (text, spans) = buildSemanticTextAndSpans(child, itemStyle, inheritedLinkHref)
             val imageSrc = itemStyle.blockStyle.listStyleImage?.let { resolveImagePath(it) }
             SemanticListItem(text, spans, itemStyle, child.id().ifBlank { null }, child.getCfiPath(), 0, imageSrc, blockIndex = nextBlockIndex++)
@@ -990,7 +1005,9 @@ private class SemanticHtmlParser(
                 val tagName = cellElement.tagName().lowercase()
                 if (tagName !in listOf("td", "th")) return@mapNotNull null
 
-                var cellCssStyle = getElementStyle(cellElement, rowStyle.customProperties).withResolvedBlockResources()
+                var cellCssStyle = getElementStyle(cellElement, rowStyle.customProperties)
+                    .withResolvedFontFamily()
+                    .withResolvedBlockResources()
                 if (cellCssStyle.display == "none") return@mapNotNull null
 
                 if (!cellCssStyle.blockStyle.backgroundColor.isSpecified) {

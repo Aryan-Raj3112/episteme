@@ -3170,7 +3170,7 @@ private fun SemanticTextBlock.renderedTextStyle(
         ).takeIf { it.isSpecified } ?: foreground,
         fontSize = fontSize,
         lineHeight = lineHeight,
-        fontFamily = fallbackFontFamily,
+        fontFamily = style.spanStyle.fontFamily ?: fallbackFontFamily,
         fontWeight = fontWeight
             ?: style.spanStyle.fontWeight
             ?: if (this is SemanticHeader) FontWeight.Bold else MaterialTheme.typography.bodyLarge.fontWeight,
