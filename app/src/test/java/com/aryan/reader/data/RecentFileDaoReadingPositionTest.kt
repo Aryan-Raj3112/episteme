@@ -105,6 +105,26 @@ class RecentFileDaoReadingPositionTest {
         assertTrue(item.isRecent)
     }
 
+    @Test
+    fun `recent file summary caps oversized descriptions while full lookup keeps metadata`() = runTest {
+        val longDescription = "Summary ".repeat(2_000)
+        val longOriginalDescription = "Original ".repeat(2_000)
+        dao.insertOrUpdateFile(
+            recentFileEntity().copy(
+                description = longDescription,
+                originalDescription = longOriginalDescription
+            )
+        )
+
+        val summary = dao.getRecentFiles().first().single()
+        val full = dao.getFileByBookId("book-1")!!
+
+        assertEquals(4_096, summary.description?.length)
+        assertEquals(4_096, summary.originalDescription?.length)
+        assertEquals(longDescription, full.description)
+        assertEquals(longOriginalDescription, full.originalDescription)
+    }
+
     private fun recentFileEntity(lastPositionCfi: String? = null): RecentFileEntity {
         return RecentFileEntity(
             bookId = "book-1",

@@ -502,28 +502,17 @@ fun HomeScreen(
                         )
                     }
 
-                    itemForInfoDialog?.let { item ->
-                        if (showInfoDialog) {
-                            FileInfoDialog(
-                                item = item,
-                                usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
-                                onDismiss = {
-                                    showInfoDialog = false
-                                    itemForInfoDialog = null
-                                },
-                                onSaveMetadata = { metadata ->
-                                    viewModel.updateBookMetadata(item.bookId, metadata)
-                                },
-                                onSaveDisplayName = { name ->
-                                    viewModel.updateCustomName(item.bookId, name)
-                                },
-                                onRestoreMetadata = {
-                                    viewModel.restoreOriginalBookMetadata(item.bookId)
-                                },
-                                onOpenTags = { viewModel.openTagSelection(setOf(item.bookId)) }
-                            )
-                        }
-                    }
+                    HydratedFileInfoDialog(
+                        item = itemForInfoDialog,
+                        isVisible = showInfoDialog,
+                        uiState = uiState,
+                        viewModel = viewModel,
+                        onDismiss = {
+                            showInfoDialog = false
+                            itemForInfoDialog = null
+                        },
+                        onOpenTags = { bookId -> viewModel.openTagSelection(setOf(bookId)) }
+                    )
 
                     if (showClearReflowCacheDialog) {
                         DangerousFolderActionDialog(

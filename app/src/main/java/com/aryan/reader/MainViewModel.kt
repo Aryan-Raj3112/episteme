@@ -804,6 +804,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(showTagSelectionDialogFor = emptySet()) }
     }
 
+    suspend fun getFileInfoItem(bookId: String): RecentFileItem? {
+        return recentFilesRepository.getFileByBookId(bookId)
+    }
+
     fun createAndAssignTag(name: String, bookIds: Set<String>) {
         val sanitizedBookIds = SharedLibraryEditor.cleanBookIds(bookIds)
         if (sanitizedBookIds.isEmpty()) return

@@ -2,7 +2,10 @@ package com.aryan.reader
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.aryan.reader.data.RecentFileItem
 
 @Composable
@@ -64,28 +67,17 @@ internal fun ReaderFileInfoDialogs(
         }
     }
 
-    item?.let { fileInfoItem ->
-        if (isFileInfoVisible) {
-            FileInfoDialog(
-                item = fileInfoItem,
-                usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
-                onDismiss = { onFileInfoVisibleChange(false) },
-                onSaveMetadata = { metadata ->
-                    viewModel.updateBookMetadata(fileInfoItem.bookId, metadata)
-                },
-                onSaveDisplayName = { name ->
-                    viewModel.updateCustomName(fileInfoItem.bookId, name)
-                },
-                onRestoreMetadata = {
-                    viewModel.restoreOriginalBookMetadata(fileInfoItem.bookId)
-                },
-                onOpenTags = {
-                    onFileInfoVisibleChange(false)
-                    viewModel.openTagSelection(setOf(fileInfoItem.bookId))
-                }
-            )
+    HydratedFileInfoDialog(
+        item = item,
+        isVisible = isFileInfoVisible,
+        uiState = uiState,
+        viewModel = viewModel,
+        onDismiss = { onFileInfoVisibleChange(false) },
+        onOpenTags = { bookId ->
+            onFileInfoVisibleChange(false)
+            viewModel.openTagSelection(setOf(bookId))
         }
-    }
+    )
 
     if (uiState.showTagSelectionDialogFor.isNotEmpty()) {
         TagSelectionBottomSheet(
@@ -99,6 +91,52 @@ internal fun ReaderFileInfoDialogs(
                 viewModel.toggleTagForBooks(tagId, uiState.showTagSelectionDialogFor, assign)
             },
             onDismiss = viewModel::closeTagSelection
+        )
+    }
+}
+
+@Composable
+internal fun HydratedFileInfoDialog(
+    item: RecentFileItem?,
+    isVisible: Boolean,
+    uiState: ReaderScreenState,
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit,
+    onOpenTags: (String) -> Unit
+) {
+    var fileInfoItem by remember(item?.bookId) { mutableStateOf(item) }
+    var hasResolvedFullItem by remember(item?.bookId) { mutableStateOf(false) }
+
+    LaunchedEffect(item) {
+        fileInfoItem = item
+        hasResolvedFullItem = false
+    }
+
+    LaunchedEffect(isVisible, item?.bookId) {
+        if (isVisible && item != null) {
+            fileInfoItem = viewModel.getFileInfoItem(item.bookId)?.copy(tags = item.tags) ?: item
+            hasResolvedFullItem = true
+        }
+    }
+
+    val resolvedItem = fileInfoItem
+    if (isVisible && resolvedItem != null && hasResolvedFullItem) {
+        FileInfoDialog(
+            item = resolvedItem,
+            usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+            onDismiss = onDismiss,
+            onSaveMetadata = { metadata ->
+                viewModel.updateBookMetadata(resolvedItem.bookId, metadata)
+            },
+            onSaveDisplayName = { name ->
+                viewModel.updateCustomName(resolvedItem.bookId, name)
+            },
+            onRestoreMetadata = {
+                viewModel.restoreOriginalBookMetadata(resolvedItem.bookId)
+            },
+            onOpenTags = {
+                onOpenTags(resolvedItem.bookId)
+            }
         )
     }
 }

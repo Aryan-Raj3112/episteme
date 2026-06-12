@@ -128,8 +128,15 @@
                 background-color: rgba(255, 236, 179, 0.8);
                 /* Semi-transparent Gold */
                 color: black !important;
+                display: inline !important;
+                text-align: initial !important;
+                text-align-last: auto !important;
+                letter-spacing: normal !important;
+                word-spacing: normal !important;
                 padding: 0.1em 0;
                 border-radius: 3px;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
             }
 
             html.dark-theme span.tts-highlight {
@@ -1496,6 +1503,16 @@
     };
 
     const TTS_HIGHLIGHT_LOG_TAG = "TTS_HIGHLIGHT_DIAGNOSIS";
+    const TTS_HIGHLIGHT_BLOCK_SELECTOR = "p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th";
+
+    function getTtsHighlightBlock(node) {
+        if (!node) {
+            return document.body;
+        }
+
+        const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+        return (element && element.closest(TTS_HIGHLIGHT_BLOCK_SELECTOR)) || document.body;
+    }
 
     window.highlightFromCfi = function (cfi, textToHighlight, startOffset) {
         console.log(`$ {
@@ -1556,9 +1573,10 @@
             , Text content: '${(location.node.textContent || "").substring(0, 50)}...' `);
 
             const baseNode = location.node;
+            const highlightRoot = getTtsHighlightBlock(baseNode);
             let remainingOffset = startOffset;
 
-            const treeWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+            const treeWalker = document.createTreeWalker(highlightRoot, NodeFilter.SHOW_TEXT, null, false);
             treeWalker.currentNode = baseNode;
 
             let currentNode = baseNode.nodeType === Node.TEXT_NODE ? baseNode : treeWalker.nextNode();
@@ -1626,7 +1644,7 @@
                 } else {
                     remainingTextLength -= availableLength;
                     // Important: We need a fresh walker starting from the endNode to find the *next* text node reliably
-                    const nextNodeWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+                    const nextNodeWalker = document.createTreeWalker(highlightRoot, NodeFilter.SHOW_TEXT, null, false);
                     nextNodeWalker.currentNode = endNode;
                     endNode = nextNodeWalker.nextNode();
                     endOffset = 0; // Start from the beginning of the next node
@@ -1677,11 +1695,14 @@
                     TTS_HIGHLIGHT_LOG_TAG
                 }
 
-                : surroundContents failed, using fallback. Error: $ {
+                : surroundContents failed, using same-block fallback. Error: $ {
                     e.message
                 }
 
                 `);
+                if (!highlightRoot.contains(range.commonAncestorContainer)) {
+                    return "JS: Highlight range escaped current block.";
+                }
                 const contents = range.extractContents();
                 highlightSpan.appendChild(contents);
                 range.insertNode(highlightSpan);

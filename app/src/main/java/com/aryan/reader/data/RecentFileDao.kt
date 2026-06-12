@@ -33,7 +33,7 @@ interface RecentFileDao {
     @Upsert
     suspend fun insertOrUpdateFiles(files: List<RecentFileEntity>)
 
-    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, substr(description, 1, 4096) AS description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, substr(originalDescription, 1, 4096) AS originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC")
     fun getRecentFiles(): Flow<List<RecentFileSummary>>
 
     @Query("SELECT * FROM recent_files WHERE sourceFolderUri = :sourceFolderUri AND isDeleted = 0")
@@ -45,7 +45,7 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET isReflowPreferred = :isPreferred WHERE bookId = :bookId")
     suspend fun updateReflowPreference(bookId: String, isPreferred: Boolean)
 
-    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
+    @Query("SELECT bookId, uriString, type, displayName, timestamp, coverImagePath, title, author, lastChapterIndex, lastPage, lastPositionCfi, progressPercentage, isRecent, isAvailable, lastModifiedTimestamp, isDeleted, locatorBlockIndex, locatorCharOffset, sourceFolderUri, isReflowPreferred, customName, fileSize, fileContentModifiedTimestamp, seriesName, seriesIndex, substr(description, 1, 4096) AS description, originalTitle, originalAuthor, originalSeriesName, originalSeriesIndex, substr(originalDescription, 1, 4096) AS originalDescription, readingPositionModifiedTimestamp FROM recent_files WHERE isDeleted = 0 ORDER BY timestamp DESC LIMIT :limit")
     fun getRecentFilesList(limit: Int): List<RecentFileSummary>
 
     @Query("DELETE FROM recent_files WHERE bookId IN (:bookIds)")
