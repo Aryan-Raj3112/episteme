@@ -398,6 +398,32 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `spread page slot width fits page aspect instead of filling half landscape viewport`() {
+        val slotWidth = pdfSpreadPageSlotWidth(
+            containerWidth = 1920f,
+            containerHeight = 900f,
+            pageGap = 0f,
+            spreadPageCount = 2,
+            pageAspectRatio = 612f / 792f
+        )
+
+        assertEquals(695.4545f, slotWidth, 0.001f)
+    }
+
+    @Test
+    fun `spread page slot width caps pages to available spread width`() {
+        val slotWidth = pdfSpreadPageSlotWidth(
+            containerWidth = 1000f,
+            containerHeight = 900f,
+            pageGap = 20f,
+            spreadPageCount = 2,
+            pageAspectRatio = 1.4f
+        )
+
+        assertEquals(490f, slotWidth, 0.0001f)
+    }
+
+    @Test
     fun `canUsePdfSidecarsForBook only accepts loaded sidecars for active book`() {
         assertTrue(canUsePdfSidecarsForBook("book-a", "book-a", areSidecarsLoaded = true))
         assertEquals(false, canUsePdfSidecarsForBook("book-a", "book-b", areSidecarsLoaded = true))

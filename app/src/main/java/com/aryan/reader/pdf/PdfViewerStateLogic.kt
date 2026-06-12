@@ -88,6 +88,22 @@ internal fun clampPdfSpreadCameraOffset(
     )
 }
 
+internal fun pdfSpreadPageSlotWidth(
+    containerWidth: Float,
+    containerHeight: Float,
+    pageGap: Float,
+    spreadPageCount: Int,
+    pageAspectRatio: Float
+): Float {
+    if (containerWidth <= 0f || containerHeight <= 0f || spreadPageCount <= 0) return 0f
+    val safeGap = pageGap.coerceAtLeast(0f)
+    val safeAspectRatio = pageAspectRatio.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val availableWidth = (containerWidth - (safeGap * (spreadPageCount - 1))).coerceAtLeast(0f)
+    val maxPageWidth = availableWidth / spreadPageCount
+    val heightFittedPageWidth = containerHeight * safeAspectRatio
+    return heightFittedPageWidth.coerceAtMost(maxPageWidth).coerceAtLeast(0f)
+}
+
 internal fun activePdfCameraAfterLockPreferenceLoad(
     isScrollLocked: Boolean,
     lockedState: Triple<Float, Float, Float>?

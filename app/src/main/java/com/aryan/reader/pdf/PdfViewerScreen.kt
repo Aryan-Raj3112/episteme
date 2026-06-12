@@ -4569,6 +4569,8 @@ fun PdfViewerScreen(
                                             val latestSpreadScale = rememberUpdatedState(currentActiveScale)
                                             val latestSpreadOffset = rememberUpdatedState(currentActiveOffset)
                                             val spreadPageGap = if (showVerticalPageGap) 8.dp else 0.dp
+                                            val spreadPageGapPx = with(density) { spreadPageGap.toPx() }
+                                            val spreadPageCount = spreadPageIndices.size
                                             var spreadPanFlingJob by remember { mutableStateOf<Job?>(null) }
                                             Row(
                                                 modifier = Modifier
@@ -4941,6 +4943,20 @@ fun PdfViewerScreen(
                                             ) {
                                                 spreadPageIndices.forEach { pageIndex ->
                                                     key(pageIndex) {
+                                                        val spreadPageWidth = if (spreadPageCount > 1) {
+                                                            val pageAspectRatio = displayPageRatios.getOrElse(pageIndex) { 1f }
+                                                            with(density) {
+                                                                pdfSpreadPageSlotWidth(
+                                                                    containerWidth = boxMaxWidthFloat,
+                                                                    containerHeight = boxMaxHeightFloat,
+                                                                    pageGap = spreadPageGapPx,
+                                                                    spreadPageCount = spreadPageCount,
+                                                                    pageAspectRatio = pageAspectRatio
+                                                                ).toDp()
+                                                            }
+                                                        } else {
+                                                            with(density) { boxMaxWidthFloat.toDp() }
+                                                        }
                                             val isPageBookmarked by remember(bookmarks, pageIndex) {
                                                 derivedStateOf {
                                                     bookmarks.any { it.pageIndex == pageIndex }
@@ -5141,7 +5157,7 @@ fun PdfViewerScreen(
                                                 ocrHoverHighlights = stableOcrRects,
                                                 modifier = if (spreadPageIndices.size > 1) {
                                                     Modifier
-                                                        .weight(1f)
+                                                        .width(spreadPageWidth)
                                                         .fillMaxHeight()
                                                 } else {
                                                     Modifier.fillMaxSize()
