@@ -176,6 +176,17 @@ class BaseTtsSynthesizer(private val context: Context) {
         }
     }
 
+    private suspend fun stopEngineForRetryLocked() {
+        Timber.w("BaseTts: Stopping current TTS utterance before retry.")
+        try {
+            tts?.stop()
+        } catch (e: Exception) {
+            Timber.e(e, "BaseTts: Failed to stop TTS during retry recovery")
+        } finally {
+            delay(350)
+        }
+    }
+
     private fun applyPreferredVoice() {
         if (tts == null) return
 
@@ -302,7 +313,7 @@ class BaseTtsSynthesizer(private val context: Context) {
                     requests.remove(utteranceId)
 
                     if (attempt < MAX_RETRY_ATTEMPTS) {
-                        shutdownEngineLocked()
+                        stopEngineForRetryLocked()
                     }
                 }
             }

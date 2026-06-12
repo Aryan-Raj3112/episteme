@@ -328,16 +328,15 @@ private fun handleVerticalAutoAdvance(
             val nativeChunks = locatorConverter.getTtsChunksForChapter(epubBook, currentTtsChapterIndex)
 
             if (!nativeChunks.isNullOrEmpty()) {
-                val resumeIdx = findTtsChunkResumeIndex(
+                val startChunkIndex = resolveTtsContinuationStartIndex(
                     chunks = nativeChunks,
+                    loadedChunkCount = loadedChunkCount,
                     sourceCfi = lastReadCfi,
                     startOffsetInSource = currentState.startOffsetInSource,
-                    currentText = currentState.currentText,
-                    currentChunkIndexFallback = currentState.currentChunkIndex
+                    currentText = currentState.currentText
                 )
 
-                if (resumeIdx != null && resumeIdx + 1 < nativeChunks.size) {
-                    val startChunkIndex = resumeIdx + 1
+                if (startChunkIndex != null) {
                     val token = getAuthToken()
                     ttsController.start(
                         chunks = nativeChunks.withTtsReplacements(ttsReplacementPreferences, ttsReplacementBookId),

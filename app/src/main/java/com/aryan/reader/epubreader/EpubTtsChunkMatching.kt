@@ -78,6 +78,29 @@ internal fun findTtsChunkResumeIndex(
     return currentChunkIndexFallback.takeIf { it in chunks.indices }
 }
 
+internal fun resolveTtsContinuationStartIndex(
+    chunks: List<TtsChunk>,
+    loadedChunkCount: Int,
+    sourceCfi: String?,
+    startOffsetInSource: Int,
+    currentText: String?
+): Int? {
+    val matchedResumeIndex = findTtsChunkResumeIndex(
+        chunks = chunks,
+        sourceCfi = sourceCfi,
+        startOffsetInSource = startOffsetInSource,
+        currentText = currentText,
+        currentChunkIndexFallback = -1
+    )
+
+    val matchedNextIndex = matchedResumeIndex?.plus(1)
+    if (matchedNextIndex != null && matchedNextIndex in chunks.indices) {
+        return matchedNextIndex
+    }
+
+    return loadedChunkCount.takeIf { it in chunks.indices }
+}
+
 private fun cfiPathContains(parentPath: String, childPath: String): Boolean {
     if (parentPath.isBlank() || childPath.isBlank() || parentPath == childPath) return false
     val parentParts = parentPath.split('/').filter { it.isNotEmpty() }

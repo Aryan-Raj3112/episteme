@@ -62,4 +62,45 @@ class EpubTtsChunkMatchingTest {
 
         assertEquals(0, findTtsChunkStartIndex(chunks, nativeVerticalTarget))
     }
+
+    @Test
+    fun `vertical continuation falls back to loaded chunk boundary when resume match is unavailable`() {
+        val chunks = listOf(
+            TtsChunk("Loaded one", "/4/2", 0),
+            TtsChunk("Loaded two", "/4/4", 0),
+            TtsChunk("Remaining three", "/4/6", 0),
+            TtsChunk("Remaining four", "/4/8", 0)
+        )
+
+        assertEquals(
+            2,
+            resolveTtsContinuationStartIndex(
+                chunks = chunks,
+                loadedChunkCount = 2,
+                sourceCfi = "/does/not/match",
+                startOffsetInSource = 0,
+                currentText = "not present"
+            )
+        )
+    }
+
+    @Test
+    fun `vertical continuation starts after matched spoken chunk`() {
+        val chunks = listOf(
+            TtsChunk("Loaded one", "/4/2", 0),
+            TtsChunk("Loaded two", "/4/4", 0),
+            TtsChunk("Remaining three", "/4/6", 0)
+        )
+
+        assertEquals(
+            2,
+            resolveTtsContinuationStartIndex(
+                chunks = chunks,
+                loadedChunkCount = 1,
+                sourceCfi = "/4/4",
+                startOffsetInSource = 0,
+                currentText = "Loaded two"
+            )
+        )
+    }
 }

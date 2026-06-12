@@ -55,6 +55,25 @@ class TtsChunkNavigationTest {
     }
 
     @Test
+    fun `automatic playlist advance can step over chunks marked skipped after generation failures`() {
+        assertEquals(
+            true,
+            shouldAdvanceToTtsPlaylistChunk(
+                currentChunkIndex = 8,
+                playlistChunkIndex = 10,
+                skippedChunkIndices = setOf(9)
+            )
+        )
+        assertEquals(10, resolveNextPlayableTtsChunkIndex(8, 12, setOf(9)))
+    }
+
+    @Test
+    fun `chunk generation gives up after bounded failures`() {
+        assertEquals(false, shouldGiveUpTtsChunkGeneration(failureCount = 1, maxFailures = 2))
+        assertEquals(true, shouldGiveUpTtsChunkGeneration(failureCount = 2, maxFailures = 2))
+    }
+
+    @Test
     fun `transition prefetch is deferred only for the rebuilding generation`() {
         assertEquals(false, shouldStartTtsTransitionPrefetch(currentGeneration = 6, deferredGeneration = 6))
         assertEquals(true, shouldStartTtsTransitionPrefetch(currentGeneration = 6, deferredGeneration = 5))
