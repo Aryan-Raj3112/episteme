@@ -174,6 +174,7 @@ import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -3675,7 +3676,8 @@ fun NativeVerticalReaderScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
-                        .fillMaxSize(),
+                        .fillMaxSize()
+                        .sharedAcceleratedLazyWheelScroll(listState),
                     contentPadding = PaddingValues(top = verticalPadding, bottom = verticalPadding)
                 ) {
                     itemsIndexed(

@@ -4297,6 +4297,74 @@ fun EpubReaderHost(
             val epubJumpBackLabel = epubJumpHistory.backLocator?.epubJumpLabel()
             val epubJumpForwardLabel = epubJumpHistory.forwardLocator?.epubJumpLabel()
             val isEpubJumpHistoryVisible = showBars && !searchState.isSearchActive && (epubJumpBackLabel != null || epubJumpForwardLabel != null)
+            val keyboardLineScrollPx = with(density) {
+                (configuration.screenHeightDp.dp.toPx() * 0.16f).roundToInt().coerceAtLeast(96)
+            }
+            val keyboardPageScrollPx = with(density) {
+                (configuration.screenHeightDp.dp.toPx() * 0.82f).roundToInt().coerceAtLeast(keyboardLineScrollPx)
+            }
+
+            fun scrollVerticalReaderBy(deltaPx: Int) {
+                if (isNativeVerticalMode) {
+                    nativeVerticalScrollDeltaRequestId += 1L
+                    nativeVerticalScrollDeltaAnimated = false
+                    nativeVerticalScrollDeltaRequest = deltaPx.toFloat()
+                } else {
+                    webViewRefForTts?.evaluateJavascript(
+                        "window.scrollBy({ top: $deltaPx, behavior: 'smooth' });",
+                        null
+                    )
+                }
+            }
+
+            fun navigateReaderPage(targetPage: Int) {
+                when {
+                    isNativeVerticalMode -> {
+                        val lastPage = (nativeVerticalTotalPages - 1).coerceAtLeast(0)
+                        nativeVerticalScrollRequest = targetPage.coerceIn(0, lastPage)
+                    }
+                    currentRenderMode == RenderMode.VERTICAL_SCROLL -> {
+                        scrollVerticalReaderBy((targetPage - nativeVerticalCurrentPage).coerceIn(-1, 1) * keyboardPageScrollPx)
+                    }
+                    else -> {
+                        scope.launch {
+                            val pageCount = paginatedPagerState.pageCount
+                            if (pageCount <= 0) return@launch
+                            val page = targetPage.coerceIn(0, pageCount - 1)
+                            if (page != paginatedPagerState.currentPage) {
+                                if (isPageTurnAnimationEnabled) {
+                                    paginatedPagerState.animateScrollToPage(page, animationSpec = tween(700))
+                                } else {
+                                    paginatedPagerState.scrollToPage(page)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            fun navigateReaderPageBy(delta: Int) {
+                when {
+                    isNativeVerticalMode -> navigateReaderPage(nativeVerticalCurrentPage + delta)
+                    currentRenderMode == RenderMode.VERTICAL_SCROLL -> scrollVerticalReaderBy(delta * keyboardPageScrollPx)
+                    else -> navigateReaderPage(paginatedPagerState.currentPage + delta)
+                }
+            }
+
+            fun navigateReaderBoundary(first: Boolean) {
+                when {
+                    isNativeVerticalMode -> navigateReaderPage(if (first) 0 else nativeVerticalTotalPages - 1)
+                    currentRenderMode == RenderMode.VERTICAL_SCROLL -> {
+                        val script = if (first) {
+                            "window.scrollTo({ top: 0, behavior: 'smooth' });"
+                        } else {
+                            "window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });"
+                        }
+                        webViewRefForTts?.evaluateJavascript(script, null)
+                    }
+                    else -> navigateReaderPage(if (first) 0 else paginatedPagerState.pageCount - 1)
+                }
+            }
 
             Box(
                 modifier = Modifier
@@ -4379,6 +4447,17 @@ fun EpubReaderHost(
                                 }
                             }
                         }
+                    )
+                    .epubReaderKeyboardNavigationHandler(
+                        enabled = !searchState.isSearchActive,
+                        renderMode = currentRenderMode,
+                        isRightToLeftPagination = rightToLeftPagination,
+                        verticalLineScrollPx = keyboardLineScrollPx,
+                        onVerticalScrollBy = ::scrollVerticalReaderBy,
+                        onNextPage = { navigateReaderPageBy(1) },
+                        onPreviousPage = { navigateReaderPageBy(-1) },
+                        onFirstPage = { navigateReaderBoundary(first = true) },
+                        onLastPage = { navigateReaderBoundary(first = false) }
                     )
             ) {
                 when (currentRenderMode) {

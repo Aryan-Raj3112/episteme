@@ -34,6 +34,8 @@ import androidx.compose.ui.input.key.type
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.aryan.reader.paginatedreader.AndroidEpubKeyCommand
+import com.aryan.reader.paginatedreader.androidEpubKeyCommandOrNull
 import com.aryan.reader.RenderMode
 
 @Composable
@@ -147,6 +149,48 @@ fun Modifier.volumeScrollHandler(
         } else {
             if (isNext) onNextPage() else onPrevPage()
         }
+    }
+    true
+}
+
+fun Modifier.epubReaderKeyboardNavigationHandler(
+    enabled: Boolean,
+    renderMode: RenderMode,
+    isRightToLeftPagination: Boolean,
+    verticalLineScrollPx: Int,
+    onVerticalScrollBy: (Int) -> Unit,
+    onNextPage: () -> Unit,
+    onPreviousPage: () -> Unit,
+    onFirstPage: () -> Unit,
+    onLastPage: () -> Unit
+): Modifier = this.onPreviewKeyEvent { keyEvent ->
+    if (!enabled) return@onPreviewKeyEvent false
+    val command = androidEpubKeyCommandOrNull(
+        keyCode = keyEvent.nativeKeyEvent.keyCode,
+        rightToLeftPagination = isRightToLeftPagination,
+        isCtrlPressed = keyEvent.nativeKeyEvent.isCtrlPressed
+    ) ?: return@onPreviewKeyEvent false
+    if (keyEvent.type != KeyEventType.KeyDown) {
+        return@onPreviewKeyEvent when (command) {
+            AndroidEpubKeyCommand.SCROLL_UP,
+            AndroidEpubKeyCommand.SCROLL_DOWN -> renderMode == RenderMode.VERTICAL_SCROLL
+            else -> true
+        }
+    }
+
+    when (command) {
+        AndroidEpubKeyCommand.SCROLL_UP -> {
+            if (renderMode != RenderMode.VERTICAL_SCROLL) return@onPreviewKeyEvent false
+            onVerticalScrollBy(-verticalLineScrollPx)
+        }
+        AndroidEpubKeyCommand.SCROLL_DOWN -> {
+            if (renderMode != RenderMode.VERTICAL_SCROLL) return@onPreviewKeyEvent false
+            onVerticalScrollBy(verticalLineScrollPx)
+        }
+        AndroidEpubKeyCommand.PREVIOUS_PAGE -> onPreviousPage()
+        AndroidEpubKeyCommand.NEXT_PAGE -> onNextPage()
+        AndroidEpubKeyCommand.FIRST_PAGE -> onFirstPage()
+        AndroidEpubKeyCommand.LAST_PAGE -> onLastPage()
     }
     true
 }
