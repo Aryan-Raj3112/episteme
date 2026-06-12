@@ -12,6 +12,7 @@ import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.SemanticMath
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
@@ -190,6 +191,57 @@ class SharedNativeVerticalReaderFlowTest {
         val paragraphItem = assertNotNull(items.first().block)
         assertEquals(Color(0xFFEFEFEF), paragraphItem.style.blockStyle.backgroundColor)
         assertEquals(Color.Red, paragraphItem.style.blockStyle.borderTop?.color)
+    }
+
+    @Test
+    fun `shared native vertical restore prefers block locator before compat page`() {
+        val first = SemanticParagraph(
+            text = "First paragraph",
+            spans = emptyList(),
+            style = CssStyle(),
+            elementId = "p1",
+            cfi = "/4/2",
+            startCharOffsetInSource = 0,
+            blockIndex = 1
+        )
+        val second = SemanticParagraph(
+            text = "Second paragraph",
+            spans = emptyList(),
+            style = CssStyle(),
+            elementId = "p2",
+            cfi = "/4/4",
+            startCharOffsetInSource = 16,
+            blockIndex = 2
+        )
+        val book = SharedEpubBook(
+            id = "book",
+            fileName = "book.epub",
+            title = "Book",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "chapter_0",
+                    title = "Chapter",
+                    plainText = "First paragraph\nSecond paragraph",
+                    semanticBlocks = listOf(first, second)
+                )
+            )
+        )
+
+        val items = buildSharedNativeVerticalFlowItems(book, pages = emptyList())
+        val restoredIndex = items.sharedNativeVerticalItemIndexForLocator(
+            ReaderLocator(
+                chapterIndex = 0,
+                pageIndex = 0,
+                startOffset = 16,
+                endOffset = 32,
+                blockIndex = 2,
+                charOffset = 16,
+                cfi = "/4/4:0"
+            )
+        )
+
+        assertEquals(1, restoredIndex)
+        assertEquals(2, items[restoredIndex!!].block?.blockIndex)
     }
 
     @Test

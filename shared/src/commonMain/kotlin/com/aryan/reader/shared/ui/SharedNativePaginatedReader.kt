@@ -1663,13 +1663,9 @@ private fun List<ReaderPage>.findSharedNativeVerticalPageIndexForBlock(block: Se
     return firstOrNull()?.pageIndex
 }
 
-private fun List<SharedNativeVerticalFlowItem>.sharedNativeVerticalItemIndexForLocator(
+internal fun List<SharedNativeVerticalFlowItem>.sharedNativeVerticalItemIndexForLocator(
     locator: ReaderLocator
 ): Int? {
-    locator.pageIndex?.let { pageIndex ->
-        val samePage = indexOfFirst { item -> item.page.pageIndex == pageIndex }
-        if (samePage >= 0) return samePage
-    }
     val chapterIndex = locator.chapterIndex
     if (chapterIndex != null) {
         locator.blockIndex?.let { blockIndex ->
@@ -1687,6 +1683,12 @@ private fun List<SharedNativeVerticalFlowItem>.sharedNativeVerticalItemIndexForL
             }
             if (sameOffset >= 0) return sameOffset
         }
+    }
+    locator.pageIndex?.let { pageIndex ->
+        val samePage = indexOfFirst { item -> item.page.pageIndex == pageIndex }
+        if (samePage >= 0) return samePage
+    }
+    if (chapterIndex != null) {
         val sameChapter = indexOfFirst { item -> item.page.chapterIndex == chapterIndex }
         if (sameChapter >= 0) return sameChapter
     }
