@@ -138,6 +138,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -862,6 +863,13 @@ fun AiDefinitionPopup(
     val ttsController = rememberTtsController()
     val ttsState by ttsController.ttsState.collectAsState()
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val maxPopupHeight = readerModalMaxHeightDp(
+        screenHeightDp = configuration.screenHeightDp,
+        fraction = 0.65f,
+        verticalMarginDp = 48,
+        preferredMinHeightDp = 180
+    ).dp
     @Suppress("DEPRECATION") val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
@@ -882,7 +890,7 @@ fun AiDefinitionPopup(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 5.dp)
-                .heightIn(min = 150.dp, max = 400.dp),
+                .heightIn(max = maxPopupHeight),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
         ) {
@@ -3310,12 +3318,16 @@ fun ThemeColorPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val configuration = LocalConfiguration.current
+        val maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
+
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF2C2C2C),
             modifier = Modifier
                 .fillMaxWidth(0.9f)
                 .padding(16.dp)
+                .heightIn(max = maxDialogHeight)
         ) {
             Column(
                 modifier = Modifier
@@ -3495,12 +3507,16 @@ fun HighlightColorPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val configuration = LocalConfiguration.current
+        val maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
+
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF2C2C2C),
             modifier = Modifier
                 .fillMaxWidth(0.9f)
                 .padding(16.dp)
+                .heightIn(max = maxDialogHeight)
         ) {
             Column(
                 modifier = Modifier

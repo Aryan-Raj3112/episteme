@@ -4,7 +4,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -20,12 +23,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,14 +40,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.core.graphics.drawable.toBitmap
 import com.aryan.reader.R
 import com.aryan.reader.areReaderAiFeaturesEnabled
+import com.aryan.reader.readerModalMaxHeightDp
 
 @Suppress("KotlinConstantConditions")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,25 +71,28 @@ fun DictionarySettingsDialog(
     val context = LocalContext.current
     var dictionaryApps by remember { mutableStateOf<List<ExternalDictionaryApp>>(emptyList()) }
     var searchApps by remember { mutableStateOf<List<ExternalDictionaryApp>>(emptyList()) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val configuration = LocalConfiguration.current
+    val maxSheetHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
 
     LaunchedEffect(Unit) {
         dictionaryApps = ExternalDictionaryHelper.getAvailableDictionaries(context)
         searchApps = ExternalDictionaryHelper.getAvailableSearchApps(context)
     }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-            modifier = Modifier.fillMaxWidth()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.navigationBars }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = maxSheetHeight)
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(24.dp)
-            ) {
                 Text(
                     text = stringResource(R.string.dict_lookup_settings),
                     style = MaterialTheme.typography.headlineSmall,
@@ -212,7 +221,6 @@ fun DictionarySettingsDialog(
                     onSelect = onSelectSearchPackage,
                     placeholder = stringResource(R.string.dict_select_app)
                 )
-            }
         }
     }
 }

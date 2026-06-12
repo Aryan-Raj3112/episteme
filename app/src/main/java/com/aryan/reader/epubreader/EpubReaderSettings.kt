@@ -109,6 +109,7 @@ import androidx.core.content.edit
 import com.aryan.reader.R
 import com.aryan.reader.ReaderFontDiagnosticsTag
 import com.aryan.reader.data.CustomFontEntity
+import com.aryan.reader.readerModalMaxHeightDp
 import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.supportedFontMimeTypes
 import com.aryan.reader.shared.CustomFontItem
@@ -1050,6 +1051,8 @@ fun VisualOptionsSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val configuration = LocalConfiguration.current
+    val maxSheetHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -1059,6 +1062,8 @@ fun VisualOptionsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = maxSheetHeight)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
             Row(

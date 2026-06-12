@@ -32,11 +32,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,6 +72,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -84,6 +88,7 @@ import com.aryan.reader.HexInput
 import com.aryan.reader.R
 import com.aryan.reader.RgbInputColumn
 import com.aryan.reader.SpectrumBox
+import com.aryan.reader.readerModalMaxHeightDp
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -151,18 +156,28 @@ fun ToolSettingsPopup(
     }
 
     val circleSize = 28.dp
+    val configuration = LocalConfiguration.current
+    val maxPopupHeight = readerModalMaxHeightDp(
+        screenHeightDp = configuration.screenHeightDp,
+        fraction = 0.8f,
+        verticalMarginDp = 64,
+        preferredMinHeightDp = 240
+    ).dp
 
     Surface(
         modifier = modifier
             .width(360.dp)
-            .padding(12.dp),
+            .padding(12.dp)
+            .heightIn(max = maxPopupHeight),
         shape = RoundedCornerShape(28.dp),
         color = Color(0xFF1E1E1E),
         shadowElevation = 12.dp,
         tonalElevation = 0.dp
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (isEraser) {
@@ -450,15 +465,21 @@ private fun ColorPickerDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val configuration = LocalConfiguration.current
+        val maxDialogHeight = readerModalMaxHeightDp(configuration.screenHeightDp).dp
+
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color(0xFF2C2C2C),
             modifier = Modifier
                 .fillMaxWidth(0.85f)
                 .padding(8.dp)
+                .heightIn(max = maxDialogHeight)
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
