@@ -36,8 +36,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
-import java.io.ByteArrayInputStream
-import java.security.MessageDigest
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModelTest {
@@ -464,24 +462,16 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `temporary external import marks copy for removal without showing save prompt`() = runTest(testDispatcher) {
+    fun `temporary external pdf opens directly without importing or adding to library`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
-        val externalBytes = "temporary pdf".toByteArray()
-        val bookId = sha256Hex(externalBytes)
         val externalUri = mockUri("content://external/temp.pdf", path = "/temp.pdf", lastPathSegment = "temp.pdf")
         val resolver = mockk<ContentResolver>()
         every { mockApplication.contentResolver } returns resolver
         every { resolver.getType(externalUri) } returns "application/pdf"
         every { resolver.query(externalUri, null, null, null, null) } returns null
-        every { resolver.openInputStream(externalUri) } answers { ByteArrayInputStream(externalBytes) }
-        coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId(bookId) } returns null
-        val internalFile = File(mockApplication.filesDir, "books/temp.pdf").apply {
-            parentFile?.mkdirs()
-            writeBytes(externalBytes)
-        }
-        coEvery { anyConstructed<BookImporter>().importBook(externalUri) } returns internalFile
+        coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId(match { it.startsWith("temporary-") }) } returns null
 
         viewModel.onFileSelected(
             externalUri,
@@ -491,20 +481,16 @@ class MainViewModelTest {
         )
         advanceUntilIdle()
 
-        val selected = viewModel.uiState.first { it.selectedBookId == bookId && it.selectedPdfUri != null }
+        val selected = viewModel.uiState.first { it.selectedBookId?.startsWith("temporary-") == true && it.selectedPdfUri != null }
+        assertEquals(externalUri, selected.selectedPdfUri)
         assertEquals(null, selected.showExternalFileSavePromptFor)
-        verify {
-            mockEditor.putStringSet(
-                "pending_external_file_removals",
-                match { entries ->
-                    entries.any { it.contains(bookId) && it.contains("temp.pdf") }
-                }
-            )
-        }
+        coVerify(exactly = 0) { anyConstructed<BookImporter>().importBook(any()) }
+        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().addRecentFile(any()) }
+        verify(exactly = 0) { mockEditor.putStringSet("pending_external_file_removals", any()) }
     }
 
     @Test
-    fun `closing temporary external book removes imported copy and signals activity finish`() = runTest(testDispatcher) {
+    fun `closing temporary external direct book signals activity finish without library cleanup`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -512,7 +498,7 @@ class MainViewModelTest {
         coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId(item.bookId) } returns item
         viewModel.trackExternalOpenForClose(
             bookId = item.bookId,
-            importedCopyUriString = item.uriString,
+            importedCopyUriString = null,
             isTemporaryExternalIntent = true
         )
         viewModel.onRecentFileClicked(item)
@@ -524,8 +510,8 @@ class MainViewModelTest {
         advanceUntilIdle()
 
         assertEquals(null, viewModel.uiState.value.showExternalFileSavePromptFor)
-        coVerify { anyConstructed<RecentFilesRepository>().deleteFilePermanently(listOf(item.bookId)) }
-        coVerify { anyConstructed<BookImporter>().deleteBookByUriString(item.uriString!!) }
+        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().deleteFilePermanently(listOf(item.bookId)) }
+        coVerify(exactly = 0) { anyConstructed<BookImporter>().deleteBookByUriString(item.uriString!!) }
         assertTrue(finishEvent.isCompleted)
     }
 
@@ -1241,12 +1227,6 @@ class MainViewModelTest {
             every { uri.path } returns path
             every { uri.lastPathSegment } returns lastPathSegment
         }
-    }
-
-    private fun sha256Hex(bytes: ByteArray): String {
-        return MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString(separator = "") { "%02x".format(it) }
     }
 
     private fun shelfEntity(id: String, name: String) = ShelfEntity(

@@ -207,7 +207,7 @@
     <string name="external_file_behavior_delete">Always Remove</string>
     <string name="external_file_behavior_delete_desc">Externally opened files are copied for reading, then removed after closing.</string>
     <string name="external_file_behavior_temporary">Open Temporarily</string>
-    <string name="external_file_behavior_temporary_desc">Open from the source app in a temporary reader. Back returns to that app and removes the copy.</string>
+    <string name="external_file_behavior_temporary_desc">Open directly from the source app in a temporary reader. Back returns to that app without adding the file to the library.</string>
     <string name="options_external_file_behavior">External File Behavior</string>
 
     <!-- OPDS — "OPDS" is a technical protocol name, do not translate it. -->

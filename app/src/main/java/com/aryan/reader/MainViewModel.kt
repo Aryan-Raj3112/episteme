@@ -2872,6 +2872,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val closingBookId = _internalState.value.selectedBookId
         val uriString = _internalState.value.selectedPdfUri?.toString()
             ?: _internalState.value.selectedEpubUri?.toString()
+        val isTemporaryExternalSession = closingBookId != null && closingBookId == temporaryExternalSessionBookId
         logCloudSyncTrace {
             "android.reader.close_request book=$closingBookId uri=${uriString.cloudSyncPreview()} sync=${uiState.value.isSyncEnabled}"
         }
@@ -2898,6 +2899,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 selectedEpubBook = null,
                 selectedFileType = null,
                 isLoading = false,
+                isTemporaryExternalOpen = false,
                 errorMessage = null,
                 initialLocator = null,
                 initialPageInBook = null,
@@ -2905,10 +2907,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 isOpeningFromTtsNotification = false
             )
         }
-        clearPersistedReaderSession()
+        if (!isTemporaryExternalSession) {
+            clearPersistedReaderSession()
+        }
 
         var removesExternalFileOnClose = false
-        val isTemporaryExternalSession = closingBookId != null && closingBookId == temporaryExternalSessionBookId
         if (closingBookId != null && (closingBookId == externalOpenedBookId || isTemporaryExternalSession)) {
             val behavior = if (isTemporaryExternalSession) {
                 EXTERNAL_FILE_BEHAVIOR_TEMPORARY
@@ -5005,8 +5008,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         isExternalIntent: Boolean = false,
         isTemporaryExternalIntent: Boolean = false
     ) {
+        if (isTemporaryExternalIntent) {
+            openTemporaryExternalFile(externalUri)
+            return
+        }
+
         _internalState.update {
-            it.copy(isLoading = true, errorMessage = null, contextualActionItems = emptySet())
+            it.copy(
+                isLoading = true,
+                errorMessage = null,
+                contextualActionItems = emptySet()
+            )
         }
 
         viewModelScope.launch {
@@ -5072,6 +5084,45 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(isLoading = false, errorMessage = appContext.getString(R.string.error_import_file_failed))
                 }
             }
+        }
+    }
+
+    private fun openTemporaryExternalFile(externalUri: Uri) {
+        _internalState.update {
+            it.copy(
+                isLoading = true,
+                isTemporaryExternalOpen = true,
+                errorMessage = null,
+                contextualActionItems = emptySet()
+            )
+        }
+        viewModelScope.launch {
+            val type = getFileTypeFromUri(externalUri, appContext)
+            if (type == null) {
+                _internalState.update {
+                    it.copy(
+                        isLoading = false,
+                        isTemporaryExternalOpen = false,
+                        errorMessage = appContext.getString(R.string.error_unsupported_file_type)
+                    )
+                }
+                return@launch
+            }
+
+            val displayName = getFileNameFromUri(externalUri, appContext) ?: "Temporary File"
+            val bookId = "temporary-${UUID.randomUUID()}"
+            trackExternalOpenForClose(
+                bookId = bookId,
+                importedCopyUriString = null,
+                isTemporaryExternalIntent = true
+            )
+            openBook(
+                uri = externalUri,
+                bookId = bookId,
+                type = type,
+                originalDisplayName = displayName,
+                persistToLibrary = false
+            )
         }
     }
 
@@ -5346,7 +5397,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         isInitialPageExplicit: Boolean = false,
         initialLocatorOverride: Locator? = null,
         initialCfiOverride: String? = null,
-        preserveTtsOnOpen: Boolean = false
+        preserveTtsOnOpen: Boolean = false,
+        persistToLibrary: Boolean = true
     ) {
         val openBookStartTime = System.currentTimeMillis()
         ReaderPerfLog.d("FileOpen start bookId=$bookId type=$type")
@@ -5440,16 +5492,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         )
                     }
                     ReaderPerfLog.d("FileOpen ready bookId=$bookId type=$type elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
-                    persistReaderSession(bookId, type)
-                    addFileToRecent(
-                        uri,
-                        type,
-                        bookId,
-                        customDisplayName = originalDisplayName,
-                        isRecent = true,
-                        sourceFolderUri = null,
-                        bundleResult = bundleResult
-                    )
+                    if (persistToLibrary) {
+                        persistReaderSession(bookId, type)
+                        addFileToRecent(
+                            uri,
+                            type,
+                            bookId,
+                            customDisplayName = originalDisplayName,
+                            isRecent = true,
+                            sourceFolderUri = null,
+                            bundleResult = bundleResult
+                        )
+                    }
 
                     if (!suppressNavigation) {
                         Timber.tag("FileSwitch").d("PDF state updated, emitting navigation event")
@@ -5490,7 +5544,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         )
                     }
                     ReaderPerfLog.d("FileOpen ready bookId=$bookId type=$type elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
-                    persistReaderSession(bookId, type)
+                    if (persistToLibrary) {
+                        persistReaderSession(bookId, type)
+                    }
 
                     if (!suppressNavigation) {
                         Timber.tag("FileSwitch").d("EPUB state updated, emitting navigation event")
@@ -5499,22 +5555,22 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                     when (type) {
                         FileType.EPUB -> {
-                            loadEpub(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult)
+                            loadEpub(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult, persistToLibrary = persistToLibrary)
                         }
 
                         FileType.MOBI -> {
-                            loadMobi(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult)
+                            loadMobi(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult, persistToLibrary = persistToLibrary)
                         }
 
                         FileType.FB2 -> {
-                            loadFb2(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult)
+                            loadFb2(uri, bookId, customDisplayName = originalDisplayName, bundleResult = bundleResult, persistToLibrary = persistToLibrary)
                         }
                         FileType.ODT, FileType.FODT -> {
-                            loadOdt(uri, bookId, type == FileType.FODT, customDisplayName = originalDisplayName, bundleResult = bundleResult)
+                            loadOdt(uri, bookId, type == FileType.FODT, customDisplayName = originalDisplayName, bundleResult = bundleResult, persistToLibrary = persistToLibrary)
                         }
                         else -> {
                             loadSingleFile(
-                                uri, bookId, type, customDisplayName = originalDisplayName, bundleResult = bundleResult
+                                uri, bookId, type, customDisplayName = originalDisplayName, bundleResult = bundleResult, persistToLibrary = persistToLibrary
                             )
                         }
                     }
@@ -5537,7 +5593,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun loadFb2(uri: Uri, bookId: String, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
+    private fun loadFb2(
+        uri: Uri,
+        bookId: String,
+        customDisplayName: String? = null,
+        bundleResult: CalibreBundleResult? = null,
+        persistToLibrary: Boolean = true
+    ) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadFb2 START")
         viewModelScope.launch {
@@ -5559,9 +5621,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.i("FB2 parsing successful. Title: ${fb2Book.title}")
                 Timber.tag("FileOpenPerf").d("[$bookId] loadFb2 completed | chapters=${fb2Book.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
 
-                addFileToRecent(
-                    uri, FileType.FB2, bookId, fb2Book, customDisplayName, isRecent = true, sourceFolderUri = null, bundleResult = bundleResult
-                )
+                if (persistToLibrary) {
+                    addFileToRecent(
+                        uri, FileType.FB2, bookId, fb2Book, customDisplayName, isRecent = true, sourceFolderUri = null, bundleResult = bundleResult
+                    )
+                }
 
                 _internalState.update { it.copy(selectedEpubBook = fb2Book, isLoading = false) }
             } catch (e: Exception) {
@@ -5573,7 +5637,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun loadOdt(uri: Uri, bookId: String, isFlat: Boolean, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
+    private fun loadOdt(
+        uri: Uri,
+        bookId: String,
+        isFlat: Boolean,
+        customDisplayName: String? = null,
+        bundleResult: CalibreBundleResult? = null,
+        persistToLibrary: Boolean = true
+    ) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadOdt START | isFlat=$isFlat")
         viewModelScope.launch {
@@ -5596,9 +5667,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.i("ODT parsing successful. Title: ${odtBook.title}")
                 Timber.tag("FileOpenPerf").d("[$bookId] loadOdt completed | chapters=${odtBook.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
 
-                addFileToRecent(
-                    uri, if (isFlat) FileType.FODT else FileType.ODT, bookId, odtBook, customDisplayName, isRecent = true, sourceFolderUri = null, bundleResult = bundleResult
-                )
+                if (persistToLibrary) {
+                    addFileToRecent(
+                        uri, if (isFlat) FileType.FODT else FileType.ODT, bookId, odtBook, customDisplayName, isRecent = true, sourceFolderUri = null, bundleResult = bundleResult
+                    )
+                }
 
                 _internalState.update { it.copy(selectedEpubBook = odtBook, isLoading = false) }
             } catch (e: Exception) {
@@ -5615,7 +5688,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         bookId: String,
         type: FileType,
         customDisplayName: String? = null,
-        bundleResult: CalibreBundleResult? = null
+        bundleResult: CalibreBundleResult? = null,
+        persistToLibrary: Boolean = true
     ) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadSingleFile START | type=$type")
@@ -5653,16 +5727,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.tag("FileOpenPerf")
                     .d("[$bookId] loadSingleFile: importSingleFile completed | chapters=${epubBook.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
                 Timber.i("Import successful ($type). Title: ${epubBook.title}")
-                addFileToRecent(
-                    uri,
-                    type,
-                    bookId,
-                    epubBook,
-                    customDisplayName,
-                    isRecent = true,
-                    sourceFolderUri = null,
-                    bundleResult = bundleResult
-                )
+                if (persistToLibrary) {
+                    addFileToRecent(
+                        uri,
+                        type,
+                        bookId,
+                        epubBook,
+                        customDisplayName,
+                        isRecent = true,
+                        sourceFolderUri = null,
+                        bundleResult = bundleResult
+                    )
+                }
 
                 _internalState.update { it.copy(selectedEpubBook = epubBook, isLoading = false) }
                 Timber.tag("FileOpenPerf")
@@ -5701,7 +5777,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return resolveFileTypeFromMetadata(fileName, mimeType)
     }
 
-    private fun loadMobi(uri: Uri, bookId: String, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
+    private fun loadMobi(
+        uri: Uri,
+        bookId: String,
+        customDisplayName: String? = null,
+        bundleResult: CalibreBundleResult? = null,
+        persistToLibrary: Boolean = true
+    ) {
         viewModelScope.launch {
             if (!_internalState.value.isLoading) {
                 _internalState.update { it.copy(isLoading = true, errorMessage = null) }
@@ -5723,16 +5805,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
                 if (mobiAsEpubBook != null) {
                     Timber.i("MOBI parsing successful. Title: ${mobiAsEpubBook.title}")
-                    addFileToRecent(
-                        uri,
-                        FileType.MOBI,
-                        bookId,
-                        mobiAsEpubBook,
-                        customDisplayName,
-                        isRecent = true,
-                        sourceFolderUri = null,
-                        bundleResult = bundleResult
-                    )
+                    if (persistToLibrary) {
+                        addFileToRecent(
+                            uri,
+                            FileType.MOBI,
+                            bookId,
+                            mobiAsEpubBook,
+                            customDisplayName,
+                            isRecent = true,
+                            sourceFolderUri = null,
+                            bundleResult = bundleResult
+                        )
+                    }
                     _internalState.update {
                         it.copy(selectedEpubBook = mobiAsEpubBook, isLoading = false)
                     }
@@ -5754,7 +5838,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun loadEpub(uri: Uri, bookId: String, customDisplayName: String? = null, bundleResult: CalibreBundleResult? = null) {
+    private fun loadEpub(
+        uri: Uri,
+        bookId: String,
+        customDisplayName: String? = null,
+        bundleResult: CalibreBundleResult? = null,
+        persistToLibrary: Boolean = true
+    ) {
         val loadStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[$bookId] loadEpub START")
         viewModelScope.launch {
@@ -5780,16 +5870,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 Timber.tag("FileOpenPerf")
                     .d("[$bookId] loadEpub: createEpubBook completed | chapters=${epubBook.chapters.size} | elapsed=${System.currentTimeMillis() - loadStart}ms")
 
-                addFileToRecent(
-                    uri,
-                    FileType.EPUB,
-                    bookId,
-                    epubBook,
-                    customDisplayName,
-                    isRecent = true,
-                    sourceFolderUri = null,
-                    bundleResult = bundleResult
-                )
+                if (persistToLibrary) {
+                    addFileToRecent(
+                        uri,
+                        FileType.EPUB,
+                        bookId,
+                        epubBook,
+                        customDisplayName,
+                        isRecent = true,
+                        sourceFolderUri = null,
+                        bundleResult = bundleResult
+                    )
+                }
 
                 _internalState.update { it.copy(selectedEpubBook = epubBook, isLoading = false) }
                 Timber.tag("FileOpenPerf")

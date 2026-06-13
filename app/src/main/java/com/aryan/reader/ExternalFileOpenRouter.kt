@@ -47,7 +47,7 @@ class ExternalFileOpenRouterActivity : Activity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (temporary) {
                 putExtra(EXTRA_TEMPORARY_EXTERNAL_OPEN, true)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)
             }
         }
         startActivity(targetIntent)

@@ -43,6 +43,7 @@ data class ReaderScreenState(
     val selectedEpubUri: Uri? = null,
     val selectedFileType: FileType? = null,
     val isLoading: Boolean = false,
+    val isTemporaryExternalOpen: Boolean = false,
     val errorMessage: String? = null,
     val contextualActionItems: Set<RecentFileItem> = emptySet(),
     val renderMode: RenderMode = RenderMode.VERTICAL_SCROLL,

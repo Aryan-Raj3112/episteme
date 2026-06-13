@@ -220,11 +220,17 @@ fun AppNavigation(
         NavHost(navController = navController, startDestination = AppDestinations.MAIN_ROUTE) {
         composable(AppDestinations.MAIN_ROUTE) {
             Timber.d("Navigating to Main Screen (${AppDestinations.MAIN_ROUTE}).")
-            MainScreen(
-                viewModel = viewModel,
-                windowSizeClass = windowSizeClass,
-                navController = navController
-            )
+            if (uiState.isTemporaryExternalOpen) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                MainScreen(
+                    viewModel = viewModel,
+                    windowSizeClass = windowSizeClass,
+                    navController = navController
+                )
+            }
         }
 
         // PDF Viewer Screen Composable
