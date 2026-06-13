@@ -1812,9 +1812,14 @@ fun ExternalFileBehaviorDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.options_external_file_behavior)) },
         text = {
-            Column {
-                val options = listOf("ASK" to R.string.external_file_behavior_ask, "KEEP" to R.string.external_file_behavior_keep, "DELETE" to R.string.external_file_behavior_delete)
-                options.forEach { (value, labelRes) ->
+            Column(modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                val options = listOf(
+                    Triple("ASK", R.string.external_file_behavior_ask, R.string.external_file_behavior_ask_desc),
+                    Triple("KEEP", R.string.external_file_behavior_keep, R.string.external_file_behavior_keep_desc),
+                    Triple("DELETE", R.string.external_file_behavior_delete, R.string.external_file_behavior_delete_desc),
+                    Triple("TEMPORARY", R.string.external_file_behavior_temporary, R.string.external_file_behavior_temporary_desc)
+                )
+                options.forEach { (value, labelRes, descriptionRes) ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -1824,7 +1829,14 @@ fun ExternalFileBehaviorDialog(
                     ) {
                         RadioButton(selected = currentBehavior == value, onClick = null)
                         Spacer(modifier = Modifier.width(16.dp))
-                        Text(stringResource(labelRes))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(labelRes))
+                            Text(
+                                text = stringResource(descriptionRes),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

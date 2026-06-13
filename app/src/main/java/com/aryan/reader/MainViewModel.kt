@@ -222,10 +222,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
+    private val _temporaryExternalOpenFinished = Channel<Unit>(Channel.BUFFERED)
+    val temporaryExternalOpenFinished = _temporaryExternalOpenFinished.receiveAsFlow()
     private var bannerDismissJob: Job? = null
     private var bannerDismissGeneration = 0L
     private var pendingSwitchDeferred: CompletableDeferred<Boolean>? = null
     private var externalOpenedBookId: String? = null
+    private var temporaryExternalSessionBookId: String? = null
     private var cloudContentRetryJob: Job? = null
     private val cloudMetadataUploadJobs = ConcurrentHashMap<String, Job>()
 
@@ -2093,6 +2096,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    internal fun trackExternalOpenForClose(
+        bookId: String,
+        importedCopyUriString: String?,
+        isTemporaryExternalIntent: Boolean
+    ) {
+        if (isTemporaryExternalIntent) {
+            temporaryExternalSessionBookId = bookId
+            if (importedCopyUriString != null) {
+                externalOpenedBookId = bookId
+                markPendingExternalFileRemoval(bookId, importedCopyUriString)
+            }
+            return
+        }
+
+        externalOpenedBookId = bookId
+        if (
+            importedCopyUriString != null &&
+            prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, EXTERNAL_FILE_BEHAVIOR_ASK) == "DELETE"
+        ) {
+            markPendingExternalFileRemoval(bookId, importedCopyUriString)
+        }
+    }
+
     fun saveOriginalFile(sourceUri: Uri, destUri: Uri) {
         viewModelScope.launch {
             _internalState.update {
@@ -2882,17 +2908,36 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         clearPersistedReaderSession()
 
         var removesExternalFileOnClose = false
-        if (closingBookId != null && closingBookId == externalOpenedBookId) {
-            val behavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK"
+        val isTemporaryExternalSession = closingBookId != null && closingBookId == temporaryExternalSessionBookId
+        if (closingBookId != null && (closingBookId == externalOpenedBookId || isTemporaryExternalSession)) {
+            val behavior = if (isTemporaryExternalSession) {
+                EXTERNAL_FILE_BEHAVIOR_TEMPORARY
+            } else {
+                prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, EXTERNAL_FILE_BEHAVIOR_ASK) ?: EXTERNAL_FILE_BEHAVIOR_ASK
+            }
             if (behavior == "ASK") {
                 _internalState.update { it.copy(showExternalFileSavePromptFor = closingBookId) }
             } else if (behavior == "DELETE") {
                 removesExternalFileOnClose = true
                 deletePendingExternalFileRemoval(closingBookId, uriString)
+            } else if (behavior == EXTERNAL_FILE_BEHAVIOR_TEMPORARY) {
+                removesExternalFileOnClose = true
+                val shouldDeleteImportedCopy = closingBookId == externalOpenedBookId
+                if (shouldDeleteImportedCopy) {
+                    viewModelScope.launch {
+                        deletePendingExternalFileRemoval(PendingExternalFileRemoval(closingBookId, uriString))
+                        _temporaryExternalOpenFinished.send(Unit)
+                    }
+                } else {
+                    viewModelScope.launch {
+                        _temporaryExternalOpenFinished.send(Unit)
+                    }
+                }
             } else {
                 clearPendingExternalFileRemovals(setOf(closingBookId))
             }
             externalOpenedBookId = null
+            temporaryExternalSessionBookId = null
         }
 
         if (uriString != null && !removesExternalFileOnClose) {
@@ -4887,7 +4932,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun onFileSelected(uri: Uri, isFromRecent: Boolean = false, isExternalIntent: Boolean = false) {
+    fun onFileSelected(
+        uri: Uri,
+        isFromRecent: Boolean = false,
+        isExternalIntent: Boolean = false,
+        isTemporaryExternalIntent: Boolean = false
+    ) {
         if (isFromRecent) {
             Timber.i("Opening recent file: $uri")
             viewModelScope.launch {
@@ -4900,7 +4950,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
         } else {
             Timber.i("Importing new file: $uri")
-            importExternalFile(uri, isExternalIntent)
+            importExternalFile(uri, isExternalIntent, isTemporaryExternalIntent)
         }
     }
 
@@ -4950,7 +5000,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun importExternalFile(externalUri: Uri, isExternalIntent: Boolean = false) {
+    private fun importExternalFile(
+        externalUri: Uri,
+        isExternalIntent: Boolean = false,
+        isTemporaryExternalIntent: Boolean = false
+    ) {
         _internalState.update {
             it.copy(isLoading = true, errorMessage = null, contextualActionItems = emptySet())
         }
@@ -4962,10 +5016,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (importResult != null) {
                     val (internalUri, bookId, type) = importResult
                     if (isExternalIntent) {
-                        externalOpenedBookId = bookId
-                        if (prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") == "DELETE") {
-                            markPendingExternalFileRemoval(bookId, internalUri.toString())
-                        }
+                        trackExternalOpenForClose(
+                            bookId = bookId,
+                            importedCopyUriString = internalUri.toString(),
+                            isTemporaryExternalIntent = isTemporaryExternalIntent
+                        )
                     }
                     val displayName = getFileNameFromUri(externalUri, appContext) ?: "Unknown File"
                     openBook(
@@ -4980,6 +5035,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         val existingItem = recentFilesRepository.getFileByBookId(hash)
                         if (existingItem != null) {
                             Timber.i("Re-selected an existing book. Opening it.")
+                            if (isTemporaryExternalIntent) {
+                                trackExternalOpenForClose(
+                                    bookId = existingItem.bookId,
+                                    importedCopyUriString = null,
+                                    isTemporaryExternalIntent = true
+                                )
+                            }
                             onRecentFileClicked(existingItem)
                             _internalState.update { it.copy(isLoading = false) }
                             return@launch
@@ -7166,6 +7228,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_LAST_OPEN_BOOK_ID = "last_open_book_id"
         private const val KEY_LAST_OPEN_FILE_TYPE = "last_open_file_type"
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
+        private const val EXTERNAL_FILE_BEHAVIOR_ASK = "ASK"
+        private const val EXTERNAL_FILE_BEHAVIOR_TEMPORARY = "TEMPORARY"
         private const val KEY_PENDING_EXTERNAL_FILE_REMOVALS = "pending_external_file_removals"
         private const val KEY_USE_STRICT_FILE_FILTER = "use_strict_file_filter"
         private const val KEY_USE_PDF_FILE_NAME_AS_DISPLAY_NAME = "use_pdf_file_name_as_display_name"

@@ -58,10 +58,12 @@ import com.aryan.reader.tts.EXTRA_TTS_SOURCE_CFI
 import com.aryan.reader.tts.EXTRA_TTS_START_OFFSET
 
 @UnstableApi
-class MainActivity : AppCompatActivity() {
+open class MainActivity : AppCompatActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private lateinit var platformFeaturesRepository: PlatformFeaturesRepository
+    private val isTemporaryExternalOpen: Boolean
+        get() = intent?.getBooleanExtra(EXTRA_TEMPORARY_EXTERNAL_OPEN, false) == true
 
     private val updateLauncher = registerForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
@@ -83,6 +85,14 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             viewModel.reviewRequestEvent.collect {
                 platformFeaturesRepository.requestReview(this@MainActivity)
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.temporaryExternalOpenFinished.collect {
+                if (isTemporaryExternalOpen) {
+                    finishAndRemoveTask()
+                }
             }
         }
 
@@ -160,7 +170,12 @@ class MainActivity : AppCompatActivity() {
         if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
             Timber.d("Received VIEW intent with URI: ${intent.data}")
             val uri = intent.data!!
-            viewModel.onFileSelected(uri, isFromRecent = false, isExternalIntent = true)
+            viewModel.onFileSelected(
+                uri,
+                isFromRecent = false,
+                isExternalIntent = true,
+                isTemporaryExternalIntent = isTemporaryExternalOpen
+            )
         }
     }
 }

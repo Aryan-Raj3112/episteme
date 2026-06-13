@@ -55,7 +55,24 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
 
+        <activity
+            android:name=".TemporaryExternalFileActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Reader"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:documentLaunchMode="always"
+            android:excludeFromRecents="true"
+            android:launchMode="standard"
+            android:taskAffinity="${applicationId}.temporary" />
+
+        <activity
+            android:name=".ExternalFileOpenRouterActivity"
+            android:exported="true"
+            android:theme="@style/Theme.App.Starting"
+            android:noHistory="true"
+            android:excludeFromRecents="true">
             <!-- PDF -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
