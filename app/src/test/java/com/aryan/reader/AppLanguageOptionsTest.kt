@@ -15,11 +15,11 @@ class AppLanguageOptionsTest {
         assertEquals(
             listOf(
                 "en", "ar", "de", "nl", "tr", "fr", "ru", "uk", "be", "es", "pt-BR", "it", "pl",
-                "id", "vi", "ja", "ko", "hi", "zh-CN"
+                "id", "vi", "ja", "ko", "hi", "zh-CN", "et"
             ),
             supportedAppLanguageOptions.mapNotNull { it.tag }
         )
-        assertEquals(R.string.language_chinese_simplified, supportedAppLanguageOptions.last().labelRes)
+        assertEquals(R.string.language_estonian, supportedAppLanguageOptions.last().labelRes)
     }
 
     @Test
@@ -51,6 +51,7 @@ class AppLanguageOptionsTest {
         val vietnamese = supportedAppLanguageOptions.first { it.tag == "vi" }
         val japanese = supportedAppLanguageOptions.first { it.tag == "ja" }
         val korean = supportedAppLanguageOptions.first { it.tag == "ko" }
+        val estonian = supportedAppLanguageOptions.first { it.tag == "et" }
 
         assertTrue(turkish.matchesLanguageSearch(label = "Türkçe (Turkish)", query = "turkce"))
         assertTrue(dutch.matchesLanguageSearch(label = "Nederlands", query = "dutch"))
@@ -66,6 +67,7 @@ class AppLanguageOptionsTest {
         assertTrue(vietnamese.matchesLanguageSearch(label = "Tiếng Việt", query = "tieng viet"))
         assertTrue(japanese.matchesLanguageSearch(label = "日本語", query = "nihongo"))
         assertTrue(korean.matchesLanguageSearch(label = "한국어", query = "hangul"))
+        assertTrue(estonian.matchesLanguageSearch(label = "Eesti", query = "eesti"))
     }
 
     @Test

@@ -67,7 +67,8 @@ val supportedAppLanguageOptions = listOf(
             "中文",
             "简体中文",
         )
-    )
+    ),
+    AppLanguageOption("et", R.string.language_estonian, listOf("estonian", "eesti"))
 )
 
 val appLanguageSelectionOptions = listOf(systemAppLanguageOption) + supportedAppLanguageOptions

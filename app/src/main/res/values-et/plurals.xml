@@ -22,99 +22,99 @@
     </plurals>
     <plurals name="shelf_count">
         <item quantity="one">%1$d riiul</item>
-        <item quantity="other">%1$d riiulid</item>
+        <item quantity="other">%1$d riiulit</item>
     </plurals>
     <plurals name="dialog_permanently_delete_desc">
-        <item quantity="one">Kas soovite %1$d jäädavalt kustutada valitud faili oma seadmest? Seda toimingut ei saa tagasi võtta.</item>
-        <item quantity="other">Kas soovite %1$d jäädavalt kustutada teie seadmest valitud failid? Seda toimingut ei saa tagasi võtta.</item>
+        <item quantity="one">Kas kustutada %1$d valitud fail seadmest jäädavalt? Seda toimingut ei saa tagasi võtta.</item>
+        <item quantity="other">Kas kustutada %1$d valitud faili seadmest jäädavalt? Seda toimingut ei saa tagasi võtta.</item>
     </plurals>
     <plurals name="dialog_remove_recents_desc">
-        <item quantity="one">Kas soovite eemaldada %1$d valitud faili viimaste failide loendist? See kuvatakse uuesti, kui avate selle uuesti raamatukogust.</item>
-        <item quantity="other">Kas soovite eemaldada %1$d valitud failid viimaste failide loendist? See kuvatakse uuesti, kui avate selle uuesti raamatukogust.</item>
+        <item quantity="one">Kas eemaldada %1$d valitud fail viimaste failide loendist? See ilmub uuesti, kui avad selle raamatukogust.</item>
+        <item quantity="other">Kas eemaldada %1$d valitud faili viimaste failide loendist? Need ilmuvad uuesti, kui avad need raamatukogust.</item>
     </plurals>
     <plurals name="dialog_remove_from_shelf_desc">
-        <item quantity="one">Kas soovite kindlasti eemaldada %1$d raamat \'%2$s\' riiul? Raamat jääb teie kogusse ja kuvatakse jaotises Riiulita.</item>
-        <item quantity="other">Kas soovite kindlasti eemaldada %1$d raamatud \'%2$s\' riiul? Raamatud jäävad teie kogusse ja kuvatakse jaotises Riiulita.</item>
+        <item quantity="one">Kas eemaldada %1$d raamat riiulilt &quot;%2$s&quot;? Raamat jääb raamatukokku ja kuvatakse riiulita raamatute all.</item>
+        <item quantity="other">Kas eemaldada %1$d raamatut riiulilt &quot;%2$s&quot;? Raamatud jäävad raamatukokku ja kuvatakse riiulita raamatute all.</item>
     </plurals>
     <plurals name="banner_books_removed_library">
         <item quantity="one">%1$d raamat raamatukogust eemaldatud.</item>
-        <item quantity="other">%1$d raamatud raamatukogust eemaldatud.</item>
+        <item quantity="other">%1$d raamatut eemaldati raamatukogust.</item>
     </plurals>
     <plurals name="banner_importing_books_count">
-        <item quantity="one">Importimine %1$d raamat… See ilmub peagi teie teegis.</item>
-        <item quantity="other">Importimine %1$d raamatud… Need ilmuvad peagi teie kogusse.</item>
+        <item quantity="one">Impordin %1$d raamatut… See ilmub peagi raamatukogusse.</item>
+        <item quantity="other">Impordin %1$d raamatut… Need ilmuvad peagi raamatukogusse.</item>
     </plurals>
     <plurals name="banner_books_imported_library_tab">
-        <item quantity="one">Imporditud %1$d raamat. Selle leiate vahekaardilt Raamatukogu.</item>
-        <item quantity="other">Imporditud %1$d raamatuid. Leiate need vahekaardilt Raamatukogu.</item>
+        <item quantity="one">Imporditi %1$d raamat. Leiad selle vahekaardilt Raamatukogu.</item>
+        <item quantity="other">Imporditi %1$d raamatut. Leiad need vahekaardilt Raamatukogu.</item>
     </plurals>
     <plurals name="banner_books_added_to_shelf">
         <item quantity="one">%1$d raamat lisatud riiulile.</item>
-        <item quantity="other">%1$d raamatud lisatud riiulile.</item>
+        <item quantity="other">%1$d raamatut lisati riiulile.</item>
     </plurals>
     <plurals name="banner_books_tagged_with_tag">
         <item quantity="one">%1$d raamat sildiga &quot;%2$s&quot;.</item>
-        <item quantity="other">%1$d raamatud sildiga &quot;%2$s&quot;.</item>
+        <item quantity="other">%1$d raamatut märgiti sildiga &quot;%2$s&quot;.</item>
     </plurals>
     <plurals name="banner_folder_removed_with_book_count">
-        <item quantity="one">Eemaldatud kaust &quot;%1$s&quot; ja %2$d raamat rakendusest.</item>
-        <item quantity="other">Eemaldatud kaust &quot;%1$s&quot; ja %2$d raamatud rakendusest.</item>
+        <item quantity="one">Eemaldati kaust &quot;%1$s&quot; ja %2$d raamat rakendusest.</item>
+        <item quantity="other">Eemaldati kaust &quot;%1$s&quot; ja %2$d raamatut rakendusest.</item>
     </plurals>
     <plurals name="folder_count">
-        <item quantity="one">%1$d kausta</item>
-        <item quantity="other">%1$d kaustad</item>
+        <item quantity="one">%1$d kaust</item>
+        <item quantity="other">%1$d kausta</item>
     </plurals>
     <plurals name="file_count">
-        <item quantity="one">%1$d faili</item>
-        <item quantity="other">%1$d failid</item>
+        <item quantity="one">%1$d fail</item>
+        <item quantity="other">%1$d faili</item>
     </plurals>
     <plurals name="desktop_drop_import_file_count">
-        <item quantity="one">Langetage import %1$d faili</item>
-        <item quantity="other">Langetage import %1$d failid</item>
+        <item quantity="one">Lohista importimiseks %1$d fail</item>
+        <item quantity="other">Lohista importimiseks %1$d faili</item>
     </plurals>
     <plurals name="desktop_unsupported_import_file_count">
         <item quantity="one">%1$d toetamata fail jäetakse vahele.</item>
-        <item quantity="other">%1$d toetamata failid jäetakse vahele.</item>
+        <item quantity="other">%1$d toetamata faili jäetakse vahele.</item>
     </plurals>
     <plurals name="desktop_importing_file_count">
-        <item quantity="one">Importimine %1$d fail…</item>
-        <item quantity="other">Importimine %1$d failid…</item>
+        <item quantity="one">Impordin %1$d faili…</item>
+        <item quantity="other">Impordin %1$d faili…</item>
     </plurals>
     <plurals name="desktop_imported_file_count">
-        <item quantity="one">Imporditud %1$d faili.</item>
-        <item quantity="other">Imporditud %1$d failid.</item>
+        <item quantity="one">Imporditi %1$d fail.</item>
+        <item quantity="other">Imporditi %1$d faili.</item>
     </plurals>
     <plurals name="desktop_imported_file_count_reader_support_later">
-        <item quantity="one">Imporditud %1$d faili. Lugeja tugi tuleb hiljem.</item>
-        <item quantity="other">Imporditud %1$d failid. Lugeja tugi tuleb hiljem.</item>
+        <item quantity="one">Imporditi %1$d fail. Lugeja tugi tuleb hiljem.</item>
+        <item quantity="other">Imporditi %1$d faili. Lugeja tugi tuleb hiljem.</item>
     </plurals>
     <plurals name="desktop_import_failed_file_count">
-        <item quantity="one">Ei saanud importida %1$d faili.</item>
-        <item quantity="other">Ei saanud importida %1$d failid.</item>
+        <item quantity="one">%1$d faili importimine nurjus.</item>
+        <item quantity="other">%1$d faili importimine nurjus.</item>
     </plurals>
     <plurals name="desktop_skipped_file_count">
-        <item quantity="one">Vahele jäetud %1$d faili.</item>
-        <item quantity="other">Vahele jäetud %1$d failid.</item>
+        <item quantity="one">%1$d fail jäeti vahele.</item>
+        <item quantity="other">%1$d faili jäeti vahele.</item>
     </plurals>
     <plurals name="desktop_remove_folder_desc_with_book_count">
-        <item quantity="one">Eemalda &quot;%1$s&quot; ja selle %2$d raamatut rakendusest? Ketta faile ei kustutata.</item>
-        <item quantity="other">Eemalda &quot;%1$s&quot; ja selle %2$d raamatud rakendusest? Ketta faile ei kustutata.</item>
+        <item quantity="one">Kas eemaldada &quot;%1$s&quot; ja selle %2$d raamat rakendusest? Kettal olevaid faile ei kustutata.</item>
+        <item quantity="other">Kas eemaldada &quot;%1$s&quot; ja selle %2$d raamatut rakendusest? Kettal olevaid faile ei kustutata.</item>
     </plurals>
     <plurals name="desktop_folder_sync_failed_folder_count">
-        <item quantity="one">Kausta sünkroonimine ebaõnnestus %1$d kausta.</item>
-        <item quantity="other">Kausta sünkroonimine ebaõnnestus %1$d kaustad.</item>
+        <item quantity="one">%1$d kausta sünkroonimine nurjus.</item>
+        <item quantity="other">%1$d kausta sünkroonimine nurjus.</item>
     </plurals>
     <plurals name="desktop_folder_sync_skipped_folder_count">
-        <item quantity="one">Kausta sünkroonimine on lõpetatud %1$d kaust jäi vahele.</item>
-        <item quantity="other">Kausta sünkroonimine on lõpetatud %1$d kaustad vahele jäetud.</item>
+        <item quantity="one">Kausta sünkroonimine lõppes, %1$d kaust jäeti vahele.</item>
+        <item quantity="other">Kausta sünkroonimine lõppes, %1$d kausta jäeti vahele.</item>
     </plurals>
     <plurals name="desktop_opds_removed_stream_book_count">
-        <item quantity="one">Eemaldatud %1$d voogesitatud OPDS raamat sellest kataloogist.</item>
-        <item quantity="other">Eemaldatud %1$d voogesitatud OPDS raamatud sellest kataloogist.</item>
+        <item quantity="one">Sellest kataloogist eemaldati %1$d voogedastatud OPDS-raamat.</item>
+        <item quantity="other">Sellest kataloogist eemaldati %1$d voogedastatud OPDS-raamatut.</item>
     </plurals>
     <plurals name="tag_count">
-        <item quantity="one">%1$d tag</item>
-        <item quantity="other">%1$d sildid</item>
+        <item quantity="one">%1$d silt</item>
+        <item quantity="other">%1$d silti</item>
     </plurals>
     <plurals name="desktop_library_tab_books_count">
         <item quantity="one">Kõik raamatud %1$d</item>
@@ -133,7 +133,7 @@
         <item quantity="other">Kaustad %1$d</item>
     </plurals>
     <plurals name="tts_cache_chunk_count_parenthetical">
-        <item quantity="one">(%1$d tükk)</item>
-        <item quantity="other">(%1$d tükid)</item>
+        <item quantity="one">(%1$d osa)</item>
+        <item quantity="other">(%1$d osa)</item>
     </plurals>
 </resources>

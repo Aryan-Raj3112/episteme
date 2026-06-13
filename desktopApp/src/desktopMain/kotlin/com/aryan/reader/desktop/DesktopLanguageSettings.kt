@@ -58,7 +58,8 @@ internal val DesktopLanguageOptions = listOf(
     DesktopLanguageOption("zh-CN", "language_chinese_simplified", "Chinese, Simplified"),
     DesktopLanguageOption("nl", "language_dutch", "Dutch"),
     DesktopLanguageOption("uk", "language_ukrainian", "Ukrainian"),
-    DesktopLanguageOption("id", "language_indonesian", "Indonesian")
+    DesktopLanguageOption("id", "language_indonesian", "Indonesian"),
+    DesktopLanguageOption("et", "language_estonian", "Estonian")
 )
 
 internal fun selectedDesktopLanguageOption(languageTag: String?): DesktopLanguageOption {

@@ -1200,6 +1200,7 @@
     <string name="language_korean">한국어 (Korean)</string>
     <string name="language_hindi">हिन्दी (Hindi)</string>
     <string name="language_chinese_simplified">简体中文 (Chinese, Simplified)</string>
+    <string name="language_estonian">Eesti (Estonian)</string>
 
     <!-- App-wide theme controls in HomeScreen.kt. -->
     <string name="app_theme_title">App Theme</string>

@@ -128,6 +128,14 @@ class DesktopStringResourcesTest {
     }
 
     @Test
+    fun resolvesSelectedDesktopLanguageOptionForEstonian() {
+        val option = selectedDesktopLanguageOption("et")
+
+        assertEquals("et", option.normalizedTag)
+        assertEquals("language_estonian", option.labelKey)
+    }
+
+    @Test
     fun desktopLanguageSettingsStorePersistsLanguageAcrossInstances() {
         val tempDirectory = Files.createTempDirectory("episteme-desktop-language-test")
         val settingsFile = tempDirectory.resolve("language.properties").toFile()

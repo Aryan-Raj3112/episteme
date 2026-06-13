@@ -12,16 +12,28 @@ class AndroidStringFormatResourcesTest {
 
     @Test
     fun `vietnamese strings cover translatable base resources`() {
+        assertLocaleCoversTranslatableBaseResources(localeDirectory = "values-vi", localeName = "Vietnamese")
+    }
+
+    @Test
+    fun `estonian strings cover translatable base resources`() {
+        assertLocaleCoversTranslatableBaseResources(localeDirectory = "values-et", localeName = "Estonian")
+    }
+
+    private fun assertLocaleCoversTranslatableBaseResources(
+        localeDirectory: String,
+        localeName: String
+    ) {
         val resDirectory = findResDirectory()
         val baseNames = readResourceNames(
             stringsFile = File(resDirectory, "values/strings.xml"),
             includeNonTranslatable = false
         )
-        val vietnameseNames = readResourceNames(File(resDirectory, "values-vi/strings.xml"))
-        val missingNames = baseNames.filterNot { it in vietnameseNames }
+        val localizedNames = readResourceNames(File(resDirectory, "$localeDirectory/strings.xml"))
+        val missingNames = baseNames.filterNot { it in localizedNames }
 
         assertTrue(
-            "Missing Vietnamese strings:\n${missingNames.joinToString(separator = "\n")}",
+            "Missing $localeName strings:\n${missingNames.joinToString(separator = "\n")}",
             missingNames.isEmpty()
         )
     }
