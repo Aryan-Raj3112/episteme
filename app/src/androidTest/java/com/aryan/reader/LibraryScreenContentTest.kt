@@ -320,6 +320,8 @@ class LibraryScreenContentTest {
                     onItemClick = {},
                     onItemLongClick = { item -> selectedItems.value = setOf(item) },
                     onInfoClick = onInfoClick,
+                    onSaveClick = null,
+                    onShareClick = null,
                     onDeleteClick = onDeleteClick,
                     onSelectAllClick = onSelectAllClick,
                     onShelfClick = onShelfClick,

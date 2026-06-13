@@ -41,7 +41,7 @@ class OdtParser(private val context: Context) {
 
         val mathJaxFileName = "tex-mml-chtml.js"
         val mathJaxFile = File(extractionDir, mathJaxFileName)
-        if (!mathJaxFile.exists()) {
+        if (parseContent && !mathJaxFile.exists()) {
             try {
                 context.assets.open("mathjax/$mathJaxFileName").use { input ->
                     FileOutputStream(mathJaxFile).use { output ->
@@ -170,32 +170,33 @@ class OdtParser(private val context: Context) {
 
         try {
             if (!isFlat) {
-                val zis = ZipInputStream(inputStream)
-                var entry = zis.nextEntry
                 var contentXmlBytes: ByteArray? = null
                 var stylesXmlBytes: ByteArray? = null
                 val ignoredFiles = setOf("meta.xml", "settings.xml", "META-INF/manifest.xml")
 
-                while (entry != null) {
-                    if (!entry.isDirectory) {
-                        when (entry.name) {
-                            "content.xml" -> contentXmlBytes = zis.readBytes()
-                            "styles.xml" -> stylesXmlBytes = zis.readBytes()
-                            "Thumbnails/thumbnail.png" -> coverBytes = zis.readBytes()
-                            else -> {
-                                if (entry.name !in ignoredFiles) {
-                                    val extractedFile = safeFileInRoot(extractionDir, entry.name)
-                                    if (extractedFile != null) {
-                                        extractedFile.parentFile?.mkdirs()
-                                        FileOutputStream(extractedFile).use { out -> zis.copyTo(out) }
-                                    } else {
-                                        Timber.w("Skipping unsafe ODT entry outside extraction root: ${entry.name}")
+                ZipInputStream(inputStream).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory) {
+                            when (entry.name) {
+                                "content.xml" -> contentXmlBytes = zis.readBytes()
+                                "styles.xml" -> stylesXmlBytes = zis.readBytes()
+                                "Thumbnails/thumbnail.png" -> coverBytes = zis.readBytes()
+                                else -> {
+                                    if (entry.name !in ignoredFiles) {
+                                        val extractedFile = safeFileInRoot(extractionDir, entry.name)
+                                        if (extractedFile != null) {
+                                            extractedFile.parentFile?.mkdirs()
+                                            FileOutputStream(extractedFile).use { out -> zis.copyTo(out) }
+                                        } else {
+                                            Timber.w("Skipping unsafe ODT entry outside extraction root: ${entry.name}")
+                                        }
                                     }
                                 }
                             }
                         }
+                        entry = zis.nextEntry
                     }
-                    entry = zis.nextEntry
                 }
 
                 // Pre-parse styles if available

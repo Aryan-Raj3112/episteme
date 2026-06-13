@@ -5352,7 +5352,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private suspend fun cleanupBookDataLocally(bookId: String) {
+    protected open suspend fun cleanupBookDataLocally(bookId: String) {
         pdfTextRepository.clearBookText(bookId)
         clearImportedFileCache(bookId)
         bookCacheDao.deleteEntireBookCache(bookId)

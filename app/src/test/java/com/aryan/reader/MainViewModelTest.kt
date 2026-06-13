@@ -23,6 +23,7 @@ import com.aryan.reader.tts.TtsPlaybackManager
 import io.mockk.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -46,6 +47,7 @@ class MainViewModelTest {
     private lateinit var mockApplication: Application
     private lateinit var mockPrefs: SharedPreferences
     private lateinit var mockEditor: SharedPreferences.Editor
+    private val prefsStringSets = mutableMapOf<String, Set<String>>()
 
     private val billingStateFlow = MutableStateFlow(ProUpgradeState())
     private val customFontsFlow = MutableStateFlow<List<CustomFontEntity>>(emptyList())
@@ -65,6 +67,12 @@ class MainViewModelTest {
     }
 
     private class TestMainViewModel(application: Application) : MainViewModel(application) {
+        val locallyCleanedBookIds = mutableListOf<String>()
+
+        override suspend fun cleanupBookDataLocally(bookId: String) {
+            locallyCleanedBookIds += bookId
+        }
+
         fun clearForTest() {
             ViewModel::class.java
                 .getDeclaredMethod("clear\$lifecycle_viewmodel_release")
@@ -84,6 +92,7 @@ class MainViewModelTest {
         billingStateFlow.value = ProUpgradeState()
         customFontsFlow.value = emptyList()
         ttsStateFlow.value = TtsPlaybackManager.TtsState()
+        prefsStringSets.clear()
 
         mockkStatic(Log::class)
         every { Log.isLoggable(any(), any()) } returns false
@@ -110,9 +119,14 @@ class MainViewModelTest {
         every { mockApplication.filesDir } returns filesDir
         every { mockApplication.cacheDir } returns cacheDir
         every { mockApplication.getExternalFilesDir(any()) } returns externalFilesDir
+        every { mockApplication.getString(any()) } answers { "res-${firstArg<Int>()}" }
+        every { mockApplication.getString(any(), *anyVararg()) } answers { "res-${firstArg<Int>()}" }
         every { mockPrefs.edit() } returns mockEditor
 
         every { mockPrefs.getString(any(), any()) } answers { secondArg() as String? }
+        every { mockPrefs.getStringSet(any(), any()) } answers {
+            prefsStringSets[firstArg<String>()]?.toMutableSet() ?: secondArg<Set<String>?>()?.toMutableSet()
+        }
         every { mockPrefs.getBoolean(any(), any()) } answers { secondArg() as Boolean }
         every { mockPrefs.getInt(any(), any()) } answers { secondArg() as Int }
         every { mockPrefs.getFloat(any(), any()) } answers { secondArg() as Float }
@@ -437,22 +451,21 @@ class MainViewModelTest {
     fun `startup removes pending external always-remove file before restoring session`() = runTest(testDispatcher) {
         val pendingUri = "file:///data/user/0/com.aryan.reader/files/books/external.epub"
         val pendingEntry = """{"bookId":"external-book","uriString":"$pendingUri"}"""
-        every {
-            mockPrefs.getStringSet("pending_external_file_removals", any())
-        } returns mutableSetOf(pendingEntry)
+        prefsStringSets["pending_external_file_removals"] = setOf(pendingEntry)
         every { mockPrefs.getString("last_open_book_id", null) } returns "external-book"
         every { mockPrefs.getString("last_open_file_type", null) } returns FileType.EPUB.name
 
         val restored = TestMainViewModel(mockApplication)
         try {
             advanceUntilIdle()
-
-            coVerify {
+            coVerify(timeout = 1_000) {
                 anyConstructed<RecentFilesRepository>().deleteFilePermanently(listOf("external-book"))
             }
+
             coVerify {
                 anyConstructed<BookImporter>().deleteBookByUriString(pendingUri)
             }
+            assertEquals(listOf("external-book"), restored.locallyCleanedBookIds)
             verify(atLeast = 1) { mockEditor.remove("last_open_book_id") }
             verify(atLeast = 1) { mockEditor.remove("last_open_file_type") }
             verify { mockEditor.remove("pending_external_file_removals") }
@@ -504,7 +517,7 @@ class MainViewModelTest {
         viewModel.onRecentFileClicked(item)
         advanceUntilIdle()
         viewModel.uiState.first { it.selectedBookId == item.bookId }
-        val finishEvent = async { viewModel.temporaryExternalOpenFinished.first() }
+        val finishEvent = backgroundScope.async { viewModel.temporaryExternalOpenFinished.first() }
 
         viewModel.clearSelectedFile()
         advanceUntilIdle()
