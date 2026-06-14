@@ -57,8 +57,8 @@ android {
         applicationId = "com.aryan.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 53
-        versionName = "1.0.49"
+        versionCode = 54
+        versionName = "1.0.50"
 
         resourceConfigurations += configuredAppLocaleTags()
             .map { it.toAndroidResourceConfiguration() }
