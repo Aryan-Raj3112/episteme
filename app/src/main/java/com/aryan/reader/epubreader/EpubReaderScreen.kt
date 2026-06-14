@@ -207,6 +207,8 @@ import com.aryan.reader.paginatedreader.TextContentBlock
 import com.aryan.reader.paginatedreader.TtsChunk
 import com.aryan.reader.paginatedreader.buildEpubFontFaceCss
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import com.aryan.reader.paginatedreader.locatorForPersistence
+import com.aryan.reader.paginatedreader.nativeVerticalChapterPageInfo
 import com.aryan.reader.paginatedreader.nativeVerticalProgressForCompatPage
 import com.aryan.reader.paginatedreader.semanticBlockModule
 import com.aryan.reader.rememberSearchState
@@ -1192,7 +1194,7 @@ fun EpubReaderHost(
     fun currentNativeVerticalLocator(): Locator? {
         val bookPaginator = paginator as? BookPaginator
         val pageChapterIndex = bookPaginator?.findChapterIndexForPage(nativeVerticalCurrentPage)
-        return nativeVerticalLocation?.locator
+        return nativeVerticalLocation?.locatorForPersistence()
             ?: lastKnownLocator?.takeIf { pageChapterIndex == null || it.chapterIndex == pageChapterIndex }
             ?: bookPaginator?.getLocatorForPage(nativeVerticalCurrentPage)
     }
@@ -1204,6 +1206,8 @@ fun EpubReaderHost(
         keepVisible: Boolean = false
     ) {
         if (locator != null) {
+            nativeVerticalScrollRequest = null
+            nativeVerticalProgressScrollRequest = null
             nativeVerticalLocatorScrollRequest = locator
             nativeVerticalLocatorScrollRequestId += 1L
             nativeVerticalLocatorScrollKeepVisible = keepVisible
@@ -2124,6 +2128,44 @@ fun EpubReaderHost(
             }
         } else {
             1
+        }
+    }
+
+    val nativeVerticalDisplayPageInfo = remember(
+        isNativeVerticalMode,
+        nativeVerticalLocation,
+        nativeVerticalCurrentPage,
+        nativeVerticalTotalPages,
+        currentChapterIndex,
+        lastKnownLocator,
+        paginator
+    ) {
+        if (!isNativeVerticalMode) {
+            null
+        } else {
+            nativeVerticalLocation?.chapterPageInfo ?: run {
+                val bookPaginator = paginator as? BookPaginator
+                val locationLocator = nativeVerticalLocation?.locator
+                val chapterIndex = nativeVerticalLocation?.chapterIndex
+                    ?: locationLocator?.chapterIndex
+                    ?: lastKnownLocator?.chapterIndex
+                    ?: currentChapterIndex
+                val locatorForChapter = locationLocator
+                    ?.takeIf { it.chapterIndex == chapterIndex }
+                    ?: lastKnownLocator?.takeIf { it.chapterIndex == chapterIndex }
+                val chapterLengthChars = chapters
+                    .getOrNull(chapterIndex)
+                    ?.plainTextCharacterCount()
+                    ?: 0
+
+                nativeVerticalChapterPageInfo(
+                    chapterCharOffset = locatorForChapter?.charOffset,
+                    chapterLengthChars = chapterLengthChars,
+                    chapterPageCount = bookPaginator?.chapterPageCounts?.get(chapterIndex),
+                    compatPageIndex = nativeVerticalCurrentPage,
+                    chapterStartPageIndex = bookPaginator?.chapterStartPageIndices?.get(chapterIndex)
+                )
+            }
         }
     }
 
@@ -4556,6 +4598,7 @@ fun EpubReaderHost(
                                     },
                                     onLocationChanged = { location ->
                                         nativeVerticalLocation = location
+                                        location.locatorForPersistence()?.let { lastKnownLocator = it }
                                     },
                                     onTap = {
                                         focusManager.clearFocus()
@@ -6177,8 +6220,8 @@ fun EpubReaderHost(
                                 ?: "Chapter"
 
                         val displayPageInfo = when {
-                            isNativeVerticalMode && nativeVerticalTotalPages > 0 ->
-                                " (${nativeVerticalCurrentPage + 1}/$nativeVerticalTotalPages)"
+                            isNativeVerticalMode && nativeVerticalDisplayPageInfo != null ->
+                                " (${nativeVerticalDisplayPageInfo.currentPage}/${nativeVerticalDisplayPageInfo.totalPages})"
                             currentScrollHeightValue <= 0 || isChapterParsing -> ""
                             else -> " ($currentPageInChapter/$totalPagesInCurrentChapter)"
                         }
