@@ -161,4 +161,24 @@ class NativeVerticalLocationTest {
             )
         )
     }
+
+    @Test
+    fun `native vertical tts follow centers target offset in viewport`() {
+        assertEquals(
+            100f,
+            nativeVerticalCenteredScrollDelta(
+                targetOffsetInViewport = 500f,
+                viewportHeight = 800f
+            ),
+            0.001f
+        )
+        assertEquals(
+            -200f,
+            nativeVerticalCenteredScrollDelta(
+                targetOffsetInViewport = 200f,
+                viewportHeight = 800f
+            ),
+            0.001f
+        )
+    }
 }

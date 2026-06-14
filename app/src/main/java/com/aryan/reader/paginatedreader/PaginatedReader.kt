@@ -274,6 +274,11 @@ internal fun shouldFallbackNativeVerticalInitialScrollToCompatPage(
     didLocatorScroll: Boolean
 ): Boolean = !hasInitialLocator && !didLocatorScroll
 
+internal fun nativeVerticalCenteredScrollDelta(
+    targetOffsetInViewport: Float,
+    viewportHeight: Float
+): Float = targetOffsetInViewport - (viewportHeight * 0.5f)
+
 data class NativeVerticalChapterPageInfo(
     val currentPage: Int,
     val totalPages: Int
@@ -3479,19 +3484,19 @@ fun NativeVerticalReaderScreen(
             )
             if (exactDelta != null) {
                 val scrollDelta = if (keepVisible) {
-                    val viewportHeight = rootWindowBounds.height
-                    val comfortableTop = viewportHeight * 0.24f
-                    val comfortableBottom = viewportHeight * 0.76f
-                    if (exactDelta in comfortableTop..comfortableBottom) {
-                        0f
-                    } else {
-                        exactDelta - (viewportHeight * 0.38f)
-                    }
+                    nativeVerticalCenteredScrollDelta(
+                        targetOffsetInViewport = exactDelta,
+                        viewportHeight = rootWindowBounds.height
+                    )
                 } else {
                     exactDelta
                 }
                 if (abs(scrollDelta) > 1f) {
-                    listState.scrollBy(scrollDelta)
+                    if (animate) {
+                        listState.animateScrollBy(scrollDelta)
+                    } else {
+                        listState.scrollBy(scrollDelta)
+                    }
                 }
                 if (keepVisible || abs(exactDelta) > 1f) return true
             }
@@ -3501,7 +3506,11 @@ fun NativeVerticalReaderScreen(
                 chapters = chapters,
                 locator = locator
             ) ?: return false
-            listState.scrollToItem(targetIndex)
+            if (animate) {
+                listState.animateScrollToItem(targetIndex)
+            } else {
+                listState.scrollToItem(targetIndex)
+            }
             repeat(4) {
                 withFrameNanos { }
                 val refinedDelta = resolveNativeVerticalScrollDeltaForLocator(
@@ -3516,13 +3525,19 @@ fun NativeVerticalReaderScreen(
                 )
                 if (refinedDelta != null) {
                     val scrollDelta = if (keepVisible) {
-                        val viewportHeight = rootWindowBounds.height
-                        refinedDelta - (viewportHeight * 0.38f)
+                        nativeVerticalCenteredScrollDelta(
+                            targetOffsetInViewport = refinedDelta,
+                            viewportHeight = rootWindowBounds.height
+                        )
                     } else {
                         refinedDelta
                     }
                     if (abs(scrollDelta) > 1f) {
-                        listState.scrollBy(scrollDelta)
+                        if (animate) {
+                            listState.animateScrollBy(scrollDelta)
+                        } else {
+                            listState.scrollBy(scrollDelta)
+                        }
                     }
                     return true
                 }
@@ -3620,7 +3635,12 @@ fun NativeVerticalReaderScreen(
         LaunchedEffect(scrollRequestLocatorId, scrollRequestLocator, scrollRequestLocatorKeepVisible, flowChapters, rootWindowBounds) {
             val requestedLocator = scrollRequestLocator ?: return@LaunchedEffect
             if (flowChapters == null || rootWindowBounds == Rect.Zero) return@LaunchedEffect
-            if (scrollToFlowLocator(requestedLocator, animate = false, keepVisible = scrollRequestLocatorKeepVisible)) {
+            if (scrollToFlowLocator(
+                    locator = requestedLocator,
+                    animate = scrollRequestLocatorKeepVisible,
+                    keepVisible = scrollRequestLocatorKeepVisible
+                )
+            ) {
                 paginator.onUserScrolledTo(
                     nativeVerticalCompatPageForProgress(
                         estimateNativeVerticalProgressPercent(book, requestedLocator) ?: 0f,
