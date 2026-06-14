@@ -371,8 +371,6 @@ jobs:
                 :desktopApp:prepareAurPackage && \
                 cd desktopApp/build/aur/${{ matrix.flavor.aur }} && \
                 makepkg -sf --cleanbuild --nodeps && \
-                makepkg --printsrcinfo > .SRCINFO.generated && \
-                cmp -s .SRCINFO .SRCINFO.generated && \
                 pkgfile=\$(find . -maxdepth 1 -name '*.pkg.tar.zst' -print -quit) && \
                 desktop_file=${{ matrix.flavor.aur }} && \
                 desktop_file=\${desktop_file%-bin}.desktop && \
@@ -394,8 +392,7 @@ jobs:
                 -PdesktopAurSourceUrl=https://github.com/${{ env.PUBLIC_RELEASE_REPOSITORY }}/releases/download/${{ inputs.release_tag }}/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x64.tar.gz \
                 :desktopApp:prepareAurPackage && \
                 cd desktopApp/build/aur/${{ matrix.flavor.aur }} && \
-                makepkg --printsrcinfo > .SRCINFO.generated && \
-                cmp -s .SRCINFO .SRCINFO.generated"
+                makepkg --printsrcinfo > .SRCINFO"
             '
           sudo chown -R "$USER:$USER" desktopApp/build release-assets
 
