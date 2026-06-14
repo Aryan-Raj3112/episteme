@@ -28,15 +28,42 @@ permissions:
   contents: write
 
 env:
+  PUBLIC_RELEASE_REPOSITORY: Aryan-Raj3112/episteme
   DESKTOP_FIREBASE_PROJECT_ID: ${{ secrets.DESKTOP_FIREBASE_PROJECT_ID }}
   DESKTOP_FIREBASE_WEB_API_KEY: ${{ secrets.DESKTOP_FIREBASE_WEB_API_KEY }}
   DESKTOP_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.DESKTOP_GOOGLE_OAUTH_CLIENT_ID }}
   DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.DESKTOP_GOOGLE_OAUTH_CLIENT_SECRET }}
 
 jobs:
+  prepare-public-release:
+    name: Prepare public draft release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "PUBLIC_RELEASE_TOKEN secret is required to publish desktop assets to $PUBLIC_RELEASE_REPOSITORY." >&2
+            exit 1
+          fi
+          if ! gh release view "${{ inputs.release_tag }}" --repo "$PUBLIC_RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            draft_flag=""
+            if [ "${{ inputs.draft }}" = "true" ]; then
+              draft_flag="--draft"
+            fi
+            gh release create "${{ inputs.release_tag }}" \
+              --repo "$PUBLIC_RELEASE_REPOSITORY" \
+              --title "Episteme ${{ inputs.version }}" \
+              --notes "Desktop release ${{ inputs.version }}" \
+              $draft_flag
+          fi
+
   windows-msi:
     name: Windows MSI (${{ matrix.flavor.label }})
     runs-on: windows-latest
+    needs: prepare-public-release
     strategy:
       fail-fast: false
       matrix:
@@ -99,14 +126,21 @@ jobs:
           if ($null -eq $source) { throw "MSI output not found" }
           Copy-Item $source.FullName "release-assets/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-windows-x64.msi"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-msi-${{ matrix.flavor.label }}
-          path: release-assets/*
+      - name: Upload MSI to public release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          $assets = @(Get-ChildItem release-assets -File | ForEach-Object { $_.FullName })
+          if ($assets.Count -eq 0) { throw "No MSI assets found to upload" }
+          gh release upload "${{ inputs.release_tag }}" @assets `
+            --repo "$env:PUBLIC_RELEASE_REPOSITORY" `
+            --clobber
 
   ubuntu-deb-tar:
     name: Ubuntu DEB and tar (${{ matrix.flavor.label }})
     runs-on: ubuntu-latest
+    needs: prepare-public-release
     strategy:
       fail-fast: false
       matrix:
@@ -166,14 +200,19 @@ jobs:
           cp "$(find desktopApp/build/compose/binaries/main/linux-tar -name '*.tar.gz' -print -quit)" \
             "release-assets/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x64.tar.gz"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ubuntu-deb-tar-${{ matrix.flavor.label }}
-          path: release-assets/*
+      - name: Upload DEB and tarball to public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.release_tag }}" release-assets/* \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" \
+            --clobber
 
   fedora-rpm:
     name: Fedora RPM (${{ matrix.flavor.label }})
     runs-on: ubuntu-latest
+    needs: prepare-public-release
     strategy:
       fail-fast: false
       matrix:
@@ -251,14 +290,19 @@ jobs:
           cp "$(find desktopApp/build/compose/binaries/main/rpm -name '*.rpm' -print -quit)" \
             "release-assets/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x86_64.rpm"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fedora-rpm-${{ matrix.flavor.label }}
-          path: release-assets/*
+      - name: Upload RPM to public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.release_tag }}" release-assets/* \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" \
+            --clobber
 
   arch-package:
     name: Arch package (${{ matrix.flavor.label }})
     runs-on: ubuntu-latest
+    needs: prepare-public-release
     strategy:
       fail-fast: false
       matrix:
@@ -347,7 +391,7 @@ jobs:
                 -PdesktopVersion=${{ inputs.version }} \
                 -PdesktopPackageVersion=${{ inputs.version }} \
                 -PdesktopAurPackageRelease=1 \
-                -PdesktopAurSourceUrl=https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x64.tar.gz \
+                -PdesktopAurSourceUrl=https://github.com/${{ env.PUBLIC_RELEASE_REPOSITORY }}/releases/download/${{ inputs.release_tag }}/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x64.tar.gz \
                 :desktopApp:prepareAurPackage && \
                 cd desktopApp/build/aur/${{ matrix.flavor.aur }} && \
                 makepkg --printsrcinfo > .SRCINFO.generated && \
@@ -363,13 +407,17 @@ jobs:
             -czf "release-assets/aur-${{ matrix.flavor.aur }}-${{ inputs.version }}.tar.gz" \
             PKGBUILD .SRCINFO
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: arch-package-${{ matrix.flavor.label }}
-          path: release-assets/*
+      - name: Upload Arch package and AUR metadata to public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.release_tag }}" release-assets/* \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" \
+            --clobber
 
-  publish-release:
-    name: Publish draft release
+  publish-checksums:
+    name: Publish release checksums
     runs-on: ubuntu-latest
     needs:
       - windows-msi
@@ -377,33 +425,18 @@ jobs:
       - fedora-rpm
       - arch-package
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: downloaded-artifacts
-
-      - name: Collect release assets
+      - name: Generate and upload checksums from public release assets
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          find downloaded-artifacts -type f -exec cp {} release-assets/ \;
+          gh release download "${{ inputs.release_tag }}" \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" \
+            --dir release-assets \
+            --clobber
+          rm -f release-assets/SHA256SUMS.txt
           (cd release-assets && sha256sum * > SHA256SUMS.txt)
-
-      - name: Create or update GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if ! gh release view "${{ inputs.release_tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            draft_flag=""
-            if [ "${{ inputs.draft }}" = "true" ]; then
-              draft_flag="--draft"
-            fi
-            gh release create "${{ inputs.release_tag }}" \
-              --repo "${{ github.repository }}" \
-              --title "Episteme ${{ inputs.version }}" \
-              --notes "Desktop release ${{ inputs.version }}" \
-              $draft_flag
-          fi
-          gh release upload "${{ inputs.release_tag }}" release-assets/* \
-            --repo "${{ github.repository }}" \
+          gh release upload "${{ inputs.release_tag }}" release-assets/SHA256SUMS.txt \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" \
             --clobber
