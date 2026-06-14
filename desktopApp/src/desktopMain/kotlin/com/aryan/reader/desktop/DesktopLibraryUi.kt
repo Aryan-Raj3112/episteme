@@ -35,6 +35,7 @@ import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedFolderPathResolver
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
