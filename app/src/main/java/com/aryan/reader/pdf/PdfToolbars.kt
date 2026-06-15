@@ -183,7 +183,8 @@ internal fun PdfTopBar(
     onTabClick: (String) -> Unit,
     onTabClose: (String) -> Unit,
     onNewTabClick: () -> Unit,
-    onGenerateDemoAnnotations: () -> Unit
+    onGenerateDemoAnnotations: () -> Unit,
+    includeDebugActions: Boolean = BuildConfig.DEBUG
 ) {
     AnimatedVisibility(
         visible = showStandardBars,
@@ -240,11 +241,11 @@ internal fun PdfTopBar(
                             modifier = Modifier.padding(start = 12.dp).weight(1f).testTag("PageNumberIndicator")
                         )
 
-                        if (topToolbarTools.isNotEmpty() || BuildConfig.DEBUG) {
+                        if (topToolbarTools.isNotEmpty() || includeDebugActions) {
                             val topToolbarScrollState = rememberScrollState()
                             Row(
                                 modifier = Modifier
-                                    .weight(1f, fill = false)
+                                    .weight(1f)
                                     .horizontalScroll(topToolbarScrollState),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.End
@@ -349,7 +350,7 @@ internal fun PdfTopBar(
                                     }
                                 }
 
-                                if (BuildConfig.DEBUG) {
+                                if (includeDebugActions) {
                                     TooltipIconButton(text = stringResource(R.string.tooltip_demo_annotations), onClick = onGenerateDemoAnnotations) {
                                         Icon(Icons.Default.BugReport, contentDescription = stringResource(R.string.content_desc_generate_demo_annotations), tint = MaterialTheme.colorScheme.secondary)
                                     }
