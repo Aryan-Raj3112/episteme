@@ -66,6 +66,37 @@ class DesktopEpubPaginationTest {
     }
 
     @Test
+    fun `stale measured pagination requests are ignored after settings change`() {
+        val request = desktopPaginationRequest()
+
+        assertTrue(
+            desktopMeasuredPaginationRequestStillCurrent(
+                request = request,
+                settings = ReaderSettings(
+                    readingMode = ReaderReadingMode.PAGINATED,
+                    pageSpreadMode = ReaderPageSpreadMode.SINGLE
+                )
+            )
+        )
+        assertFalse(
+            desktopMeasuredPaginationRequestStillCurrent(
+                request = request,
+                settings = ReaderSettings(
+                    readingMode = ReaderReadingMode.PAGINATED,
+                    pageSpreadMode = ReaderPageSpreadMode.SINGLE,
+                    fontSize = 22
+                )
+            )
+        )
+        assertFalse(
+            desktopMeasuredPaginationRequestStillCurrent(
+                request = request,
+                settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL)
+            )
+        )
+    }
+
+    @Test
     fun `measured chapter warm start replaces only that chapter and renumbers pages`() {
         val currentPages = listOf(
             readerPage(text = "chapter 0 page", chapterIndex = 0, pageIndex = 0),

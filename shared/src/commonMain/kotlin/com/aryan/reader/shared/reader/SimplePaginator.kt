@@ -18,6 +18,29 @@ class SimplePaginator {
         }.mapIndexed { pageIndex, page -> page.copy(pageIndex = pageIndex) }
     }
 
+    fun paginateAnchorChapter(
+        book: SharedEpubBook,
+        settings: ReaderSettings,
+        anchorChapterIndex: Int?,
+        fallbackPageIndex: Int = 0,
+        viewportWidth: Int = 980,
+        viewportHeight: Int = 720
+    ): List<ReaderPage> {
+        val chapters = book.chapters
+        if (chapters.isEmpty()) return paginate(book, settings, viewportWidth, viewportHeight)
+        val chapterIndex = anchorChapterIndex
+            ?.takeIf { it in chapters.indices }
+            ?: chapters.indices.elementAtOrNull(fallbackPageIndex.coerceAtLeast(0))
+            ?: 0
+        val charsPerPage = estimateCharsPerPage(settings, viewportWidth, viewportHeight)
+        return paginateChapter(
+            chapter = chapters[chapterIndex],
+            chapterIndex = chapterIndex,
+            firstPageIndex = 0,
+            charsPerPage = charsPerPage
+        ).mapIndexed { pageIndex, page -> page.copy(pageIndex = pageIndex) }
+    }
+
     fun repaginate(
         state: PaginatedReaderState,
         settings: ReaderSettings,

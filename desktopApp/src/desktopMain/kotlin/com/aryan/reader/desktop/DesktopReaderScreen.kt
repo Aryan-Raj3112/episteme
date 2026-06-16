@@ -51,6 +51,7 @@ import com.aryan.reader.shared.reader.ReaderLinkTarget
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.ReaderSettingsUpdateMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
@@ -323,8 +324,7 @@ internal fun DesktopReaderScreen(
             val cacheProbeStartedAt = System.nanoTime()
             val cacheProbeSettings = latestSession.reader.settings
             val cachedPages = if (
-                cacheProbeSettings.readingMode == ReaderReadingMode.PAGINATED &&
-                cacheProbeSettings.layoutSignature() == request.layoutSignature
+                desktopMeasuredPaginationRequestStillCurrent(request, cacheProbeSettings)
             ) {
                 withContext(Dispatchers.Default) {
                     epubPaginationCache.loadMemory(
@@ -339,8 +339,7 @@ internal fun DesktopReaderScreen(
                 null
             }
             val settingsAfterCacheProbe = latestSession.reader.settings
-            if (settingsAfterCacheProbe.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
-            if (settingsAfterCacheProbe.layoutSignature() != request.layoutSignature) return@LaunchedEffect
+            if (!desktopMeasuredPaginationRequestStillCurrent(request, settingsAfterCacheProbe)) return@LaunchedEffect
             if (cachedPages != null) {
                 val cacheLayoutChanged = !latestSession.reader.pages.samePageLayoutAs(cachedPages)
                 logEpubPagination(
@@ -423,8 +422,7 @@ internal fun DesktopReaderScreen(
             val reflowStartRequestId = reflowStartSession.navigationRequestId
             val reflowAnchor = readerEngine.reflowAnchorFor(reflowStartSession)
             val settings = reflowStartSession.reader.settings
-            if (settings.readingMode != ReaderReadingMode.PAGINATED) return@LaunchedEffect
-            if (settings.layoutSignature() != request.layoutSignature) return@LaunchedEffect
+            if (!desktopMeasuredPaginationRequestStillCurrent(request, settings)) return@LaunchedEffect
             logEpubPagination(
                 "reflow_start book=\"${session.reader.book.title.logPreview()}\" " +
                     "viewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
@@ -631,7 +629,8 @@ internal fun DesktopReaderScreen(
         preferNativeVerticalReader = desktopShouldUseNativeVerticalEpubReader(),
         bottomChromeExtraContent = bottomChromeExtraContent,
         useDetachedChromeLayer = useDetachedChromeLayer,
-        useDetachedPanelLayer = useDetachedPanelLayer
+        useDetachedPanelLayer = useDetachedPanelLayer,
+        settingsUpdateMode = ReaderSettingsUpdateMode.DEFER_LAYOUT_PAGINATION
     ) { renderPlan, onVisiblePageChanged, onHighlightSelected, onOpenHighlightPaletteManager, onChromeActivity ->
         val renderPlanModeKey = renderPlan.desktopReaderSurfaceModeKey()
         val readerSurfaceKey = renderPlan.desktopReaderSurfaceContentKey(paginatedLayoutReady)

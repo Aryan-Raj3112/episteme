@@ -43,6 +43,16 @@ enum class ReaderPageSpreadMode {
     TWO_PAGE
 }
 
+enum class ReaderPaginationMode {
+    FULL,
+    ANCHOR_CHAPTER_ONLY
+}
+
+enum class ReaderSettingsUpdateMode {
+    FULL_REPAGINATE,
+    DEFER_LAYOUT_PAGINATION
+}
+
 enum class SharedReaderTextAlign {
     START,
     RIGHT,

@@ -39,6 +39,24 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `createSession can build only anchor chapter provisional pages for desktop paginated open`() {
+        val engine = ReaderEngine()
+        val book = multiChapterLongBook()
+        val locator = ReaderLocator(chapterIndex = 2, startOffset = 40, endOffset = 40)
+
+        val session = engine.createSession(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED),
+            initialLocator = locator,
+            paginationMode = ReaderPaginationMode.ANCHOR_CHAPTER_ONLY
+        )
+
+        assertTrue(session.reader.pages.isNotEmpty())
+        assertTrue(session.reader.pages.all { it.chapterIndex == 2 })
+        assertEquals(2, session.navigationLocator?.chapterIndex)
+    }
+
+    @Test
     fun `visible locator and bookmarks prefer android style cfi when semantic blocks provide it`() {
         val engine = ReaderEngine()
         val session = engine.createSession(
@@ -185,6 +203,30 @@ class ReaderEngineTest {
         val page = updated.reader.currentPage ?: error("Expected current page")
         assertEquals(visibleLocator.startOffset, updated.navigationLocator?.startOffset)
         assertTrue(visibleLocator.startOffset!! in page.startOffset..page.endOffset)
+    }
+
+    @Test
+    fun `deferred layout settings update keeps current pages for measured desktop replacement`() {
+        val engine = ReaderEngine()
+        val session = engine.goToPage(
+            engine.createSession(
+                book = longBook(),
+                settings = ReaderSettings(readingMode = ReaderReadingMode.PAGINATED)
+            ),
+            1
+        )
+        val oldPages = session.reader.pages
+
+        val updated = engine.updateSettings(
+            session,
+            session.reader.settings.copy(fontSize = session.reader.settings.fontSize + 3),
+            ReaderSettingsUpdateMode.DEFER_LAYOUT_PAGINATION
+        )
+
+        assertSame(oldPages, updated.reader.pages)
+        assertEquals(session.reader.currentPageIndex, updated.reader.currentPageIndex)
+        assertEquals(session.navigationLocator?.startOffset, updated.navigationLocator?.startOffset)
+        assertTrue(updated.jumpHistory.locators.isEmpty())
     }
 
     @Test
@@ -561,6 +603,22 @@ class ReaderEngineTest {
                 SharedEpubChapter(id = "two", title = "Two", plainText = "Second chapter text."),
                 SharedEpubChapter(id = "three", title = "Three", plainText = "Third chapter text.")
             )
+        )
+    }
+
+    private fun multiChapterLongBook(): SharedEpubBook {
+        return SharedEpubBook(
+            id = "multi-long",
+            fileName = "multi-long.epub",
+            title = "Multi Long",
+            chapters = List(4) { index ->
+                SharedEpubChapter(
+                    id = "chapter-$index",
+                    title = "Chapter ${index + 1}",
+                    plainText = List(120) { "Chapter ${index + 1} has enough text to make several provisional pages." }
+                        .joinToString("\n\n")
+                )
+            }
         )
     }
 

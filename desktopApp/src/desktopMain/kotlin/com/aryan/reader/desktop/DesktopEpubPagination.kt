@@ -13,8 +13,10 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.reader.ReaderLayoutSignature
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderViewportSpec
 import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.layoutSignature
 
 internal data class DesktopEpubPaginationRequest(
     val bookId: String,
@@ -49,6 +51,14 @@ internal fun desktopPaginatedLayoutReadyForDisplay(
     return readingMode != ReaderReadingMode.PAGINATED || measuredPagesApplied
 }
 
+internal fun desktopMeasuredPaginationRequestStillCurrent(
+    request: DesktopEpubPaginationRequest,
+    settings: ReaderSettings
+): Boolean {
+    return settings.readingMode == ReaderReadingMode.PAGINATED &&
+        settings.layoutSignature() == request.layoutSignature
+}
+
 internal fun desktopPagesWithMeasuredChapter(
     currentPages: List<ReaderPage>,
     chapterIndex: Int,
@@ -69,14 +79,13 @@ internal fun List<ReaderPage>.firstPageIndexForChapter(chapterIndex: Int): Int? 
 }
 
 internal fun SharedEpubBook.desktopPaginationContentSignature(): Int {
-    return chapters.fold(31 * id.hashCode() + css.hashCode()) { acc, chapter ->
+    return chapters.fold(31 * id.hashCode() + css.keys.hashCode() + css.values.sumOf { it.length }) { acc, chapter ->
         31 * acc +
             chapter.id.hashCode() +
             chapter.plainText.length +
             chapter.plainText.hashCode() +
-            chapter.semanticBlocks.hashCode() +
+            chapter.semanticBlocks.size +
             chapter.htmlContent.length +
-            chapter.htmlContent.hashCode() +
             chapter.baseHref.orEmpty().hashCode()
     }
 }

@@ -153,6 +153,7 @@ import com.aryan.reader.shared.readerTextureDisplayName
 import com.aryan.reader.shared.resetReaderFormatSettings
 import com.aryan.reader.shared.sanitizeCustomReaderThemes
 import com.aryan.reader.shared.shouldShowPageWidthFormatControl
+import com.aryan.reader.shared.toReaderReadingMode
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.withHorizontalReaderMargin
 import com.aryan.reader.shared.withVerticalReaderMargin
@@ -166,6 +167,7 @@ import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.ReaderSettingsUpdateMode
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -179,6 +181,35 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private val SharedReaderFullscreenFocusRetryDelaysMillis = longArrayOf(80L, 120L, 160L, 240L)
+
+private fun ReaderSessionState.reduceReaderAction(
+    action: ReaderAction,
+    readerEngine: ReaderEngine,
+    settingsUpdateMode: ReaderSettingsUpdateMode
+): ReaderSessionState {
+    if (settingsUpdateMode == ReaderSettingsUpdateMode.FULL_REPAGINATE) {
+        return reduce(action, readerEngine)
+    }
+    return when (action) {
+        is ReaderAction.SettingsChanged -> readerEngine.updateSettings(this, action.settings, settingsUpdateMode)
+        is ReaderAction.RenderModeChanged -> readerEngine.updateSettings(
+            this,
+            reader.settings.copy(readingMode = action.renderMode.toReaderReadingMode()),
+            settingsUpdateMode
+        )
+        is ReaderAction.ThemeChanged -> readerEngine.updateSettings(
+            this,
+            action.theme.toReaderSettings(reader.settings),
+            settingsUpdateMode
+        )
+        is ReaderAction.FormatChanged -> readerEngine.updateSettings(
+            this,
+            action.settings.toReaderSettings(reader.settings),
+            settingsUpdateMode
+        )
+        else -> reduce(action, readerEngine)
+    }
+}
 
 @Composable
 fun SharedScreenScaffold(
@@ -249,6 +280,7 @@ fun SharedReaderScreen(
     bottomChromeExtraContent: @Composable ColumnScope.() -> Unit = {},
     useDetachedChromeLayer: Boolean = true,
     useDetachedPanelLayer: Boolean = true,
+    settingsUpdateMode: ReaderSettingsUpdateMode = ReaderSettingsUpdateMode.FULL_REPAGINATE,
     readerContent: @Composable ColumnScope.(
         renderPlan: ReaderContentRenderPlan,
         onVisiblePageChanged: (Int, ReaderLocator?) -> Unit,
@@ -292,10 +324,12 @@ fun SharedReaderScreen(
         showHighlightPaletteManager = true
     }
     fun dispatch(action: ReaderAction) {
-        onSessionChange(session.reduce(action, readerEngine))
+        onSessionChange(session.reduceReaderAction(action, readerEngine, settingsUpdateMode))
     }
     fun dispatchAll(actions: List<ReaderAction>) {
-        onSessionChange(actions.fold(session) { state, action -> state.reduce(action, readerEngine) })
+        onSessionChange(actions.fold(session) { state, action ->
+            state.reduceReaderAction(action, readerEngine, settingsUpdateMode)
+        })
     }
     fun setFullscreen(enabled: Boolean) {
         onFullscreenChange(enabled)

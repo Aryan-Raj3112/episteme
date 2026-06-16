@@ -80,6 +80,8 @@ import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderImageReference
+import com.aryan.reader.shared.reader.ReaderPaginationMode
+import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
@@ -3547,7 +3549,15 @@ internal fun EpistemeDesktopApp(
                                 initialPageIndex = book.lastPageIndex ?: 0,
                                 initialLocator = book.readerPosition,
                                 bookmarks = book.readerBookmarks,
-                                highlights = book.readerHighlights
+                                highlights = book.readerHighlights,
+                                paginationMode = if (
+                                    restoredSettings.readingMode == ReaderReadingMode.PAGINATED &&
+                                    book.readerPosition?.chapterIndex != null
+                                ) {
+                                    ReaderPaginationMode.ANCHOR_CHAPTER_ONLY
+                                } else {
+                                    ReaderPaginationMode.FULL
+                                }
                             )
                             logDesktopReaderOpenTrace {
                                 opening.openTracePrefix("desktop_session_create_done") +
@@ -4623,6 +4633,77 @@ internal fun EpistemeDesktopApp(
                                     ) {
                                         clearReaderHubSummary(readerWindow.id)
                                         clearReaderHubRecap(readerWindow.id)
+                                    }
+                                    LaunchedEffect(
+                                        readerWindow.id,
+                                        content.session.reader.book.id,
+                                        content.session.reader.settings.readingMode,
+                                        content.session.reader.currentPage?.chapterIndex
+                                    ) {
+                                        val chapterIndex = content.session.reader.currentPage?.chapterIndex
+                                            ?: content.session.navigationLocator?.chapterIndex
+                                            ?: return@LaunchedEffect
+                                        val readerFile = content.book.path
+                                            ?.takeIf { it.isNotBlank() }
+                                            ?.let(::File)
+                                            ?.takeIf { it.isFile }
+                                            ?: return@LaunchedEffect
+                                        if (
+                                            content.book.type != FileType.EPUB ||
+                                            content.session.reader.settings.readingMode != ReaderReadingMode.VERTICAL ||
+                                            content.session.reader.book.chapters.getOrNull(chapterIndex)?.htmlContent?.isNotBlank() == true
+                                        ) {
+                                            return@LaunchedEffect
+                                        }
+                                        val preparedRange =
+                                            (chapterIndex - DesktopVerticalInitialPreparedHtmlChapterRadius).coerceAtLeast(0)..
+                                                (chapterIndex + DesktopVerticalInitialPreparedHtmlChapterRadius)
+                                        val preparedBook = withContext(Dispatchers.IO) {
+                                            SharedJvmBookLoader.prepareEpubHtmlChapters(
+                                                file = readerFile,
+                                                book = content.session.reader.book,
+                                                chapterRange = preparedRange
+                                            )
+                                        }
+                                        if (preparedBook == content.session.reader.book) return@LaunchedEffect
+                                        updateTextReaderWindow(readerWindow.id) { current ->
+                                            val currentSession = current.session
+                                            if (
+                                                current.book.id != content.book.id ||
+                                                currentSession.reader.book.id != content.session.reader.book.id
+                                            ) {
+                                                current
+                                            } else {
+                                                val mergedBook = currentSession.reader.book.copy(
+                                                    chapters = currentSession.reader.book.chapters.mapIndexed { index, chapter ->
+                                                        preparedBook.chapters.getOrNull(index)
+                                                            ?.takeIf { it.htmlContent.isNotBlank() }
+                                                            ?.let { preparedChapter ->
+                                                                chapter.copy(
+                                                                    htmlContent = preparedChapter.htmlContent,
+                                                                    baseHref = preparedChapter.baseHref ?: chapter.baseHref
+                                                                )
+                                                            }
+                                                            ?: chapter
+                                                    },
+                                                    css = if (currentSession.reader.book.css.isEmpty()) {
+                                                        preparedBook.css
+                                                    } else {
+                                                        currentSession.reader.book.css
+                                                    },
+                                                    tableOfContents = if (currentSession.reader.book.tableOfContents.isEmpty()) {
+                                                        preparedBook.tableOfContents
+                                                    } else {
+                                                        currentSession.reader.book.tableOfContents
+                                                    }
+                                                )
+                                                current.copy(
+                                                    session = currentSession.copy(
+                                                        reader = currentSession.reader.copy(book = mergedBook)
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
                                     DesktopReaderScreen(
                                         session = content.session,

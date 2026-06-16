@@ -167,6 +167,39 @@ object SharedJvmBookLoader {
         }
     }
 
+    fun prepareEpubHtmlChapters(
+        file: File,
+        book: SharedEpubBook,
+        chapterRange: IntRange
+    ): SharedEpubBook {
+        val safeRange = chapterRange.first.coerceAtLeast(0)..chapterRange.last.coerceAtLeast(0)
+        val prepared = load(
+            file = file,
+            type = FileType.EPUB,
+            titleOverride = book.title,
+            authorOverride = book.author,
+            semanticMode = SharedJvmBookLoadSemanticMode.SKIP,
+            preparedHtmlChapterRange = safeRange
+        )
+        if (prepared.chapters.isEmpty()) return book
+        val mergedChapters = book.chapters.mapIndexed { index, chapter ->
+            val preparedChapter = prepared.chapters.getOrNull(index)
+            if (index in safeRange && preparedChapter != null && preparedChapter.htmlContent.isNotBlank()) {
+                chapter.copy(
+                    htmlContent = preparedChapter.htmlContent,
+                    baseHref = preparedChapter.baseHref ?: chapter.baseHref
+                )
+            } else {
+                chapter
+            }
+        }
+        return book.copy(
+            chapters = mergedChapters,
+            css = if (book.css.isEmpty()) prepared.css else book.css,
+            tableOfContents = if (book.tableOfContents.isEmpty()) prepared.tableOfContents else book.tableOfContents
+        )
+    }
+
     fun loadEpub(
         file: File,
         parseSemanticBlocks: Boolean = true,

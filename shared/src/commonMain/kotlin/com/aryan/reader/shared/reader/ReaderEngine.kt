@@ -104,9 +104,10 @@ class ReaderEngine(
         initialPageIndex: Int = 0,
         initialLocator: ReaderLocator? = null,
         bookmarks: List<ReaderBookmark> = emptyList(),
-        highlights: List<UserHighlight> = emptyList()
+        highlights: List<UserHighlight> = emptyList(),
+        paginationMode: ReaderPaginationMode = ReaderPaginationMode.FULL
     ): ReaderSessionState {
-        val pages = pagesFor(book, settings)
+        val pages = pagesFor(book, settings, initialLocator, initialPageIndex, paginationMode)
         val locatorResolvedIndex = initialLocator
             ?.let { pages.findPageIndexForLocator(it) }
             ?.takeIf { it >= 0 }
@@ -393,6 +394,14 @@ class ReaderEngine(
     }
 
     fun updateSettings(state: ReaderSessionState, settings: ReaderSettings): ReaderSessionState {
+        return updateSettings(state, settings, ReaderSettingsUpdateMode.FULL_REPAGINATE)
+    }
+
+    fun updateSettings(
+        state: ReaderSessionState,
+        settings: ReaderSettings,
+        updateMode: ReaderSettingsUpdateMode
+    ): ReaderSessionState {
         val layoutChanged = state.reader.settings.layoutSignature() != settings.layoutSignature()
         val nextJumpHistory = if (settings.readingMode == ReaderReadingMode.PAGINATED) {
             state.jumpHistory.clear()
@@ -406,7 +415,34 @@ class ReaderEngine(
             )
         }
         val anchor = state.navigationLocator ?: state.reader.currentPage?.toLocator(state.reader.book)
-        val pages = pagesFor(state.reader.book, settings)
+        if (
+            updateMode == ReaderSettingsUpdateMode.DEFER_LAYOUT_PAGINATION &&
+            settings.readingMode == ReaderReadingMode.PAGINATED
+        ) {
+            val currentPage = state.reader.currentPage
+            val normalizedIndex = ReaderSpreadLayout.normalizePageIndex(
+                state.reader.currentPageIndex,
+                state.reader.pages.size,
+                settings
+            )
+            val normalizedLocator = anchor
+                ?.normalizedForResolvedPage(
+                    state.reader.book,
+                    state.reader.pages,
+                    state.reader.currentPageIndex.coerceIn(0, state.reader.pages.lastIndex.coerceAtLeast(0))
+                )
+                ?: currentPage?.toLocator(state.reader.book)
+            val updated = state.copy(
+                reader = state.reader.copy(
+                    currentPageIndex = normalizedIndex,
+                    settings = settings
+                ),
+                navigationLocator = normalizedLocator,
+                jumpHistory = nextJumpHistory
+            )
+            return if (updated.searchQuery.isNotBlank()) search(updated, updated.searchQuery) else updated
+        }
+        val pages = pagesFor(state.reader.book, settings, anchor, state.reader.currentPageIndex, ReaderPaginationMode.FULL)
         val requestedIndex = anchor
             ?.let { pages.findPageIndexForLocator(it) }
             ?.takeIf { it >= 0 }
@@ -481,7 +517,21 @@ class ReaderEngine(
         return if (updated.searchQuery.isNotBlank()) refreshSearchResults(updated) else updated
     }
 
-    private fun pagesFor(book: SharedEpubBook, settings: ReaderSettings): List<ReaderPage> {
+    private fun pagesFor(
+        book: SharedEpubBook,
+        settings: ReaderSettings,
+        initialLocator: ReaderLocator? = null,
+        initialPageIndex: Int = 0,
+        paginationMode: ReaderPaginationMode = ReaderPaginationMode.FULL
+    ): List<ReaderPage> {
+        if (paginationMode == ReaderPaginationMode.ANCHOR_CHAPTER_ONLY && settings.readingMode == ReaderReadingMode.PAGINATED) {
+            return paginator.paginateAnchorChapter(
+                book = book,
+                settings = settings,
+                anchorChapterIndex = initialLocator?.chapterIndex,
+                fallbackPageIndex = initialLocator?.pageIndex ?: initialPageIndex
+            )
+        }
         val key = PaginationCacheKey(
             bookId = book.id,
             chapterSignature = book.chapters.fold(1) { acc, chapter ->

@@ -213,6 +213,29 @@ class SharedJvmBookLoaderTest {
     }
 
     @Test
+    fun `epub loader can lazily merge prepared html range into existing book`() = withTempDir { dir ->
+        val file = File(dir, "two-chapters.epub")
+        writeTwoChapterEpub(file)
+        val initial = SharedJvmBookLoader.loadEpub(
+            file = file,
+            parseSemanticBlocks = false,
+            preparedHtmlChapterRange = 0..0
+        )
+
+        val expanded = SharedJvmBookLoader.prepareEpubHtmlChapters(
+            file = file,
+            book = initial,
+            chapterRange = 1..1
+        )
+
+        assertEquals(initial.title, expanded.title)
+        assertEquals(2, expanded.chapters.size)
+        assertTrue(expanded.chapters[0].htmlContent.contains("First chapter text"))
+        assertTrue(expanded.chapters[1].htmlContent.contains("Second chapter text"))
+        assertEquals(initial.chapters[1].plainText, expanded.chapters[1].plainText)
+    }
+
+    @Test
     fun `epub loader does not inline stylesheet font resources`() = withTempDir { dir ->
         val file = File(dir, "font-book.epub")
         writeImageEpub(file)
