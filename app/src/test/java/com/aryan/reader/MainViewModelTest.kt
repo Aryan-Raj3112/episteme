@@ -186,6 +186,7 @@ class MainViewModelTest {
         coEvery { anyConstructed<RecentFilesRepository>().assignTagToBook(any(), any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().removeTagFromBook(any(), any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().removeBooksFromShelf(any(), any()) } just Runs
+        coEvery { anyConstructed<RecentFilesRepository>().addShelf(any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().deleteShelf(any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().deleteFilePermanently(any()) } just Runs
@@ -583,6 +584,33 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `setMainScreenPage clears contextual selection when switching home and library`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        val homeBook = recentFile("home")
+        val libraryBook = recentFile("library")
+        recentFilesFlow.value = listOf(homeBook, libraryBook)
+        viewModel.uiState.first { it.recentFiles.size == 2 }
+
+        viewModel.onRecentItemLongPress(homeBook)
+        viewModel.uiState.first { it.contextualActionItems.map { item -> item.bookId }.toSet() == setOf("home") }
+        viewModel.setMainScreenPage(1)
+        val libraryState = viewModel.uiState.first {
+            it.mainScreenStartPage == 1 && it.contextualActionItems.isEmpty()
+        }
+        assertTrue(libraryState.contextualActionItems.isEmpty())
+
+        viewModel.onRecentItemLongPress(libraryBook)
+        viewModel.uiState.first { it.contextualActionItems.map { item -> item.bookId }.toSet() == setOf("library") }
+        viewModel.setMainScreenPage(0)
+        val homeState = viewModel.uiState.first {
+            it.mainScreenStartPage == 0 && it.contextualActionItems.isEmpty()
+        }
+        assertTrue(homeState.contextualActionItems.isEmpty())
+    }
+
+    @Test
     fun `setLibraryScreenPage clamps to available library tabs and persists`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
@@ -870,6 +898,108 @@ class MainViewModelTest {
         viewModel.toggleTagForBooks(" ", setOf("book"), assign = true)
         advanceUntilIdle()
         coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().assignTagToBook("book", " ") }
+    }
+
+    @Test
+    fun `add selected to shelf dialog ignores empty targets and dismisses cleanly`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+
+        viewModel.openAddSelectedToShelf(emptySet())
+        assertTrue(viewModel.uiState.value.showAddSelectedToShelfDialogFor.isEmpty())
+
+        viewModel.openAddSelectedToShelf(setOf(" book ", "", "other"))
+        val openedState = viewModel.uiState.first {
+            it.showAddSelectedToShelfDialogFor == setOf("book", "other")
+        }
+        assertEquals(setOf("book", "other"), openedState.showAddSelectedToShelfDialogFor)
+
+        viewModel.closeAddSelectedToShelf()
+        val closedState = viewModel.uiState.first { it.showAddSelectedToShelfDialogFor.isEmpty() }
+        assertTrue(closedState.showAddSelectedToShelfDialogFor.isEmpty())
+    }
+
+    @Test
+    fun `addSelectedBooksToShelves adds selected books to mutable shelves and clears selection`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        val book = recentFile("book")
+        recentFilesFlow.value = listOf(book)
+        shelvesFlow.value = listOf(
+            shelfEntity("manual", "Manual"),
+            shelfEntity("other", "Other")
+        )
+        viewModel.uiState.first { it.recentFiles.any { item -> item.bookId == "book" } }
+        viewModel.uiState.first { state ->
+            state.shelves.any { it.id == "manual" } && state.shelves.any { it.id == "other" }
+        }
+        viewModel.onRecentItemLongPress(book)
+        viewModel.openAddSelectedToShelf(setOf("book"))
+        viewModel.uiState.first {
+            it.contextualActionItems.any { item -> item.bookId == "book" } &&
+                it.showAddSelectedToShelfDialogFor == setOf("book")
+        }
+
+        viewModel.addSelectedBooksToShelves(setOf(" manual ", "other"), setOf(" book "))
+        advanceUntilIdle()
+
+        coVerify { anyConstructed<RecentFilesRepository>().addBooksToShelf("manual", listOf("book")) }
+        coVerify { anyConstructed<RecentFilesRepository>().addBooksToShelf("other", listOf("book")) }
+        val clearedState = viewModel.uiState.first {
+            it.showAddSelectedToShelfDialogFor.isEmpty() && it.contextualActionItems.isEmpty()
+        }
+        assertTrue(clearedState.showAddSelectedToShelfDialogFor.isEmpty())
+        assertTrue(clearedState.contextualActionItems.isEmpty())
+    }
+
+    @Test
+    fun `addSelectedBooksToShelves ignores invalid shelves and empty books`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        shelvesFlow.value = listOf(shelfEntity("manual", "Manual"))
+        viewModel.uiState.first { it.shelves.any { shelf -> shelf.id == "manual" } }
+
+        viewModel.openAddSelectedToShelf(setOf("book"))
+        viewModel.addSelectedBooksToShelves(setOf("unshelved", "tag_favorite", ""), setOf("book"))
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.showAddSelectedToShelfDialogFor.isEmpty())
+
+        viewModel.addSelectedBooksToShelves(setOf("manual"), emptySet())
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), any()) }
+    }
+
+    @Test
+    fun `createShelf adds pending selected books to the new shelf and clears selection`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        val book = recentFile("book")
+        recentFilesFlow.value = listOf(book)
+        viewModel.uiState.first { it.recentFiles.any { item -> item.bookId == "book" } }
+        viewModel.onRecentItemLongPress(book)
+        viewModel.showCreateShelfDialogForSelectedBooks(setOf(" book "))
+        viewModel.uiState.first {
+            it.showCreateShelfDialog && it.createShelfSelectedBookIds == setOf("book")
+        }
+
+        viewModel.createShelf("New shelf")
+        advanceUntilIdle()
+
+        coVerify { anyConstructed<RecentFilesRepository>().addShelf(match { it.name == "New shelf" }) }
+        coVerify { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), listOf("book")) }
+        val clearedState = viewModel.uiState.first {
+            !it.showCreateShelfDialog &&
+                it.createShelfSelectedBookIds.isEmpty() &&
+                it.contextualActionItems.isEmpty()
+        }
+        assertFalse(clearedState.showCreateShelfDialog)
+        assertTrue(clearedState.createShelfSelectedBookIds.isEmpty())
+        assertTrue(clearedState.contextualActionItems.isEmpty())
     }
 
     @Test

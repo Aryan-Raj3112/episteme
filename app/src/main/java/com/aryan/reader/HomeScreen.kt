@@ -415,6 +415,9 @@ fun HomeScreen(
                                 onTagClick = {
                                     viewModel.openTagSelection(selectedContextItems.map { it.bookId }.toSet())
                                 },
+                                onAddToShelfClick = {
+                                    viewModel.openAddSelectedToShelf(selectedContextItems.map { it.bookId }.toSet())
+                                },
                                 onInfoClick = {
                                     if (selectedContextItems.size == 1) {
                                         itemForInfoDialog = selectedContextItems.first()
@@ -429,7 +432,10 @@ fun HomeScreen(
                                     ?.let { item -> { shareOriginalItem(item) } },
                                 onPinClick = { viewModel.togglePinForContextualItems(isHome = true) },
                                 onDeleteClick = { showDeleteConfirmDialog = true },
-                                onSelectAllClick = { viewModel.selectAllRecentFiles() })
+                                onSelectAllClick = { viewModel.selectAllRecentFiles() },
+                                compactSelectionActions = true,
+                                overflowDeleteLabelRes = R.string.action_remove,
+                                onClearSelectionClick = { viewModel.clearContextualAction() })
                         }
                     }) { paddingValues ->
                     Box(modifier = Modifier.fillMaxSize()) {

@@ -338,6 +338,7 @@ fun LibraryScreen(
             onClearFilters = { viewModel.updateLibraryFilters(LibraryFilters()) },
             onRemoveFilter = { viewModel.updateLibraryFilters(it) },
             onTagClick = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
+            onAddToShelfClick = { viewModel.openAddSelectedToShelf(selectedItems.map { it.bookId }.toSet()) },
             onPinClick = { viewModel.togglePinForContextualItems(isHome = false) },
             onClearSelection = { viewModel.clearContextualAction() },
             onItemClick = viewModel::onRecentFileClicked,
@@ -632,6 +633,7 @@ fun LibraryScreenContent(
     onClearFilters: () -> Unit,
     onRemoveFilter: (LibraryFilters) -> Unit,
     onTagClick: () -> Unit,
+    onAddToShelfClick: () -> Unit,
     onPinClick: () -> Unit,
     onClearSelection: () -> Unit,
     onItemClick: (RecentFileItem) -> Unit,
@@ -699,12 +701,15 @@ fun LibraryScreenContent(
                         selectedItemCount = selectedItems.size,
                         onNavIconClick = onClearSelection,
                         onTagClick = onTagClick,
+                        onAddToShelfClick = onAddToShelfClick,
                         onPinClick = onPinClick,
                         onInfoClick = onInfoClick,
                         onSaveClick = onSaveClick,
                         onShareClick = onShareClick,
                         onDeleteClick = onDeleteClick,
-                        onSelectAllClick = onSelectAllClick
+                        onSelectAllClick = onSelectAllClick,
+                        compactSelectionActions = true,
+                        onClearSelectionClick = onClearSelection
                     )
                 } else if (isShelfContextualModeActive && pagerState.currentPage == 1) {
                     ContextualTopAppBar(

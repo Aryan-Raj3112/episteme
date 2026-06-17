@@ -809,6 +809,44 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(showTagSelectionDialogFor = emptySet()) }
     }
 
+    fun openAddSelectedToShelf(bookIds: Set<String>) {
+        val sanitizedBookIds = SharedLibraryEditor.cleanBookIds(bookIds)
+        if (sanitizedBookIds.isEmpty()) return
+        _internalState.update { it.copy(showAddSelectedToShelfDialogFor = sanitizedBookIds) }
+    }
+
+    fun closeAddSelectedToShelf() {
+        _internalState.update { it.copy(showAddSelectedToShelfDialogFor = emptySet()) }
+    }
+
+    fun addSelectedBooksToShelves(shelfIds: Set<String>, bookIds: Set<String>) {
+        val sanitizedBookIds = SharedLibraryEditor.cleanBookIds(bookIds)
+        val mutableManualShelfIds = _internalState.value.shelves
+            .filter { shelf -> shelf.type == ShelfType.MANUAL && SharedLibraryEditor.canMutateShelf(shelf.id) }
+            .mapTo(mutableSetOf()) { shelf -> shelf.id }
+        val sanitizedShelfIds = shelfIds
+            .mapNotNullTo(linkedSetOf()) { shelfId ->
+                shelfId.trim().takeIf { it in mutableManualShelfIds }
+            }
+        if (sanitizedBookIds.isEmpty() || sanitizedShelfIds.isEmpty()) {
+            closeAddSelectedToShelf()
+            return
+        }
+
+        viewModelScope.launch {
+            sanitizedShelfIds.forEach { shelfId ->
+                recentFilesRepository.addBooksToShelf(shelfId, sanitizedBookIds.toList())
+                syncShelfChangeToFirestore(shelfId)
+            }
+            _internalState.update {
+                it.copy(
+                    showAddSelectedToShelfDialogFor = emptySet(),
+                    contextualActionItems = emptySet()
+                )
+            }
+        }
+    }
+
     suspend fun getFileInfoItem(bookId: String): RecentFileItem? {
         return recentFilesRepository.getFileByBookId(bookId)
     }
@@ -6236,6 +6274,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(showCreateShelfDialog = true) }
     }
 
+    fun showCreateShelfDialogForSelectedBooks(bookIds: Set<String>) {
+        val sanitizedBookIds = SharedLibraryEditor.cleanBookIds(bookIds)
+        _internalState.update {
+            it.copy(
+                showCreateShelfDialog = true,
+                createShelfSelectedBookIds = sanitizedBookIds
+            )
+        }
+    }
+
     fun handleExternalFilePrompt(bookId: String, keep: Boolean, dontAskAgain: Boolean) {
         if (dontAskAgain) {
             val newBehavior = if (keep) "KEEP" else "DELETE"
@@ -6254,15 +6302,25 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun dismissCreateShelfDialog() {
-        _internalState.update { it.copy(showCreateShelfDialog = false) }
+        _internalState.update {
+            it.copy(
+                showCreateShelfDialog = false,
+                createShelfSelectedBookIds = emptySet()
+            )
+        }
     }
 
     fun createShelf(name: String) {
         val shelfId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
         val shelf = SharedLibraryEditor.createShelfRecord(name, shelfId)?.toShelfEntity(now) ?: return
+        val selectedBookIds = SharedLibraryEditor.cleanBookIds(_internalState.value.createShelfSelectedBookIds)
         viewModelScope.launch {
             recentFilesRepository.addShelf(shelf)
+            if (selectedBookIds.isNotEmpty()) {
+                recentFilesRepository.addBooksToShelf(shelfId, selectedBookIds.toList())
+                _internalState.update { it.copy(contextualActionItems = emptySet()) }
+            }
             dismissCreateShelfDialog()
             syncShelfChangeToFirestore(shelfId)
         }
@@ -6271,7 +6329,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun setMainScreenPage(page: Int) {
         val sanitizedPage = page.coerceIn(0, 1)
         if (_internalState.value.mainScreenStartPage == sanitizedPage) return
-        _internalState.update { it.copy(mainScreenStartPage = sanitizedPage) }
+        _internalState.update {
+            it.copy(
+                mainScreenStartPage = sanitizedPage,
+                contextualActionItems = emptySet()
+            )
+        }
         persistLibraryLandingState()
     }
 

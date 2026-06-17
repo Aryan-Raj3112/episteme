@@ -59,6 +59,7 @@ data class ReaderScreenState(
     val viewingShelfId: String? = null,
     val isAddingBooksToShelf: Boolean = false,
     val showCreateShelfDialog: Boolean = false,
+    val createShelfSelectedBookIds: Set<String> = emptySet(),
     val mainScreenStartPage: Int = 0,
     val libraryScreenStartPage: Int = 0,
     val showRenameShelfDialogFor: String? = null,
@@ -110,5 +111,6 @@ data class ReaderScreenState(
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val allTags: List<TagEntity> = emptyList(),
     val showTagSelectionDialogFor: Set<String> = emptySet(),
+    val showAddSelectedToShelfDialogFor: Set<String> = emptySet(),
     val isScreenCaptureProtectionEnabled: Boolean = false,
 )

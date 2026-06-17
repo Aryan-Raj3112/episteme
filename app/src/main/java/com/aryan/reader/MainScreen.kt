@@ -41,6 +41,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
+import com.aryan.reader.shared.SharedLibraryEditor
+import com.aryan.reader.shared.Shelf as SharedShelf
+import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 
 sealed class BottomBarScreen(val route: String, val stringResId: Int, val iconResId: Int) {
     object Home : BottomBarScreen("home", R.string.nav_home, R.drawable.home)
@@ -133,5 +136,36 @@ fun MainScreen(
                 onDismiss = viewModel::closeTagSelection
             )
         }
+        if (uiState.showAddSelectedToShelfDialogFor.isNotEmpty()) {
+            SharedAddToShelfDialog(
+                shelves = uiState.shelves
+                    .filter { shelf -> shelf.type == ShelfType.MANUAL && SharedLibraryEditor.canMutateShelf(shelf.id) }
+                    .map { shelf -> shelf.toSharedShelfForAddDialog() },
+                onDismiss = viewModel::closeAddSelectedToShelf,
+                onCreateShelf = {
+                    val selectedBookIds = uiState.showAddSelectedToShelfDialogFor
+                    viewModel.closeAddSelectedToShelf()
+                    viewModel.setMainScreenPage(1)
+                    viewModel.showCreateShelfDialogForSelectedBooks(selectedBookIds)
+                },
+                onShelvesSelected = { shelfIds ->
+                    viewModel.addSelectedBooksToShelves(shelfIds, uiState.showAddSelectedToShelfDialogFor)
+                }
+            )
+        }
     }
+}
+
+private fun Shelf.toSharedShelfForAddDialog(): SharedShelf {
+    return SharedShelf(
+        id = id,
+        name = name,
+        type = type,
+        books = books.map { it.toSharedBookItem() },
+        directBooks = directBooks.map { it.toSharedBookItem() },
+        parentShelfId = parentShelfId,
+        childShelfIds = childShelfIds,
+        depth = depth,
+        sortKey = sortKey
+    )
 }

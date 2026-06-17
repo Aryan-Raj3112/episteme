@@ -83,6 +83,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
@@ -94,6 +95,8 @@ import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -279,53 +282,179 @@ fun ContextualTopAppBar(
     onSaveClick: (() -> Unit)? = null,
     onShareClick: (() -> Unit)? = null,
     onTagClick: (() -> Unit)? = null,
+    onAddToShelfClick: (() -> Unit)? = null,
     onSelectAllClick: (() -> Unit)? = null,
     onPinClick: (() -> Unit)? = null,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    compactSelectionActions: Boolean = false,
+    overflowDeleteLabelRes: Int = R.string.action_delete,
+    onClearSelectionClick: (() -> Unit)? = null
 ) {
     CustomTopAppBar(
-        title = { Text(stringResource(R.string.items_selected_count, selectedItemCount)) },
+        title = {
+            Text(
+                text = stringResource(R.string.items_selected_count, selectedItemCount),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
         navigationIcon = {
             IconButton(onClick = onNavIconClick) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.clear_selection))
             }
         },
         actions = {
-            if (onTagClick != null) {
-                IconButton(onClick = onTagClick) {
-                    Icon(painterResource(id = R.drawable.tag), contentDescription = stringResource(R.string.content_desc_tag))
+            if (compactSelectionActions) {
+                CompactSelectionActions(
+                    selectedItemCount = selectedItemCount,
+                    onInfoClick = onInfoClick,
+                    onPinClick = onPinClick,
+                    onSelectAllClick = onSelectAllClick,
+                    onTagClick = onTagClick,
+                    onAddToShelfClick = onAddToShelfClick,
+                    onSaveClick = onSaveClick,
+                    onShareClick = onShareClick,
+                    onClearSelectionClick = onClearSelectionClick ?: onNavIconClick,
+                    onDeleteClick = onDeleteClick,
+                    overflowDeleteLabelRes = overflowDeleteLabelRes
+                )
+            } else {
+                if (onTagClick != null) {
+                    IconButton(onClick = onTagClick) {
+                        Icon(painterResource(id = R.drawable.tag), contentDescription = stringResource(R.string.content_desc_tag))
+                    }
                 }
-            }
-            if (onPinClick != null) {
-                IconButton(onClick = onPinClick) {
-                    Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.pin_unpin))
+                if (onPinClick != null) {
+                    IconButton(onClick = onPinClick) {
+                        Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.pin_unpin))
+                    }
                 }
-            }
-            if (selectedItemCount == 1 && onInfoClick != null) {
-                IconButton(onClick = onInfoClick) {
-                    Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.info))
+                if (selectedItemCount == 1 && onInfoClick != null) {
+                    IconButton(onClick = onInfoClick) {
+                        Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.info))
+                    }
                 }
-            }
-            if (selectedItemCount == 1 && onSaveClick != null) {
-                IconButton(onClick = onSaveClick) {
-                    Icon(Icons.Filled.Save, contentDescription = stringResource(R.string.action_save_copy_to_device))
+                if (selectedItemCount == 1 && onSaveClick != null) {
+                    IconButton(onClick = onSaveClick) {
+                        Icon(Icons.Filled.Save, contentDescription = stringResource(R.string.action_save_copy_to_device))
+                    }
                 }
-            }
-            if (selectedItemCount == 1 && onShareClick != null) {
-                IconButton(onClick = onShareClick) {
-                    Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.action_share))
+                if (selectedItemCount == 1 && onShareClick != null) {
+                    IconButton(onClick = onShareClick) {
+                        Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.action_share))
+                    }
                 }
-            }
-            if (onSelectAllClick != null) {
-                IconButton(onClick = onSelectAllClick) {
-                    Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all))
+                if (onSelectAllClick != null) {
+                    IconButton(onClick = onSelectAllClick) {
+                        Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all))
+                    }
                 }
-            }
-            IconButton(onClick = onDeleteClick) {
-                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.action_delete))
+                IconButton(onClick = onDeleteClick) {
+                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.action_delete))
+                }
             }
         }
     )
+}
+
+@Composable
+private fun CompactSelectionActions(
+    selectedItemCount: Int,
+    onInfoClick: (() -> Unit)?,
+    onPinClick: (() -> Unit)?,
+    onSelectAllClick: (() -> Unit)?,
+    onTagClick: (() -> Unit)?,
+    onAddToShelfClick: (() -> Unit)?,
+    onSaveClick: (() -> Unit)?,
+    onShareClick: (() -> Unit)?,
+    onClearSelectionClick: () -> Unit,
+    onDeleteClick: () -> Unit,
+    overflowDeleteLabelRes: Int
+) {
+    var showMoreMenu by remember { mutableStateOf(false) }
+
+    if (selectedItemCount == 1 && onInfoClick != null) {
+        IconButton(onClick = onInfoClick) {
+            Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.info))
+        }
+    }
+    if (onPinClick != null) {
+        IconButton(onClick = onPinClick) {
+            Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.pin_unpin))
+        }
+    }
+    if (onSelectAllClick != null) {
+        IconButton(onClick = onSelectAllClick) {
+            Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all))
+        }
+    }
+
+    Box {
+        IconButton(onClick = { showMoreMenu = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.content_desc_more_options))
+        }
+        DropdownMenu(
+            expanded = showMoreMenu,
+            onDismissRequest = { showMoreMenu = false }
+        ) {
+            onTagClick?.let { tag ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.content_desc_tag)) },
+                    leadingIcon = { Icon(painterResource(id = R.drawable.tag), contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        tag()
+                    }
+                )
+            }
+            onAddToShelfClick?.let { addToShelf ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.desktop_add_to_shelf)) },
+                    leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        addToShelf()
+                    }
+                )
+            }
+            if (selectedItemCount == 1 && onSaveClick != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_save_copy_to_device)) },
+                    leadingIcon = { Icon(Icons.Filled.Save, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onSaveClick()
+                    }
+                )
+            }
+            if (selectedItemCount == 1 && onShareClick != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_share)) },
+                    leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onShareClick()
+                    }
+                )
+            }
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_clear)) },
+                leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
+                onClick = {
+                    showMoreMenu = false
+                    onClearSelectionClick()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(overflowDeleteLabelRes)) },
+                leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                onClick = {
+                    showMoreMenu = false
+                    onDeleteClick()
+                }
+            )
+        }
+    }
 }
 
 @Composable
