@@ -1002,7 +1002,7 @@ internal fun PdfNavigationDrawerContent(
                                         supportingContent = {
                                             Column {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    val displayColor = customHighlightColors[highlight.color] ?: highlight.color.color
+                                                    val displayColor = highlight.resolvedColor(customHighlightColors)
 
                                                     Box(
                                                         modifier = Modifier

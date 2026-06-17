@@ -140,11 +140,18 @@ data class PdfUserHighlight(
     val pageIndex: Int,
     val bounds: List<RectF>,
     val color: PdfHighlightColor,
+    val colorArgb: Int? = null,
     val text: String,
     val range: Pair<Int, Int>,
     val note: String? = null,
     val comments: List<SharedPdfAnnotationComment> = emptyList()
-)
+) {
+    fun resolvedColor(customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap()): Color {
+        customHighlightColors[color]?.let { return it }
+        colorArgb?.let { return Color(it) }
+        return color.color
+    }
+}
 
 internal data class CustomPdfMenuState(
     val selectedText: String,
@@ -764,7 +771,7 @@ fun PdfAnnotationBottomSheet(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp)
         ) {
-            val displayColor = customHighlightColors[highlight.color] ?: highlight.color.color
+            val displayColor = highlight.resolvedColor(customHighlightColors)
 
             PdfHighlightColorRow(
                 selectedColor = highlight.color,

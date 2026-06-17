@@ -78,7 +78,8 @@ internal object PdfiumAnnotationExporter {
         inkAnnotations: Map<Int, List<PdfAnnotation>>,
         richTextPageLayouts: List<PageTextLayout>? = null,
         textBoxes: List<PdfTextBox>? = null,
-        highlights: List<PdfUserHighlight>? = null
+        highlights: List<PdfUserHighlight>? = null,
+        customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap()
     ) {
         withContext(Dispatchers.IO) {
             if (!supportsOriginalPageOrder(virtualPages)) {
@@ -121,6 +122,7 @@ internal object PdfiumAnnotationExporter {
                     inkAnnotations = inkAnnotations,
                     textBoxes = emptyList(),
                     highlights = highlights.orEmpty(),
+                    customHighlightColors = customHighlightColors,
                     richTextPageLayouts = emptyList(),
                     rasterOverlays = rasterOverlays,
                     pageSizes = pageSizes
@@ -206,6 +208,7 @@ internal object PdfiumAnnotationExporter {
         inkAnnotations: Map<Int, List<PdfAnnotation>>,
         textBoxes: List<PdfTextBox>,
         highlights: List<PdfUserHighlight>,
+        customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
         richTextPageLayouts: List<PageTextLayout> = emptyList(),
         fontPathResolver: (String?) -> String? = { it },
         rasterOverlays: List<PdfiumRasterOverlay> = emptyList(),
@@ -215,6 +218,7 @@ internal object PdfiumAnnotationExporter {
             sharedExportAnnotations(
                 inkAnnotations = inkAnnotations,
                 highlights = highlights,
+                customHighlightColors = customHighlightColors,
                 pageSizes = pageSizes
             )
         )
@@ -378,6 +382,7 @@ internal object PdfiumAnnotationExporter {
     private fun sharedExportAnnotations(
         inkAnnotations: Map<Int, List<PdfAnnotation>>,
         highlights: List<PdfUserHighlight>,
+        customHighlightColors: Map<PdfHighlightColor, Color>,
         pageSizes: List<PdfiumPageSize>
     ): List<SharedPdfAnnotation> {
         val annotations = mutableListOf<SharedPdfAnnotation>()
@@ -412,7 +417,7 @@ internal object PdfiumAnnotationExporter {
                 text = highlight.text,
                 note = highlight.note,
                 comments = highlight.comments,
-                colorArgb = highlight.color.color.toArgb(),
+                colorArgb = highlight.resolvedColor(customHighlightColors).toArgb(),
                 rangeStartIndex = highlight.range.first,
                 rangeEndIndex = (highlight.range.second - 1).coerceAtLeast(highlight.range.first)
             )

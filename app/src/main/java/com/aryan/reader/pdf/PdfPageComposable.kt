@@ -4754,7 +4754,7 @@ private fun PdfHighlightsLayer(
 
             // 9. Persistent User Highlights
             userHighlightScreenRects.forEach { (highlight, screenRects) ->
-                val displayColor = customHighlightColors[highlight.color] ?: highlight.color.color
+                val displayColor = highlight.resolvedColor(customHighlightColors)
                 screenRects.forEach { r ->
                     if (isVisible(r)) {
                         drawRect(

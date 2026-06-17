@@ -39,6 +39,7 @@ import com.aryan.reader.paginatedreader.semanticBlockModule
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.annotation.OptIn
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.edit
 import androidx.core.graphics.createBitmap
@@ -90,6 +91,7 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PDF_BLANK_PAGE_PERSISTENCE_TAG
+import com.aryan.reader.pdf.PdfHighlightColor
 import com.aryan.reader.pdf.PdfUserHighlight
 import com.aryan.reader.pdf.PdfiumCoreProvider
 import com.aryan.reader.pdf.PdfiumEngineProvider
@@ -2041,6 +2043,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         richTextPageLayouts: List<com.aryan.reader.pdf.PageTextLayout>? = null,
         textBoxes: List<PdfTextBox>? = null,
         highlights: List<PdfUserHighlight>? = null,
+        customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
         bookId: String
     ) {
         viewModelScope.launch {
@@ -2059,7 +2062,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         inkAnnotations = annotations,
                         richTextPageLayouts = richTextPageLayouts,
                         textBoxes = textBoxes,
-                        highlights = highlights
+                        highlights = highlights,
+                        customHighlightColors = customHighlightColors
                     )
                     showBanner(appContext.getString(R.string.banner_pdf_saved))
                 } else {
@@ -2178,6 +2182,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         richTextPageLayouts: List<com.aryan.reader.pdf.PageTextLayout>? = null,
         textBoxes: List<PdfTextBox>? = null,
         highlights: List<PdfUserHighlight>? = null,
+        customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
         includeAnnotations: Boolean,
         filename: String,
         bookId: String? = null
@@ -2215,7 +2220,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             inkAnnotations = annotations,
                             richTextPageLayouts = richTextPageLayouts,
                             textBoxes = textBoxes,
-                            highlights = highlights
+                            highlights = highlights,
+                            customHighlightColors = customHighlightColors
                         )
                     } else {
                         appContext.contentResolver.openInputStream(sourceUri)?.use { input ->

@@ -1667,7 +1667,7 @@ fun PdfViewerScreen(
         }
     }
 
-    val onHighlightAdd = remember(pdfDocument, currentBookId) {
+    val onHighlightAdd = remember(pdfDocument, currentBookId, customHighlightColors) {
         { pageIndex: Int, range: Pair<Int, Int>, text: String, color: PdfHighlightColor ->
             Timber.tag("PdfExportDebug").i("onHighlightAdd: Adding persistent highlight. Page: $pageIndex, Text: ${text.take(20)}...")
             coroutineScope.launch {
@@ -1709,6 +1709,7 @@ fun PdfViewerScreen(
                                     pageIndex = pageIndex,
                                     bounds = mergedPdfRects,
                                     color = color,
+                                    colorArgb = customHighlightColors[color]?.toArgb() ?: color.color.toArgb(),
                                     text = fullText,
                                     range = Pair(newStart, newEnd)
                                 )
@@ -1732,13 +1733,16 @@ fun PdfViewerScreen(
         }
     }
 
-    val onHighlightUpdate = remember {
+    val onHighlightUpdate = remember(customHighlightColors) {
         { id: String, newColor: PdfHighlightColor ->
             Timber.tag("PdfHighlightDebug").d("onHighlightUpdate triggered: id=$id, newColor=$newColor")
             val index = userHighlights.indexOfFirst { it.id == id }
             if (index != -1) {
                 val old = userHighlights[index]
-                userHighlights[index] = old.copy(color = newColor)
+                userHighlights[index] = old.copy(
+                    color = newColor,
+                    colorArgb = customHighlightColors[newColor]?.toArgb() ?: newColor.color.toArgb()
+                )
                 Timber.tag("PdfHighlightDebug").d("Highlight successfully updated")
             } else {
                 Timber.tag("PdfHighlightDebug").w("Highlight update failed: ID $id not found")
@@ -2641,6 +2645,7 @@ fun PdfViewerScreen(
                                 richTextPageLayouts = currentRichTextLayouts,
                                 textBoxes = visibleTextBoxes,
                                 highlights = visibleUserHighlights,
+                                customHighlightColors = customHighlightColors,
                                 bookId = currentBookId!!
                             )
                         }
@@ -2720,6 +2725,7 @@ fun PdfViewerScreen(
                     richTextPageLayouts = currentRichTextLayouts,
                     textBoxes = visibleTextBoxes,
                     highlights = visibleUserHighlights,
+                    customHighlightColors = customHighlightColors,
                     includeAnnotations = true,
                     filename = filename,
                     bookId = currentBookId

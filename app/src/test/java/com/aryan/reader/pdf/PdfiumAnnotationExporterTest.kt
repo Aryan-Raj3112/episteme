@@ -152,6 +152,52 @@ class PdfiumAnnotationExporterTest {
     }
 
     @Test
+    fun `buildPayload exports custom highlight palette color instead of legacy slot default`() {
+        val customColor = Color(0xFF7B1FA2)
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = emptyMap(),
+            textBoxes = emptyList(),
+            highlights = listOf(
+                PdfUserHighlight(
+                    id = "custom-highlight",
+                    pageIndex = 0,
+                    bounds = listOf(RectF(10f, 90f, 40f, 80f)),
+                    color = PdfHighlightColor.YELLOW,
+                    text = "Selected text",
+                    range = 0 to 13
+                )
+            ),
+            customHighlightColors = mapOf(PdfHighlightColor.YELLOW to customColor),
+            pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
+        )
+
+        assertArrayEquals(intArrayOf(customColor.toArgb()), payload.highlightColors)
+    }
+
+    @Test
+    fun `buildPayload exports persisted highlight argb when custom palette is unavailable`() {
+        val persistedColor = Color(0xFF00695C)
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = emptyMap(),
+            textBoxes = emptyList(),
+            highlights = listOf(
+                PdfUserHighlight(
+                    id = "persisted-highlight",
+                    pageIndex = 0,
+                    bounds = listOf(RectF(10f, 90f, 40f, 80f)),
+                    color = PdfHighlightColor.YELLOW,
+                    colorArgb = persistedColor.toArgb(),
+                    text = "Selected text",
+                    range = 0 to 13
+                )
+            ),
+            pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
+        )
+
+        assertArrayEquals(intArrayOf(persistedColor.toArgb()), payload.highlightColors)
+    }
+
+    @Test
     fun `buildPayload flattens raster text overlays and leaves native text empty`() {
         val pixels = intArrayOf(
             0x00000000,

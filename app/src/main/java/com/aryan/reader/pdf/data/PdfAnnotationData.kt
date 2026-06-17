@@ -232,6 +232,7 @@ object HighlightSerializer {
             obj.put("id", h.id)
             obj.put("pageIndex", h.pageIndex)
             obj.put("color", h.color.name)
+            h.colorArgb?.let { obj.put("colorArgb", it) }
             obj.put("text", h.text)
             obj.put("rangeStart", h.range.first)
             obj.put("rangeEnd", h.range.second)
@@ -283,6 +284,7 @@ object HighlightSerializer {
                         pageIndex = obj.getInt("pageIndex"),
                         bounds = bounds,
                         color = try { PdfHighlightColor.valueOf(obj.getString("color")) } catch(_: Exception) { PdfHighlightColor.YELLOW },
+                        colorArgb = obj.optNullableInt("colorArgb"),
                         text = obj.optString("text", ""),
                         range = Pair(obj.optInt("rangeStart", 0), obj.optInt("rangeEnd", 0)),
                         note = obj.optString("note").takeIf { !it.isNullOrBlank() },
@@ -340,5 +342,9 @@ object HighlightSerializer {
             )
         }
         return comments
+    }
+
+    private fun JSONObject.optNullableInt(name: String): Int? {
+        return if (has(name) && !isNull(name)) optInt(name) else null
     }
 }
