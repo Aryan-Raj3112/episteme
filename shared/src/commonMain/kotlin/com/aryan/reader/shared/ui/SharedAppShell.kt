@@ -115,15 +115,22 @@ fun SharedAppShell(
     onCustomAppThemeDeleted: (String) -> Unit = {},
     onTabsEnabledChange: (Boolean) -> Unit = {},
     onAiSettingsRequested: (() -> Unit)? = null,
+    onDevToolsRequested: (() -> Unit)? = null,
     content: @Composable (SharedAppTab) -> Unit
 ) {
     val aiSettingsAvailable = onAiSettingsRequested != null && featurePolicy.aiAndCloud
-    val shellModel = remember(selectedTab, aiSettingsAvailable, featurePolicy) {
-        sharedAppShellModel(
+    val shellModel = remember(selectedTab, aiSettingsAvailable, featurePolicy, onDevToolsRequested != null) {
+        val base = sharedAppShellModel(
             selectedTab = selectedTab,
             aiSettingsAvailable = aiSettingsAvailable,
             featurePolicy = featurePolicy
         )
+        if (onDevToolsRequested == null) {
+            base
+        } else {
+            val actions = base.toolActions + SharedAppToolAction.DEV_TOOLS
+            base.copy(toolActions = actions, moreSections = sharedAppMoreSections(actions))
+        }
     }
     val sidebarSyncToggleModel = remember(
         currentUser != null,
@@ -188,6 +195,7 @@ fun SharedAppShell(
                                     onFolderMetadataSyncRequested = onFolderMetadataSyncRequested,
                                     onAppThemeRequested = { showAppThemeSettings = true },
                                     onAiSettingsRequested = { onAiSettingsRequested?.invoke() },
+                                    onDevToolsRequested = { onDevToolsRequested?.invoke() },
                                     onOpenTab = onTabSelected,
                                     onTabsEnabledChange = onTabsEnabledChange
                                 )
@@ -216,6 +224,7 @@ fun SharedAppShell(
                                     onFolderMetadataSyncRequested = onFolderMetadataSyncRequested,
                                     onAppThemeRequested = { showAppThemeSettings = true },
                                     onAiSettingsRequested = { onAiSettingsRequested?.invoke() },
+                                    onDevToolsRequested = { onDevToolsRequested?.invoke() },
                                     onOpenTab = onTabSelected,
                                     onTabsEnabledChange = onTabsEnabledChange
                                 )
@@ -652,6 +661,7 @@ private fun SharedMoreMenuButton(
     onFolderMetadataSyncRequested: (() -> Unit)?,
     onAppThemeRequested: () -> Unit,
     onAiSettingsRequested: () -> Unit,
+    onDevToolsRequested: () -> Unit,
     onOpenTab: (SharedAppTab) -> Unit,
     onTabsEnabledChange: (Boolean) -> Unit
 ) {
@@ -667,6 +677,7 @@ private fun SharedMoreMenuButton(
             SharedAppToolAction.APP_THEME -> onAppThemeRequested()
             SharedAppToolAction.PRO -> onOpenTab(SharedAppTab.PRO)
             SharedAppToolAction.AI_SETTINGS -> onAiSettingsRequested()
+            SharedAppToolAction.DEV_TOOLS -> onDevToolsRequested()
             SharedAppToolAction.CUSTOM_FONTS -> onOpenTab(SharedAppTab.CUSTOM_FONTS)
             SharedAppToolAction.HELP_FEEDBACK -> onOpenTab(SharedAppTab.FEEDBACK)
             SharedAppToolAction.SUPPORT -> onOpenTab(SharedAppTab.SUPPORT)
@@ -775,6 +786,7 @@ private fun SharedAppMoreGroup.labelForMoreMenu(): String {
         SharedAppMoreGroup.LIBRARY -> readerString("desktop_more_library_actions", "Library actions")
         SharedAppMoreGroup.ACCOUNT -> readerString("desktop_account_and_credits", "Account & credits")
         SharedAppMoreGroup.PREFERENCES -> readerString("desktop_preferences", "Preferences")
+        SharedAppMoreGroup.DEV_TOOLS -> readerString("desktop_dev_tools", "Dev tools")
         SharedAppMoreGroup.HELP -> readerString("desktop_help", "Help")
     }
 }
@@ -789,6 +801,7 @@ private fun SharedAppToolAction.labelForMoreMenu(isTabsEnabled: Boolean): String
         SharedAppToolAction.APP_THEME -> readerString("app_theme_title", "App theme")
         SharedAppToolAction.PRO -> readerString("desktop_account_and_credits", "Account & credits")
         SharedAppToolAction.AI_SETTINGS -> readerString("ai_settings_title", "AI keys and models")
+        SharedAppToolAction.DEV_TOOLS -> readerString("desktop_dev_tools", "Dev tools")
         SharedAppToolAction.CUSTOM_FONTS -> readerString("custom_fonts", "Custom fonts")
         SharedAppToolAction.HELP_FEEDBACK -> readerString("drawer_help_feedback", "Help & feedback")
         SharedAppToolAction.SUPPORT -> readerString("drawer_support_project", "Support project")
@@ -810,6 +823,7 @@ private fun SharedAppToolAction.iconForMoreMenu(): ImageVector {
         SharedAppToolAction.APP_THEME -> Icons.Default.Palette
         SharedAppToolAction.PRO -> Icons.Default.Star
         SharedAppToolAction.AI_SETTINGS -> Icons.Default.Settings
+        SharedAppToolAction.DEV_TOOLS -> Icons.Default.Settings
         SharedAppToolAction.CUSTOM_FONTS -> Icons.Default.TextFields
         SharedAppToolAction.HELP_FEEDBACK -> Icons.Default.Feedback
         SharedAppToolAction.SUPPORT -> Icons.Default.Favorite

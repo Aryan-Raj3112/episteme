@@ -1687,6 +1687,8 @@
     <!-- Desktop credit cost label. %1$s = decimal credit cost. Example: "2.5 credits". -->
     <string name="desktop_credits_decimal_format">%1$s credits</string>
     <string name="desktop_custom_fonts_desc">Imported fonts for the reader</string>
+    <string name="desktop_dev_tools">Dev tools</string>
+    <string name="desktop_dev_tools_desc">Maintenance actions for debugging desktop reader behavior.</string>
     <string name="desktop_delete_font">Delete font</string>
     <!-- Desktop delete-font confirmation. %1$s = font display name. Example: "Delete Merriweather? Books using it will fall back to the default font." -->
     <string name="desktop_delete_font_desc">Delete %1$s? Books using it will fall back to the default font.</string>

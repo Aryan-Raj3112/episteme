@@ -19,6 +19,7 @@ enum class SharedAppToolAction {
     IMPORT_FOLDER,
     SYNC,
     APP_THEME,
+    DEV_TOOLS,
     PRO,
     AI_SETTINGS,
     CUSTOM_FONTS,
@@ -32,6 +33,7 @@ enum class SharedAppMoreGroup {
     LIBRARY,
     ACCOUNT,
     PREFERENCES,
+    DEV_TOOLS,
     HELP
 }
 
@@ -109,6 +111,12 @@ fun sharedAppMoreSections(actions: List<SharedAppToolAction>): List<SharedAppMor
                     it == SharedAppToolAction.APP_THEME ||
                     it == SharedAppToolAction.AI_SETTINGS ||
                     it == SharedAppToolAction.CUSTOM_FONTS
+            }
+        ),
+        SharedAppMoreSection(
+            group = SharedAppMoreGroup.DEV_TOOLS,
+            actions = actions.filter {
+                it == SharedAppToolAction.DEV_TOOLS
             }
         ),
         SharedAppMoreSection(

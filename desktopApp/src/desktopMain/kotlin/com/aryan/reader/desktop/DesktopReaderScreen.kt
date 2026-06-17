@@ -160,13 +160,17 @@ internal fun DesktopReaderScreen(
         density = density.density,
         fontScale = density.fontScale
     )
+    val paginationFocusChapterIndex = session.navigationLocator?.chapterIndex
+        ?: session.reader.currentPage?.chapterIndex
+        ?: 0
     val measuredPaginationRequest = remember(
         session.reader.book.id,
         paginationContentSignature,
         paginationLayoutSignature,
         readerViewport,
         paginationDensitySignature,
-        epubPaginationCacheGeneration
+        epubPaginationCacheGeneration,
+        paginationFocusChapterIndex
     ) {
         if (session.reader.settings.readingMode == ReaderReadingMode.PAGINATED && readerViewport.isSpecified) {
             DesktopEpubPaginationRequest(
@@ -175,7 +179,8 @@ internal fun DesktopReaderScreen(
                 layoutSignature = paginationLayoutSignature,
                 viewport = readerViewport,
                 density = paginationDensitySignature,
-                cacheGeneration = epubPaginationCacheGeneration
+                cacheGeneration = epubPaginationCacheGeneration,
+                focusChapterIndex = paginationFocusChapterIndex
             )
         } else {
             null
@@ -210,7 +215,8 @@ internal fun DesktopReaderScreen(
     )
     val paginatedLayoutReady = desktopPaginatedLayoutReadyForDisplay(
         readingMode = session.reader.settings.readingMode,
-        measuredPagesApplied = measuredPaginationPagesApplied
+        measuredPagesApplied = measuredPaginationPagesApplied,
+        warmPagesApplied = warmMeasuredPaginationPagesApplied
     )
     val latestSession by rememberUpdatedState(session)
     val latestOnSessionChange by rememberUpdatedState(onSessionChange)
@@ -323,7 +329,7 @@ internal fun DesktopReaderScreen(
         try {
             val cacheProbeStartedAt = System.nanoTime()
             val cacheProbeSettings = latestSession.reader.settings
-            val cachedPages = if (
+            var cachedPages = if (
                 desktopMeasuredPaginationRequestStillCurrent(request, cacheProbeSettings)
             ) {
                 withContext(Dispatchers.Default) {
@@ -340,10 +346,22 @@ internal fun DesktopReaderScreen(
             }
             val settingsAfterCacheProbe = latestSession.reader.settings
             if (!desktopMeasuredPaginationRequestStillCurrent(request, settingsAfterCacheProbe)) return@LaunchedEffect
+            if (cachedPages == null) {
+                cachedPages = withContext(Dispatchers.IO) {
+                    epubPaginationCache.load(
+                        book = session.reader.book,
+                        settings = settingsAfterCacheProbe,
+                        viewport = request.viewport,
+                        density = request.density.density,
+                        fontScale = request.density.fontScale
+                    )
+                }
+            }
+            if (!desktopMeasuredPaginationRequestStillCurrent(request, latestSession.reader.settings)) return@LaunchedEffect
             if (cachedPages != null) {
                 val cacheLayoutChanged = !latestSession.reader.pages.samePageLayoutAs(cachedPages)
                 logEpubPagination(
-                    "cache_warm_result book=\"${session.reader.book.title.logPreview()}\" pages=${cachedPages.size} " +
+                    "cache_exact_result book=\"${session.reader.book.title.logPreview()}\" pages=${cachedPages.size} " +
                         "layoutChanged=$cacheLayoutChanged viewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
                         "elapsedMs=${cacheProbeStartedAt.elapsedMillis()}"
                 )
@@ -364,7 +382,8 @@ internal fun DesktopReaderScreen(
 
             val warmStartSession = latestSession
             val warmAnchor = readerEngine.reflowAnchorFor(warmStartSession)
-            val warmChapterIndex = warmAnchor?.chapterIndex
+            val warmChapterIndex = request.focusChapterIndex.takeIf { it in session.reader.book.chapters.indices }
+                ?: warmAnchor?.chapterIndex
                 ?: warmStartSession.reader.currentPage?.chapterIndex
                 ?: 0
             val warmFirstPageIndex = warmStartSession.reader.pages.firstPageIndexForChapter(warmChapterIndex) ?: 0
@@ -388,6 +407,18 @@ internal fun DesktopReaderScreen(
                     viewport = request.viewport,
                     chapterIndex = warmChapterIndex,
                     firstPageIndex = warmFirstPageIndex
+                )
+            }
+            if (cachedWarmChapterPages == null) {
+                epubPaginationCache.saveChapter(
+                    book = session.reader.book,
+                    settings = settingsAfterCacheProbe,
+                    viewport = request.viewport,
+                    chapterIndex = warmChapterIndex,
+                    pages = warmChapterPages,
+                    firstPageIndex = warmFirstPageIndex,
+                    density = request.density.density,
+                    fontScale = request.density.fontScale
                 )
             }
             val warmPages = desktopPagesWithMeasuredChapter(
@@ -414,63 +445,109 @@ internal fun DesktopReaderScreen(
                         reflowAnchor = warmAnchor
                     )
                 )
+            }
+            if (warmPages.isNotEmpty()) {
                 warmMeasuredPaginationPages = warmPages
                 warmMeasuredPaginationRequest = request
             }
 
-            val reflowStartSession = latestSession
-            val reflowStartRequestId = reflowStartSession.navigationRequestId
-            val reflowAnchor = readerEngine.reflowAnchorFor(reflowStartSession)
-            val settings = reflowStartSession.reader.settings
-            if (!desktopMeasuredPaginationRequestStillCurrent(request, settings)) return@LaunchedEffect
-            logEpubPagination(
-                "reflow_start book=\"${session.reader.book.title.logPreview()}\" " +
-                    "viewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
-                    "spread=${settings.pageSpreadMode} font=${settings.fontSize} lineSpacing=${settings.lineSpacing} " +
-                    "margins=${settings.resolvedHorizontalMargin}x${settings.resolvedVerticalMargin} " +
-                    "pageWidthSetting=${settings.pageWidth} oldPages=${reflowStartSession.reader.pages.size} " +
-                    "anchorPage=${reflowAnchor?.pageIndex} anchorOffsets=${reflowAnchor?.startOffset}..${reflowAnchor?.endOffset}"
+            val chapterOrder = desktopChapterPaginationPriorityOrder(
+                chapterCount = session.reader.book.chapters.size,
+                currentChapterIndex = warmChapterIndex
             )
-            val pages = withContext(Dispatchers.Default) {
-                measuredPaginator.paginate(
+            logEpubPagination(
+                "chapter_background_start book=\"${session.reader.book.title.logPreview()}\" " +
+                    "viewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
+                    "order=$chapterOrder warmChapter=$warmChapterIndex oldPages=${warmStartSession.reader.pages.size}"
+            )
+            var aggregatePages = warmPages.takeIf { it.isNotEmpty() } ?: warmStartSession.reader.pages
+            for (chapterIndex in chapterOrder) {
+                val settings = latestSession.reader.settings
+                if (!desktopMeasuredPaginationRequestStillCurrent(request, settings)) return@LaunchedEffect
+                if (
+                    chapterIndex == warmChapterIndex &&
+                    aggregatePages.any { it.chapterIndex == chapterIndex && it.semanticBlocks.isNotEmpty() }
+                ) {
+                    continue
+                }
+                val firstPageIndex = aggregatePages.firstPageIndexForChapter(chapterIndex)
+                    ?: latestSession.reader.pages.firstPageIndexForChapter(chapterIndex)
+                    ?: 0
+                val chapterStartedAt = System.nanoTime()
+                val cachedChapterPages = epubPaginationCache.loadChapter(
                     book = session.reader.book,
                     settings = settings,
                     viewport = request.viewport,
-                    readCache = true
+                    chapterIndex = chapterIndex,
+                    density = request.density.density,
+                    fontScale = request.density.fontScale
                 )
-            }
-            val layoutChanged = pages.isNotEmpty() && !latestSession.reader.pages.samePageLayoutAs(pages)
-            logEpubPagination(
-                "reflow_result book=\"${session.reader.book.title.logPreview()}\" pages=${pages.size} " +
-                    "layoutChanged=$layoutChanged currentPages=${latestSession.reader.pages.size}"
-            )
-            val currentVisiblePageDetails = latestSession.reader.visiblePages.map { page ->
-                "${page.pageIndex + 1}:text=${page.text.length}:blocks=${page.semanticBlocks.size}"
-            }
-            val measuredCurrentPageDetails = pages.getOrNull(latestSession.reader.currentPageIndex)
-                ?.let { page -> "${page.pageIndex + 1}:text=${page.text.length}:blocks=${page.semanticBlocks.size}" }
-                ?: "none"
-            logReaderModeSwitch(
-                "pagination_result requestViewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
-                    "measuredPages=${pages.size} currentPages=${latestSession.reader.pages.size} layoutChanged=$layoutChanged " +
-                    "currentVisible=$currentVisiblePageDetails measuredAtCurrent=$measuredCurrentPageDetails"
-            )
-            if (layoutChanged) {
-                logReaderModeSwitch(
-                    "pagination_apply_dispatch requestViewport=${request.viewport.widthPx}x${request.viewport.heightPx} " +
-                        "measuredPages=${pages.size} currentPages=${latestSession.reader.pages.size}"
-                )
-                latestOnSessionChange(
-                    readerEngine.replacePages(
-                        state = latestSession,
-                        pages = pages,
-                        reflowAnchor = reflowAnchor,
-                        navigationRequestIdAtReflowStart = reflowStartRequestId
+                val chapterPages = cachedChapterPages ?: withContext(Dispatchers.Default) {
+                    measuredPaginator.paginateChapterWindow(
+                        book = session.reader.book,
+                        settings = settings,
+                        viewport = request.viewport,
+                        chapterIndex = chapterIndex,
+                        firstPageIndex = firstPageIndex
                     )
+                }
+                if (cachedChapterPages == null) {
+                    epubPaginationCache.saveChapter(
+                        book = session.reader.book,
+                        settings = settings,
+                        viewport = request.viewport,
+                        chapterIndex = chapterIndex,
+                        pages = chapterPages,
+                        firstPageIndex = firstPageIndex,
+                        density = request.density.density,
+                        fontScale = request.density.fontScale
+                    )
+                }
+                val applySession = latestSession
+                val nextPages = desktopPagesWithMeasuredChapter(
+                    currentPages = aggregatePages,
+                    chapterIndex = chapterIndex,
+                    measuredChapterPages = chapterPages
                 )
+                if (nextPages.isEmpty()) continue
+                aggregatePages = nextPages
+                val layoutChanged = !applySession.reader.pages.samePageLayoutAs(nextPages)
+                logEpubPagination(
+                    "chapter_background_result book=\"${session.reader.book.title.logPreview()}\" " +
+                        "chapter=$chapterIndex source=${if (cachedChapterPages != null) "cache" else "measured"} " +
+                        "chapterPages=${chapterPages.size} pages=${nextPages.size} layoutChanged=$layoutChanged " +
+                        "measuredChapters=${desktopMeasuredChapterCount(nextPages)}/${session.reader.book.chapters.size} " +
+                        "elapsedMs=${chapterStartedAt.elapsedMillis()}"
+                )
+                if (layoutChanged) {
+                    latestOnSessionChange(
+                        readerEngine.replacePages(
+                            state = applySession,
+                            pages = nextPages,
+                            reflowAnchor = readerEngine.reflowAnchorFor(applySession)
+                        )
+                    )
+                }
+                warmMeasuredPaginationPages = nextPages
+                warmMeasuredPaginationRequest = request
             }
-            if (pages.isNotEmpty()) {
-                completedMeasuredPaginationPages = pages
+            if (!desktopMeasuredPaginationRequestStillCurrent(request, latestSession.reader.settings)) return@LaunchedEffect
+            val completedPages = aggregatePages.takeIf { it.isNotEmpty() } ?: latestSession.reader.pages
+            epubPaginationCache.save(
+                book = session.reader.book,
+                settings = latestSession.reader.settings,
+                viewport = request.viewport,
+                pages = completedPages,
+                density = request.density.density,
+                fontScale = request.density.fontScale
+            )
+            logEpubPagination(
+                "chapter_background_complete book=\"${session.reader.book.title.logPreview()}\" pages=${completedPages.size} " +
+                    "measuredChapters=${desktopMeasuredChapterCount(completedPages)}/${session.reader.book.chapters.size} " +
+                    "currentPages=${latestSession.reader.pages.size}"
+            )
+            if (completedPages.isNotEmpty()) {
+                completedMeasuredPaginationPages = completedPages
                 completedMeasuredPaginationRequest = request
             }
         } catch (error: Throwable) {

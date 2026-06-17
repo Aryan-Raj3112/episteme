@@ -277,6 +277,68 @@ class SharedEpubPaginationCache(
         Unit
     }
 
+    suspend fun saveChapter(
+        book: SharedEpubBook,
+        settings: ReaderSettings,
+        viewport: ReaderViewportSpec,
+        chapterIndex: Int,
+        pages: List<ReaderPage>,
+        firstPageIndex: Int,
+        density: Float = 1f,
+        fontScale: Float = 1f
+    ): Unit = withContext(Dispatchers.IO) {
+        if (pages.isEmpty()) {
+            logEpubPaginationCache {
+                "chapter_cache_save result=skip reason=empty_pages book=\"${book.title.logPreview()}\" " +
+                    "chapter=$chapterIndex viewport=${viewport.widthPx}x${viewport.heightPx}"
+            }
+            return@withContext
+        }
+        if (chapterIndex !in book.chapters.indices || !pages.carriesRequiredSemanticBlocksForChapter(book, chapterIndex)) {
+            logEpubPaginationCache {
+                "chapter_cache_save result=skip reason=missing_semantic_blocks book=\"${book.title.logPreview()}\" " +
+                    "chapter=$chapterIndex pages=${pages.size} viewport=${viewport.widthPx}x${viewport.heightPx}"
+            }
+            return@withContext
+        }
+        val key = keyFor(book, settings, viewport, density, fontScale)
+        if (chapterIndex !in key.chapterVersions.indices) return@withContext
+        val normalizedPages = pages
+            .sortedBy { it.pageIndex }
+            .mapIndexed { index, page -> page.copy(pageIndex = firstPageIndex + index) }
+        val record = CachedReaderChapterPages(
+            schemaVersion = SharedEpubPaginationCacheSchemaVersion,
+            processingVersion = SharedEpubPaginationProcessingVersion,
+            pageCacheVersion = SharedEpubPaginationPageCacheVersion,
+            bookFingerprint = key.bookFingerprint,
+            configHash = key.configHash,
+            chapterVersion = key.chapterVersions[chapterIndex],
+            chapterIndex = chapterIndex,
+            firstPageIndex = firstPageIndex,
+            pageCount = normalizedPages.size,
+            pages = normalizedPages.map(CachedReaderPage::from)
+        )
+        runCatching {
+            writeAtomically(chapterCacheFile(key, chapterIndex), proto.encodeToByteArray(record))
+            synchronized(chapterMemoryCache) {
+                chapterMemoryCache[key.chapterCacheId(chapterIndex)] = normalizedPages
+            }
+            logEpubPaginationCache {
+                "chapter_cache_save result=ok book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
+                    "pages=${normalizedPages.size} viewport=${viewport.widthPx}x${viewport.heightPx} " +
+                    "config=${key.configHash.toUInt().toString(16)}"
+            }
+        }.onFailure { error ->
+            logEpubPaginationCache {
+                "chapter_cache_save result=failed book=\"${book.title.logPreview()}\" chapter=$chapterIndex " +
+                    "pages=${normalizedPages.size} viewport=${viewport.widthPx}x${viewport.heightPx} " +
+                    "config=${key.configHash.toUInt().toString(16)} " +
+                    "error=\"${error.message.orEmpty().logPreview(180)}\""
+            }
+        }
+        Unit
+    }
+
     fun keyFor(
         book: SharedEpubBook,
         settings: ReaderSettings,

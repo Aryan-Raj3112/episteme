@@ -48,7 +48,8 @@ class DesktopEpubPaginationTest {
         assertFalse(
             desktopPaginatedLayoutReadyForDisplay(
                 readingMode = ReaderReadingMode.PAGINATED,
-                measuredPagesApplied = false
+                measuredPagesApplied = false,
+                warmPagesApplied = false
             )
         )
         assertTrue(
@@ -61,6 +62,17 @@ class DesktopEpubPaginationTest {
             desktopPaginatedLayoutReadyForDisplay(
                 readingMode = ReaderReadingMode.VERTICAL,
                 measuredPagesApplied = false
+            )
+        )
+    }
+
+    @Test
+    fun `paginated display is ready after warm current chapter is applied`() {
+        assertTrue(
+            desktopPaginatedLayoutReadyForDisplay(
+                readingMode = ReaderReadingMode.PAGINATED,
+                measuredPagesApplied = false,
+                warmPagesApplied = true
             )
         )
     }
@@ -119,6 +131,34 @@ class DesktopEpubPaginationTest {
         assertEquals("chapter 1 measured", pages[1].text)
     }
 
+    @Test
+    fun `chapter pagination priority starts at current chapter then alternates neighbors`() {
+        assertEquals(
+            listOf(2, 3, 1, 4, 0),
+            desktopChapterPaginationPriorityOrder(chapterCount = 5, currentChapterIndex = 2)
+        )
+        assertEquals(
+            listOf(0, 1, 2),
+            desktopChapterPaginationPriorityOrder(chapterCount = 3, currentChapterIndex = -2)
+        )
+        assertEquals(
+            emptyList(),
+            desktopChapterPaginationPriorityOrder(chapterCount = 0, currentChapterIndex = 2)
+        )
+    }
+
+    @Test
+    fun `measured chapter count counts only chapters with semantic page payloads`() {
+        val pages = listOf(
+            readerPage(text = "estimate", chapterIndex = 0, pageIndex = 0),
+            readerPage(text = "exact one", chapterIndex = 1, pageIndex = 1, exact = true),
+            readerPage(text = "exact one more", chapterIndex = 1, pageIndex = 2, exact = true),
+            readerPage(text = "exact two", chapterIndex = 2, pageIndex = 3, exact = true)
+        )
+
+        assertEquals(2, desktopMeasuredChapterCount(pages))
+    }
+
     private fun desktopPaginationRequest(): DesktopEpubPaginationRequest {
         return DesktopEpubPaginationRequest(
             bookId = "book",
@@ -129,14 +169,16 @@ class DesktopEpubPaginationTest {
             ).layoutSignature(),
             viewport = ReaderViewportSpec(widthPx = 1200, heightPx = 900),
             density = DesktopEpubPaginationDensity(density = 1f, fontScale = 1f),
-            cacheGeneration = 0
+            cacheGeneration = 0,
+            focusChapterIndex = 0
         )
     }
 
     private fun readerPage(
         text: String,
         chapterIndex: Int = 0,
-        pageIndex: Int = 0
+        pageIndex: Int = 0,
+        exact: Boolean = false
     ): ReaderPage {
         return ReaderPage(
             pageIndex = pageIndex,
@@ -144,7 +186,16 @@ class DesktopEpubPaginationTest {
             chapterTitle = "Chapter",
             text = text,
             startOffset = 0,
-            endOffset = text.length
+            endOffset = text.length,
+            semanticBlocks = if (exact) listOf(
+                com.aryan.reader.paginatedreader.SemanticParagraph(
+                    text = text,
+                    spans = emptyList(),
+                    style = com.aryan.reader.paginatedreader.CssStyle(),
+                    elementId = null,
+                    cfi = null
+                )
+            ) else emptyList()
         )
     }
 }

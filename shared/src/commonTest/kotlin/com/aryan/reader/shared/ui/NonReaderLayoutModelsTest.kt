@@ -58,6 +58,41 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `more menu keeps dev tools out of the base shell actions`() {
+        val model = sharedAppShellModel(
+            selectedTab = SharedAppTab.LIBRARY,
+            aiSettingsAvailable = false
+        )
+
+        assertFalse(model.toolActions.contains(SharedAppToolAction.DEV_TOOLS))
+        assertFalse(model.moreSections.any { it.group == SharedAppMoreGroup.DEV_TOOLS })
+    }
+
+    @Test
+    fun `more menu exposes dev tools in its own section when action is provided`() {
+        val sections = sharedAppMoreSections(
+            listOf(
+                SharedAppToolAction.SETTINGS,
+                SharedAppToolAction.DEV_TOOLS,
+                SharedAppToolAction.ABOUT
+            )
+        )
+
+        assertEquals(
+            listOf(
+                SharedAppMoreGroup.PREFERENCES,
+                SharedAppMoreGroup.DEV_TOOLS,
+                SharedAppMoreGroup.HELP
+            ),
+            sections.map { it.group }
+        )
+        assertEquals(
+            listOf(SharedAppToolAction.DEV_TOOLS),
+            sections.first { it.group == SharedAppMoreGroup.DEV_TOOLS }.actions
+        )
+    }
+
+    @Test
     fun `desktop shelves tab exposes primary new shelf action only on desktop`() {
         assertEquals(
             listOf(NonReaderLibraryPrimaryAction.NEW_SHELF),

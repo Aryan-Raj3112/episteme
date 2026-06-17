@@ -24,7 +24,8 @@ internal data class DesktopEpubPaginationRequest(
     val layoutSignature: ReaderLayoutSignature,
     val viewport: ReaderViewportSpec,
     val density: DesktopEpubPaginationDensity,
-    val cacheGeneration: Int
+    val cacheGeneration: Int,
+    val focusChapterIndex: Int
 )
 
 internal data class DesktopEpubPaginationDensity(
@@ -46,9 +47,10 @@ internal fun desktopMeasuredPaginationReady(
 
 internal fun desktopPaginatedLayoutReadyForDisplay(
     readingMode: ReaderReadingMode,
-    measuredPagesApplied: Boolean
+    measuredPagesApplied: Boolean,
+    warmPagesApplied: Boolean = false
 ): Boolean {
-    return readingMode != ReaderReadingMode.PAGINATED || measuredPagesApplied
+    return readingMode != ReaderReadingMode.PAGINATED || measuredPagesApplied || warmPagesApplied
 }
 
 internal fun desktopMeasuredPaginationRequestStillCurrent(
@@ -88,6 +90,30 @@ internal fun SharedEpubBook.desktopPaginationContentSignature(): Int {
             chapter.htmlContent.length +
             chapter.baseHref.orEmpty().hashCode()
     }
+}
+
+internal fun desktopChapterPaginationPriorityOrder(
+    chapterCount: Int,
+    currentChapterIndex: Int
+): List<Int> {
+    if (chapterCount <= 0) return emptyList()
+    val current = currentChapterIndex.coerceIn(0, chapterCount - 1)
+    val ordered = mutableListOf(current)
+    for (offset in 1 until chapterCount) {
+        val next = current + offset
+        val previous = current - offset
+        if (next < chapterCount) ordered += next
+        if (previous >= 0) ordered += previous
+    }
+    return ordered
+}
+
+internal fun desktopMeasuredChapterCount(pages: List<ReaderPage>): Int {
+    return pages
+        .filter { it.semanticBlocks.isNotEmpty() }
+        .map { it.chapterIndex }
+        .distinct()
+        .size
 }
 
 @Composable

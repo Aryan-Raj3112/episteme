@@ -385,6 +385,7 @@ internal fun EpistemeDesktopApp(
     var showDesktopAppThemeSettingsDialog by remember { mutableStateOf(false) }
     var showDesktopLanguageDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
+    var showDesktopDevToolsDialog by remember { mutableStateOf(false) }
     var desktopFeatureNoticeState by remember { mutableStateOf<DesktopFeatureNoticeState?>(null) }
     var settingsQuery by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
@@ -4055,7 +4056,8 @@ internal fun EpistemeDesktopApp(
                     { showAiByokSettingsDialog = true }
                 } else {
                     null
-                }
+                },
+                onDevToolsRequested = { showDesktopDevToolsDialog = true }
             ) { tab ->
                 when (tab) {
                         SharedAppTab.SETTINGS -> SharedSettingsHub(
@@ -4924,6 +4926,16 @@ internal fun EpistemeDesktopApp(
             )
         }
 
+        if (showDesktopDevToolsDialog) {
+            DesktopDevToolsDialog(
+                onClearBookCache = {
+                    showDesktopDevToolsDialog = false
+                    showClearBookCacheDialog = true
+                },
+                onDismiss = { showDesktopDevToolsDialog = false }
+            )
+        }
+
         if (showCreateShelfDialog) {
             SharedTextInputDialog(
                 title = readerString("create_new_shelf", "Create shelf"),
@@ -5107,6 +5119,35 @@ private fun DesktopFeatureNoticeDialog(
             }
         } else {
             null
+        }
+    )
+}
+
+@Composable
+private fun DesktopDevToolsDialog(
+    onClearBookCache: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(readerString("desktop_dev_tools", "Dev tools")) },
+        text = {
+            Text(
+                readerString(
+                    "desktop_dev_tools_desc",
+                    "Maintenance actions for debugging desktop reader behavior."
+                )
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onClearBookCache) {
+                Text(readerString("options_clear_book_cache", "Clear book cache"))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(readerString("action_cancel", "Cancel"))
+            }
         }
     )
 }

@@ -130,6 +130,51 @@ class SharedEpubPaginationCacheTest {
     }
 
     @Test
+    fun `chapter page cache can save a measured chapter without whole book pages`() = runBlocking {
+        val root = Files.createTempDirectory("reader-page-cache").toFile()
+        try {
+            val cache = SharedEpubPaginationCache(root)
+            val book = cacheBook().copy(
+                chapters = listOf(
+                    cacheBook().chapters.first(),
+                    cacheBook().chapters.first().copy(id = "chapter-2", title = "Two", plainText = "Second chapter.")
+                )
+            )
+            val settings = ReaderSettings()
+            val viewport = ReaderViewportSpec(widthPx = 960, heightPx = 720)
+            val pages = listOf(
+                ReaderPage(
+                    pageIndex = 42,
+                    chapterIndex = 1,
+                    chapterTitle = "Two",
+                    text = "Second cached page",
+                    startOffset = 0,
+                    endOffset = 18
+                )
+            )
+
+            cache.saveChapter(
+                book = book,
+                settings = settings,
+                viewport = viewport,
+                chapterIndex = 1,
+                pages = pages,
+                firstPageIndex = 5
+            )
+            val loadedChapter = cache.loadChapter(book, settings, viewport, chapterIndex = 1)
+
+            assertNotNull(loadedChapter)
+            assertEquals(1, loadedChapter.size)
+            assertEquals(5, loadedChapter.first().pageIndex)
+            assertEquals(1, loadedChapter.first().chapterIndex)
+            assertEquals("Second cached page", loadedChapter.first().text)
+            assertNull(cache.load(book, settings, viewport))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `pagination cache key changes for spread mode`() {
         val root = Files.createTempDirectory("reader-page-cache").toFile()
         try {
