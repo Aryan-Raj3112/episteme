@@ -254,6 +254,8 @@ class EpubReaderScreenTest {
         clickContentDescription(text(R.string.content_desc_more_options_bookmark))
         clickText(text(R.string.action_rename))
         waitForText(text(R.string.dialog_rename_bookmark))
+        composeTestRule.onNode(hasSetTextAction()).assertTextContains("BOOKMARK_TARGET_ECHO")
+        composeTestRule.onNode(hasSetTextAction()).performTextClearance()
         composeTestRule.onNode(hasSetTextAction()).performTextInput("Renamed fixture bookmark")
         clickText(text(R.string.action_save))
         waitForText("Renamed fixture bookmark")

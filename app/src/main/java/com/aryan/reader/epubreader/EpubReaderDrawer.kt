@@ -667,8 +667,8 @@ private fun BookmarksList(
         }
 
         showRenameBookmarkDialog?.let { bookmarkToRename ->
-            var newTitle by remember { mutableStateOf("") }
             val currentName = bookmarkToRename.label?.takeIf { it.isNotBlank() } ?: bookmarkToRename.snippet
+            var newTitle by remember(bookmarkToRename) { mutableStateOf(currentName) }
 
             AlertDialog(
                 onDismissRequest = { showRenameBookmarkDialog = null },
@@ -678,15 +678,6 @@ private fun BookmarksList(
                         value = newTitle,
                         onValueChange = { newTitle = it },
                         label = { Text(stringResource(R.string.label_new_name)) },
-                        placeholder = {
-                            Text(
-                                text = currentName,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                            )
-                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )

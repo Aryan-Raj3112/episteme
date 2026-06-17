@@ -892,7 +892,7 @@ internal fun PdfNavigationDrawerContent(
                         }
 
                         showRenameBookmarkDialog?.let { bookmarkToRename ->
-                            var newTitle by remember { mutableStateOf("") }
+                            var newTitle by remember(bookmarkToRename) { mutableStateOf(bookmarkToRename.title) }
 
                             AlertDialog(onDismissRequest = {
                                 showRenameBookmarkDialog = null
@@ -901,17 +901,6 @@ internal fun PdfNavigationDrawerContent(
                                     value = newTitle,
                                     onValueChange = { newTitle = it },
                                     label = { Text(stringResource(R.string.label_new_title)) },
-                                    placeholder = {
-                                        Text(
-                                            text = bookmarkToRename.title,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                                alpha = 0.6f
-                                            )
-                                        )
-                                    },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth()
                                 )
