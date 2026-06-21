@@ -55,16 +55,44 @@ class TtsChunkNavigationTest {
     }
 
     @Test
-    fun `automatic playlist advance can step over chunks marked skipped after generation failures`() {
+    fun `automatic playlist advance never steps over missing chunks`() {
         assertEquals(
-            true,
+            false,
             shouldAdvanceToTtsPlaylistChunk(
                 currentChunkIndex = 8,
                 playlistChunkIndex = 10,
                 skippedChunkIndices = setOf(9)
             )
         )
-        assertEquals(10, resolveNextPlayableTtsChunkIndex(8, 12, setOf(9)))
+        assertEquals(9, resolveNextPlayableTtsChunkIndex(8, 12, setOf(9)))
+    }
+
+    @Test
+    fun `premature streamed transitions are retried instead of accepted`() {
+        assertEquals(
+            true,
+            shouldRetryPrematureTtsStreamTransition(
+                transitionReason = androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                previousUriScheme = "ttsstream",
+                previousStreamFinished = false
+            )
+        )
+        assertEquals(
+            false,
+            shouldRetryPrematureTtsStreamTransition(
+                transitionReason = androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                previousUriScheme = "ttsstream",
+                previousStreamFinished = true
+            )
+        )
+        assertEquals(
+            false,
+            shouldRetryPrematureTtsStreamTransition(
+                transitionReason = androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+                previousUriScheme = "ttsstream",
+                previousStreamFinished = false
+            )
+        )
     }
 
     @Test

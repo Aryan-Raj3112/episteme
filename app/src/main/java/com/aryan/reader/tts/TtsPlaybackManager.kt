@@ -116,6 +116,7 @@ private const val TTS_NOTIFICATION_TRAILING_BUFFER_MS = 2_000L
 private const val TTS_NOTIFICATION_AVERAGE_WORD_MS = 550L
 private const val TTS_NOTIFICATION_PUNCTUATION_PAUSE_MS = 120L
 private const val NO_DEFERRED_TRANSITION_PREFETCH_GENERATION = -1
+private const val TTS_MISSING_CHUNK_RETRY_DELAY_MS = 1_000L
 internal const val MAX_CHUNK_GENERATION_FAILURES = 2
 private val TTS_NOTIFICATION_WORD_PATTERN = Regex("""\S+""")
 
@@ -177,13 +178,14 @@ internal fun shouldStopTtsPrefetchAfterMissingChunk(
     return !isLoaded && playlistIndex == null
 }
 
+@Suppress("UNUSED_PARAMETER")
 internal fun resolveNextPlayableTtsChunkIndex(
     currentChunkIndex: Int,
     totalChunks: Int,
     skippedChunkIndices: Set<Int>
 ): Int? {
     if (totalChunks <= 0 || currentChunkIndex !in -1 until totalChunks) return null
-    return ((currentChunkIndex + 1) until totalChunks).firstOrNull { it !in skippedChunkIndices }
+    return (currentChunkIndex + 1).takeIf { it in 0 until totalChunks }
 }
 
 internal fun shouldGiveUpTtsChunkGeneration(
@@ -191,6 +193,16 @@ internal fun shouldGiveUpTtsChunkGeneration(
     maxFailures: Int = MAX_CHUNK_GENERATION_FAILURES
 ): Boolean {
     return failureCount >= maxFailures
+}
+
+internal fun shouldRetryPrematureTtsStreamTransition(
+    transitionReason: Int,
+    previousUriScheme: String?,
+    previousStreamFinished: Boolean
+): Boolean {
+    return transitionReason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
+        previousUriScheme == "ttsstream" &&
+        !previousStreamFinished
 }
 
 internal fun resolveTtsStreamPcmDurationMs(totalBytes: Long): Long? {
@@ -1215,24 +1227,11 @@ class TtsPlaybackManager(
                 "prepare-first-failed",
                 "chunk=$startAtIndex failureCount=$failureCount error=${ttsAudioData.error} audioFile=${audioFile?.name} streamUri=$streamUri serverText=${serverText != null}"
             )
-            val nextPlayableChunk = resolveNextPlayableTtsChunkIndex(
-                currentChunkIndex = startAtIndex,
-                totalChunks = textChunks.size,
-                skippedChunkIndices = skippedChunks + startAtIndex
-            )
-            if (shouldGiveUpTtsChunkGeneration(failureCount) && nextPlayableChunk != null) {
-                skippedChunks.add(startAtIndex)
+            if (shouldGiveUpTtsChunkGeneration(failureCount)) {
                 logChunkNav(
-                    "prepare-first-skip-failed-chunk",
-                    "chunk=$startAtIndex nextChunk=$nextPlayableChunk failureCount=$failureCount"
+                    "prepare-first-required-chunk-failed",
+                    "chunk=$startAtIndex failureCount=$failureCount"
                 )
-                prepareAndPlayFirstChunk(
-                    startAtIndex = nextPlayableChunk,
-                    playWhenReady = playWhenReady,
-                    startAtPosition = 0L,
-                    prefetchAfterPrepare = prefetchAfterPrepare
-                )
-                return
             }
             _ttsState.value = _ttsState.value.copy(
                 isLoading = false,
@@ -1328,6 +1327,25 @@ class TtsPlaybackManager(
 
         val currentChunkIndex = mediaItem?.mediaId?.toIntOrNull() ?: return
 
+        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && newPlaylistIndex > 0) {
+            val previousMediaItem = player.getMediaItemAt(newPlaylistIndex - 1)
+            val previousChunkIndex = previousMediaItem.mediaId.toIntOrNull()
+            val previousUri = previousMediaItem.localConfiguration?.uri
+            val previousStreamId = previousUri?.host ?: previousUri?.lastPathSegment
+            val previousStreamFinished = previousStreamId
+                ?.let { StreamRegistry.getStreamMetadata(it).first }
+                ?: false
+
+            if (previousChunkIndex != null && shouldRetryPrematureTtsStreamTransition(reason, previousUri?.scheme, previousStreamFinished)) {
+                logChunkNavWarnMain(
+                    "media-transition-retry-premature-stream",
+                    "previousChunk=$previousChunkIndex attemptedChunk=$currentChunkIndex previousStreamId=$previousStreamId"
+                )
+                retryTtsChunkAfterPrematureStreamEnd(previousChunkIndex)
+                return
+            }
+        }
+
         val extras = mediaItem.mediaMetadata.extras
         val newText = extras?.getString("ttsText") ?: mediaItem.mediaMetadata.subtitle?.toString()
         val sourceCfi = extras?.getString("sourceCfi")
@@ -1382,6 +1400,67 @@ class TtsPlaybackManager(
         prefetchNextChunkAudio(currentChunkIndex)
     }
 
+    private fun scheduleMissingChunkRetry(currentIndex: Int, targetIndex: Int, generation: Int) {
+        scope.launch {
+            delay(TTS_MISSING_CHUNK_RETRY_DELAY_MS)
+            if (!isPlaybackGenerationActive(generation)) return@launch
+            if (loadedChunks.contains(targetIndex) || prefetchingJobs.containsKey(targetIndex)) return@launch
+
+            val shouldRetry = withContext(Dispatchers.Main) {
+                val activeChunkIndex = currentChunkIndexFromPlayer()
+                activeChunkIndex == currentIndex && _ttsState.value.isLoading
+            }
+            if (!shouldRetry) return@launch
+
+            lastPrefetchIndex = -1
+            logChunkNav(
+                "prefetch-retry-missing-required-chunk",
+                "currentChunk=$currentIndex targetChunk=$targetIndex generation=$generation"
+            )
+            prefetchNextChunkAudio(currentIndex)
+        }
+    }
+
+    private fun retryTtsChunkAfterPrematureStreamEnd(chunkIndex: Int) {
+        val chunk = textChunks.getOrNull(chunkIndex) ?: return
+        val shouldResumePlayback = player.playWhenReady || _ttsState.value.isPlaying
+        val generation = advancePlaybackGeneration()
+        preparationJob?.cancel()
+        wordTrackingJob?.cancel()
+        cancelPrefetchWork()
+        onResetContext()
+
+        _ttsState.value = _ttsState.value.copy(
+            isLoading = true,
+            isPlaying = false,
+            currentText = chunk.text,
+            errorMessage = null,
+            currentChunkIndex = chunkIndex,
+            totalChunks = textChunks.size,
+            bookProgressPercent = calculateBookProgressPercent(chunkIndex),
+            sourceCfi = chunk.sourceCfi,
+            startOffsetInSource = chunk.startOffsetInSource,
+            currentWordSourceCfi = null,
+            currentWordStartOffset = -1,
+            sessionFinished = false
+        )
+
+        player.pause()
+        player.stop()
+        player.clearMediaItems()
+
+        preparationJob = scope.launch {
+            clearAudioFiles()
+            if (!isPlaybackGenerationActive(generation)) return@launch
+            prepareAndPlayFirstChunk(
+                startAtIndex = chunkIndex,
+                playWhenReady = shouldResumePlayback,
+                startAtPosition = 0L,
+                prefetchAfterPrepare = true
+            )
+        }
+    }
+
     override fun onIsPlayingChanged(isPlaying: Boolean) {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onIsPlayingChanged. isPlaying=$isPlaying, playbackState=${player.playbackState}, playWhenReady=${player.playWhenReady}, mediaItems=${player.mediaItemCount}, currentIndex=${player.currentMediaItemIndex}"
@@ -1419,6 +1498,21 @@ class TtsPlaybackManager(
                     "player-state-ended",
                     "currentChunk=$currentChunkIndex isLast=$isLastChunkInSession totalChunks=${textChunks.size}"
                 )
+                val currentMediaItem = player.currentMediaItem
+                val currentUri = currentMediaItem?.localConfiguration?.uri
+                val currentStreamId = currentUri?.host ?: currentUri?.lastPathSegment
+                val currentStreamFinished = currentStreamId
+                    ?.let { StreamRegistry.getStreamMetadata(it).first }
+                    ?: false
+                if (currentUri?.scheme == "ttsstream" && !currentStreamFinished) {
+                    logChunkNavWarnMain(
+                        "player-ended-retry-premature-stream",
+                        "currentChunk=$currentChunkIndex streamId=$currentStreamId"
+                    )
+                    _ttsState.value = nextState.copy(isLoading = true, isPlaying = false)
+                    retryTtsChunkAfterPrematureStreamEnd(currentChunkIndex)
+                    return
+                }
                 if (isLastChunkInSession || textChunks.isEmpty()) {
                     Timber.tag("TTS_CHAPTER_CHANGE_DIAG").i("Setting sessionFinished = true")
                     logChunkNavMain(
@@ -1661,9 +1755,8 @@ class TtsPlaybackManager(
                                 "targetChunk=$targetIndex generation=$generation failureCount=$failureCount error=${ttsAudioData.error} audioFile=${audioFile?.name} streamUri=$streamUri serverText=${serverText != null}"
                             )
                             if (shouldGiveUpTtsChunkGeneration(failureCount)) {
-                                skippedChunks.add(targetIndex)
                                 logChunkNav(
-                                    "prefetch-skip-failed-chunk",
+                                    "prefetch-required-chunk-still-missing",
                                     "targetChunk=$targetIndex generation=$generation failureCount=$failureCount"
                                 )
                             }
@@ -1704,6 +1797,11 @@ class TtsPlaybackManager(
                         }
                     }
                     if (shouldStopAfterMissingChunk) {
+                        scheduleMissingChunkRetry(
+                            currentIndex = currentIndex,
+                            targetIndex = targetIndex,
+                            generation = generation
+                        )
                         return@launch
                     }
                 }
