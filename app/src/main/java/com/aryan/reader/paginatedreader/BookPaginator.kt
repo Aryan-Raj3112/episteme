@@ -951,6 +951,10 @@ class BookPaginator(
 
                     if (!shouldIgnoreCache) {
                         Timber.d("getBlocksForChapter: Cache HIT for chapter $chapterIndex in DATABASE.")
+                        Timber.tag("HtmlImportDebug").w(
+                            "paginator_semantic_cache_hit bookId=$bookId chapter=$chapterIndex blocks=${semanticBlocks.size} " +
+                                "lazyChapter=${chapter.htmlContent.isEmpty()} configHash=$currentConfigHash"
+                        )
                         val styledBlocks = styler.style(semanticBlocks)
                         Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                             "content_from_semantic_cache chapter=$chapterIndex configHash=$currentConfigHash " +
@@ -967,6 +971,10 @@ class BookPaginator(
         }
 
         Timber.d("getBlocksForChapter: Cache MISS for chapter $chapterIndex. Parsing to Semantic IR.")
+        Timber.tag("HtmlImportDebug").d(
+            "paginator_cache_miss bookId=$bookId chapter=$chapterIndex chapterAbsPath=${chapter.absPath} " +
+                "htmlContentChars=${chapter.htmlContent.length} extractionBasePath=$extractionBasePath"
+        )
 
         var htmlToParse = chapter.htmlContent
         if (htmlToParse.isEmpty()) {
@@ -975,6 +983,11 @@ class BookPaginator(
                 Timber.tag("ReflowPaginationDiag").d("getBlocksForChapter: Lazy loading content from disk for chapter $chapterIndex: ${file.name} (${file.length()} bytes)")
                 try {
                     htmlToParse = file.readText()
+                    val lazyHtmlHasProductEzoic = htmlToParse.contains("productEzoicAds", ignoreCase = true)
+                    Timber.tag("HtmlImportDebug").d(
+                        "paginator_lazy_html_loaded bookId=$bookId chapter=$chapterIndex file=${file.absolutePath} " +
+                            "fileBytes=${file.length()} htmlChars=${htmlToParse.length} productEzoic=$lazyHtmlHasProductEzoic"
+                    )
                 } catch (e: Exception) {
                     Timber.tag("ReflowPaginationDiag").e(e, "Failed to read lazy HTML file")
                 }
@@ -984,6 +997,14 @@ class BookPaginator(
         }
 
         val document = Jsoup.parse(htmlToParse, chapter.absPath)
+        val htmlInputHasProductEzoic = htmlToParse.contains("productEzoicAds", ignoreCase = true)
+        val parsedBlockedNodeCount = document.select("script, style, noscript, template").size
+        val parsedBodyTextHasProductEzoic = document.body().text().contains("productEzoicAds", ignoreCase = true)
+        Timber.tag("HtmlImportDebug").d(
+            "paginator_jsoup_parsed bookId=$bookId chapter=$chapterIndex htmlChars=${htmlToParse.length} " +
+                "scriptNodes=$parsedBlockedNodeCount bodyTextHasProductEzoic=$parsedBodyTextHasProductEzoic " +
+                "htmlHasProductEzoic=$htmlInputHasProductEzoic"
+        )
         Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
             "html_parse_input chapter=$chapterIndex htmlChars=${htmlToParse.length} " +
                 document.readerHtmlLinkDiagSummary()

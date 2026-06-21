@@ -182,6 +182,7 @@ class EpubParserUnitTest {
         assertTrue(first.chapters.first().plainTextContent.contains("One"))
         assertFalse(cachedMetadata.contains("Ignored HTML Title"))
         assertFalse(cachedMetadata.contains("body { color: black; }"))
+        assertFalse(File(activeDir, "book_metadata.json.tmp").exists())
         File(activeDir, "sentinel.txt").writeText("still here")
 
         val second = parser.createEpubBook(

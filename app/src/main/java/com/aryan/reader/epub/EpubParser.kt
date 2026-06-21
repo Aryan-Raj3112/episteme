@@ -25,10 +25,12 @@ import android.graphics.BitmapFactory
 import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToStream
 import org.jsoup.Jsoup
 import org.w3c.dom.Element
 import org.w3c.dom.Node
@@ -312,10 +314,14 @@ class EpubParser(private val context: Context) {
         book: EpubBook
     ) {
         try {
-            File(extractionDir, BOOK_METADATA_FILE).writeText(
-                jsonSerializer.encodeToString(book.toExtractionMetadataCache())
-            )
-            File(extractionDir, CACHE_MANIFEST_FILE).writeText(
+            val metadataFile = File(extractionDir, BOOK_METADATA_FILE)
+            val manifestFile = File(extractionDir, CACHE_MANIFEST_FILE)
+            val metadataWritten = writeCachedBookMetadata(metadataFile, book.toExtractionMetadataCache())
+            if (!metadataWritten) {
+                manifestFile.delete()
+                return
+            }
+            manifestFile.writeText(
                 jsonSerializer.encodeToString(
                     EpubExtractionCacheManifest(
                         bookId = bookId,
@@ -327,8 +333,52 @@ class EpubParser(private val context: Context) {
                     )
                 )
             )
+        } catch (e: OutOfMemoryError) {
+            Timber.e(e, "Failed to write EPUB extraction cache without exhausting memory for bookId=$bookId")
+            File(extractionDir, BOOK_METADATA_FILE).delete()
+            File(extractionDir, CACHE_MANIFEST_FILE).delete()
         } catch (e: Exception) {
             Timber.e(e, "Failed to write EPUB extraction cache for bookId=$bookId")
+        }
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun writeCachedBookMetadata(metadataFile: File, cachedBook: EpubBook): Boolean {
+        val tempFile = File(metadataFile.parentFile, "${metadataFile.name}.tmp")
+        runCatching { tempFile.delete() }
+        return try {
+            tempFile.outputStream().buffered().use { output ->
+                jsonSerializer.encodeToStream(cachedBook, output)
+            }
+            if (tempFile.length() > MAX_CACHED_BOOK_METADATA_BYTES) {
+                Timber.w(
+                    "Skipping oversized EPUB extraction metadata cache: " +
+                        "path=${metadataFile.absolutePath} size=${tempFile.length()} limit=$MAX_CACHED_BOOK_METADATA_BYTES"
+                )
+                tempFile.delete()
+                metadataFile.delete()
+                return false
+            }
+            if (metadataFile.exists() && !metadataFile.delete()) {
+                Timber.w("Unable to replace existing EPUB metadata cache at ${metadataFile.absolutePath}")
+                tempFile.delete()
+                return false
+            }
+            if (!tempFile.renameTo(metadataFile)) {
+                Timber.w("Unable to promote EPUB metadata cache temp file at ${tempFile.absolutePath}")
+                tempFile.delete()
+                return false
+            }
+            true
+        } catch (e: OutOfMemoryError) {
+            tempFile.delete()
+            metadataFile.delete()
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to stream EPUB metadata cache to ${metadataFile.absolutePath}")
+            tempFile.delete()
+            metadataFile.delete()
+            false
         }
     }
 

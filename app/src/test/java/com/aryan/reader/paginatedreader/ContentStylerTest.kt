@@ -10,6 +10,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -254,6 +255,36 @@ class ContentStylerTest {
                 range.item.background.isSpecified &&
                 range.item.textDecoration?.contains(TextDecoration.Underline) == true
         })
+    }
+
+
+    @Test
+    fun `html parser skips executable body nodes`() {
+        val semanticBlocks = htmlToSemanticBlocks(
+            html = """
+                <html>
+                  <head><style>p { color: red; }</style></head>
+                  <body>
+                    <p>Visible<script>function productEzoicAds() { return true; }</script><style>.ad { display: block; }</style><noscript>Enable scripts</noscript> text</p>
+                  </body>
+                </html>
+            """.trimIndent(),
+            cssRules = OptimizedCssRules(),
+            textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
+            chapterAbsPath = "OEBPS/chapter1.xhtml",
+            extractionBasePath = "",
+            density = Density(1f),
+            fontFamilyMap = emptyMap(),
+            constraints = androidx.compose.ui.unit.Constraints(maxWidth = 400, maxHeight = 800)
+        )
+
+        val text = semanticBlocks.filterIsInstance<SemanticParagraph>().joinToString(" ") { it.text }
+
+        assertTrue(text.contains("Visible"))
+        assertTrue(text.contains("text"))
+        assertFalse(text.contains("productEzoicAds"))
+        assertFalse(text.contains(".ad"))
+        assertFalse(text.contains("Enable scripts"))
     }
 
     @Test

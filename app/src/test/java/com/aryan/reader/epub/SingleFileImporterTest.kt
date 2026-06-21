@@ -119,7 +119,9 @@ class SingleFileImporterTest {
                 <style>p { color: red; }</style>
               </head>
               <body>
+                HTML Title
                 <p>First page</p>
+                <div>Visible<script>function productEzoicAds() { return true; }</script> content</div>
                 <script>bad()</script>
                 <page-break></page-break>
                 <p>Second page</p>
@@ -140,9 +142,59 @@ class SingleFileImporterTest {
         assertEquals("HTML Title", book.chapters[0].title)
         assertEquals("Page 2", book.chapters[1].title)
         assertTrue(book.chapters[0].plainTextContent.contains("First page"))
+        assertFalse(book.chapters[0].plainTextContent.startsWith("HTML Title"))
+        assertTrue(book.chapters[0].plainTextContent.contains("Visible content"))
+        assertFalse(book.chapters[0].plainTextContent.contains("productEzoicAds"))
         assertTrue(book.chapters[1].plainTextContent.contains("Second page"))
-        assertFalse(File(book.extractionBasePath, "page_1.html").readText().contains("bad()"))
-        assertTrue(File(book.extractionBasePath, "page_1.html").readText().contains("p { color: red; }"))
+        val firstPageHtml = File(book.extractionBasePath, "page_1.html").readText()
+        assertFalse(firstPageHtml.contains("bad()"))
+        assertFalse(firstPageHtml.contains("productEzoicAds"))
+        assertTrue(firstPageHtml.contains("p { color: red; }"))
+    }
+
+    @Test
+    fun `html import removes leaked ad script text but keeps visible code blocks`() = runTest {
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("html-leaked-script-cache")))
+        val leakedScriptText = """
+            function productEzoicAds() {
+              window.google_reactive_ads_global_state = { description: "Can't disable auto ads programmatically on the page" };
+              var d = {"r":{"r":[{"p":" ezoic_pub_ad_placeholder-700-top_of_page-300x250"}]}};
+            }
+        """.trimIndent()
+        val leakedBootstrapText = """
+            var soc_app_id = '0';
+            var did = 176527;
+            var ezdomain = 'filesamples.com';
+            var ezoicSearchable = 1;
+        """.trimIndent()
+        val html = """
+            <html>
+              <body>
+                <p>Article text remains.</p>
+                <div>$leakedScriptText</div>
+                <div>$leakedBootstrapText</div>
+                <pre><code>function example() { window.alert('visible sample'); }</code></pre>
+              </body>
+            </html>
+        """.trimIndent()
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(html.toByteArray()),
+            type = FileType.HTML,
+            originalBookNameHint = "leaked.html",
+            bookId = "leaked-html-book"
+        )
+
+        val chapter = book.chapters.single()
+        val chapterHtml = File(book.extractionBasePath, chapter.htmlFilePath).readText()
+        assertTrue(chapter.plainTextContent.contains("Article text remains."))
+        assertTrue(chapter.plainTextContent.contains("function example()"))
+        assertFalse(chapter.plainTextContent.contains("productEzoicAds"))
+        assertFalse(chapter.plainTextContent.contains("ezoicSearchable"))
+        assertFalse(chapterHtml.contains("google_reactive_ads_global_state"))
+        assertFalse(chapterHtml.contains("ezoic_pub_ad_placeholder"))
+        assertFalse(chapterHtml.contains("ezdomain"))
+        assertTrue(chapterHtml.contains("function example()"))
     }
 
     @Test
@@ -163,6 +215,8 @@ class SingleFileImporterTest {
             val chapterFile = File(book.extractionBasePath, chapter.htmlFilePath)
             assertTrue(chapterFile.isFile)
             assertTrue(chapterFile.length() < 1_200_000L)
+            assertTrue(chapter.plainTextContent.length <= 256_000)
+            assertTrue(chapter.plainTextLength >= chapter.plainTextContent.length)
         }
     }
 

@@ -71,6 +71,7 @@ private val semanticBlockDescendantTags = setOf(
     "main"
 )
 private val forcedStandaloneSemanticTags = setOf("img", "svg", "math-placeholder", "hr", "table")
+private val nonRenderableHtmlTags = setOf("script", "style", "noscript", "template")
 
 interface HtmlResourceResolver {
     fun resolvePath(chapterAbsPath: String, extractionBasePath: String, src: String): String?
@@ -218,6 +219,8 @@ private class SemanticHtmlParser(
             sortedRules = combinedRules.sortedForCascade()
         }
 
+        document.select("script, style, noscript, template").remove()
+
         val body = document.body()
         return parseContainer(body, getElementStyle(body).withResolvedFontFamily())
     }
@@ -272,6 +275,7 @@ private class SemanticHtmlParser(
 
     private fun Element.isEffectivelySemanticBlock(): Boolean {
         val tagName = tagName().lowercase()
+        if (tagName in nonRenderableHtmlTags) return false
         return isBlock ||
                 tagName in forcedStandaloneSemanticTags ||
                 (!isBlock && hasSemanticBlockDescendant())
@@ -310,6 +314,7 @@ private class SemanticHtmlParser(
     }
 
     private fun CssRule.matchesElement(element: Element, pseudoElement: String? = null): Boolean {
+        if (element.tagName().lowercase() in nonRenderableHtmlTags) return false
         if (this.pseudoElement != pseudoElement) return false
         if (unsupportedPseudoElementRegex.containsMatchIn(selector.selector)) return false
         return try {
@@ -817,6 +822,7 @@ private class SemanticHtmlParser(
                     if (node.tagName().lowercase() == "br") {
                         appendText("\n"); return
                     }
+                    if (node.tagName().lowercase() in nonRenderableHtmlTags) return
                     val currentElementStyle = getElementStyle(node, inheritedStyle.customProperties)
                     val newStyle = inheritedStyle.merge(currentElementStyle).withResolvedFontFamily()
                     if (newStyle.display == "none") return

@@ -56,9 +56,41 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_HTML_BUFFERED_LINE_CHARS = 128_000
         private const val MAX_HTML_HEAD_SCAN_CHARS = 256_000
         private const val MAX_HTML_INLINE_CSS_CHARS = 256_000
+        private const val MAX_SINGLE_FILE_PLAIN_TEXT_CHARS = 256_000
         private const val MAX_SINGLE_FILE_METADATA_BYTES = 2L * 1024L * 1024L
         private const val BOOK_METADATA_FILE = "book_metadata.json"
         private const val PAGE_BREAK_MARKER = "<page-break></page-break>"
+        private const val HTML_IMPORT_DEBUG_TAG = "HtmlImportDebug"
+
+        private val scriptTextPreservingTags = setOf("pre", "code", "kbd", "samp", "textarea")
+        private val leakedAdScriptMarkers = listOf(
+            "function productezoicads",
+            "google_reactive_ads_global_state",
+            "ezoic_pub_ad_placeholder",
+            "ezdisableads",
+            "ezoictestactive",
+            "window.__ez",
+            "ezstandalone",
+            "ezosuibasgeneris",
+            "data-ezscrex",
+            "ezoicsearchable",
+            "ezdomain",
+            "var soc_app_id",
+            "var did ="
+        )
+        private val leakedScriptTextSignals = listOf(
+            "window.",
+            "document.",
+            "function ",
+            "function(",
+            "var ",
+            "const ",
+            "let ",
+            "typeof ",
+            "object.assign",
+            ".push(",
+            "return;"
+        )
     }
 
     private val htmlSafelist = Safelist.relaxed()
@@ -71,6 +103,10 @@ class SingleFileImporter(private val context: Context) {
     private val htmlOutputSettings = Document.OutputSettings().prettyPrint(false)
 
     private fun metadataFile(extractionDir: File): File = File(extractionDir, BOOK_METADATA_FILE)
+
+    private fun File.htmlDebugFileList(): String {
+        return listFiles()?.joinToString { file -> "${file.name}:${file.length()}" } ?: "<unreadable>"
+    }
 
     private fun EpubBook.lightweightSingleFileCache(): EpubBook {
         val cacheChapters = chapters.map { chapter ->
@@ -87,12 +123,21 @@ class SingleFileImporter(private val context: Context) {
     }
 
     private fun readCachedSingleFileBook(metadataFile: File, extractionDir: File, tag: String): EpubBook? {
-        if (!metadataFile.exists()) return null
+        if (!metadataFile.exists()) {
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).d("cache_miss_no_metadata tag=$tag dir=${extractionDir.absolutePath}")
+            return null
+        }
+        val extractionFilesSummary = extractionDir.htmlDebugFileList()
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+            "cache_metadata_present tag=$tag dir=${extractionDir.absolutePath} " +
+                "metadataBytes=${metadataFile.length()} files=$extractionFilesSummary"
+        )
         if (metadataFile.length() > MAX_SINGLE_FILE_METADATA_BYTES) {
             Timber.w(
                 "Ignoring oversized $tag metadata cache (${metadataFile.length()} bytes). " +
                     "The file will be reparsed with lightweight metadata."
             )
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).w("cache_oversized tag=$tag metadataBytes=${metadataFile.length()}")
             runCatching { metadataFile.delete() }
             return null
         }
@@ -104,13 +149,20 @@ class SingleFileImporter(private val context: Context) {
                 chapters = cacheChapters,
                 chaptersForPagination = cacheChapters,
                 extractionBasePath = extractionDir.absolutePath
-            ).takeIf { it.hasReadableExtractedContent() }
+            ).also { book ->
+                Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+                    "cache_decoded tag=$tag chapters=${book.chapters.size} readable=${book.hasReadableExtractedContent()} " +
+                        "extractionBasePath=${book.extractionBasePath}"
+                )
+            }.takeIf { it.hasReadableExtractedContent() }
         } catch (e: OutOfMemoryError) {
             Timber.e(e, "Failed to load cached $tag metadata without exhausting memory")
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).e(e, "cache_decode_oom tag=$tag")
             runCatching { metadataFile.delete() }
             null
         } catch (e: Exception) {
             Timber.e(e, "Failed to load cached $tag, parsing again")
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).e(e, "cache_decode_failed tag=$tag")
             null
         }
     }
@@ -118,11 +170,17 @@ class SingleFileImporter(private val context: Context) {
     private fun writeSingleFileMetadata(metadataFile: File, book: EpubBook, tag: String) {
         try {
             metadataFile.writeText(jsonSerializer.encodeToString(book.lightweightSingleFileCache()))
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+                "cache_write tag=$tag chapters=${book.chapters.size} metadataBytes=${metadataFile.length()} " +
+                    "extractionBasePath=${book.extractionBasePath}"
+            )
         } catch (e: OutOfMemoryError) {
             Timber.e(e, "Failed to cache lightweight $tag metadata without exhausting memory")
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).e(e, "cache_write_oom tag=$tag")
             runCatching { metadataFile.delete() }
         } catch (e: Exception) {
             Timber.e(e, "Failed to cache $tag metadata")
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).e(e, "cache_write_failed tag=$tag")
         }
     }
 
@@ -134,6 +192,7 @@ class SingleFileImporter(private val context: Context) {
         parseContent: Boolean = true
     ): EpubBook {
 
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d("import_start type=$type bookId=$bookId name=$originalBookNameHint parseContent=$parseContent")
         val lowerHint = originalBookNameHint.lowercase()
         val isCsv = lowerHint.endsWith(".csv") || lowerHint.endsWith(".tsv") ||
             lowerHint.endsWith(".csv.txt") || lowerHint.endsWith(".tsv.txt")
@@ -321,12 +380,15 @@ class SingleFileImporter(private val context: Context) {
 
                 file.writeText(fullHtml)
 
+                val plainText = htmlBody.toPlainTextSummary()
+
                 EpubChapter(
                     chapterId = "${bookId}_$pageNum",
                     absPath = fileName,
                     title = chapterTitle,
                     htmlFilePath = fileName,
-                    plainTextContent = Jsoup.parse(htmlBody).text(),
+                    plainTextContent = plainText.text,
+                    plainTextLength = plainText.length,
                     htmlContent = "",
                     depth = 0,
                     isInToc = true
@@ -533,11 +595,18 @@ class SingleFileImporter(private val context: Context) {
 
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = metadataFile(extractionDir)
+        val extractionFilesSummary = extractionDir.htmlDebugFileList()
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+            "html_parse_cache_check bookId=$bookId name=$originalBookNameHint dir=${extractionDir.absolutePath} " +
+                "metadataExists=${metadataFile.exists()} files=$extractionFilesSummary"
+        )
 
         readCachedSingleFileBook(metadataFile, extractionDir, "HTML")?.let { cachedBook ->
             Timber.tag("FileOpenPerf").d("[HTML] Loaded from cache instantly | bookId=$bookId")
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).w("html_cache_hit bookId=$bookId chapters=${cachedBook.chapters.size} extractionBasePath=${cachedBook.extractionBasePath}")
             return@withContext cachedBook
         }
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d("html_cache_reset_before_parse bookId=$bookId dir=${extractionDir.absolutePath}")
         ImportedFileCache.resetActiveBookDir(context, bookId)
 
         val parseStart = System.currentTimeMillis()
@@ -551,6 +620,9 @@ class SingleFileImporter(private val context: Context) {
 
         inputStream.bufferedReader().use { reader ->
             var inScript = false
+            var skippedScriptLines = 0
+            var scriptStartLines = 0
+            var productEzoicScriptLines = 0
             var inStyle = false
             var inBody = false
             var pageNum = 1
@@ -625,12 +697,20 @@ class SingleFileImporter(private val context: Context) {
                 val trimmed = line.trim()
 
                 if (inScript) {
+                    skippedScriptLines++
+                    if (trimmed.contains("productEzoicAds", ignoreCase = true)) productEzoicScriptLines++
                     if (trimmed.contains("</script", ignoreCase = true)) {
                         inScript = false
+                        Timber.tag(HTML_IMPORT_DEBUG_TAG).d("html_stream_script_end bookId=$bookId skippedScriptLines=$skippedScriptLines")
                     }
                     return@forEachBoundedLine
                 }
                 if (trimmed.startsWith("<script", ignoreCase = true)) {
+                    skippedScriptLines++
+                    scriptStartLines++
+                    val lineHasProductEzoic = trimmed.contains("productEzoicAds", ignoreCase = true)
+                    if (lineHasProductEzoic) productEzoicScriptLines++
+                    Timber.tag(HTML_IMPORT_DEBUG_TAG).w("html_stream_script_start bookId=$bookId productEzoic=$lineHasProductEzoic sample=${trimmed.take(180)}")
                     if (!trimmed.contains("</script", ignoreCase = true)) {
                         inScript = true
                     }
@@ -708,6 +788,7 @@ class SingleFileImporter(private val context: Context) {
                 }
             }
 
+            Timber.tag(HTML_IMPORT_DEBUG_TAG).d("html_stream_complete bookId=$bookId chaptersBeforeFinalFlush=${chapters.size} skippedScriptLines=$skippedScriptLines scriptStartLines=$scriptStartLines productEzoicScriptLines=$productEzoicScriptLines cssChars=${cssBuilder.length}")
             flushChapter()
         }
 
@@ -784,8 +865,158 @@ class SingleFileImporter(private val context: Context) {
         ).find(metaTag)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
     }
 
-    private fun sanitizeHtmlFragment(html: String): String {
-        return Jsoup.clean(html, "", htmlSafelist, htmlOutputSettings)
+    private fun sanitizeHtmlFragment(html: String, leadingTitleToDrop: String? = null): String {
+        val body = Jsoup.parseBodyFragment(html).body()
+        removeLeadingDuplicateTitleText(body, leadingTitleToDrop)
+        val blockedNodes = body.select("script, style, noscript, template")
+        val hasProductEzoicBefore = body.html().contains("productEzoicAds", ignoreCase = true) ||
+            body.text().contains("productEzoicAds", ignoreCase = true)
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+            "sanitize_fragment_before inputChars=${html.length} blockedNodes=${blockedNodes.size} " +
+                "productEzoic=$hasProductEzoicBefore"
+        )
+        blockedNodes.remove()
+        val leakedScriptTextNodesRemoved = removeLeakedScriptTextNodes(body)
+        val cleaned = Jsoup.clean(body.html(), "", htmlSafelist, htmlOutputSettings)
+        val hasProductEzoicAfter = cleaned.contains("productEzoicAds", ignoreCase = true)
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+            "sanitize_fragment_after outputChars=${cleaned.length} blockedTextNodesRemoved=$leakedScriptTextNodesRemoved " +
+                "productEzoic=$hasProductEzoicAfter"
+        )
+        return cleaned
+    }
+
+    private fun removeLeadingDuplicateTitleText(root: org.jsoup.nodes.Element, title: String?) {
+        val normalizedTitle = title?.normalizeImportedHtmlTitleText()?.takeIf { it.isNotBlank() } ?: return
+        for (node in root.childNodes().toList()) {
+            if (node is org.jsoup.nodes.TextNode) {
+                val normalizedText = node.text().normalizeImportedHtmlTitleText()
+                if (normalizedText.isBlank()) {
+                    node.remove()
+                    continue
+                }
+                if (normalizedText == normalizedTitle) {
+                    Timber.tag(HTML_IMPORT_DEBUG_TAG).d("sanitize_removed_leading_duplicate_title title=$title")
+                    node.remove()
+                }
+            }
+            return
+        }
+    }
+
+    private fun String.normalizeImportedHtmlTitleText(): String {
+        return trim().replace(Regex("\\s+"), " ").lowercase()
+    }
+
+    private fun removeLeakedScriptTextNodes(root: org.jsoup.nodes.Element): Int {
+        var removed = 0
+        val stack = ArrayDeque<org.jsoup.nodes.Element>()
+        stack.add(root)
+
+        while (stack.isNotEmpty()) {
+            val element = stack.removeLast()
+            val tagName = element.tagName().lowercase()
+            if (tagName in scriptTextPreservingTags) continue
+
+            element.textNodes().toList().forEach { textNode ->
+                if (looksLikeLeakedScriptText(textNode.text())) {
+                    textNode.remove()
+                    removed++
+                }
+            }
+            element.children().forEach { child -> stack.add(child) }
+        }
+
+        return removed
+    }
+
+    private fun looksLikeLeakedScriptText(text: String): Boolean {
+        val normalized = text.trim().lowercase()
+        if (normalized.isBlank()) return false
+
+        if (leakedAdScriptMarkers.any { marker -> marker in normalized }) {
+            return true
+        }
+
+        val signalCount = leakedScriptTextSignals.count { signal -> signal in normalized }
+        return normalized.length > 120 &&
+            signalCount >= 3 &&
+            ("window." in normalized || "document." in normalized || "function" in normalized)
+    }
+
+    private data class PlainTextSummary(val text: String, val length: Int)
+
+    private fun String.toPlainTextSummary(maxChars: Int = MAX_SINGLE_FILE_PLAIN_TEXT_CHARS): PlainTextSummary {
+        val text = StringBuilder(minOf(length, maxChars))
+        var plainLength = 0
+        var index = 0
+        var inTag = false
+        var previousWasWhitespace = true
+
+        fun appendDecoded(char: Char) {
+            val output = if (char.isWhitespace()) ' ' else char
+            if (output == ' ') {
+                if (previousWasWhitespace) return
+                previousWasWhitespace = true
+            } else {
+                previousWasWhitespace = false
+            }
+            plainLength += 1
+            if (text.length < maxChars) {
+                text.append(output)
+            }
+        }
+
+        while (index < length) {
+            val char = this[index]
+            when {
+                inTag -> {
+                    if (char == '>') inTag = false
+                    index += 1
+                }
+                char == '<' -> {
+                    inTag = true
+                    if (startsWithAny(index, "<br", "</p", "</div", "</section", "</article", "</li", "</tr", "</h")) {
+                        appendDecoded(' ')
+                    }
+                    index += 1
+                }
+                char == '&' -> {
+                    val semicolon = indexOf(';', startIndex = index + 1).takeIf { it in (index + 2)..(index + 12) }
+                    if (semicolon != null) {
+                        appendDecoded(decodeHtmlEntity(substring(index + 1, semicolon)) ?: ' ')
+                        index = semicolon + 1
+                    } else {
+                        appendDecoded(char)
+                        index += 1
+                    }
+                }
+                else -> {
+                    appendDecoded(char)
+                    index += 1
+                }
+            }
+        }
+
+        return PlainTextSummary(text.toString().trim(), plainLength)
+    }
+
+    private fun String.startsWithAny(index: Int, vararg prefixes: String): Boolean {
+        return prefixes.any { prefix -> regionMatches(index, prefix, 0, prefix.length, ignoreCase = true) }
+    }
+
+    private fun decodeHtmlEntity(entity: String): Char? {
+        return when {
+            entity.equals("amp", ignoreCase = true) -> '&'
+            entity.equals("lt", ignoreCase = true) -> '<'
+            entity.equals("gt", ignoreCase = true) -> '>'
+            entity.equals("quot", ignoreCase = true) -> '"'
+            entity.equals("apos", ignoreCase = true) -> '\''
+            entity.equals("nbsp", ignoreCase = true) -> ' '
+            entity.startsWith("#x", ignoreCase = true) -> entity.drop(2).toIntOrNull(16)?.toChar()
+            entity.startsWith("#") -> entity.drop(1).toIntOrNull()?.toChar()
+            else -> null
+        }
     }
 
     private suspend fun parseDocx(
@@ -902,7 +1133,19 @@ class SingleFileImporter(private val context: Context) {
         val chapterTitle = if (pageNum > 1 || bodyContent.contains("<page-break")) "Page $pageNum" else title
         val fileName = "page_$pageNum.html"
         val file = File(extractionDir, fileName)
-        val sanitizedBodyContent = sanitizeHtmlFragment(bodyContent)
+        val inputScriptTags = Regex("<script\\b", RegexOption.IGNORE_CASE).findAll(bodyContent).count()
+        val inputHasProductEzoic = bodyContent.contains("productEzoicAds", ignoreCase = true)
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+            "html_write_chapter_before_sanitize bookId=$bookId page=$pageNum inputChars=${bodyContent.length} " +
+                "scriptTags=$inputScriptTags productEzoic=$inputHasProductEzoic file=${file.absolutePath}"
+        )
+        val sanitizedBodyContent = sanitizeHtmlFragment(bodyContent, leadingTitleToDrop = title)
+        val outputScriptTags = Regex("<script\\b", RegexOption.IGNORE_CASE).findAll(sanitizedBodyContent).count()
+        val outputHasProductEzoic = sanitizedBodyContent.contains("productEzoicAds", ignoreCase = true)
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+            "html_write_chapter_after_sanitize bookId=$bookId page=$pageNum outputChars=${sanitizedBodyContent.length} " +
+                "scriptTags=$outputScriptTags productEzoic=$outputHasProductEzoic"
+        )
         val escapedTitle = title.replace("\"", "&quot;")
 
         file.bufferedWriter().use { writer ->
@@ -915,17 +1158,24 @@ class SingleFileImporter(private val context: Context) {
             writer.write("\n</body>\n</html>")
         }
 
-        val plainText = Jsoup.parse(sanitizedBodyContent).text()
+        val plainText = sanitizedBodyContent.toPlainTextSummary()
+        val plainTextHasProductEzoic = plainText.text.contains("productEzoicAds", ignoreCase = true)
+        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+            "html_write_chapter_file_written bookId=$bookId page=$pageNum fileBytes=${file.length()} " +
+                "plainTextChars=${plainText.text.length} plainTextLength=${plainText.length} " +
+                "plainTextProductEzoic=$plainTextHasProductEzoic"
+        )
 
         return EpubChapter(
             chapterId = "${bookId}_$pageNum",
             absPath = fileName,
             title = chapterTitle,
             htmlFilePath = fileName,
-            plainTextContent = plainText,
+            plainTextContent = plainText.text,
             htmlContent = "",
             depth = 0,
-            isInToc = true
+            isInToc = true,
+            plainTextLength = plainText.length
         )
     }
 
