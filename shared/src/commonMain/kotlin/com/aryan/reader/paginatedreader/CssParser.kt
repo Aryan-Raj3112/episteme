@@ -412,6 +412,34 @@ object CssParser {
         return result
     }
 
+    private fun splitDeclarationNameAndValue(declaration: String): Pair<String, String>? {
+        var quote: Char? = null
+        var escaped = false
+        var parenDepth = 0
+        var bracketDepth = 0
+
+        declaration.forEachIndexed { index, ch ->
+            when {
+                escaped -> escaped = false
+                ch == '\\' -> escaped = true
+                quote != null -> if (ch == quote) quote = null
+                ch == '"' || ch == '\'' -> quote = ch
+                ch == '(' -> parenDepth++
+                ch == ')' -> parenDepth = (parenDepth - 1).coerceAtLeast(0)
+                ch == '[' -> bracketDepth++
+                ch == ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
+                ch == ':' && parenDepth == 0 && bracketDepth == 0 -> {
+                    val name = declaration.substring(0, index).trim()
+                    val value = declaration.substring(index + 1).trim()
+                    if (name.isBlank()) return null
+                    return name to value
+                }
+            }
+        }
+
+        return null
+    }
+
     private fun splitCssTokens(value: String): List<String> {
         val result = mutableListOf<String>()
         val current = StringBuilder()
@@ -805,10 +833,10 @@ object CssParser {
         }
 
         splitDeclarations(properties).filter { it.isNotBlank() }.forEach { prop ->
-            val parts = prop.split(':', limit = 2).map { it.trim() }
-            if (parts.size == 2) {
-                val key = parts[0].lowercase()
-                val valueWithImportant = parts[1]
+            val parts = splitDeclarationNameAndValue(prop)
+            if (parts != null) {
+                val key = parts.first.lowercase()
+                val valueWithImportant = parts.second
                 val isImportant = valueWithImportant.contains("!important", ignoreCase = true)
                 if (key.startsWith("--")) {
                     return@forEach
@@ -1398,10 +1426,10 @@ object CssParser {
     ): Map<String, String> {
         val result = linkedMapOf<String, String>()
         splitDeclarations(properties).forEach { declaration ->
-            val parts = declaration.split(':', limit = 2).map { it.trim() }
-            if (parts.size != 2 || !parts[0].startsWith("--")) return@forEach
-            val rawValue = parts[1].replace(Regex("\\s*!important", RegexOption.IGNORE_CASE), "").trim()
-            result[parts[0]] = resolveCssVariables(rawValue, inheritedCustomProperties + result)
+            val parts = splitDeclarationNameAndValue(declaration) ?: return@forEach
+            if (!parts.first.startsWith("--")) return@forEach
+            val rawValue = parts.second.replace(Regex("\\s*!important", RegexOption.IGNORE_CASE), "").trim()
+            result[parts.first] = resolveCssVariables(rawValue, inheritedCustomProperties + result)
         }
         return result
     }

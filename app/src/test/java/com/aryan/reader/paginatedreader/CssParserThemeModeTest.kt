@@ -48,4 +48,27 @@ class CssParserThemeModeTest {
         assertEquals(Color.Transparent, style.blockStyle.backgroundColor)
         assertEquals(Color.White, style.blockStyle.borderTop?.color)
     }
+
+    @Test
+    fun parseKeepsColonsInsideDeclarationValues() {
+        val result = CssParser.parse(
+            cssContent = """
+                :root { --asset: url(data:image/svg+xml;charset=utf-8,<svg viewBox='0:0'></svg>); }
+                p::before { content: "chapter: one"; color: var(--missing, #123456); }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false,
+            adaptThemeColors = false
+        )
+
+        val rootStyle = result.rules.byTag.getValue("html").single().style
+        val beforeStyle = result.rules.otherComplex.single { it.pseudoElement == "before" }.style
+
+        assertEquals("url(data:image/svg+xml;charset=utf-8,<svg viewBox='0:0'></svg>)", rootStyle.customProperties["--asset"])
+        assertEquals("\"chapter: one\"", beforeStyle.content)
+        assertEquals(Color(0xFF123456), beforeStyle.spanStyle.color)
+    }
 }

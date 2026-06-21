@@ -55,7 +55,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavHostController
 import com.aryan.reader.R
 import timber.log.Timber
 
@@ -74,7 +73,7 @@ private fun launchEmailFeedback(context: android.content.Context) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedbackScreen(
-    navController: NavHostController,
+    onNavigateBack: () -> Unit,
     viewModel: FeedbackViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -85,7 +84,7 @@ fun FeedbackScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.drawer_help_feedback)) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 }

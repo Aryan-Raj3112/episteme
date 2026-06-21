@@ -31,13 +31,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavHostController
 import com.aryan.reader.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SupportProjectScreen(
-    navController: NavHostController
+    onNavigateBack: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
 
@@ -46,7 +45,7 @@ fun SupportProjectScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.support_project_title)) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
+                    IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 }

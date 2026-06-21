@@ -114,6 +114,19 @@ class AppLanguageOptionsTest {
         assertTrue("application/tar" in mimeTypes)
     }
 
+    @Test
+    fun `pro manifest declares Play license error activity`() {
+        val activity = readProAndroidManifest()
+            .getElementsByTagName("activity")
+            .asElements()
+            .singleOrNull {
+                it.androidAttribute("name") == "com.pairip.licensecheck.LicenseActivity"
+            }
+
+        assertTrue(activity != null)
+        assertEquals("false", activity!!.androidAttribute("exported"))
+    }
+
     private fun readLocaleConfigTags(): List<String> {
         val localeConfig = listOf(
             File("src/main/res/xml/locales_config.xml"),
@@ -135,6 +148,17 @@ class AppLanguageOptionsTest {
                 )
             }
         }
+    }
+
+    private fun readProAndroidManifest(): org.w3c.dom.Document {
+        val manifest = listOf(
+            File("src/pro/AndroidManifest.xml"),
+            File("app/src/pro/AndroidManifest.xml")
+        ).first { it.isFile }
+        return DocumentBuilderFactory.newInstance()
+            .apply { isNamespaceAware = true }
+            .newDocumentBuilder()
+            .parse(manifest)
     }
 
     private fun readAndroidManifest(): org.w3c.dom.Document {

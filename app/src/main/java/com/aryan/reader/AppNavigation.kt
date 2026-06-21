@@ -87,10 +87,7 @@ fun shouldInterceptAppNavBack(
     isCurrentEntryResumed: Boolean
 ): Boolean {
     if (!hasPreviousBackStackEntry || !isCurrentEntryResumed) return false
-    return currentRoute != null &&
-        currentRoute != AppDestinations.MAIN_ROUTE &&
-        currentRoute != AppDestinations.PDF_VIEWER_ROUTE &&
-        currentRoute != AppDestinations.EPUB_READER_ROUTE
+    return currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE
 }
 
 private fun NavHostController.isReadyForBackStackChange(): Boolean {
@@ -214,7 +211,11 @@ fun AppNavigation(
 
     Box(modifier = Modifier.fillMaxSize()) {
         BackHandler(enabled = shouldInterceptBack) {
-            navController.popBackStackIfReady()
+            when (currentRoute) {
+                AppDestinations.PDF_VIEWER_ROUTE,
+                AppDestinations.EPUB_READER_ROUTE -> viewModel.clearSelectedFile()
+                else -> navController.popBackStackIfReady()
+            }
         }
 
         NavHost(navController = navController, startDestination = AppDestinations.MAIN_ROUTE) {
@@ -410,13 +411,13 @@ fun AppNavigation(
 
         composable(route = AppDestinations.FEEDBACK_SCREEN_ROUTE) {
             FeedbackScreen(
-                navController = navController
+                onNavigateBack = { navController.popBackStackIfReady() }
             )
         }
 
         composable(route = AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE) {
             SupportProjectScreen(
-                navController = navController
+                onNavigateBack = { navController.popBackStackIfReady() }
             )
         }
 
