@@ -218,6 +218,7 @@ import com.aryan.reader.COMIC_ARCHIVE_FILE_TYPES
 import com.aryan.reader.FileType
 import com.aryan.reader.HighlightColorPickerDialog
 import com.aryan.reader.MainViewModel
+import com.aryan.reader.PDF_RENAME_TRACE_TAG
 import com.aryan.reader.R
 import com.aryan.reader.ReaderBrightnessEffect
 import com.aryan.reader.ReaderBrightnessSheet
@@ -232,6 +233,7 @@ import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
+import com.aryan.reader.cardTitle
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
 import com.aryan.reader.epubreader.ExternalDictionaryHelper
@@ -466,19 +468,70 @@ fun PdfViewerScreen(
     val activeTabBookId = uiState.activeTabBookId
     val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
     val isPdfTabStripVisible = canShowPdfTabs && showTopTabStrip
-    val originalFileName by remember(uiState.recentFiles,  effectivePdfUri) {
+    val originalFileName by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, uiState.selectedBookId, effectivePdfUri) {
         derivedStateOf {
-            uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }?.displayName
+            (uiState.selectedBookId?.let { selectedId ->
+                uiState.allRecentFiles.find { it.bookId == selectedId }
+                    ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
+                    ?: uiState.recentFiles.find { it.bookId == selectedId }
+            } ?: uiState.allRecentFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.rawLibraryFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() })?.displayName
                 ?: effectivePdfUri.lastPathSegment ?: "Document.pdf"
+        }
+    }
+    var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
+    val activeLibraryItem by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, uiState.selectedBookId, effectivePdfUri) {
+        derivedStateOf {
+            uiState.selectedBookId?.let { selectedId ->
+                uiState.allRecentFiles.find { it.bookId == selectedId }
+                    ?: uiState.rawLibraryFiles.find { it.bookId == selectedId }
+                    ?: uiState.recentFiles.find { it.bookId == selectedId }
+            } ?: uiState.allRecentFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.rawLibraryFiles.find { it.uriString == effectivePdfUri.toString() }
+                ?: uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }
+        }
+    }
+    val readerDisplayTitle by remember(activeLibraryItem, uiState.usePdfFileNameAsDisplayName, originalFileName) {
+        derivedStateOf {
+            activeLibraryItem
+                ?.cardTitle(uiState.usePdfFileNameAsDisplayName)
+                ?: originalFileName
+        }
+    }
+    val effectiveReaderBookTitle by remember(activeLibraryItem, documentMetadataTitle, readerDisplayTitle) {
+        derivedStateOf {
+            activeLibraryItem?.customName?.takeIf { it.isNotBlank() }
+                ?: documentMetadataTitle?.takeIf { it.isNotBlank() }
+                ?: readerDisplayTitle
         }
     }
     var currentBookId by remember { mutableStateOf<String?>(null) }
     val bookId = currentBookId ?: effectivePdfUri.toString().hashCode().toString()
     val activeDocumentRenderKey = currentBookId ?: effectivePdfUri.toString()
-    var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
     val view = LocalView.current
     var isDockDragging by remember { mutableStateOf(false) }
     var initialScrollDone by remember { mutableStateOf(false) }
+
+    LaunchedEffect(
+        activeLibraryItem,
+        documentMetadataTitle,
+        readerDisplayTitle,
+        effectiveReaderBookTitle,
+        originalFileName,
+        currentBookId,
+        uiState.selectedBookId,
+        effectivePdfUri
+    ) {
+        Timber.tag(PDF_RENAME_TRACE_TAG).i(
+            "pdfScreen.titleResolved selectedBookId=${uiState.selectedBookId} currentBookId=$currentBookId " +
+                "uri=$effectivePdfUri activeItemId=${activeLibraryItem?.bookId} " +
+                "displayName=${activeLibraryItem?.displayName} title=${activeLibraryItem?.title} " +
+                "customName=${activeLibraryItem?.customName} documentMetadataTitle=$documentMetadataTitle " +
+                "originalFileName=$originalFileName readerDisplayTitle=$readerDisplayTitle " +
+                "effectiveReaderBookTitle=$effectiveReaderBookTitle usePdfFileName=${uiState.usePdfFileNameAsDisplayName}"
+        )
+    }
 
     val reflowBookId = remember(bookId) { "${bookId}_reflow" }
     val hasReflowFile by remember(uiState.allRecentFiles, reflowBookId) {
@@ -3516,6 +3569,12 @@ fun PdfViewerScreen(
 
     LaunchedEffect(effectivePdfUri, pdfiumCore, documentPassword) {
         Timber.tag("PdfTabSync").i("UI: LaunchedEffect triggered by URI change: $effectivePdfUri")
+        Timber.tag(PDF_RENAME_TRACE_TAG).i(
+            "pdfScreen.openEffect.start uri=$effectivePdfUri selectedBookId=${uiState.selectedBookId} " +
+                "activeTabBookId=${uiState.activeTabBookId} currentBookId=$currentBookId " +
+                "activeItemId=${activeLibraryItem?.bookId} customName=${activeLibraryItem?.customName} " +
+                "displayName=${activeLibraryItem?.displayName} title=${activeLibraryItem?.title}"
+        )
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.start uri=$effectivePdfUri scheme=${effectivePdfUri.scheme} " +
                 "selectedBookId=${uiState.selectedBookId} previousBookId=$currentBookId " +
@@ -3598,6 +3657,11 @@ fun PdfViewerScreen(
             Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                 "ui.open.cacheHit bookId=$activeBookIdForLoad cachedTotalPages=${cachedItem.totalPages}"
             )
+            Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                "pdfScreen.openEffect.cacheHit bookId=$activeBookIdForLoad " +
+                    "customName=${activeLibraryItem?.customName} documentMetadataTitle=$documentMetadataTitle " +
+                    "effectiveReaderBookTitle=$effectiveReaderBookTitle"
+            )
             Timber.tag("PdfTabSync").i("UI: Restoring from cache for $currentBookId")
             pdfDocument = cachedItem.doc
             pfdState = cachedItem.pfd
@@ -3663,6 +3727,11 @@ fun PdfViewerScreen(
                         wrapper.pdfDocument.getDocumentMeta().title?.takeIf { it.isNotBlank() }
                     }
                 }
+                Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                    "pdfScreen.openEffect.metadataLoaded bookId=$currentBookId uri=$effectivePdfUri " +
+                        "documentMetadataTitle=$documentMetadataTitle activeCustomName=${activeLibraryItem?.customName} " +
+                        "activeDisplayName=${activeLibraryItem?.displayName} activeTitle=${activeLibraryItem?.title}"
+                )
                 pfdState = null
                 val pagesCount = doc.getPageCount()
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
@@ -7466,7 +7535,7 @@ fun PdfViewerScreen(
         } else {
             verticalReaderState.currentPage
         }
-        val bookTitle = documentMetadataTitle ?: originalFileName
+        val bookTitle = effectiveReaderBookTitle
 
         AiHubBottomSheet(
             bookTitle = bookTitle,
@@ -7727,7 +7796,13 @@ fun PdfViewerScreen(
                     LazyColumn(modifier = Modifier.fillMaxWidth()) {
                         items(pdfFiles, key = { it.bookId }) { file ->
                             ListItem(
-                                headlineContent = { Text(file.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                headlineContent = {
+                                    Text(
+                                        file.cardTitle(uiState.usePdfFileNameAsDisplayName),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
                                 supportingContent = { file.author?.let { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
                                 modifier = Modifier.clickable {
                                     coroutineScope.launch {
@@ -7889,7 +7964,7 @@ fun PdfViewerScreen(
     }
 
     if (showTtsSettingsSheet) {
-        val bookTitle = documentMetadataTitle ?: originalFileName
+        val bookTitle = effectiveReaderBookTitle
         TtsSettingsSheet(
             isVisible = true,
             onDismiss = { showTtsSettingsSheet = false },
@@ -7912,7 +7987,7 @@ fun PdfViewerScreen(
     TtsWordReplacementsSheet(
         isVisible = showTtsReplacementsSheet,
         bookId = bookId,
-        bookTitle = documentMetadataTitle ?: originalFileName,
+        bookTitle = effectiveReaderBookTitle,
         preferences = ttsReplacementPreferences,
         onPreferencesChange = updateTtsReplacementPreferences,
         onDismiss = { showTtsReplacementsSheet = false },

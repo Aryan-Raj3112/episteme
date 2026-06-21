@@ -563,6 +563,27 @@ class LibraryStateProjectorTest {
         assertEquals("EPUB title", epub.cardTitle(usePdfFileNameAsDisplayName = true))
     }
 
+    @Test
+    fun `cardTitle uses custom name for pdf related file types`() {
+        val pdf = recentFile(
+            id = "pdf",
+            type = FileType.PDF,
+            displayName = "file-name.pdf",
+            title = "Metadata title",
+            customName = "Manual PDF name"
+        )
+        val cbz = recentFile(
+            id = "comic",
+            type = FileType.CBZ,
+            displayName = "comic.cbz",
+            title = "Comic metadata",
+            customName = "Manual comic name"
+        )
+
+        assertEquals("Manual PDF name", pdf.cardTitle(usePdfFileNameAsDisplayName = true))
+        assertEquals("Manual comic name", cbz.cardTitle(usePdfFileNameAsDisplayName = true))
+    }
+
     private fun recentFile(
         id: String,
         uriString: String? = "content://$id",

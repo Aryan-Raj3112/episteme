@@ -84,6 +84,9 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET bookmarks = :bookmarksJson, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateBookmarks(bookId: String, bookmarksJson: String, timestamp: Long)
 
+    @Query("UPDATE recent_files SET customName = :customName, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
+    suspend fun updateCustomName(bookId: String, customName: String?, timestamp: Long)
+
     @Query("UPDATE recent_files SET isAvailable = 1, uriString = :uriString, timestamp = :timestamp, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateBookAvailability(bookId: String, uriString: String, timestamp: Long)
 

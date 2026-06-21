@@ -87,6 +87,33 @@ class RecentFilesRepositoryReadingPositionMergeTest {
     }
 
     @Test
+    fun `addRecentFile preserves existing custom name when pdf open refresh omits it`() = runTest {
+        val inserted = slot<RecentFileEntity>()
+        coEvery { recentFileDao.getFileByBookId("book-1") } returns existingEntity().copy(
+            type = FileType.PDF,
+            displayName = "Original.pdf",
+            title = "Original",
+            customName = "Renamed PDF"
+        )
+        coEvery { recentFileDao.insertOrUpdateFile(capture(inserted)) } just Runs
+
+        repository.addRecentFile(
+            RecentFileItem(
+                bookId = "book-1",
+                uriString = "content://new",
+                type = FileType.PDF,
+                displayName = "Original.pdf",
+                timestamp = 2_000L,
+                title = "Original.pdf",
+                customName = null,
+                isRecent = true
+            )
+        )
+
+        assertEquals("Renamed PDF", inserted.captured.customName)
+    }
+
+    @Test
     fun `addRecentFile uses incoming reading position when newer metadata includes it`() = runTest {
         val inserted = slot<RecentFileEntity>()
         coEvery { recentFileDao.getFileByBookId("book-1") } returns existingEntity()

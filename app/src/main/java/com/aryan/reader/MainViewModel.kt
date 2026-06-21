@@ -746,6 +746,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         uri?.let {
             persistReaderSession(bookId, item.type)
+            Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                "viewModel.switchTab bookId=$bookId type=${item.type} uri=$it " +
+                    "displayName=${item.displayName} title=${item.title} customName=${item.customName} " +
+                    "usePdfFileName=${_internalState.value.usePdfFileNameAsDisplayName}"
+            )
             Timber.tag("PdfTabSync").d("ViewModel: Setting new URI directly: $it")
             _internalState.update { state ->
                 state.copy(
@@ -4759,6 +4764,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             seriesIndex = seriesIndex,
             description = description
         )
+        if (type in PDF_VIEWER_FILE_TYPES) {
+            Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                "viewModel.addFileToRecent.pdf bookId=$bookId uri=$uri displayName=$displayName " +
+                    "title=$title existingCustomName=${existingItem?.customName} " +
+                    "existingTitle=${existingItem?.title} isNewBook=$isNewBook sourceFolderUri=$sourceFolderUri"
+            )
+        }
         recentFilesRepository.addRecentFile(newItem)
         Timber.i("Added/Updated $displayName ($type) to recent files via repository.")
 
@@ -5448,6 +5460,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         ReaderPerfLog.d("FileOpen start bookId=$bookId type=$type")
         Timber.tag("FileOpenPerf")
             .d("[$bookId] openBook START | type=$type | displayName=$originalDisplayName")
+        if (type in PDF_VIEWER_FILE_TYPES) {
+            Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                "viewModel.openBook.start bookId=$bookId type=$type uri=$uri " +
+                    "originalDisplayName=$originalDisplayName selectedBookId=${_internalState.value.selectedBookId} " +
+                    "usePdfFileName=${_internalState.value.usePdfFileNameAsDisplayName}"
+            )
+        }
 
         val currentTabState = _internalState.value
         if (currentTabState.isTabsEnabled && type == FileType.PDF) {
@@ -5522,6 +5541,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (type in PDF_VIEWER_FILE_TYPES) {
                 viewModelScope.launch {
                     val recentItem = recentFilesRepository.getFileByBookId(bookId)
+                    Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                        "viewModel.openBook.pdfBranch bookId=$bookId uri=$uri " +
+                            "dbDisplayName=${recentItem?.displayName} dbTitle=${recentItem?.title} " +
+                            "dbCustomName=${recentItem?.customName} dbType=${recentItem?.type} " +
+                            "initialPage=${initialPageOverride ?: recentItem?.lastPage} persistToLibrary=$persistToLibrary"
+                    )
 
                     Timber.tag("FileOpenPerf")
                         .d("[$bookId] Branch: PDF | elapsed=${System.currentTimeMillis() - openBookStartTime}ms")
@@ -6107,6 +6132,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun onRecentFileClicked(item: RecentFileItem) {
         ReaderPerfLog.d("FileOpen click bookId=${item.bookId} name=${item.displayName}")
+        if (item.type in PDF_VIEWER_FILE_TYPES) {
+            Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                "viewModel.recentClick bookId=${item.bookId} type=${item.type} uri=${item.uriString} " +
+                    "displayName=${item.displayName} title=${item.title} customName=${item.customName} " +
+                    "isAvailable=${item.isAvailable} sourceFolderUri=${item.sourceFolderUri} " +
+                    "usePdfFileName=${_internalState.value.usePdfFileNameAsDisplayName}"
+            )
+        }
         val currentSelection = _internalState.value.contextualActionItems
         if (currentSelection.isNotEmpty()) {
             Timber.d("Toggling selection for: ${item.displayName}")
@@ -6950,14 +6983,24 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val item = recentFilesRepository.getFileByBookId(bookId)
             if (item != null) {
-                val updatedItem = item.copy(customName = newName, lastModifiedTimestamp = System.currentTimeMillis())
-                recentFilesRepository.addRecentFile(updatedItem)
+                Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                    "viewModel.rename.before bookId=$bookId type=${item.type} displayName=${item.displayName} " +
+                        "title=${item.title} oldCustomName=${item.customName} newCustomName=$newName " +
+                        "uri=${item.uriString} sourceFolderUri=${item.sourceFolderUri}"
+                )
+                recentFilesRepository.updateCustomName(bookId, newName)
+                val savedItem = recentFilesRepository.getFileByBookId(bookId)
+                Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                    "viewModel.rename.after bookId=$bookId savedDisplayName=${savedItem?.displayName} " +
+                        "savedTitle=${savedItem?.title} savedCustomName=${savedItem?.customName} " +
+                        "savedUri=${savedItem?.uriString}"
+                )
 
-                if (uiState.value.isSyncEnabled) {
-                    uploadSingleBookMetadata(updatedItem)
+                if (uiState.value.isSyncEnabled && savedItem != null) {
+                    uploadSingleBookMetadata(savedItem)
                 }
 
-                if (updatedItem.sourceFolderUri != null) {
+                if (savedItem?.sourceFolderUri != null) {
                     launch(Dispatchers.IO) {
                         recentFilesRepository.syncLocalMetadataToFolder(bookId, force = true)
                     }

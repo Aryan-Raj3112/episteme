@@ -241,6 +241,11 @@ class RecentFilesRepository(private val context: Context) {
                 isDeleted = item.isDeleted,
                 sourceFolderUri = item.sourceFolderUri ?: existingItem.sourceFolderUri,
                 highlights = item.highlightsJson ?: existingItem.highlights,
+                customName = when {
+                    item.customName != null -> item.customName
+                    item.lastModifiedTimestamp > existingItem.lastModifiedTimestamp -> null
+                    else -> existingItem.customName
+                },
                 fileSize = if (item.fileSize > 0) item.fileSize else existingItem.fileSize,
                 fileContentModifiedTimestamp = if (item.fileContentModifiedTimestamp > 0) item.fileContentModifiedTimestamp else existingItem.fileContentModifiedTimestamp,
                 seriesName = if (folderFileChanged) {
@@ -337,6 +342,12 @@ class RecentFilesRepository(private val context: Context) {
             timestamp = currentTime
         )
         Timber.d("Updated user-editable metadata for $bookId")
+    }
+
+    suspend fun updateCustomName(bookId: String, customName: String?) = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        recentFileDao.updateCustomName(bookId, customName, currentTime)
+        Timber.d("Updated custom display name for $bookId")
     }
 
     suspend fun restoreOriginalMetadata(

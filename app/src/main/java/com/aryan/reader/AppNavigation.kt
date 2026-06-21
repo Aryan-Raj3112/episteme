@@ -241,9 +241,22 @@ fun AppNavigation(
             val initialBookmarksJson = uiState.initialBookmarksJson
 
             val bookId =
-                uiState.recentFiles.find { it.uriString == uiState.selectedPdfUri.toString() }?.bookId
+                uiState.selectedBookId
+                    ?: uiState.allRecentFiles.find { it.uriString == uiState.selectedPdfUri.toString() }?.bookId
+                    ?: uiState.rawLibraryFiles.find { it.uriString == uiState.selectedPdfUri.toString() }?.bookId
+                    ?: uiState.recentFiles.find { it.uriString == uiState.selectedPdfUri.toString() }?.bookId
 
             if (pdfUri != null) {
+                val navItem = bookId?.let { id ->
+                    uiState.allRecentFiles.find { it.bookId == id }
+                        ?: uiState.rawLibraryFiles.find { it.bookId == id }
+                        ?: uiState.recentFiles.find { it.bookId == id }
+                }
+                Timber.tag(PDF_RENAME_TRACE_TAG).i(
+                    "navigation.pdf routeBookId=$bookId selectedBookId=${uiState.selectedBookId} " +
+                        "uri=$pdfUri displayName=${navItem?.displayName} title=${navItem?.title} " +
+                        "customName=${navItem?.customName} usePdfFileName=${uiState.usePdfFileNameAsDisplayName}"
+                )
                 Timber.i("Displaying PDF Viewer for URI: $pdfUri, initialPage: $initialPage")
                 Box(modifier = Modifier.fillMaxSize()) {
                     PdfViewerScreen(
