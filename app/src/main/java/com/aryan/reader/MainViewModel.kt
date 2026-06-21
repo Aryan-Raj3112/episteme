@@ -2127,11 +2127,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 it.copy(isLoading = true, bannerMessage = BannerMessage(appContext.getString(R.string.banner_saving_original_pdf)))
             }
             try {
-                val contentResolver = appContext.contentResolver
-                contentResolver.openInputStream(sourceUri)?.use { input ->
-                    contentResolver.openOutputStream(destUri)?.use { output ->
-                        input.copyTo(output)
-                    }
+                withContext(Dispatchers.IO) {
+                    copyUriBytes(sourceUri, destUri)
                 }
                 showBanner(appContext.getString(R.string.banner_original_pdf_saved))
             } catch (e: Exception) {

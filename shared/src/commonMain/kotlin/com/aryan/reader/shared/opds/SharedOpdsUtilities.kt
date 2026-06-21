@@ -141,6 +141,7 @@ object SharedOpdsDownloadNamer {
 }
 
 object SharedOpdsLocalBookMatcher {
+    private const val MAX_MATCH_KEY_INPUT_CHARS = 512
     fun findBook(entry: OpdsEntry, books: List<BookItem>): BookItem? {
         return find(
             entry = entry,
@@ -194,6 +195,7 @@ object SharedOpdsLocalBookMatcher {
             ?.substringBefore('#')
             ?.substringAfterLast('/')
             ?.substringAfterLast('\\')
+            ?.take(MAX_MATCH_KEY_INPUT_CHARS)
             ?.percentDecode()
             ?.takeIf { it.isNotBlank() }
             ?: return
@@ -221,17 +223,42 @@ object SharedOpdsLocalBookMatcher {
     }
 
     private fun String.normalizedMatchKey(): String {
-        return percentDecode()
+        val decoded = take(MAX_MATCH_KEY_INPUT_CHARS)
+            .percentDecode()
             .withoutOpdsDownloadPrefix()
-            .replace(Regex("""[^\p{L}\p{N}]+"""), " ")
-            .trim()
-            .lowercase()
-            .replace(Regex("""\s+"""), " ")
-            .removePrefix("opds dl ")
+        val normalized = StringBuilder(decoded.length)
+        var previousWasSeparator = true
+        decoded.forEach { char ->
+            if (char.isLetterOrDigit()) {
+                normalized.append(char.lowercaseChar())
+                previousWasSeparator = false
+            } else if (!previousWasSeparator) {
+                normalized.append(' ')
+                previousWasSeparator = true
+            }
+        }
+        return normalized.toString().trim().removePrefix("opds dl ")
     }
 
     private fun String.withoutOpdsDownloadPrefix(): String {
-        return replace(Regex("""^opds[_\-\s]+dl[_\-\s]+""", RegexOption.IGNORE_CASE), "")
+        var index = 0
+        if (!regionMatches(0, "opds", 0, 4, ignoreCase = true)) return this
+        index += 4
+        index = skipOpdsDownloadPrefixSeparators(index)
+        if (!regionMatches(index, "dl", 0, 2, ignoreCase = true)) return this
+        index += 2
+        val afterDl = skipOpdsDownloadPrefixSeparators(index)
+        return if (afterDl > index) substring(afterDl) else this
+    }
+
+    private fun String.skipOpdsDownloadPrefixSeparators(startIndex: Int): Int {
+        var index = startIndex
+        while (index < length) {
+            val char = this[index]
+            if (char != '_' && char != '-' && !char.isWhitespace()) break
+            index += 1
+        }
+        return index
     }
 }
 

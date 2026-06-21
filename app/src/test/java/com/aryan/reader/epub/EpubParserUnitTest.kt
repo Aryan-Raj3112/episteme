@@ -220,7 +220,7 @@ class EpubParserUnitTest {
         )
         File(activeDir, "book_metadata.json").outputStream().use { output ->
             val chunk = ByteArray(1024) { 'x'.code.toByte() }
-            repeat(17 * 1024) { output.write(chunk) }
+            repeat(5 * 1024) { output.write(chunk) }
         }
 
         val book = parser.createEpubBook(

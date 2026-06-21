@@ -165,6 +165,10 @@ fun htmlToSemanticBlocks(
     ).parse(html)
 }
 
+private fun OptimizedCssRules.sortedForCascade(): List<CssRule> {
+    return toFlatList().sortedWith(compareBy<CssRule> { it.selector.specificity }.thenBy { it.sourceOrder })
+}
+
 /**
  * A stateful parser that holds the context for a single HTML-to-SemanticBlock conversion.
  */
@@ -184,6 +188,7 @@ private class SemanticHtmlParser(
 ) {
     private val semanticBlockDescendantCache = IdentityHashMap<Element, Boolean>()
     private var combinedRules: OptimizedCssRules = cssRules
+    private var sortedRules: List<CssRule> = cssRules.sortedForCascade()
     private val currentFontFamilyMap: MutableMap<String, FontFamily> = fontFamilyMap.toMutableMap()
     private var nextBlockIndex = 0
 
@@ -210,6 +215,7 @@ private class SemanticHtmlParser(
                 }
             }
             combinedRules = combinedRules.merge(inlineParseResult.rules)
+            sortedRules = combinedRules.sortedForCascade()
         }
 
         val body = document.body()
@@ -315,12 +321,7 @@ private class SemanticHtmlParser(
     }
 
     private fun rulesForElement(element: Element, pseudoElement: String? = null): List<CssRule> {
-        val rules = combinedRules.toFlatList()
-        return rules
-            .asSequence()
-            .filter { it.matchesElement(element, pseudoElement) }
-            .sortedWith(compareBy<CssRule> { it.selector.specificity }.thenBy { it.sourceOrder })
-            .toList()
+        return sortedRules.filter { it.matchesElement(element, pseudoElement) }
     }
 
     private fun getElementStyle(element: Element, inheritedCustomProperties: Map<String, String> = emptyMap()): CssStyle {

@@ -8,7 +8,7 @@ data class FontVariant(
     val style: FontStyle
 )
 
-private val filenameSeparatorsRegex = Regex("""[\s._,-]+""")
+private const val MAX_FONT_FILENAME_TOKEN_CHARS = 512
 
 fun String.familyFilenameSignature(): String {
     val tokens = filenameTokens()
@@ -86,11 +86,44 @@ fun String.detectFontVariant(): FontVariant? {
 }
 
 private fun String.filenameTokens(): List<String> {
-    return this
-        .replace(Regex("""(?i)variablefont"""), " variablefont ")
-        .replace(Regex("""(?<=[a-z])(?=[A-Z])"""), "-")
-        .lowercase()
-        .split(filenameSeparatorsRegex)
+    val tokens = mutableListOf<String>()
+    val current = StringBuilder()
+    var index = 0
+    val limit = minOf(length, MAX_FONT_FILENAME_TOKEN_CHARS)
+
+    fun flushToken() {
+        if (current.isNotEmpty()) {
+            tokens += current.toString().lowercase()
+            current.clear()
+        }
+    }
+
+    while (index < limit) {
+        if (regionMatches(index, "variablefont", 0, "variablefont".length, ignoreCase = true)) {
+            flushToken()
+            tokens += "variablefont"
+            index += "variablefont".length
+            continue
+        }
+
+        val char = this[index]
+        val previous = current.lastOrNull()
+        if (char.isFilenameSeparator()) {
+            flushToken()
+        } else {
+            if (previous != null && previous.isLowerCase() && char.isUpperCase()) {
+                flushToken()
+            }
+            current.append(char)
+        }
+        index += 1
+    }
+    flushToken()
+    return tokens
+}
+
+private fun Char.isFilenameSeparator(): Boolean {
+    return isWhitespace() || this == '.' || this == '_' || this == ',' || this == '-'
 }
 
 private val italicTokens = setOf("italic", "ital", "oblique", "obliq", "it", "itallic", "italics", "slanted", "slant")

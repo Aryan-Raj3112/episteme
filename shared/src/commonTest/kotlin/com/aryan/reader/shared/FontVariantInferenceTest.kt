@@ -47,6 +47,16 @@ class FontVariantInferenceTest {
         )
     }
 
+    @Test
+    fun longFontFilenameTokenizationIsBounded() {
+        val longSuffix = "Ignored".repeat(200)
+        val fileName = "Pliant-BoldItalic-$longSuffix"
+
+        assertTrue(fileName.familyFilenameSignature().length < fileName.length)
+        assertEquals(FontStyle.Italic, fileName.detectFontVariant()?.style)
+        assertEquals(FontWeight.Bold, fileName.detectFontVariant()?.weight)
+    }
+
     private fun fontItem(id: String, fileName: String): CustomFontItem {
         return CustomFontItem(
             id = id,

@@ -113,7 +113,7 @@ class EpubParser(private val context: Context) {
         private const val CACHE_MANIFEST_FILE = "epub_cache_manifest.json"
         private const val EPUB_EXTRACTION_CACHE_VERSION = 1
         private const val MAX_METADATA_ENTRY_BYTES = 4 * 1024 * 1024
-        private const val MAX_CACHED_BOOK_METADATA_BYTES = 16L * 1024L * 1024L
+        private const val MAX_CACHED_BOOK_METADATA_BYTES = 4L * 1024L * 1024L
         private const val EPUB_COVER_MAX_DIMENSION = 1024
         private val EPUB_IMAGE_EXTENSIONS = setOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
     }
@@ -266,7 +266,8 @@ class EpubParser(private val context: Context) {
         if (!metadataFile.isFile || !manifestFile.isFile) return null
 
         return try {
-            val manifest = jsonSerializer.decodeFromString<EpubExtractionCacheManifest>(manifestFile.readText())
+            val manifestText = manifestFile.readTextIfWithinLimit(MAX_METADATA_ENTRY_BYTES.toLong()) ?: return null
+            val manifest = jsonSerializer.decodeFromString<EpubExtractionCacheManifest>(manifestText)
             val isCompatible = manifest.bookId == bookId &&
                 manifest.originalBookNameHint == originalBookNameHint &&
                 manifest.parserVersion == EPUB_EXTRACTION_CACHE_VERSION &&
@@ -279,15 +280,8 @@ class EpubParser(private val context: Context) {
                 return null
             }
 
-            if (metadataFile.length() > MAX_CACHED_BOOK_METADATA_BYTES) {
-                Timber.w(
-                    "Ignoring oversized EPUB extraction metadata cache for bookId=$bookId " +
-                        "size=${metadataFile.length()}"
-                )
-                return null
-            }
-
-            val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataFile.readText())
+            val metadataText = metadataFile.readTextIfWithinLimit(MAX_CACHED_BOOK_METADATA_BYTES) ?: return null
+            val cachedBook = jsonSerializer.decodeFromString<EpubBook>(metadataText)
                 .copy(
                     extractionBasePath = extractionDir.absolutePath,
                     css = readExtractedCss(extractionDir)
@@ -298,6 +292,15 @@ class EpubParser(private val context: Context) {
             Timber.e(e, "Failed to read EPUB extraction cache for bookId=$bookId")
             null
         }
+    }
+
+    private fun File.readTextIfWithinLimit(maxBytes: Long): String? {
+        val size = length()
+        if (size > maxBytes) {
+            Timber.w("Ignoring oversized EPUB cache file: path=$absolutePath size=$size limit=$maxBytes")
+            return null
+        }
+        return readText(Charsets.UTF_8)
     }
 
     private fun writeCachedEpubBook(

@@ -47,6 +47,8 @@ class MathMLRenderer(private val context: Context) {
     @Volatile
     private var isDestroyed = false
     private var isMathJaxReady = false
+    @Volatile
+    private var isSetupStarted = false
     private val readySignal = CompletableDeferred<Boolean>()
 
     sealed class Job {
@@ -59,16 +61,9 @@ class MathMLRenderer(private val context: Context) {
     private val jobQueue = mutableListOf<Job.Render>()
     private var isProcessing = false
 
-    init {
-        handler.post {
-            if (!isDestroyed) {
-                setupWebView()
-            }
-        }
-    }
-
     suspend fun awaitReady(): Boolean {
         if (isDestroyed) return false
+        ensureWebViewStarted()
         Timber.d("awaitReady: Waiting for WebView and MathJax initialization...")
         return withTimeoutOrNull(10_000) {
             readySignal.await()
@@ -76,6 +71,16 @@ class MathMLRenderer(private val context: Context) {
             Timber.e("awaitReady: Timed out waiting for renderer to become ready.")
             destroy()
             false
+        }
+    }
+
+    private fun ensureWebViewStarted() {
+        if (isDestroyed || isSetupStarted) return
+        isSetupStarted = true
+        handler.post {
+            if (!isDestroyed) {
+                setupWebView()
+            }
         }
     }
 
