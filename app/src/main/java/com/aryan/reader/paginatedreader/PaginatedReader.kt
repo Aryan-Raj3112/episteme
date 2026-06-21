@@ -315,6 +315,24 @@ private data class AndroidEpubPageContentBounds(
 private val AndroidEpubPageContentBounds.pageClipBottomPx: Int
     get() = bottomPx + verticalPaddingPx
 
+private data class AndroidEpubRenderedBlockBounds(
+    val blockIndex: Int,
+    val kind: String,
+    val leftPx: Int,
+    val topPx: Int,
+    val widthPx: Int,
+    val heightPx: Int,
+    val expectedHeightPx: Int,
+    val sourceRange: String,
+    val textChars: Int,
+    val marginTopPx: Int,
+    val marginBottomPx: Int,
+    val paddingTopPx: Int,
+    val paddingBottomPx: Int
+) {
+    val bottomPx: Int = topPx + heightPx
+}
+
 private data class NativeVerticalFlowChapter(
     val chapterIndex: Int,
     val title: String?,
@@ -5240,6 +5258,22 @@ private fun TextContentBlock.androidEpubSourceRangeLabel(): String {
     return "$start..$end"
 }
 
+private fun ContentBlock.androidEpubSourceRangeLabel(): String {
+    return when (this) {
+        is TextContentBlock -> androidEpubSourceRangeLabel()
+        else -> "unknown"
+    }
+}
+
+private fun ContentBlock.androidEpubTextCharCount(): Int {
+    return when (this) {
+        is TextContentBlock -> content.text.length
+        is TableBlock -> rows.flatten().sumOf { cell -> cell.content.sumOf { block -> block.androidEpubTextCharCount() } }
+        is FlexContainerBlock -> children.sumOf { it.androidEpubTextCharCount() }
+        is WrappingContentBlock -> paragraphsToWrap.sumOf { it.androidEpubTextCharCount() }
+        else -> 0
+    }
+}
 private fun TextContentBlock.androidEpubKindName(): String {
     return when (this) {
         is HeaderBlock -> "header"
@@ -5266,6 +5300,28 @@ private fun ContentBlock.androidEpubKindName(): String {
     }
 }
 
+private fun logAndroidEpubPageBoundsIfNeeded(
+    pageIndex: Int,
+    pageContentBounds: AndroidEpubPageContentBounds,
+    diagnosticsContext: String,
+    signatureAlreadyLogged: (String) -> Boolean,
+    markSignatureLogged: (String) -> Unit
+) {
+    val signature = "page_bounds:$pageIndex:${pageContentBounds.pageWidthPx}x${pageContentBounds.pageHeightPx}:" +
+        "${pageContentBounds.widthPx}x${pageContentBounds.heightPx}:" +
+        "${pageContentBounds.horizontalPaddingPx}x${pageContentBounds.verticalPaddingPx}"
+    if (signatureAlreadyLogged(signature)) return
+    markSignatureLogged(signature)
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=android_page_bounds page=${pageIndex + 1} " +
+            "contentPx=${pageContentBounds.widthPx}x${pageContentBounds.heightPx} " +
+            "pagePx=${pageContentBounds.pageWidthPx}x${pageContentBounds.pageHeightPx} " +
+            "contentTopPx=${pageContentBounds.topPx} contentBottomPx=${pageContentBounds.bottomPx} " +
+            "pageClipBottomPx=${pageContentBounds.pageClipBottomPx} " +
+            "paddingPx=${pageContentBounds.horizontalPaddingPx}x${pageContentBounds.verticalPaddingPx} " +
+            diagnosticsContext
+    )
+}
 private fun logAndroidEpubBlockOverflowIfNeeded(
     pageIndex: Int,
     block: ContentBlock,
@@ -5274,16 +5330,16 @@ private fun logAndroidEpubBlockOverflowIfNeeded(
     diagnosticsContext: String,
     signatureAlreadyLogged: (String) -> Boolean,
     markSignatureLogged: (String) -> Unit
-) {
-    val bounds = pageContentBounds ?: return
+): Boolean {
+    val bounds = pageContentBounds ?: return false
     val blockTopPx = coordinates.positionInWindow().y.roundToInt()
     val blockBottomPx = blockTopPx + coordinates.size.height
     val contentOverflowPx = blockBottomPx - bounds.bottomPx
     val pageClipOverflowPx = blockBottomPx - bounds.pageClipBottomPx
-    if (pageClipOverflowPx <= AndroidEpubCutoffTolerancePx) return
+    if (pageClipOverflowPx <= AndroidEpubCutoffTolerancePx) return false
     val relativeTopPx = blockTopPx - bounds.topPx
     val signature = "block:$pageIndex:${block.blockIndex}:$relativeTopPx:${coordinates.size.height}:$pageClipOverflowPx"
-    if (signatureAlreadyLogged(signature)) return
+    if (signatureAlreadyLogged(signature)) return false
     markSignatureLogged(signature)
     logAndroidEpubCutoff(
         "cutoff_probe layer=android_rendered_block_overflow page=${pageIndex + 1} " +
@@ -5293,10 +5349,53 @@ private fun logAndroidEpubBlockOverflowIfNeeded(
             "pagePx=${bounds.pageWidthPx}x${bounds.pageHeightPx} contentOverflowPx=$contentOverflowPx " +
             "pageClipOverflowPx=$pageClipOverflowPx " +
             "expectedHeightPx=${block.expectedHeight} actualHeightPx=${coordinates.size.height} " +
+            "sourceRange=${block.androidEpubSourceRangeLabel()} textChars=${block.androidEpubTextCharCount()} " +
             "paddingPx=${bounds.horizontalPaddingPx}x${bounds.verticalPaddingPx} $diagnosticsContext"
     )
+    return true
 }
 
+private fun logAndroidEpubPageBlockBoundsIfNeeded(
+    pageIndex: Int,
+    triggerBlock: ContentBlock,
+    renderedBounds: Collection<AndroidEpubRenderedBlockBounds>,
+    pageContentBounds: AndroidEpubPageContentBounds?,
+    diagnosticsContext: String,
+    signatureAlreadyLogged: (String) -> Boolean,
+    markSignatureLogged: (String) -> Unit
+) {
+    val bounds = pageContentBounds ?: return
+    val sortedBounds = renderedBounds.sortedBy { it.topPx }
+    if (sortedBounds.isEmpty()) return
+    val signature = "page_block_bounds:$pageIndex:${triggerBlock.blockIndex}:${sortedBounds.size}:${sortedBounds.maxOf { it.bottomPx }}"
+    if (signatureAlreadyLogged(signature)) return
+    markSignatureLogged(signature)
+
+    var cumulativeExpectedBottomPx = 0
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=android_page_block_bounds_summary page=${pageIndex + 1} " +
+            "triggerBlock=${triggerBlock.blockIndex} blockCount=${sortedBounds.size} " +
+            "contentPx=${bounds.widthPx}x${bounds.heightPx} pagePx=${bounds.pageWidthPx}x${bounds.pageHeightPx} " +
+            "contentBottomPx=${bounds.bottomPx - bounds.topPx} pageClipBottomPx=${bounds.pageClipBottomPx - bounds.topPx} " +
+            diagnosticsContext
+    )
+    sortedBounds.forEach { blockBounds ->
+        val gapFromExpectedPreviousPx = blockBounds.topPx - cumulativeExpectedBottomPx
+        cumulativeExpectedBottomPx += blockBounds.expectedHeightPx
+        val driftPx = blockBounds.bottomPx - cumulativeExpectedBottomPx
+        logAndroidEpubCutoff(
+            "cutoff_probe layer=android_page_block_bounds page=${pageIndex + 1} " +
+                "triggerBlock=${triggerBlock.blockIndex} block=${blockBounds.blockIndex} kind=${blockBounds.kind} " +
+                "boxPx=${blockBounds.leftPx},${blockBounds.topPx},${blockBounds.widthPx}x${blockBounds.heightPx} " +
+                "bottomPx=${blockBounds.bottomPx} expectedHeightPx=${blockBounds.expectedHeightPx} " +
+                "expectedCumulativeBottomPx=$cumulativeExpectedBottomPx driftPx=$driftPx " +
+                "gapFromExpectedPreviousPx=$gapFromExpectedPreviousPx " +
+                "marginPx=${blockBounds.marginTopPx},${blockBounds.marginBottomPx} " +
+                "paddingPx=${blockBounds.paddingTopPx},${blockBounds.paddingBottomPx} " +
+                "sourceRange=${blockBounds.sourceRange} textChars=${blockBounds.textChars}"
+        )
+    }
+}
 private fun logAndroidEpubTextCutoffIfNeeded(
     pageIndex: Int,
     block: TextContentBlock,
@@ -6358,6 +6457,9 @@ internal fun PaginatedReaderContent(
                         val cutoffLogSignatures = remember(pageIndex, uiState.generation) {
                             mutableStateMapOf<String, Boolean>()
                         }
+                        val renderedBlockBounds = remember(pageIndex, uiState.generation) {
+                            mutableStateMapOf<Int, AndroidEpubRenderedBlockBounds>()
+                        }
                         val cutoffDiagnosticsEnabled = !uiState.isLoading
                         val cutoffDiagnosticsContext =
                             "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount}"
@@ -6368,7 +6470,25 @@ internal fun PaginatedReaderContent(
                                 .background(effectiveBg)
                                 .then(pageTextureModifier)
                                 .then(pageModifier)
-                                .onGloballyPositioned { pageLayoutCoordinates = it }
+                                .onGloballyPositioned { coordinates ->
+                                    pageLayoutCoordinates = coordinates
+                                    if (cutoffDiagnosticsEnabled) {
+                                        logAndroidEpubPageBoundsIfNeeded(
+                                            pageIndex = pageIndex,
+                                            pageContentBounds = coordinates.androidEpubPageContentBounds(
+                                                horizontalPaddingPx = pageHorizontalPaddingPx,
+                                                verticalPaddingPx = pageVerticalPaddingPx
+                                            ),
+                                            diagnosticsContext = cutoffDiagnosticsContext,
+                                            signatureAlreadyLogged = { signature ->
+                                                cutoffLogSignatures[signature] == true
+                                            },
+                                            markSignatureLogged = { signature ->
+                                                cutoffLogSignatures[signature] = true
+                                            }
+                                        )
+                                    }
+                                }
                                 .pointerInput(pageIndex, pageViewConfiguration.touchSlop) {
                                     awaitEachGesture {
                                         awaitReaderLinkTap(
@@ -6475,11 +6595,29 @@ internal fun PaginatedReaderContent(
                                                         val actualHeight =
                                                             coordinates.size.height
                                                         if (cutoffDiagnosticsEnabled) {
-                                                            logAndroidEpubBlockOverflowIfNeeded(
+                                                            val pageContentBounds = pageContentBoundsProvider()
+                                                            if (pageContentBounds != null) {
+                                                                renderedBlockBounds[block.blockIndex] = AndroidEpubRenderedBlockBounds(
+                                                                    blockIndex = block.blockIndex,
+                                                                    kind = block.androidEpubKindName(),
+                                                                    leftPx = coordinates.positionInWindow().x.roundToInt(),
+                                                                    topPx = coordinates.positionInWindow().y.roundToInt() - pageContentBounds.topPx,
+                                                                    widthPx = coordinates.size.width,
+                                                                    heightPx = coordinates.size.height,
+                                                                    expectedHeightPx = block.expectedHeight,
+                                                                    sourceRange = block.androidEpubSourceRangeLabel(),
+                                                                    textChars = block.androidEpubTextCharCount(),
+                                                                    marginTopPx = with(density) { block.style.margin.top.coerceAtLeast(0.dp).roundToPx() },
+                                                                    marginBottomPx = with(density) { block.style.margin.bottom.coerceAtLeast(0.dp).roundToPx() },
+                                                                    paddingTopPx = with(density) { block.style.padding.top.coerceAtLeast(0.dp).roundToPx() },
+                                                                    paddingBottomPx = with(density) { block.style.padding.bottom.coerceAtLeast(0.dp).roundToPx() }
+                                                                )
+                                                            }
+                                                            val didLogOverflow = logAndroidEpubBlockOverflowIfNeeded(
                                                                 pageIndex = pageIndex,
                                                                 block = block,
                                                                 coordinates = coordinates,
-                                                                pageContentBounds = pageContentBoundsProvider(),
+                                                                pageContentBounds = pageContentBounds,
                                                                 diagnosticsContext = cutoffDiagnosticsContext,
                                                                 signatureAlreadyLogged = { signature ->
                                                                     cutoffLogSignatures[signature] == true
@@ -6488,6 +6626,21 @@ internal fun PaginatedReaderContent(
                                                                     cutoffLogSignatures[signature] = true
                                                                 }
                                                             )
+                                                            if (didLogOverflow) {
+                                                                logAndroidEpubPageBlockBoundsIfNeeded(
+                                                                    pageIndex = pageIndex,
+                                                                    triggerBlock = block,
+                                                                    renderedBounds = renderedBlockBounds.values,
+                                                                    pageContentBounds = pageContentBounds,
+                                                                    diagnosticsContext = cutoffDiagnosticsContext,
+                                                                    signatureAlreadyLogged = { signature ->
+                                                                        cutoffLogSignatures[signature] == true
+                                                                    },
+                                                                    markSignatureLogged = { signature ->
+                                                                        cutoffLogSignatures[signature] = true
+                                                                    }
+                                                                )
+                                                            }
                                                         }
                                                         if (block.expectedHeight > 0) {
                                                             val snippet = when (block) {

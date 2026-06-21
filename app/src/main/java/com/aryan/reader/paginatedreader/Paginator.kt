@@ -62,6 +62,28 @@ private fun TextLayoutResult.paginationMeasuredHeightPx(): Int {
     return measuredTextHeightForPagination(size.height, lastLineBottomPx)
 }
 
+internal fun collapsedVerticalMarginPxForPagination(
+    previousBottomMarginPx: Float?,
+    currentTopMarginPx: Float
+): Int {
+    val currentTop = currentTopMarginPx.coerceAtLeast(0f)
+    val collapsed = previousBottomMarginPx?.let { previousBottom ->
+        maxOf(previousBottom.coerceAtLeast(0f), currentTop)
+    } ?: currentTop
+    return collapsed.roundToInt()
+}
+
+internal fun availableBlockWidthPxForPagination(
+    containerWidthPx: Int,
+    marginLeftPx: Float,
+    marginRightPx: Float,
+    isCenterAligned: Boolean
+): Float {
+    if (isCenterAligned) return containerWidthPx.toFloat().coerceAtLeast(0f)
+    return (containerWidthPx.toFloat() - marginLeftPx.coerceAtLeast(0f) - marginRightPx.coerceAtLeast(0f))
+        .coerceAtLeast(0f)
+}
+
 private fun logAndroidEpubCutoff(message: String) {
     if (!BuildConfig.DEBUG) return
     Log.d(AndroidEpubCutoffLogTag, message)
@@ -547,16 +569,25 @@ suspend fun paginate(
 
         val blockHeight = measurementProvider.measure(block)
         val blockHeightWithSafetyMargin = blockHeight + safetyMarginPerBlock
-
-        val spaceBetweenBlocks = with(density) {
-            if (currentPageContent.isNotEmpty()) {
-                val prevMargin = currentPageContent.last().style.margin.bottom.toPx()
-                val currentMargin = block.style.margin.top.toPx()
-                maxOf(prevMargin, currentMargin)
-            } else {
-                block.style.margin.top.toPx()
-            }
-        }.roundToInt()
+        val previousBottomMarginPx = currentPageContent.lastOrNull()?.let { previousBlock ->
+            with(density) { previousBlock.style.margin.bottom.toPx() }
+        }
+        val currentTopMarginPx = with(density) { block.style.margin.top.toPx() }
+        val spaceBetweenBlocks = collapsedVerticalMarginPxForPagination(
+            previousBottomMarginPx = previousBottomMarginPx,
+            currentTopMarginPx = currentTopMarginPx
+        )
+        if ((previousBottomMarginPx != null && previousBottomMarginPx < 0f) || currentTopMarginPx < 0f) {
+            val blockKind = block::class.simpleName ?: "Block"
+            val previousBottomMarginLabel = previousBottomMarginPx?.toString() ?: "none"
+            logAndroidEpubCutoff(
+                "cutoff_probe layer=android_paginator_margin_clamp page=${pageIndex + 1} " +
+                    "block=${block.blockIndex} kind=$blockKind " +
+                    "prevBottomMarginPx=$previousBottomMarginLabel " +
+                    "currentTopMarginPx=$currentTopMarginPx collapsedMarginPx=$spaceBetweenBlocks " +
+                    "remainingBeforePx=$remainingHeight blockHeightPx=$blockHeight"
+            )
+        }
 
         val spaceRequired = blockHeightWithSafetyMargin + spaceBetweenBlocks
 
@@ -1670,21 +1701,18 @@ private suspend fun calculateContentHeightWithMargins(
         coroutineContext.ensureActive()
         val childHeight = measureBlockHeight(child, textMeasurer, constraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
         val margin = with(density) {
-            if (index > 0) {
-                val prevMargin = children[index - 1].style.margin.bottom.toPx()
-                val currMargin = child.style.margin.top.toPx()
-                maxOf(prevMargin, currMargin)
-            } else {
-                child.style.margin.top.toPx()
-            }
-        }.roundToInt()
+            collapsedVerticalMarginPxForPagination(
+                previousBottomMarginPx = children.getOrNull(index - 1)?.style?.margin?.bottom?.toPx(),
+                currentTopMarginPx = child.style.margin.top.toPx()
+            )
+        }
         totalHeight += (childHeight + margin)
         if (DEBUG_PAGINATION_LOGS) {
             Timber.tag("PAGINATION_DEBUG").v("  Internal Child ${child::class.simpleName}: h=$childHeight, margin=$margin, runningTotal=$totalHeight")
         }
     }
     if (children.isNotEmpty()) {
-        totalHeight += with(density) { children.last().style.margin.bottom.toPx().roundToInt() }
+        totalHeight += with(density) { children.last().style.margin.bottom.toPx().coerceAtLeast(0f).roundToInt() }
     }
     return totalHeight
 }
@@ -1704,12 +1732,19 @@ private fun computeBlockBoxMetrics(
     val horizontalPaddingPx: Float
     val verticalBorderPx: Float
     val horizontalBorderPx: Float
+    val availableBlockWidthPx: Float
 
     with(density) {
-        verticalPaddingPx = block.style.padding.top.toPx() + block.style.padding.bottom.toPx()
-        horizontalPaddingPx = block.style.padding.left.toPx() + block.style.padding.right.toPx()
+        verticalPaddingPx = block.style.padding.top.coerceAtLeast(0.dp).toPx() + block.style.padding.bottom.coerceAtLeast(0.dp).toPx()
+        horizontalPaddingPx = block.style.padding.left.coerceAtLeast(0.dp).toPx() + block.style.padding.right.coerceAtLeast(0.dp).toPx()
         verticalBorderPx = (block.style.borderTop?.width?.toPx() ?: 0f) + (block.style.borderBottom?.width?.toPx() ?: 0f)
         horizontalBorderPx = (block.style.borderLeft?.width?.toPx() ?: 0f) + (block.style.borderRight?.width?.toPx() ?: 0f)
+        availableBlockWidthPx = availableBlockWidthPxForPagination(
+            containerWidthPx = constraints.maxWidth,
+            marginLeftPx = block.style.margin.left.toPx(),
+            marginRightPx = block.style.margin.right.toPx(),
+            isCenterAligned = block.style.horizontalAlign == "center"
+        )
     }
 
     val isBorderBox = block.style.boxSizing == "border-box"
@@ -1718,7 +1753,7 @@ private fun computeBlockBoxMetrics(
     val specifiedMinWidthDp = block.style.minWidth
 
     val blockOuterWidthPx = with(density) {
-        var effectiveWidthPx = constraints.maxWidth.toFloat()
+        var effectiveWidthPx = availableBlockWidthPx
         if (specifiedWidthDp != Dp.Unspecified) {
             effectiveWidthPx = specifiedWidthDp.toPx()
         }
@@ -1731,7 +1766,7 @@ private fun computeBlockBoxMetrics(
         if (specifiedMinWidthDp != Dp.Unspecified) {
             effectiveWidthPx = effectiveWidthPx.coerceAtLeast(specifiedMinWidthDp.toPx())
         }
-        effectiveWidthPx.coerceAtMost(constraints.maxWidth.toFloat())
+        effectiveWidthPx.coerceAtMost(availableBlockWidthPx)
     }
 
     val contentMaxWidth = if (specifiedWidthDp == Dp.Unspecified || isBorderBox) {
