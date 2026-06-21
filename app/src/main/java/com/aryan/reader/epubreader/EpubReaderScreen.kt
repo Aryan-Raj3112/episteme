@@ -1157,6 +1157,9 @@ fun EpubReaderHost(
 
     LaunchedEffect(Unit) {
         Timber.tag("POS_DIAG").d("Reader Opening: initialLocator=$initialLocator, initialCfi=$initialCfi")
+        Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+            "open_start mode=$currentRenderMode initialLocator=$initialLocator initialCfi=${initialCfi?.take(80)} bookId=$bookId"
+        )
     }
 
     var initialScrollTargetForChapter by rememberSaveable(epubBook.title) {
@@ -2517,44 +2520,81 @@ fun EpubReaderHost(
 
     LaunchedEffect(paginator, currentRenderMode, isPagerInitialized) {
         Timber.tag("ReflowPaginationDiag").d("EpubReaderScreen: Checking paginator init. currentRenderMode=$currentRenderMode, paginator=${paginator != null}, isPagerInitialized=$isPagerInitialized")
+        Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+            "restore_check mode=$currentRenderMode hasPaginator=${paginator != null} initialized=$isPagerInitialized " +
+                "lastKnown=$lastKnownLocator chapterSwitch=$chapterToLoadOnSwitch pageCount=${paginatedPagerState.pageCount}"
+        )
         if (currentRenderMode == RenderMode.PAGINATED && paginator != null && !isPagerInitialized) {
-            scope.launch {
-                val bookPaginator = paginator as? BookPaginator
-                val targetChapterIndex = lastKnownLocator?.chapterIndex
-                    ?: chapterToLoadOnSwitch
-                    ?: initialLocator?.chapterIndex
-                    ?: 0
+            val bookPaginator = paginator as? BookPaginator
+            val targetChapterIndex = lastKnownLocator?.chapterIndex
+                ?: chapterToLoadOnSwitch
+                ?: initialLocator?.chapterIndex
+                ?: 0
 
-                if (bookPaginator != null) {
-                    withTimeoutOrNull(5000L) {
-                        snapshotFlow { bookPaginator.chapterPageCounts[targetChapterIndex] }
-                            .filter { it != null && it > 0 }
-                            .first()
-                    }
+            if (bookPaginator != null) {
+                Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                    "restore_wait chapter=$targetChapterIndex currentCount=${bookPaginator.chapterPageCounts[targetChapterIndex]} total=${bookPaginator.totalPageCount}"
+                )
+                val countReady = withTimeoutOrNull(5000L) {
+                    snapshotFlow { bookPaginator.chapterPageCounts[targetChapterIndex] }
+                        .filter { it != null && it > 0 }
+                        .first()
                 }
-
-                val pageToScrollTo = lastKnownLocator?.let { locator ->
-                    Timber.d("Paginator ready. Finding page for locator: $locator")
-                    (paginator as? BookPaginator)?.findPageForLocator(locator)
-                } ?: run {
-                    Timber.d("Paginator ready, but no locator. Falling back to chapter start.")
-                    val chapterToLoad = chapterToLoadOnSwitch ?: initialLocator?.chapterIndex ?: 0
-                    (paginator as? BookPaginator)?.chapterStartPageIndices?.get(chapterToLoad) ?: 0
-                }
-
-                @Suppress("SENSELESS_COMPARISON")
-                if (pageToScrollTo != null) {
-                    Timber.d("Scrolling to page: $pageToScrollTo")
-                    delay(16)
-                    paginatedPagerState.scrollToPage(pageToScrollTo)
-                } else {
-                    Timber.w("Could not determine a page to scroll to.")
-                }
-
-                delay(100)
-                isPagerInitialized = true
-                chapterToLoadOnSwitch = null
+                Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                    "restore_wait_done chapter=$targetChapterIndex count=$countReady total=${bookPaginator.totalPageCount}"
+                )
             }
+
+            val restoreLocator = lastKnownLocator
+            val pageToScrollTo = restoreLocator?.let { locator ->
+                Timber.d("Paginator ready. Finding page for locator: $locator")
+                Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d("restore_resolve_stable_locator locator=$locator")
+                (paginator as? BookPaginator)?.findStablePageForLocator(locator)
+            } ?: run {
+                Timber.d("Paginator ready, but no locator. Falling back to chapter start.")
+                val chapterToLoad = chapterToLoadOnSwitch ?: initialLocator?.chapterIndex ?: 0
+                val fallbackPage = (paginator as? BookPaginator)?.findStableChapterStartPage(chapterToLoad) ?: 0
+                Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                    "restore_resolve_stable_fallback chapter=$chapterToLoad page=$fallbackPage"
+                )
+                fallbackPage
+            }
+
+            @Suppress("SENSELESS_COMPARISON")
+            if (pageToScrollTo != null) {
+                val readyPageCount = if (paginatedPagerState.pageCount <= pageToScrollTo) {
+                    Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                        "restore_wait_page_count rawPage=$pageToScrollTo currentPageCount=${paginatedPagerState.pageCount} paginatorTotal=${bookPaginator?.totalPageCount}"
+                    )
+                    withTimeoutOrNull(2000L) {
+                        snapshotFlow { paginatedPagerState.pageCount }
+                            .filter { it > pageToScrollTo }
+                            .first()
+                    } ?: paginatedPagerState.pageCount
+                } else {
+                    paginatedPagerState.pageCount
+                }
+                val targetPage = pageToScrollTo.coerceIn(0, (readyPageCount - 1).coerceAtLeast(0))
+                Timber.d("Scrolling to page: $targetPage")
+                Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                    "restore_scroll page=$targetPage rawPage=$pageToScrollTo pageCount=$readyPageCount locator=$restoreLocator"
+                )
+                delay(16)
+                bookPaginator?.onUserScrolledTo(targetPage)
+                paginatedPagerState.scrollToPage(targetPage)
+            } else {
+                Timber.w("Could not determine a page to scroll to.")
+                Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).w(
+                    "restore_failed targetChapter=$targetChapterIndex locator=$restoreLocator pageCount=${paginatedPagerState.pageCount}"
+                )
+            }
+
+            delay(100)
+            isPagerInitialized = true
+            chapterToLoadOnSwitch = null
+            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                "restore_complete currentPage=${paginatedPagerState.currentPage} pageCount=${paginatedPagerState.pageCount}"
+            )
         }
     }
 
@@ -2567,45 +2607,98 @@ fun EpubReaderHost(
                 if (!isPaginatedReconfigurationRestoring) {
                     (paginator as? BookPaginator)?.getLocatorForPage(page)?.let { locator ->
                         lastKnownLocator = locator
+                        Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                            "page_observed page=$page locator=$locator"
+                        )
                     }
+                } else {
+                    Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                        "page_observed_suppressed page=$page reason=reconfiguration_restore"
+                    )
                 }
             }
     }
-
-    LaunchedEffect(paginatedPagerState.currentPage, paginator, isPaginatedReconfigurationRestoring) {
-        if (currentRenderMode == RenderMode.PAGINATED &&
-            paginator != null &&
-            isPagerInitialized &&
-            !isPaginatedReconfigurationRestoring
+    LaunchedEffect(
+        paginatedPagerState.currentPage,
+        paginator,
+        isPaginatedReconfigurationRestoring,
+        isPagerInitialized,
+        currentRenderMode,
+        paginatedPagerState.pageCount
+    ) {
+        val pageAtLaunch = paginatedPagerState.currentPage
+        if (!shouldSavePaginatedOpenPosition(
+                isPaginatedMode = currentRenderMode == RenderMode.PAGINATED,
+                hasPaginator = paginator != null,
+                isPagerInitialized = isPagerInitialized,
+                isReconfigurationRestoring = isPaginatedReconfigurationRestoring,
+                pageCount = paginatedPagerState.pageCount,
+                pageToSave = pageAtLaunch
+            )
         ) {
-            delay(1500L)
-            val pageToSave = paginatedPagerState.currentPage
+            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                "save_skip_initial page=$pageAtLaunch mode=$currentRenderMode hasPaginator=${paginator != null} " +
+                    "initialized=$isPagerInitialized restoring=$isPaginatedReconfigurationRestoring pageCount=${paginatedPagerState.pageCount}"
+            )
+            return@LaunchedEffect
+        }
 
-            val locator = (paginator as? BookPaginator)?.getLocatorForPage(pageToSave)
-            val chapterIndex = paginator!!.findChapterIndexForPage(pageToSave)
+        delay(1500L)
+        val pageToSave = paginatedPagerState.currentPage
+        if (!shouldSavePaginatedOpenPosition(
+                isPaginatedMode = currentRenderMode == RenderMode.PAGINATED,
+                hasPaginator = paginator != null,
+                isPagerInitialized = isPagerInitialized,
+                isReconfigurationRestoring = isPaginatedReconfigurationRestoring,
+                pageCount = paginatedPagerState.pageCount,
+                pageToSave = pageToSave
+            )
+        ) {
+            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                "save_skip_after_delay launchPage=$pageAtLaunch currentPage=$pageToSave mode=$currentRenderMode " +
+                    "hasPaginator=${paginator != null} initialized=$isPagerInitialized restoring=$isPaginatedReconfigurationRestoring " +
+                    "pageCount=${paginatedPagerState.pageCount}"
+            )
+            return@LaunchedEffect
+        }
 
-            if (locator != null && chapterIndex != null) {
-                lastKnownLocator = locator
-                val bookPaginator = paginator as? BookPaginator
-                val progress = if (totalBookLengthChars > 0 && bookPaginator != null) {
-                    val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
-                    val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
-                    val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
-                    val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
-                    val calculatedProgress = ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
-                    val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
-                    if (isLastPageOfBook) 100f else calculatedProgress
+        if (pageToSave != pageAtLaunch) {
+            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                "save_skip_page_changed launchPage=$pageAtLaunch currentPage=$pageToSave"
+            )
+            return@LaunchedEffect
+        }
 
-                } else {
-                    0f
-                }
+        val locator = (paginator as? BookPaginator)?.getLocatorForPage(pageToSave)
+        val chapterIndex = paginator!!.findChapterIndexForPage(pageToSave)
 
-                Timber.d("Auto-saving paginated position. Page: $pageToSave, Locator: $locator, Progress: $progress%"
-                )
-                onSavePosition(locator, null, progress)
+        if (locator != null && chapterIndex != null) {
+            lastKnownLocator = locator
+            val bookPaginator = paginator as? BookPaginator
+            val progress = if (totalBookLengthChars > 0 && bookPaginator != null) {
+                val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
+                val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { pageToSave - it }
+                val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
+                val totalCharsScrolled = completedCharsInPreviousChapters + charsScrolledInCurrentChapter
+                val calculatedProgress = ((totalCharsScrolled.toDouble() / totalBookLengthChars.toDouble()) * 100.0).toFloat()
+                val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
+                if (isLastPageOfBook) 100f else calculatedProgress
+
             } else {
-                Timber.w("Could not auto-save paginated position. Locator or chapterIndex was null.")
+                0f
             }
+
+            Timber.d("Auto-saving paginated position. Page: $pageToSave, Locator: $locator, Progress: $progress%"
+            )
+            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+                "save_position page=$pageToSave locator=$locator chapter=$chapterIndex progress=$progress"
+            )
+            onSavePosition(locator, null, progress)
+        } else {
+            Timber.w("Could not auto-save paginated position. Locator or chapterIndex was null.")
+            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).w(
+                "save_failed page=$pageToSave locator=$locator chapter=$chapterIndex"
+            )
         }
     }
 

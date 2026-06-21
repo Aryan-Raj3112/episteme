@@ -200,4 +200,37 @@ class BookCacheDaoTest {
         assertArrayEquals(largePayload, cached.pagesProto)
         assertEquals(listOf(indexEntry), cachedIndex)
     }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    @Test
+    fun `page cache metadata query returns compatible measured counts without page blobs`() = runTest {
+        val proto = ProtoBuf
+        val matching = PageCacheEntry(
+            bookId = "book",
+            configHash = 777,
+            chapterIndex = 1,
+            processingVersion = LATEST_PROCESSING_VERSION,
+            pageCacheVersion = LATEST_PAGE_CACHE_VERSION,
+            contentVersion = 100,
+            pageCount = 42,
+            pagesProto = proto.encodeToByteArray(listOf(Page(content = emptyList())))
+        )
+        val staleVersion = matching.copy(chapterIndex = 2, pageCacheVersion = LATEST_PAGE_CACHE_VERSION - 1)
+        val otherConfig = matching.copy(configHash = 778, chapterIndex = 3)
+
+        dao.insertPageCache(matching, emptyList())
+        dao.insertPageCache(staleVersion, emptyList())
+        dao.insertPageCache(otherConfig, emptyList())
+
+        val metadata = dao.getPageCacheMetadataForConfig(
+            bookId = "book",
+            configHash = 777,
+            processingVersion = LATEST_PROCESSING_VERSION,
+            pageCacheVersion = LATEST_PAGE_CACHE_VERSION
+        )
+
+        assertEquals(1, metadata.size)
+        assertEquals(1, metadata.single().chapterIndex)
+        assertEquals(42, metadata.single().pageCount)
+    }
 }

@@ -301,21 +301,14 @@ class BookPaginator(
                     BookProcessingWorker.cancelForBook(context, bookId)
                 }
 
-                // 3. TRY LOAD EXACT COUNTS FROM DB
+                // 3. Seed counts with fast estimates, then overlay measured cached counts.
                 coroutineContext.ensureActive()
                 if (isDisposed()) return@launch
-                val cachedConfig = bookCacheDao.getConfigurationCache(bookId, currentConfigHash)
+                seedEstimatedPageCounts()
 
                 coroutineContext.ensureActive()
                 if (isDisposed()) return@launch
-                if (cachedConfig != null) {
-                    Timber.i("Configuration Cache HIT. Using saved page counts.")
-                    applyAccuratePageCounts(cachedConfig.chapterPageCounts)
-                } else {
-                    Timber.i("Configuration Cache MISS. Running instant estimator.")
-                    runEstimator()
-                }
-
+                applyCachedMeasuredPageCounts()
                 // 4. Start Worker
                 paginationWorker = startPaginationWorker()
 
@@ -339,7 +332,7 @@ class BookPaginator(
         }
     }
 
-    private fun runEstimator() {
+    private fun seedEstimatedPageCounts() {
         var runningTotal = 0
 
         // This loop is extremely fast (math only)
@@ -392,47 +385,74 @@ class BookPaginator(
         return hash
     }
 
-    private fun applyAccuratePageCounts(countsString: String?) {
-        val countsMap = if (!countsString.isNullOrBlank()) {
-            try {
-                countsString.split(',').filter { it.contains(':') }.associate {
-                    val (index, count) = it.split(':')
-                    index.toInt() to count.toInt()
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to parse chapter page counts string.")
-                mapOf()
-            }
-        } else {
-            mapOf()
+    private suspend fun applyCachedMeasuredPageCounts() {
+        val measuredCounts = linkedMapOf<Int, Int>()
+        val measuredChapters = linkedSetOf<Int>()
+
+        val cachedConfig = bookCacheDao.getConfigurationCache(bookId, currentConfigHash)
+        val snapshot = PageCountCacheCodec.decode(cachedConfig?.chapterPageCounts)
+        when {
+            cachedConfig == null -> Timber.i("Configuration Cache MISS. Using estimates until measured counts are available.")
+            snapshot.isVersioned -> Timber.i(
+                "Configuration Cache HIT. finalized=${snapshot.finalizedChapters.size}/${chapters.size} measuredCounts=${snapshot.counts.size}"
+            )
+            else -> Timber.i("Legacy configuration cache found. Ignoring ambiguous page counts and using page-cache metadata instead.")
         }
 
-        if (countsMap.isEmpty()) {
-            runEstimator() // Fallback if string was empty
+        if (snapshot.isVersioned) {
+            snapshot.finalizedChapters.forEach { chapterIndex ->
+                val count = snapshot.counts[chapterIndex]
+                if (chapterIndex in chapters.indices && count != null && count > 0) {
+                    measuredCounts[chapterIndex] = count
+                    measuredChapters += chapterIndex
+                }
+            }
+        }
+
+        val pageMetadata = bookCacheDao.getPageCacheMetadataForConfig(
+            bookId = bookId,
+            configHash = currentConfigHash,
+            processingVersion = LATEST_PROCESSING_VERSION,
+            pageCacheVersion = LATEST_PAGE_CACHE_VERSION
+        )
+        pageMetadata.forEach { metadata ->
+            val chapter = chapters.getOrNull(metadata.chapterIndex) ?: return@forEach
+            if (metadata.contentVersion == chapterContentVersion(chapter) && metadata.pageCount > 0) {
+                measuredCounts[metadata.chapterIndex] = metadata.pageCount
+                measuredChapters += metadata.chapterIndex
+            }
+        }
+
+        if (measuredCounts.isEmpty()) {
+            Timber.i("No compatible measured page counts found. Estimated counts remain active.")
             return
         }
 
-        var runningTotal = 0
-        chapters.forEachIndexed { index, chapter ->
-            // Use cached count if available, otherwise estimate
-            val pageCount = countsMap[index] ?: PageCountEstimator.estimateChapterPageCount(
-                chapter, constraints, textStyle, density
-            )
-
-            chapterPageCounts[index] = pageCount
-            chapterStartPageIndices[index] = runningTotal
-            runningTotal += pageCount
+        measuredCounts.forEach { (chapterIndex, count) ->
+            chapterPageCounts[chapterIndex] = count
         }
-        totalPageCount = runningTotal
-        pageCountsAreAccurate = countsMap.size == chapters.size
-        rebuildChapterStartSnapshot()
+        finalizedChapterCounts.addAll(measuredChapters)
+        rebuildPageStartsFromCounts()
+        pageCountsAreAccurate = finalizedChapterCounts.size >= chapters.size
+        Timber.i(
+            "Applied measured page counts. finalized=${finalizedChapterCounts.size}/${chapters.size} totalPageCount=$totalPageCount"
+        )
     }
 
+    private fun rebuildPageStartsFromCounts() {
+        var runningTotal = 0
+        chapters.indices.forEach { index ->
+            chapterStartPageIndices[index] = runningTotal
+            runningTotal += chapterPageCounts[index] ?: 1
+        }
+        totalPageCount = runningTotal
+        rebuildChapterStartSnapshot()
+    }
     private suspend fun updateAndSaveConfigurationCache() {
-        val countsString = chapterPageCounts.entries
-            .sortedBy { it.key }
-            .joinToString(",") { "${it.key}:${it.value}" }
-
+        val countsString = PageCountCacheCodec.encode(
+            counts = chapterPageCounts,
+            finalizedChapters = finalizedChapterCounts
+        )
         val newCache = ConfigurationCache(
             bookId = bookId,
             configHash = currentConfigHash,

@@ -219,6 +219,14 @@ abstract class BookCacheDao {
     @Query("SELECT * FROM page_cache_metadata WHERE book_id = :bookId AND config_hash = :configHash AND chapter_index = :chapterIndex")
     protected abstract suspend fun getPageCacheMetadata(bookId: String, configHash: Int, chapterIndex: Int): PageCacheMetadata?
 
+    @Query("SELECT * FROM page_cache_metadata WHERE book_id = :bookId AND config_hash = :configHash AND processing_version = :processingVersion AND page_cache_version = :pageCacheVersion")
+    abstract suspend fun getPageCacheMetadataForConfig(
+        bookId: String,
+        configHash: Int,
+        processingVersion: Int,
+        pageCacheVersion: Int
+    ): List<PageCacheMetadata>
+
     @Query("SELECT chunk_data FROM page_cache_chunks WHERE book_id = :bookId AND config_hash = :configHash AND chapter_index = :chapterIndex ORDER BY chunk_index ASC")
     protected abstract suspend fun getPageCacheChunks(bookId: String, configHash: Int, chapterIndex: Int): List<ByteArray>
 

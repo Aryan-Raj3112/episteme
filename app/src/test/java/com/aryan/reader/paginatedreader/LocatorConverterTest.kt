@@ -309,8 +309,13 @@ class LocatorConverterTest {
         override suspend fun cleanupOldConfigurations(bookId: String) = Unit
         override suspend fun insertPageIndexEntries(entries: List<PageIndexEntry>) = Unit
         override suspend fun getPageIndexEntries(bookId: String, configHash: Int, chapterIndex: Int): List<PageIndexEntry> = emptyList()
+        override suspend fun getPageCacheMetadataForConfig(
+            bookId: String,
+            configHash: Int,
+            processingVersion: Int,
+            pageCacheVersion: Int
+        ): List<PageCacheMetadata> = emptyList()
         override suspend fun cleanupOldPageCaches(bookId: String) = Unit
-
         protected override suspend fun getChapterMetadata(bookId: String, chapterIndex: Int, styleConfigHash: Int): ProcessedChapterMetadata? = null
         protected override suspend fun getAnyChapterMetadata(bookId: String, chapterIndex: Int): ProcessedChapterMetadata? = null
         protected override suspend fun getChapterChunks(bookId: String, chapterIndex: Int, styleConfigHash: Int): List<ByteArray> = emptyList()
