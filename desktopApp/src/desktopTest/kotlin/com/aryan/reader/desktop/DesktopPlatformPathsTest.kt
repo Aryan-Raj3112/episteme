@@ -5,6 +5,15 @@ import kotlin.test.assertEquals
 
 class DesktopPlatformPathsTest {
     @Test
+    fun `linux file dialogs use swing fallback`() {
+        val linux = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
+        val windows = DesktopPlatform(DesktopOperatingSystem.WINDOWS, DesktopArchitecture.X64)
+
+        assertEquals(true, linux.shouldUseSwingFileChooser())
+        assertEquals(false, windows.shouldUseSwingFileChooser())
+    }
+
+    @Test
     fun `desktop platform detects linux x64 resource names`() {
         val platform = currentDesktopPlatform(osName = "Linux", osArch = "amd64")
 

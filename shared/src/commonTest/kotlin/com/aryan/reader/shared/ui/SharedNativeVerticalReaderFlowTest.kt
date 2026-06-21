@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.BorderStyle
@@ -24,6 +25,13 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 
 class SharedNativeVerticalReaderFlowTest {
+    @Test
+    fun `shared native spacing clamps negative css lengths before Compose padding`() {
+        assertEquals(0.dp, (-12).dp.safeDp())
+        assertEquals(0.dp, Dp.Unspecified.safeDp())
+        assertEquals(8.dp, 8.dp.safeDp())
+    }
+
     @Test
     fun `shared native visibility hides css hidden blocks`() {
         assertEquals(true, BlockStyle(visibility = "hidden").isSharedNativeVisibilityHidden())

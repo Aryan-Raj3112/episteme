@@ -4878,7 +4878,7 @@ private fun sharedNativeRomanMarker(number: Int): String {
     }
 }
 
-private fun Dp.safeDp(): Dp = if (isSpecified) this else 0.dp
+internal fun Dp.safeDp(): Dp = if (isSpecified && this > 0.dp) this else 0.dp
 
 private fun Dp.isPositiveSpecified(): Boolean = isSpecified && this > 0.dp
 
@@ -4895,7 +4895,9 @@ private fun SemanticBlock.collapsedTopMarginDp(
 
 @Composable
 private fun SemanticBlock.effectiveBottomMarginDp(settings: ReaderSettings): Dp {
-    val explicit = style.blockStyle.margin.bottom.safeDp()
+    val raw = style.blockStyle.margin.bottom
+    if (raw.isSpecified && raw < 0.dp) return 0.dp
+    val explicit = raw.safeDp()
     if (explicit != 0.dp) return explicit
     return renderedDefaultBottomSpacingDp(settings)
 }
