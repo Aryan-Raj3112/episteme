@@ -89,6 +89,38 @@ class DesktopFolderMetadataExtractorTest {
         assertTrue(enriched.folderTextMetadataParsed)
         assertTrue(File(assertNotNull(enriched.coverImagePath)).isFile)
     }
+    @Test
+    fun `opened epub preserves existing file cover path`() = withCoverCacheDir { tempDir ->
+        val epub = File(tempDir, "existing-cover.epub")
+        writeEpubWithoutCoverMetadata(epub)
+        val existingCover = File(tempDir, "existing.png").apply { writeBytes(onePixelPngBytes()) }
+        val book = bookFor(epub, FileType.EPUB, title = null).copy(coverImagePath = existingCover.absolutePath)
+
+        val enriched = DesktopFolderMetadataExtractor.enrichOpenedBook(book)
+
+        assertEquals(existingCover.absolutePath, enriched.coverImagePath)
+        assertTrue(existingCover.isFile)
+        assertTrue(enriched.folderTextMetadataParsed)
+    }
+
+    @Test
+    fun `direct imported epub without embedded cover does not get content preview cover`() = withCoverCacheDir { tempDir ->
+        val epub = File(tempDir, "no-cover.epub")
+        writeEpubWithoutCoverMetadata(epub)
+        val book = bookFor(epub, FileType.EPUB, title = null)
+
+        val result = DesktopFolderMetadataExtractor.enrichImportedBooks(
+            books = listOf(book),
+            importedBookIds = setOf(book.id)
+        )
+
+        val enriched = result.books.single()
+        assertEquals("No Cover EPUB", enriched.title)
+        assertTrue(enriched.folderTextMetadataParsed)
+        assertEquals(null, enriched.coverImagePath)
+        assertEquals(1, result.stats.updatedBooks)
+        assertEquals(0, result.stats.coversUpdated)
+    }
 
     @Test
     fun `direct imported text file gets content preview cover`() = withCoverCacheDir { tempDir ->
@@ -157,6 +189,7 @@ class DesktopFolderMetadataExtractorTest {
         assertEquals(1, result.stats.updatedBooks)
         assertEquals(1, result.stats.coversUpdated)
     }
+
     @Test
     fun `direct imported html replaces legacy generated cover path with content preview cover`() = withCoverCacheDir { tempDir ->
         val html = File(tempDir, "legacy.html").apply {
@@ -255,6 +288,35 @@ class DesktopFolderMetadataExtractorTest {
         val hash = Integer.toUnsignedString(file.absolutePath.hashCode())
         return File(File(tempDir, "covers"), "cover_$hash.png")
     }
+    private fun writeEpubWithoutCoverMetadata(target: File) {
+        ZipOutputStream(target.outputStream()).use { zip ->
+            zip.putText(
+                "META-INF/container.xml",
+                """
+                    <container>
+                      <rootfiles>
+                        <rootfile full-path="OEBPS/content.opf" />
+                      </rootfiles>
+                    </container>
+                """.trimIndent()
+            )
+            zip.putText(
+                "OEBPS/content.opf",
+                """
+                    <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                      <metadata>
+                        <dc:title>No Cover EPUB</dc:title>
+                      </metadata>
+                      <manifest>
+                        <item id="chap1" href="chapter.xhtml" media-type="application/xhtml+xml" />
+                      </manifest>
+                    </package>
+                """.trimIndent()
+            )
+            zip.putText("OEBPS/chapter.xhtml", "<html><body><p>Readable EPUB text.</p></body></html>")
+        }
+    }
+
     private fun writeOdt(target: File, bodyText: String) {
         ZipOutputStream(target.outputStream()).use { zip ->
             zip.putText(

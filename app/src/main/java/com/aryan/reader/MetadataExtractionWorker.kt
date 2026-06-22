@@ -46,7 +46,7 @@ class MetadataExtractionWorker(
             FileType.FODT,
             FileType.DOCX
         )
-        private val CONTENT_THUMBNAIL_TYPES = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID)
+        private val CONTENT_THUMBNAIL_TYPES = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID) - FileType.EPUB
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {

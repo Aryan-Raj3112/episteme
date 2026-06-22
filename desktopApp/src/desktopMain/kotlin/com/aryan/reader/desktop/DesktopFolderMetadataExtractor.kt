@@ -421,6 +421,7 @@ object DesktopFolderMetadataExtractor {
 
     private fun saveContentPreviewCover(book: BookItem, file: File): String? {
         if (book.type !in generatedCoverTypes) return null
+        if (book.type == FileType.EPUB) return null
         val text = extractContentPreviewText(file, book.type) ?: return null
         return saveCoverImage(book, contentPreviewImage(text), contentCoverCacheFile(book))
     }
@@ -434,7 +435,6 @@ object DesktopFolderMetadataExtractor {
                 FileType.ODT -> readOdtText(file)
                 FileType.FODT -> file.readTextPreview().xmlBodyToPlainText("office:text")
                     ?: file.readTextPreview().xmlToPlainText()
-                FileType.EPUB -> readEpubContentText(file)
                 FileType.MOBI -> readSharedJvmBookText(file, type)
                 FileType.FB2 -> file.readTextPreview().xmlBodyToPlainText("body")
                     ?: file.readTextPreview().xmlToPlainText()

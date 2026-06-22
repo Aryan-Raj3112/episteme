@@ -40,7 +40,6 @@ internal class ContentThumbnailGenerator(context: Context) {
             FileType.ODT -> generateOdtThumbnail(uri, item, isFlat = false, targetHeight = targetHeight)
             FileType.FODT -> generateOdtThumbnail(uri, item, isFlat = true, targetHeight = targetHeight)
             FileType.MOBI -> generateMobiThumbnail(uri, item, targetHeight)
-            FileType.EPUB,
             FileType.FB2,
             FileType.HTML,
             FileType.MD,
@@ -126,7 +125,6 @@ internal class ContentThumbnailGenerator(context: Context) {
     private fun generateTextPreview(uri: Uri, type: FileType, targetHeight: Int = 800): Bitmap? {
         val text = appContext.contentResolver.openInputStream(uri)?.use { input ->
             when (type) {
-                FileType.EPUB -> extractEpubText(input)
                 FileType.FB2 -> extractXmlText(input, textTags = FB2_TEXT_TAGS, rootTag = "body")
                 FileType.HTML -> extractHtmlText(input)
                 FileType.MD, FileType.TXT -> readPlainText(input)
@@ -138,24 +136,6 @@ internal class ContentThumbnailGenerator(context: Context) {
         }?.replace(Regex("\\s+"), " ")?.trim()?.takeIf { it.isNotBlank() } ?: return null
 
         return renderTextPage(text, targetHeight)
-    }
-
-    private fun extractEpubText(input: InputStream): String? {
-        ZipInputStream(input.buffered()).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                try {
-                    val name = entry.name.lowercase()
-                    if (!entry.isDirectory && (name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm"))) {
-                        val raw = zip.readTextLimited(MAX_TEXT_SOURCE_CHARS)
-                        return Jsoup.parse(raw).body().text().takeIf { text -> text.isNotBlank() }
-                    }
-                } finally {
-                    zip.closeEntry()
-                }
-            }
-        }
-        return null
     }
 
     private fun extractHtmlText(input: InputStream): String? {

@@ -86,6 +86,29 @@ class ContentThumbnailGeneratorTest {
         thumbnail?.recycle()
     }
 
+    @Test
+    fun `epub does not get generated content thumbnail fallback`() = runTest {
+        val file = root.resolve("no-cover.epub")
+        writeZip(
+            file,
+            "META-INF/container.xml" to """
+                <container>
+                  <rootfiles><rootfile full-path="OEBPS/content.opf" /></rootfiles>
+                </container>
+            """.trimIndent(),
+            "OEBPS/content.opf" to """
+                <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                  <metadata><dc:title>No Cover EPUB</dc:title></metadata>
+                  <manifest><item id="chap1" href="chapter.xhtml" media-type="application/xhtml+xml" /></manifest>
+                </package>
+            """.trimIndent(),
+            "OEBPS/chapter.xhtml" to "<html><body><p>Readable EPUB content should not become a cover.</p></body></html>"
+        )
+
+        val thumbnail = generator.generate(itemFor(file, FileType.EPUB))
+
+        assertNull(thumbnail)
+    }
     private fun itemFor(file: File, type: FileType): RecentFileItem {
         return RecentFileItem(
             bookId = file.name,
