@@ -384,6 +384,7 @@ class EpubParser(private val context: Context) {
 
     private fun EpubBook.toExtractionMetadataCache(): EpubBook {
         return copy(
+            coverImage = null,
             chapters = chapters.map { chapter ->
                 chapter.copy(
                     plainTextContent = "",

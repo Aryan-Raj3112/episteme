@@ -172,6 +172,21 @@ class SharedModelMappersTest {
     }
 
     @Test
+    fun `projection book item cache reuses unchanged shared rows and refreshes changed rows`() {
+        val cache = SharedProjectionBookItemCache(maxEntries = 2)
+        val book = recentFile("book", displayName = "Original.epub")
+
+        val first = cache.map(book)
+        val second = cache.map(book)
+        val changed = cache.map(book.copy(displayName = "Changed.epub"))
+
+        assertSame(first, second)
+        assertFalse(first === changed)
+        assertEquals("Changed.epub", changed.displayName)
+        assertTrue(changed.readerHighlights.isEmpty())
+    }
+
+    @Test
     fun `enum filter and folder mappers round trip between android and shared`() {
         val filters = LibraryFilters(
             fileTypes = setOf(FileType.PDF, FileType.EPUB),

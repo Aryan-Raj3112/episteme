@@ -135,20 +135,23 @@ class LibraryStateProjector(
 }
 
 fun filterBySearch(files: List<RecentFileItem>, searchQuery: String): List<RecentFileItem> {
-    return files.mapSharedResults(sharedFilterBySearch(files.map { it.toSharedProjectionBookItem() }, searchQuery))
+    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
+    return files.mapSharedResults(sharedFilterBySearch(mapper.map(files), searchQuery))
 }
 
 fun applyLibraryFilters(files: List<RecentFileItem>, filters: LibraryFilters): List<RecentFileItem> {
+    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
     return files.mapSharedResults(
         sharedApplyLibraryFilters(
-            books = files.map { it.toSharedProjectionBookItem() },
+            books = mapper.map(files),
             filters = filters
         )
     )
 }
 
 fun sortFiles(files: List<RecentFileItem>, sortOrder: SortOrder): List<RecentFileItem> {
-    return files.mapSharedResults(sharedSortBooks(files.map { it.toSharedProjectionBookItem() }, sortOrder))
+    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
+    return files.mapSharedResults(sharedSortBooks(mapper.map(files), sortOrder))
 }
 
 private fun List<RecentFileItem>.mapSharedResults(sharedBooks: List<com.aryan.reader.shared.BookItem>): List<RecentFileItem> {

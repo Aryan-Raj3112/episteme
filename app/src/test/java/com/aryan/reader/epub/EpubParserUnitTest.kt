@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -163,6 +164,42 @@ class EpubParserUnitTest {
         assertTrue(files["META-INF/container.xml"]!!.data.isNotEmpty())
         assertEquals(0, files["OEBPS/images/cover.jpg"]!!.data.size)
         assertEquals(imageBytes.size.toLong(), File(extractionDir, "OEBPS/images/cover.jpg").length())
+    }
+
+    @Test
+    fun `extraction metadata cache drops heavy cover and chapter content but keeps image paths`() {
+        val parser = EpubParser(contextWithCache(temp.newFolder("cache-shape")))
+        val method = parser.javaClass.getDeclaredMethod("toExtractionMetadataCache", EpubBook::class.java).apply {
+            isAccessible = true
+        }
+        val chapter = EpubChapter(
+            chapterId = "chapter",
+            absPath = "OEBPS/chapter.xhtml",
+            title = "Chapter",
+            htmlFilePath = "OEBPS/chapter.xhtml",
+            plainTextContent = "Readable chapter text",
+            htmlContent = "<p>Readable chapter text</p>"
+        )
+        val book = EpubBook(
+            fileName = "book.epub",
+            title = "Book",
+            author = "Author",
+            language = "en",
+            coverImage = mockk(),
+            chapters = listOf(chapter),
+            images = listOf(EpubImage("OEBPS/images/picture.jpg")),
+            css = mapOf("OEBPS/style.css" to "body { color: black; }")
+        )
+
+        val cached = method.invoke(parser, book) as EpubBook
+
+        assertNotNull(book.coverImage)
+        assertNull(cached.coverImage)
+        assertEquals("", cached.chapters.single().plainTextContent)
+        assertEquals("", cached.chapters.single().htmlContent)
+        assertEquals(chapter.plainTextContent.length, cached.chapters.single().plainTextLength)
+        assertEquals(book.images, cached.images)
+        assertEquals(emptyMap<String, String>(), cached.css)
     }
 
     @Test

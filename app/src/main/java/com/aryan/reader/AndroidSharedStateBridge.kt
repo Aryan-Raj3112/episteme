@@ -11,6 +11,8 @@ import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.reduce
 
 internal object AndroidSharedStateBridge {
+    private val projectionBookItemCache = SharedProjectionBookItemCache()
+
     fun prepareLibraryProjection(
         input: LibraryProjectionInput,
         folderPathResolver: FolderPathResolver
@@ -28,7 +30,7 @@ internal object AndroidSharedStateBridge {
             ),
             booksFromStore = taggedBooks
                 .filterNot { it.bookId.endsWith("_reflow") }
-                .map { it.toSharedProjectionBookItem() },
+                .let(projectionBookItemCache::map),
             shelfRecords = input.dbShelves.map { it.toSharedShelfRecord() },
             shelfRefs = input.shelfRefs.map { it.toSharedBookShelfRef() },
             tags = input.dbTags.map { it.toSharedTag() }

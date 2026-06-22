@@ -17,6 +17,7 @@ import com.aryan.reader.shared.ShelfRecord
 import com.aryan.reader.shared.SyncedFolder as SharedSyncedFolder
 import com.aryan.reader.shared.Tag as SharedTag
 import com.aryan.reader.shared.toStablePositionCfi
+import java.util.LinkedHashMap
 
 fun FileType.toSharedFileType(): SharedFileType = this
 
@@ -80,6 +81,33 @@ fun RecentFileItem.toSharedProjectionBookItem(): SharedBookItem {
     return toSharedBookItem(
         displayName = displayName,
         includeReaderAnnotations = false
+    )
+}
+
+internal class SharedProjectionBookItemCache(
+    private val maxEntries: Int = 10_000
+) {
+    private val entries = object : LinkedHashMap<String, Entry>(maxEntries, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?): Boolean {
+            return size > maxEntries
+        }
+    }
+
+    fun map(item: RecentFileItem): SharedBookItem {
+        entries[item.bookId]?.takeIf { it.source == item }?.let { return it.shared }
+        val shared = item.toSharedProjectionBookItem()
+        entries[item.bookId] = Entry(item, shared)
+        return shared
+    }
+
+    fun map(items: List<RecentFileItem>): List<SharedBookItem> {
+        if (items.isEmpty()) return emptyList()
+        return items.map { map(it) }
+    }
+
+    private data class Entry(
+        val source: RecentFileItem,
+        val shared: SharedBookItem
     )
 }
 
