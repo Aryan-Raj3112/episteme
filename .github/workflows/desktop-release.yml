@@ -209,6 +209,81 @@ jobs:
             --repo "$PUBLIC_RELEASE_REPOSITORY" \
             --clobber
 
+
+  ubuntu-flatpak:
+    name: Ubuntu Flatpak (${{ matrix.flavor.label }})
+    runs-on: ubuntu-latest
+    needs: prepare-public-release
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - label: standard
+            gradle: standard
+          - label: oss
+            gradle: oss
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure Gradle
+        run: |
+          cat > gradle.properties <<'EOF'
+          kotlin.code.style=official
+          kotlin.daemon.jvmargs=-Xmx4096M -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.mpp.applyDefaultHierarchyTemplate=false
+          org.gradle.caching=true
+          org.gradle.configuration-cache=true
+          org.gradle.jvmargs=-Xmx2048M -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          EOF
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Install Flatpak tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+
+      - name: Download Pdfium
+        shell: pwsh
+        run: ./scripts/desktop/download-pdfium.ps1 -Repository "${{ github.repository }}" -Tag "${{ inputs.pdfium_tag }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build Flatpak bundle
+        run: >
+          ./gradlew
+          -PdesktopOnly=true
+          -PdesktopFlavor=${{ matrix.flavor.gradle }}
+          -PdesktopVersion=${{ inputs.version }}
+          -PdesktopPackageVersion=${{ inputs.version }}
+          :desktopApp:packageFlatpak
+
+      - name: Stage Flatpak bundle
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp "$(find desktopApp/build/compose/binaries/main/flatpak -name '*.flatpak' -print -quit)" \
+            "release-assets/episteme-${{ matrix.flavor.label }}-${{ inputs.version }}-linux-x64.flatpak"
+
+      - name: Upload Flatpak bundle to public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.release_tag }}" release-assets/* \
+            --repo "$PUBLIC_RELEASE_REPOSITORY" \
+            --clobber
+
   fedora-rpm:
     name: Fedora RPM (${{ matrix.flavor.label }})
     runs-on: ubuntu-latest
@@ -419,6 +494,7 @@ jobs:
     needs:
       - windows-msi
       - ubuntu-deb-tar
+      - ubuntu-flatpak
       - fedora-rpm
       - arch-package
     steps:

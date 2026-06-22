@@ -7,6 +7,7 @@ cd ~/Reader
 ./gradlew :desktopApp:packageDeb -x test
 ./gradlew :desktopApp:packageRpm -x test
 ./gradlew :desktopApp:packageAur -x test
+./gradlew :desktopApp:packageFlatpak -x test
 ```
 
 Build a Windows MSIX locally on Windows with the Windows SDK installed:
@@ -63,6 +64,7 @@ Local signing is optional and separate:
 Recommended VM split:
 
 - Ubuntu: `./gradlew :desktopApp:packageDeb -x test`
+- Ubuntu with Flatpak tooling: `./gradlew :desktopApp:packageFlatpak -x test`
 - Fedora: `./gradlew :desktopApp:packageRpm -x test`
 - Arch: `./gradlew :desktopApp:packageAur -x test`
 
@@ -126,6 +128,100 @@ Then publish the generated `PKGBUILD` and `.SRCINFO` from the AUR directory.
 The generated AUR recipes use `license=('AGPL-3.0-only')` and install the root
 `LICENSE` file into `/usr/share/licenses/$pkgname/`.
 
+
+## Flatpak packaging
+
+Flatpak packaging is generated from the same Compose Desktop distributable used
+by the Linux tarball and AUR paths. The task creates a Flatpak manifest,
+MetaInfo file, desktop entry, icon export, license export, local repository, and
+single-file `.flatpak` bundle.
+
+Install the required tools and runtime in an Ubuntu VM:
+
+```bash
+sudo apt update
+sudo apt install -y flatpak flatpak-builder
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+```
+
+Build the standard Flatpak bundle:
+
+```bash
+cd ~/Reader
+./gradlew -PdesktopOnly=true :desktopApp:packageFlatpak -x test
+```
+
+For a local package without production cloud config, either build the OSS flavor
+or allow unconfigured standard services explicitly:
+
+```bash
+./gradlew -PdesktopOnly=true -PdesktopFlavor=oss :desktopApp:packageFlatpak -x test
+./gradlew -PdesktopOnly=true -PdesktopAllowUnconfiguredStandardServices=true :desktopApp:packageFlatpak -x test
+```
+
+The bundle is written to:
+
+```text
+desktopApp/build/compose/binaries/main/flatpak
+```
+
+Install and run it in the Ubuntu VM:
+
+```bash
+flatpak install --user -y desktopApp/build/compose/binaries/main/flatpak/episteme-1.0.1-linux-x64.flatpak
+flatpak run io.github.Aryan_Raj3112.episteme
+```
+
+For the OSS/offline flavor:
+
+```bash
+flatpak install --user -y desktopApp/build/compose/binaries/main/flatpak/episteme-oss-1.0.1-linux-x64.flatpak
+flatpak run io.github.Aryan_Raj3112.episteme_oss
+```
+
+Useful local validation commands after `prepareFlatpakPackage`:
+
+```bash
+./gradlew -PdesktopOnly=true :desktopApp:prepareFlatpakPackage -x test
+flatpak-builder --show-manifest desktopApp/build/flatpak/io.github.Aryan_Raj3112.episteme/io.github.Aryan_Raj3112.episteme.yml
+flatpak-builder-lint manifest desktopApp/build/flatpak/io.github.Aryan_Raj3112.episteme/io.github.Aryan_Raj3112.episteme.yml
+```
+
+The generated manifest currently grants `--filesystem=home` because Episteme can
+open and sync arbitrary local book folders. That is convenient for a manual VM
+bundle, but Flathub reviewers generally prefer portal-backed file access and the
+smallest possible static permissions. If Flathub asks for tighter sandboxing,
+move desktop file/folder picking to XDG portals and reduce this permission to the
+specific XDG locations that remain necessary.
+
+## Flathub overview
+
+Flathub is the main public app store and build service for Flatpak apps. Users
+add the Flathub remote once, then install apps with `flatpak install flathub
+<app-id>` or through graphical software centers that integrate with Flathub.
+
+To get Episteme onto Flathub:
+
+1. Keep the app ID stable. The generated IDs are `io.github.Aryan_Raj3112.episteme`
+   and `io.github.Aryan_Raj3112.episteme_oss`; Flathub requires code-hosting IDs
+   for GitHub-hosted projects to use the `io.github.` prefix.
+2. Prepare a source-buildable Flathub manifest named after the app ID, for
+   example `io.github.Aryan_Raj3112.episteme.yml`. The local bundle manifest in
+   `build/flatpak/...` is useful as a starting point, but Flathub normally wants
+   sources and dependencies declared in the manifest rather than prebuilt local
+   binaries.
+3. Make sure the manifest uses the latest Flathub-hosted runtime at submission
+   time, installs the license under `/app/share/licenses/$FLATPAK_ID`, exports an
+   app-ID-prefixed desktop file and MetaInfo file, and passes
+   `flatpak-builder-lint`.
+4. Fork `flathub/flathub`, branch from `new-pr`, add the required manifest and
+   supporting files at the repository root, then open a pull request against the
+   `new-pr` branch titled `Add io.github.Aryan_Raj3112.episteme`.
+5. Respond to reviewer feedback. After approval, Flathub creates the app repo
+   under the Flathub GitHub organization and future updates happen there instead
+   of through the initial submission flow.
+
 ## AUR repository setup
 
 Create an account at:
@@ -178,6 +274,7 @@ OSS flavors:
 - Linux tarball used by AUR
 - Direct Arch `.pkg.tar.zst`
 - AUR metadata archives containing `PKGBUILD` and `.SRCINFO`
+- Single-file Flatpak bundles
 - `SHA256SUMS.txt`
 
 Before running it, publish Pdfium once from a machine that has the ignored

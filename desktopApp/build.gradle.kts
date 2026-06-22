@@ -24,6 +24,7 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.work.DisableCachingByDefault
 import java.io.File
 import java.security.MessageDigest
+import java.time.LocalDate
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.nio.file.AtomicMoveNotSupportedException
@@ -657,6 +658,260 @@ pkgname = $pkgname
     }
 }
 
+
+@DisableCachingByDefault(because = "Generates Flatpak metadata from the local Linux distributable.")
+abstract class PrepareDesktopFlatpakPackageTask : DefaultTask() {
+    @get:Input
+    abstract val appId: Property<String>
+
+    @get:Input
+    abstract val runtimeVersion: Property<String>
+
+    @get:Input
+    abstract val packageVersion: Property<String>
+
+    @get:Input
+    abstract val packageDescription: Property<String>
+
+    @get:Input
+    abstract val appDisplayName: Property<String>
+
+    @get:Input
+    abstract val installDirectoryName: Property<String>
+
+    @get:Input
+    abstract val launcherName: Property<String>
+
+    @get:Input
+    abstract val executableName: Property<String>
+
+    @get:Input
+    abstract val projectUrl: Property<String>
+
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val distributableDirectory: DirectoryProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val iconFile: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val licenseFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun prepare() {
+        val appIdValue = appId.get()
+        val output = outputDirectory.get().asFile
+        val sourceDir = output.resolve("sources")
+        val appDir = sourceDir.resolve("app")
+        val metadataDir = sourceDir.resolve("metadata")
+        val manifestFile = output.resolve("$appIdValue.yml")
+
+        output.deleteRecursively()
+        appDir.mkdirs()
+        metadataDir.mkdirs()
+
+        distributableDirectory.get().asFile.copyRecursively(appDir, overwrite = true)
+        iconFile.get().asFile.copyTo(metadataDir.resolve("$appIdValue.png"), overwrite = true)
+        licenseFile.get().asFile.copyTo(metadataDir.resolve("LICENSE"), overwrite = true)
+        metadataDir.resolve("$appIdValue.desktop").writeText(flatpakDesktopEntry(), Charsets.UTF_8)
+        metadataDir.resolve("$appIdValue.metainfo.xml").writeText(flatpakMetaInfo(), Charsets.UTF_8)
+        manifestFile.writeText(flatpakManifest(sourceDir), Charsets.UTF_8)
+    }
+
+    private fun flatpakManifest(sourceDir: File): String {
+        val appIdValue = appId.get()
+        val appSourcePath = sourceDir.resolve("app").absolutePath.replace(File.separatorChar, '/')
+        val metadataSourcePath = sourceDir.resolve("metadata").absolutePath.replace(File.separatorChar, '/')
+        val quotedExecutable = shellSingleQuoted(executableName.get())
+        return """
+app-id: $appIdValue
+runtime: org.freedesktop.Platform
+runtime-version: '${runtimeVersion.get()}'
+sdk: org.freedesktop.Sdk
+command: ${launcherName.get()}
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --share=network
+  - --filesystem=home
+modules:
+  - name: episteme-desktop
+    buildsystem: simple
+    build-commands:
+      - install -dm755 /app/${installDirectoryName.get()}
+      - cp -a app/. /app/${installDirectoryName.get()}/
+      - chmod 755 /app/${installDirectoryName.get()}/bin/$quotedExecutable
+      - install -dm755 /app/bin
+      - ln -sf /app/${installDirectoryName.get()}/bin/$quotedExecutable /app/bin/${launcherName.get()}
+      - install -Dm644 metadata/$appIdValue.desktop /app/share/applications/$appIdValue.desktop
+      - install -Dm644 metadata/$appIdValue.metainfo.xml /app/share/metainfo/$appIdValue.metainfo.xml
+      - install -Dm644 metadata/$appIdValue.png /app/share/icons/hicolor/512x512/apps/$appIdValue.png
+      - install -Dm644 metadata/LICENSE /app/share/licenses/$appIdValue/LICENSE
+    sources:
+      - type: dir
+        path: $appSourcePath
+        dest: app
+      - type: dir
+        path: $metadataSourcePath
+        dest: metadata
+""".trimIndent() + "\n"
+    }
+
+    private fun flatpakDesktopEntry(): String {
+        return """
+[Desktop Entry]
+Type=Application
+Name=${appDisplayName.get()}
+Comment=${packageDescription.get()}
+Exec=${launcherName.get()} %F
+Icon=${appId.get()}
+Terminal=false
+Categories=Office;Viewer;
+MimeType=${flatpakDesktopMimeTypes().joinToString(";")};
+""".trimIndent() + "\n"
+    }
+
+    private fun flatpakMetaInfo(): String {
+        val appIdValue = appId.get()
+        val version = packageVersion.get()
+        val escapedName = xmlEscaped(appDisplayName.get())
+        val escapedDescription = xmlEscaped(packageDescription.get())
+        val escapedProjectUrl = xmlEscaped(projectUrl.get())
+        return """
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>$appIdValue</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>$escapedName</name>
+  <summary>$escapedDescription</summary>
+  <description>
+    <p>$escapedDescription with support for EPUB, PDF, comics, documents, presentations, OPDS, and local libraries.</p>
+  </description>
+  <launchable type="desktop-id">$appIdValue.desktop</launchable>
+  <url type="homepage">$escapedProjectUrl</url>
+  <categories>
+    <category>Office</category>
+    <category>Viewer</category>
+  </categories>
+  <provides>
+    <binary>${xmlEscaped(executableName.get())}</binary>
+  </provides>
+  <releases>
+    <release version="$version" date="${LocalDate.now()}" />
+  </releases>
+</component>
+""".trimIndent() + "\n"
+    }
+
+    private fun shellSingleQuoted(value: String): String {
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+    }
+
+    private fun flatpakDesktopMimeTypes(): List<String> {
+        return listOf(
+            "application/pdf",
+            "application/epub+zip",
+            "application/x-mobipocket-ebook",
+            "application/vnd.amazon.ebook",
+            "application/vnd.amazon.mobi8-ebook",
+            "text/markdown",
+            "text/x-markdown",
+            "text/plain",
+            "text/html",
+            "application/xhtml+xml",
+            "application/x-fictionbook+xml",
+            "application/x-zip-compressed-fb2",
+            "application/zip",
+            "application/vnd.comicbook+zip",
+            "application/x-cbz",
+            "application/vnd.comicbook-rar",
+            "application/x-cbr",
+            "application/x-rar-compressed",
+            "application/x-cb7",
+            "application/x-7z-compressed",
+            "application/vnd.comicbook+tar",
+            "application/x-cbt",
+            "application/x-tar",
+            "application/tar",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.oasis.opendocument.text",
+            "application/x-vnd.oasis.opendocument.text-flat-xml"
+        )
+    }
+
+    private fun xmlEscaped(value: String): String {
+        return value.replace("&", "&amp;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+    }
+}
+
+@DisableCachingByDefault(because = "Runs flatpak-builder to package a local Flatpak bundle.")
+abstract class PackageDesktopFlatpakTask @Inject constructor(
+    private val execOperations: ExecOperations
+) : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val manifestFile: RegularFileProperty
+
+    @get:Input
+    abstract val appId: Property<String>
+
+    @get:OutputFile
+    abstract val outputFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val repoDirectory: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val buildDirectory: DirectoryProperty
+
+    @TaskAction
+    fun packageFlatpak() {
+        val repo = repoDirectory.get().asFile
+        val build = buildDirectory.get().asFile
+        val output = outputFile.get().asFile
+
+        build.deleteRecursively()
+        output.parentFile.mkdirs()
+        if (output.exists() && !output.delete()) {
+            throw GradleException("Could not replace existing Flatpak bundle at ${output.absolutePath}.")
+        }
+
+        execOperations.exec {
+            commandLine(
+                "flatpak-builder",
+                "--force-clean",
+                "--repo=${repo.absolutePath}",
+                build.absolutePath,
+                manifestFile.get().asFile.absolutePath
+            )
+        }
+        execOperations.exec {
+            commandLine(
+                "flatpak",
+                "build-bundle",
+                repo.absolutePath,
+                output.absolutePath,
+                appId.get()
+            )
+        }
+    }
+}
+
 @DisableCachingByDefault(because = "Strips stale jar signatures in-place after ProGuard rewrites signed dependencies.")
 abstract class StripInvalidJarSignaturesTask : DefaultTask() {
     @get:Input
@@ -1178,6 +1433,10 @@ val desktopAurPackageRelease = providers.gradleProperty("desktopAurPackageReleas
     .orElse("1")
 val desktopAurSourceUrl = providers.gradleProperty("desktopAurSourceUrl")
     .orElse("")
+val desktopFlatpakAppId = providers.gradleProperty("desktopFlatpakAppId")
+    .orElse(if (isOssOfflineDesktop) "io.github.Aryan_Raj3112.episteme_oss" else "io.github.Aryan_Raj3112.episteme")
+val desktopFlatpakRuntimeVersion = providers.gradleProperty("desktopFlatpakRuntimeVersion")
+    .orElse("25.08")
 val desktopPackageTargetFormats = providers.gradleProperty("desktopPackageFormats")
     .orElse(desktopDefaultPackageFormats(desktopOsName))
     .map { normalizeDesktopPackageFormats(it, desktopOsName) }
@@ -1316,6 +1575,13 @@ val desktopDistributableAppDir = layout.buildDirectory.dir("compose/binaries/mai
 val desktopReleaseDistributableAppDir = layout.buildDirectory.dir("compose/binaries/main-release/app/$desktopPackageName")
 val desktopLinuxTarFileName = "${desktopLinuxPackageName}-${desktopPackageVersion.get()}-linux-$desktopPackageArchitecture.tar.gz"
 val desktopAurOutputDir = layout.buildDirectory.dir("aur/${desktopAurPackageName.get()}")
+val desktopFlatpakOutputDir = layout.buildDirectory.dir("flatpak/${desktopFlatpakAppId.get()}")
+val desktopFlatpakManifestFile = desktopFlatpakOutputDir.map { it.file("${desktopFlatpakAppId.get()}.yml") }
+val desktopFlatpakRepoDir = layout.buildDirectory.dir("flatpak/repo/${desktopFlatpakAppId.get()}")
+val desktopFlatpakBuildDir = layout.buildDirectory.dir("flatpak/build/${desktopFlatpakAppId.get()}")
+val desktopFlatpakBundleFile = layout.buildDirectory.file(
+    "compose/binaries/main/flatpak/${desktopLinuxPackageName}-${desktopPackageVersion.get()}-linux-$desktopPackageArchitecture.flatpak"
+)
 val desktopMsixPackageDir = layout.buildDirectory.dir("msix/package")
 val desktopMsixAssetsDir = layout.buildDirectory.dir("msix/generated/assets")
 val desktopMsixManifestFile = layout.buildDirectory.file("msix/generated/AppxManifest.xml")
@@ -1370,6 +1636,38 @@ tasks.register<Exec>("packageAur") {
 
     commandLine("makepkg", "-sf", "--cleanbuild")
     workingDir = desktopAurOutputDir.get().asFile
+}
+
+val prepareFlatpakPackage by tasks.registering(PrepareDesktopFlatpakPackageTask::class) {
+    group = "distribution"
+    description = "Generates a local Flatpak manifest and metadata from the Linux desktop distributable."
+    dependsOn("createDistributable")
+
+    appId.set(desktopFlatpakAppId)
+    runtimeVersion.set(desktopFlatpakRuntimeVersion)
+    packageVersion.set(desktopPackageVersion)
+    packageDescription.set(desktopPackageDescription)
+    appDisplayName.set(desktopPackageName)
+    installDirectoryName.set(desktopLinuxPackageName)
+    launcherName.set(desktopLinuxPackageName)
+    executableName.set(desktopPackageName)
+    projectUrl.set(desktopProjectUrl)
+    distributableDirectory.set(desktopDistributableAppDir)
+    iconFile.set(desktopLinuxIconFile)
+    licenseFile.set(rootProject.layout.projectDirectory.file("LICENSE"))
+    outputDirectory.set(desktopFlatpakOutputDir)
+}
+
+val packageFlatpak by tasks.registering(PackageDesktopFlatpakTask::class) {
+    group = "distribution"
+    description = "Builds a single-file Flatpak bundle with flatpak-builder. Run this on Linux with Flatpak tooling installed."
+    dependsOn(prepareFlatpakPackage)
+
+    manifestFile.set(desktopFlatpakManifestFile)
+    appId.set(desktopFlatpakAppId)
+    outputFile.set(desktopFlatpakBundleFile)
+    repoDirectory.set(desktopFlatpakRepoDir)
+    buildDirectory.set(desktopFlatpakBuildDir)
 }
 
 val generateDesktopMsixManifest by tasks.registering(GenerateDesktopMsixManifestTask::class) {
@@ -1609,6 +1907,8 @@ tasks.matching {
         "packageLinuxTar",
         "prepareAurPackage",
         "packageAur",
+        "prepareFlatpakPackage",
+        "packageFlatpak",
         "runDistributable",
         "runReleaseDistributable"
     )
