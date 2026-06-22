@@ -146,6 +146,7 @@ import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.AnnotationExportFormat
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.text.SimpleDateFormat
@@ -195,6 +196,8 @@ fun HomeScreen(
         var showInfoDialog by remember { mutableStateOf(false) }
         var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
         var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
+        var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
+        var showAnnotationExportFormatDialogFor by remember { mutableStateOf<RecentFileItem?>(null) }
         var showBehaviorDialog by remember { mutableStateOf(false) }
         var showStrictFilterDialog by remember { mutableStateOf(false) }
         var showClearBookCacheDialog by remember { mutableStateOf(false) }
@@ -239,6 +242,36 @@ fun HomeScreen(
             saveOriginalLauncher.launch(item.suggestedOriginalFileName())
         }
 
+        val saveMarkdownAnnotationsLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.MARKDOWN.mimeType)
+        ) { uri ->
+            val exportText = pendingAnnotationExportText
+            pendingAnnotationExportText = null
+            if (uri != null && exportText != null) {
+                viewModel.saveAnnotationExport(exportText, uri)
+            }
+        }
+
+        val saveTextAnnotationsLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.TEXT.mimeType)
+        ) { uri ->
+            val exportText = pendingAnnotationExportText
+            pendingAnnotationExportText = null
+            if (uri != null && exportText != null) {
+                viewModel.saveAnnotationExport(exportText, uri)
+            }
+        }
+
+        fun exportAnnotationsItem(item: RecentFileItem, format: AnnotationExportFormat) {
+            viewModel.prepareAnnotationExport(item, format) { prepared ->
+                pendingAnnotationExportText = prepared.contents
+                when (format) {
+                    AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
+                    AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
+                }
+            }
+        }
+
         fun shareOriginalItem(item: RecentFileItem) {
             val uriString = item.uriString ?: return
             if (!item.canExportOriginalFile()) return
@@ -252,6 +285,34 @@ fun HomeScreen(
             }
         }
 
+        showAnnotationExportFormatDialogFor?.let { item ->
+            AlertDialog(
+                onDismissRequest = { showAnnotationExportFormatDialogFor = null },
+                title = { Text(stringResource(R.string.dialog_export_annotations_title)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            showAnnotationExportFormatDialogFor = null
+                            exportAnnotationsItem(item, AnnotationExportFormat.MARKDOWN)
+                        }) {
+                            Text(stringResource(R.string.export_annotations_markdown))
+                        }
+                        TextButton(onClick = {
+                            showAnnotationExportFormatDialogFor = null
+                            exportAnnotationsItem(item, AnnotationExportFormat.TEXT)
+                        }) {
+                            Text(stringResource(R.string.export_annotations_text))
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showAnnotationExportFormatDialogFor = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            )
+        }
         LaunchedEffect(uiState.isRequestingDrivePermission) {
             if (uiState.isRequestingDrivePermission) {
                 val intent = viewModel.getDriveSignInIntent(context)
@@ -430,6 +491,8 @@ fun HomeScreen(
                                 onShareClick = selectedContextItems.singleOrNull()
                                     ?.takeIf { it.canExportOriginalFile() }
                                     ?.let { item -> { shareOriginalItem(item) } },
+                                onExportAnnotationsClick = selectedContextItems.singleOrNull()
+                                    ?.let { item -> { showAnnotationExportFormatDialogFor = item } },
                                 onPinClick = { viewModel.togglePinForContextualItems(isHome = true) },
                                 onDeleteClick = { showDeleteConfirmDialog = true },
                                 onSelectAllClick = { viewModel.selectAllRecentFiles() },

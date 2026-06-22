@@ -143,6 +143,7 @@ import coil.compose.AsyncImage
 import coil.decode.SvgDecoder
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.TagEntity
+import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.opds.OpdsAcquisition
 import com.aryan.reader.opds.OpdsCatalog
 import com.aryan.reader.opds.OpdsDownloadState
@@ -273,6 +274,8 @@ fun LibraryScreen(
     var showInfoDialog by remember { mutableStateOf(false) }
     var itemForInfoDialog by remember { mutableStateOf<RecentFileItem?>(null) }
     var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
+    var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
+    var showAnnotationExportFormatDialogFor by remember { mutableStateOf<RecentFileItem?>(null) }
 
     val saveOriginalLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -288,6 +291,36 @@ fun LibraryScreen(
         if (!item.canExportOriginalFile()) return
         pendingSaveOriginalItem = item
         saveOriginalLauncher.launch(item.suggestedOriginalFileName())
+    }
+
+    val saveMarkdownAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.MARKDOWN.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) {
+            viewModel.saveAnnotationExport(exportText, uri)
+        }
+    }
+
+    val saveTextAnnotationsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(AnnotationExportFormat.TEXT.mimeType)
+    ) { uri ->
+        val exportText = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (uri != null && exportText != null) {
+            viewModel.saveAnnotationExport(exportText, uri)
+        }
+    }
+
+    fun exportAnnotationsItem(item: RecentFileItem, format: AnnotationExportFormat) {
+        viewModel.prepareAnnotationExport(item, format) { prepared ->
+            pendingAnnotationExportText = prepared.contents
+            when (format) {
+                AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
+                AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
+            }
+        }
     }
 
     fun shareOriginalItem(item: RecentFileItem) {
@@ -355,6 +388,8 @@ fun LibraryScreen(
             onShareClick = selectedItems.singleOrNull()
                 ?.takeIf { it.canExportOriginalFile() }
                 ?.let { item -> { shareOriginalItem(item) } },
+            onExportAnnotationsClick = selectedItems.singleOrNull()
+                ?.let { item -> { showAnnotationExportFormatDialogFor = item } },
             onDeleteClick = { showDeleteConfirmDialog = true },
             onSelectAllClick = { viewModel.selectAllLibraryFiles() },
             onShelfClick = viewModel::onShelfClick,
@@ -394,6 +429,34 @@ fun LibraryScreen(
         )
 
 
+        showAnnotationExportFormatDialogFor?.let { item ->
+            AlertDialog(
+                onDismissRequest = { showAnnotationExportFormatDialogFor = null },
+                title = { Text(stringResource(R.string.dialog_export_annotations_title)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            showAnnotationExportFormatDialogFor = null
+                            exportAnnotationsItem(item, AnnotationExportFormat.MARKDOWN)
+                        }) {
+                            Text(stringResource(R.string.export_annotations_markdown))
+                        }
+                        TextButton(onClick = {
+                            showAnnotationExportFormatDialogFor = null
+                            exportAnnotationsItem(item, AnnotationExportFormat.TEXT)
+                        }) {
+                            Text(stringResource(R.string.export_annotations_text))
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showAnnotationExportFormatDialogFor = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+            )
+        }
         if (uiState.showCreateShelfDialog) {
             CreateShelfDialog(
                 onConfirm = viewModel::createShelf,
@@ -486,6 +549,7 @@ fun ShelfScreen(
         pendingSaveOriginalItem = item
         saveOriginalLauncher.launch(item.suggestedOriginalFileName())
     }
+
 
     fun shareOriginalItem(item: RecentFileItem) {
         val uriString = item.uriString ?: return
@@ -641,6 +705,7 @@ fun LibraryScreenContent(
     onInfoClick: () -> Unit,
     onSaveClick: (() -> Unit)?,
     onShareClick: (() -> Unit)?,
+    onExportAnnotationsClick: (() -> Unit)?,
     onDeleteClick: () -> Unit,
     onSelectAllClick: () -> Unit,
     onShelfClick: (Shelf) -> Unit,
@@ -706,6 +771,7 @@ fun LibraryScreenContent(
                         onInfoClick = onInfoClick,
                         onSaveClick = onSaveClick,
                         onShareClick = onShareClick,
+                        onExportAnnotationsClick = onExportAnnotationsClick,
                         onDeleteClick = onDeleteClick,
                         onSelectAllClick = onSelectAllClick,
                         compactSelectionActions = true,

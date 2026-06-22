@@ -487,6 +487,10 @@
     <string name="banner_original_pdf_saved">Original PDF saved successfully.</string>
     <string name="banner_saving_original_file">Saving original file...</string>
     <string name="banner_original_file_saved">Original file saved successfully.</string>
+    <string name="banner_exporting_annotations">Exporting annotations...</string>
+    <string name="banner_annotations_exported">Annotations exported successfully.</string>
+    <string name="banner_no_annotations_to_export">No annotations to export.</string>
+    <string name="error_exporting_annotations">Error exporting annotations: %1$s</string>
     <string name="error_saving_file">Error saving file: %1$s</string>
     <!-- Email/share subject line. %1$s = the name of the file being shared. Example: "Sharing: Dracula.pdf". -->
     <string name="share_subject">Sharing: %1$s</string>
@@ -1091,6 +1095,10 @@
     <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->
     <string name="action_generate_text_view">Generate Text View</string>
     <string name="action_share">Share</string>
+    <string name="action_export_annotations">Export annotations</string>
+    <string name="dialog_export_annotations_title">Export annotations</string>
+    <string name="export_annotations_markdown">Markdown (.md)</string>
+    <string name="export_annotations_text">Text (.txt)</string>
     <string name="action_save_copy_to_device">Save copy to device</string>
     <string name="action_print">Print</string>
     <!-- "Text View" is the name of the PDF reflow feature — keep consistent. -->

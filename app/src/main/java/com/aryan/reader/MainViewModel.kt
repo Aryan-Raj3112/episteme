@@ -109,10 +109,18 @@ import com.aryan.reader.pdf.data.PdfTextBoxRepository
 import com.aryan.reader.pdf.data.PdfTextRepository
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pptx.PptxCoverGenerator
+import com.aryan.reader.shared.AnnotationExportDocument
+import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.AnnotationExportFormatter
+import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
+import com.aryan.reader.shared.pdf.PdfAnnotationKind
+import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.shouldApplyRemoteCloudBookMetadataUpdate
 import com.aryan.reader.shared.shouldDownloadRemoteCloudBookContent
@@ -2161,6 +2169,108 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         ) {
             markPendingExternalFileRemoval(bookId, importedCopyUriString)
         }
+    }
+
+    data class PreparedAnnotationExport(
+        val fileName: String,
+        val contents: String
+    )
+
+    fun prepareAnnotationExport(
+        item: RecentFileItem,
+        format: AnnotationExportFormat,
+        onReady: (PreparedAnnotationExport) -> Unit
+    ) {
+        viewModelScope.launch {
+            _internalState.update {
+                it.copy(isLoading = true, bannerMessage = BannerMessage(appContext.getString(R.string.banner_exporting_annotations)))
+            }
+            try {
+                val latestItem = recentFilesRepository.getFileByBookId(item.bookId) ?: item
+                val document = buildAnnotationExportDocument(latestItem)
+                val exportText = AnnotationExportFormatter.render(document, format)
+                if (exportText.isBlank()) {
+                    showBanner(appContext.getString(R.string.banner_no_annotations_to_export), isError = true)
+                    return@launch
+                }
+                onReady(
+                    PreparedAnnotationExport(
+                        fileName = AnnotationExportFormatter.suggestedFileName(document.bookTitle, format),
+                        contents = exportText
+                    )
+                )
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to prepare annotation export")
+                showBanner(appContext.getString(R.string.error_exporting_annotations, e.localizedMessage ?: e.message.orEmpty()), isError = true)
+            } finally {
+                _internalState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+
+    fun saveAnnotationExport(contents: String, destUri: Uri) {
+        viewModelScope.launch {
+            _internalState.update {
+                it.copy(isLoading = true, bannerMessage = BannerMessage(appContext.getString(R.string.banner_exporting_annotations)))
+            }
+            try {
+                if (contents.isBlank()) {
+                    showBanner(appContext.getString(R.string.banner_no_annotations_to_export), isError = true)
+                    return@launch
+                }
+                withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openOutputStream(destUri)?.use { output ->
+                        output.write(contents.toByteArray(Charsets.UTF_8))
+                    } ?: error("Could not open destination file.")
+                }
+                showBanner(appContext.getString(R.string.banner_annotations_exported))
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to export annotations")
+                showBanner(appContext.getString(R.string.error_exporting_annotations, e.localizedMessage ?: e.message.orEmpty()), isError = true)
+            } finally {
+                _internalState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+
+    private suspend fun buildAnnotationExportDocument(item: RecentFileItem): AnnotationExportDocument {
+        val title = item.cardTitle(uiState.value.usePdfFileNameAsDisplayName)
+        return when (item.type) {
+            FileType.EPUB,
+            FileType.MOBI,
+            FileType.MD,
+            FileType.TXT,
+            FileType.HTML,
+            FileType.FB2,
+            FileType.DOCX,
+            FileType.ODT,
+            FileType.FODT,
+            FileType.PPTX -> AnnotationExportFormatter.fromEpubHighlights(
+                bookTitle = title,
+                sourceType = item.type,
+                highlights = EpubAnnotationSerializer.parseHighlightsJson(item.highlightsJson)
+            )
+            FileType.PDF -> AnnotationExportFormatter.fromPdfAnnotations(
+                bookTitle = title,
+                annotations = pdfHighlightRepository.loadHighlights(item.bookId).map { it.toSharedPdfHighlightAnnotation() }
+            )
+            else -> AnnotationExportDocument(title, item.type, emptyList())
+        }
+    }
+
+    private fun PdfUserHighlight.toSharedPdfHighlightAnnotation(): SharedPdfAnnotation {
+        return SharedPdfAnnotation(
+            id = id,
+            pageIndex = pageIndex,
+            kind = PdfAnnotationKind.HIGHLIGHT,
+            tool = PdfInkTool.HIGHLIGHTER,
+            text = text,
+            note = note,
+            comments = comments,
+            colorArgb = colorArgb ?: SharedPdfAndroidHighlightColors.argbForName(color.name),
+            rangeStartIndex = range.first,
+            rangeEndIndex = (range.second - 1).coerceAtLeast(range.first)
+        )
     }
 
     fun saveOriginalFile(sourceUri: Uri, destUri: Uri) {

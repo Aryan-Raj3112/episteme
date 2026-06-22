@@ -281,6 +281,7 @@ fun ContextualTopAppBar(
     onInfoClick: (() -> Unit)? = null,
     onSaveClick: (() -> Unit)? = null,
     onShareClick: (() -> Unit)? = null,
+    onExportAnnotationsClick: (() -> Unit)? = null,
     onTagClick: (() -> Unit)? = null,
     onAddToShelfClick: (() -> Unit)? = null,
     onSelectAllClick: (() -> Unit)? = null,
@@ -314,6 +315,7 @@ fun ContextualTopAppBar(
                     onAddToShelfClick = onAddToShelfClick,
                     onSaveClick = onSaveClick,
                     onShareClick = onShareClick,
+                    onExportAnnotationsClick = onExportAnnotationsClick,
                     onClearSelectionClick = onClearSelectionClick ?: onNavIconClick,
                     onDeleteClick = onDeleteClick,
                     overflowDeleteLabelRes = overflowDeleteLabelRes
@@ -367,6 +369,7 @@ private fun CompactSelectionActions(
     onAddToShelfClick: (() -> Unit)?,
     onSaveClick: (() -> Unit)?,
     onShareClick: (() -> Unit)?,
+    onExportAnnotationsClick: (() -> Unit)?,
     onClearSelectionClick: () -> Unit,
     onDeleteClick: () -> Unit,
     overflowDeleteLabelRes: Int
@@ -434,6 +437,16 @@ private fun CompactSelectionActions(
                     onClick = {
                         showMoreMenu = false
                         onShareClick()
+                    }
+                )
+            }
+            if (selectedItemCount == 1 && onExportAnnotationsClick != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_export_annotations)) },
+                    leadingIcon = { Icon(Icons.Filled.Save, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onExportAnnotationsClick()
                     }
                 )
             }

@@ -165,6 +165,7 @@ fun SharedHomeScreen(
     onToggleSelection: (String) -> Unit,
     onClearSelection: () -> Unit,
     onRemoveSelected: () -> Unit,
+    onExportAnnotations: (BookItem) -> Unit = {},
     onShowBookInfo: (BookItem) -> Unit = {},
     onEditBook: (BookItem) -> Unit = {},
     onSaveOriginalFile: (BookItem) -> Unit = {},
@@ -238,6 +239,7 @@ fun SharedHomeScreen(
                 count = selectedBooks.size,
                 onClear = onClearSelection,
                 onRemove = onRemoveSelected,
+                onExportAnnotations = selectedBooks.singleOrNull()?.let { book -> { onExportAnnotations(book) } },
                 onTag = onTagSelectedBooks,
                 onAddToShelf = onAddSelectedBooksToShelf,
                 onPin = {
@@ -350,6 +352,7 @@ fun SharedLibraryScreen(
     onToggleSelection: (String) -> Unit,
     onClearSelection: () -> Unit,
     onRemoveSelected: () -> Unit,
+    onExportAnnotations: (BookItem) -> Unit = {},
     onShowBookInfo: (BookItem) -> Unit = {},
     onEditBook: (BookItem) -> Unit = {},
     onSaveOriginalFile: (BookItem) -> Unit = {},
@@ -405,6 +408,7 @@ fun SharedLibraryScreen(
                 count = state.selectedBookIds.size,
                 onClear = onClearSelection,
                 onRemove = onRemoveSelected,
+                onExportAnnotations = selectedBooks.singleOrNull()?.let { book -> { onExportAnnotations(book) } },
                 onTag = onTagSelectedBooks,
                 onAddToShelf = onAddSelectedBooksToShelf,
                 onSelectAll = {
@@ -737,7 +741,8 @@ private fun SelectionToolbar(
     selectAllLabel: String = "Select visible",
     onPin: (() -> Unit)? = null,
     pinLabel: String = "Pin",
-    onInfo: (() -> Unit)? = null
+    onInfo: (() -> Unit)? = null,
+    onExportAnnotations: (() -> Unit)? = null
 ) {
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -784,6 +789,24 @@ private fun SelectionToolbar(
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(selectAllLabel)
+                    }
+                }
+                onExportAnnotations?.let { export ->
+                    var exportMenuExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { exportMenuExpanded = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_more", "More"), modifier = Modifier.size(18.dp))
+                        }
+                        DropdownMenu(expanded = exportMenuExpanded, onDismissRequest = { exportMenuExpanded = false }) {
+                            DropdownMenuItem(
+                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
+                                text = { Text(readerString("action_export_annotations", "Export annotations")) },
+                                onClick = {
+                                    exportMenuExpanded = false
+                                    export()
+                                }
+                            )
+                        }
                     }
                 }
                 TextButton(onClick = onClear) {

@@ -29,6 +29,8 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
+import com.aryan.reader.shared.AnnotationExportFormat
+import com.aryan.reader.shared.AnnotationExportFormatter
 import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.AppFontPreference
 import com.aryan.reader.shared.BannerMessage
@@ -77,6 +79,7 @@ import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.opds.SharedOpdsController
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
+import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfReaderViewport
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderImageReference
@@ -90,6 +93,7 @@ import com.aryan.reader.shared.reader.SharedEpubPaginationCache
 import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.readerCloudTtsControlsModel
+import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.shouldApplyRemoteCloudBookMetadataUpdate
@@ -390,6 +394,7 @@ internal fun EpistemeDesktopApp(
     var settingsQuery by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var bookInfoDialogFor by remember { mutableStateOf<BookItem?>(null) }
+    var annotationExportDialogFor by remember { mutableStateOf<BookItem?>(null) }
     var bookInfoInitiallyEditing by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     var dropImportState by remember { mutableStateOf(DesktopDropImportState()) }
@@ -641,6 +646,39 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun exportDesktopAnnotations(book: BookItem, format: AnnotationExportFormat) {
+        val document = when (book.type) {
+            FileType.PDF -> {
+                val annotations = book.path
+                    ?.let(::desktopPdfAnnotationFile)
+                    ?.takeIf { it.isFile }
+                    ?.let { file -> runCatching { SharedPdfAnnotationSerializer.decode(file.readText()) }.getOrDefault(emptyList()) }
+                    .orEmpty()
+                AnnotationExportFormatter.fromPdfAnnotations(
+                    bookTitle = book.cardTitle(),
+                    sourceType = book.type,
+                    annotations = annotations
+                )
+            }
+            else -> AnnotationExportFormatter.fromEpubBook(book)
+        }
+        val exportText = AnnotationExportFormatter.render(document, format)
+        if (exportText.isBlank()) {
+            updateState(state.withBanner("No annotations to export.", isError = true))
+            return
+        }
+        val target = chooseSaveAnnotationExportFile(
+            AnnotationExportFormatter.suggestedFileName(book.cardTitle(), format)
+        ) ?: return
+        runCatching {
+            target.parentFile?.mkdirs()
+            target.writeText(exportText, Charsets.UTF_8)
+        }.onSuccess {
+            updateState(state.withBanner("Saved ${target.name}."))
+        }.onFailure { error ->
+            updateState(state.withBanner(error.message ?: "Could not export annotations.", isError = true))
+        }
+    }
     fun saveDesktopOriginalFile(book: BookItem) {
         val source = book.path?.let(::File)
         if (source?.isFile != true) {
@@ -4199,6 +4237,7 @@ internal fun EpistemeDesktopApp(
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
                             onRemoveSelected = ::removeSelectedBooks,
+                            onExportAnnotations = { annotationExportDialogFor = it },
                             onShowBookInfo = {
                                 bookInfoInitiallyEditing = false
                                 bookInfoDialogFor = it
@@ -4249,6 +4288,7 @@ internal fun EpistemeDesktopApp(
                             onSelect = { id -> updateState(state.reduce(LibraryAction.BookSelectionToggled(id))) },
                             onClearSelection = { updateState(state.reduce(LibraryAction.SelectionCleared)) },
                             onRemoveSelected = ::removeSelectedBooks,
+                            onExportAnnotations = { annotationExportDialogFor = it },
                             onShowBookInfo = {
                                 bookInfoInitiallyEditing = false
                                 bookInfoDialogFor = it
@@ -4871,6 +4911,29 @@ internal fun EpistemeDesktopApp(
                 )
             }
 
+        annotationExportDialogFor?.let { book ->
+            AlertDialog(
+                onDismissRequest = { annotationExportDialogFor = null },
+                title = { Text(readerString("action_export_annotations", "Export annotations")) },
+                text = { Text(book.cardTitle()) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        annotationExportDialogFor = null
+                        exportDesktopAnnotations(book, AnnotationExportFormat.MARKDOWN)
+                    }) {
+                        Text("Markdown (.md)")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        annotationExportDialogFor = null
+                        exportDesktopAnnotations(book, AnnotationExportFormat.TEXT)
+                    }) {
+                        Text("Text (.txt)")
+                    }
+                }
+            )
+        }
         if (showAiByokSettingsDialog && desktopAiKeySettingsAvailable) {
             DesktopAiByokSettingsDialog(
                 settings = aiByokSettings,
