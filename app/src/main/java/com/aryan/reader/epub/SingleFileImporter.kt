@@ -59,8 +59,13 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_SINGLE_FILE_PLAIN_TEXT_CHARS = 256_000
         private const val MAX_SINGLE_FILE_METADATA_BYTES = 2L * 1024L * 1024L
         private const val BOOK_METADATA_FILE = "book_metadata.json"
+        private const val TXT_PREFORMATTED_METADATA_FILE = "book_metadata_txt_preformatted_v3.json"
         private const val PAGE_BREAK_MARKER = "<page-break></page-break>"
         private const val HTML_IMPORT_DEBUG_TAG = "HtmlImportDebug"
+        private const val TXT_FORMAT_TRACE_TAG = "TxtFormatTrace"
+        private const val TXT_PREFORMATTED_CLASS = "reader-txt-preformatted"
+        private const val TXT_PREFORMATTED_INLINE_STYLE =
+            "white-space: pre-wrap !important; text-indent: 0 !important;"
 
         private val scriptTextPreservingTags = setOf("pre", "code", "kbd", "samp", "textarea")
         private val leakedAdScriptMarkers = listOf(
@@ -103,6 +108,16 @@ class SingleFileImporter(private val context: Context) {
     private val htmlOutputSettings = Document.OutputSettings().prettyPrint(false)
 
     private fun metadataFile(extractionDir: File): File = File(extractionDir, BOOK_METADATA_FILE)
+    private fun txtMetadataFile(extractionDir: File): File = File(extractionDir, TXT_PREFORMATTED_METADATA_FILE)
+
+    private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
+        return replace("\\", "\\\\")
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+            .replace("\t", "\\t")
+            .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+            .replace("\"", "\\\"")
+    }
 
     private fun File.htmlDebugFileList(): String {
         return listFiles()?.joinToString { file -> "${file.name}:${file.length()}" } ?: "<unreadable>"
@@ -441,12 +456,24 @@ class SingleFileImporter(private val context: Context) {
         }
 
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
-        val metadataFile = metadataFile(extractionDir)
+        val txtCacheMetadataFile = txtMetadataFile(extractionDir)
+        val legacyMetadataFile = metadataFile(extractionDir)
+        Timber.tag(TXT_FORMAT_TRACE_TAG).d(
+            "event=android_txt_cache_lookup bookId=$bookId name=${originalBookNameHint.txtFormatTracePreview()} " +
+                "metadata=${txtCacheMetadataFile.name} exists=${txtCacheMetadataFile.exists()} legacyExists=${legacyMetadataFile.exists()} " +
+                "dir=${extractionDir.absolutePath.txtFormatTracePreview()} files=${extractionDir.htmlDebugFileList().txtFormatTracePreview()}"
+        )
 
-        readCachedSingleFileBook(metadataFile, extractionDir, "TXT")?.let { cachedBook ->
+        readCachedSingleFileBook(txtCacheMetadataFile, extractionDir, "TXT_PREWRAP_INLINE")?.let { cachedBook ->
             Timber.tag("FileOpenPerf").d("[TXT] Loaded from cache instantly | bookId=$bookId")
+            Timber.tag(TXT_FORMAT_TRACE_TAG).d(
+                "event=android_txt_cache_hit bookId=$bookId chapters=${cachedBook.chapters.size} " +
+                    "firstPath=${cachedBook.chapters.firstOrNull()?.htmlFilePath.orEmpty().txtFormatTracePreview()} " +
+                    "plainChars=${cachedBook.chapters.sumOf { it.plainTextLength }}"
+            )
             return@withContext cachedBook
         }
+        Timber.tag(TXT_FORMAT_TRACE_TAG).d("event=android_txt_cache_miss bookId=$bookId resetDir=true")
         ImportedFileCache.resetActiveBookDir(context, bookId)
 
         val parseStart = System.currentTimeMillis()
@@ -459,11 +486,21 @@ class SingleFileImporter(private val context: Context) {
 
         val cssStyle = """
             body { font-family: sans-serif; line-height: 1.6; padding: 1em; max-width: 800px; margin: 0 auto; }
-            p { margin-bottom: 1em; text-indent: 1.5em; }
+            p { margin-bottom: 1em; text-indent: 0; white-space: pre-wrap; }
+            .$TXT_PREFORMATTED_CLASS { white-space: pre-wrap !important; text-indent: 0 !important; }
         """.trimIndent()
 
         val currentChapterContent = StringBuilder()
+        val currentChapterPlainText = StringBuilder()
         val chapterTargetSize = 64 * 1024
+        var totalLines = 0
+        var blankLines = 0
+        var nonBlankLines = 0
+        var linesWithRepeatedSpaces = 0
+        var linesWithLeadingOrTrailingSpaces = 0
+        var maxLineLength = 0
+        var firstNonBlankLine: String? = null
+        var firstRepeatedSpaceLine: String? = null
 
         fun flushChapter() {
             if (currentChapterContent.isEmpty()) return
@@ -471,12 +508,18 @@ class SingleFileImporter(private val context: Context) {
             val fileName = "part_$chapterCounter.html"
             val file = File(extractionDir, fileName)
             val chapterTitle = "Part $chapterCounter"
+            val plainText = currentChapterPlainText.toString().trim()
 
             val fullHtml = "<!DOCTYPE html>\n<html>\n<head>\n<title>$chapterTitle</title>\n<style>$cssStyle</style>\n</head>\n<body>\n$currentChapterContent\n</body>\n</html>"
 
             FileOutputStream(file).use { it.write(fullHtml.toByteArray()) }
-
-            val plainText = Jsoup.parse(fullHtml).text()
+            Timber.tag(TXT_FORMAT_TRACE_TAG).d(
+                "event=android_txt_chapter_written bookId=$bookId chapter=$chapterCounter file=$fileName " +
+                    "htmlChars=${fullHtml.length} plainChars=${plainText.length} htmlNewlines=${fullHtml.count { it == '\n' }} " +
+                    "plainNewlines=${plainText.count { it == '\n' }} containsPreWrap=${fullHtml.contains("white-space: pre-wrap")} " +
+                    "containsInlinePreWrap=${fullHtml.contains(TXT_PREFORMATTED_INLINE_STYLE)} " +
+                    "htmlPreview=${fullHtml.txtFormatTracePreview()} plainPreview=${plainText.txtFormatTracePreview()}"
+            )
 
             chapters.add(
                 EpubChapter(
@@ -492,6 +535,7 @@ class SingleFileImporter(private val context: Context) {
             )
 
             currentChapterContent.clear()
+            currentChapterPlainText.clear()
             chapterCounter++
         }
 
@@ -506,6 +550,21 @@ class SingleFileImporter(private val context: Context) {
         inputStream.bufferedReader().use { reader ->
             while (true) {
                 val line = reader.readLine()
+                if (line != null) {
+                    totalLines++
+                    maxLineLength = maxOf(maxLineLength, line.length)
+                    if (line.isBlank()) {
+                        blankLines++
+                    } else {
+                        nonBlankLines++
+                        if (firstNonBlankLine == null) firstNonBlankLine = line
+                        if (line != line.trim()) linesWithLeadingOrTrailingSpaces++
+                        if (Regex(" {2,}").containsMatchIn(line)) {
+                            linesWithRepeatedSpaces++
+                            if (firstRepeatedSpaceLine == null) firstRepeatedSpaceLine = line
+                        }
+                    }
+                }
                 if (line == null) {
                     if (inParagraph) {
                         currentChapterContent.append("</p>\n")
@@ -513,10 +572,10 @@ class SingleFileImporter(private val context: Context) {
                     break
                 }
 
-                val trimmed = line.trim()
-                if (trimmed.isEmpty()) {
+                if (line.isBlank()) {
                     if (inParagraph) {
                         currentChapterContent.append("</p>\n")
+                        currentChapterPlainText.append("\n\n")
                         inParagraph = false
                     }
 
@@ -525,12 +584,16 @@ class SingleFileImporter(private val context: Context) {
                     }
                 } else {
                     if (!inParagraph) {
-                        currentChapterContent.append("<p>")
+                        currentChapterContent.append(
+                            "<p class=\"$TXT_PREFORMATTED_CLASS\" style=\"$TXT_PREFORMATTED_INLINE_STYLE\">"
+                        )
                         inParagraph = true
                     } else {
-                        currentChapterContent.append(" ")
+                        currentChapterContent.append("\n")
+                        currentChapterPlainText.append("\n")
                     }
-                    currentChapterContent.append(escapeHtml(trimmed))
+                    currentChapterContent.append(escapeHtml(line))
+                    currentChapterPlainText.append(line)
 
                     if (currentChapterContent.length >= chapterTargetSize * 2) {
                         currentChapterContent.append("</p>\n")
@@ -541,16 +604,30 @@ class SingleFileImporter(private val context: Context) {
             }
         }
 
+        Timber.tag(TXT_FORMAT_TRACE_TAG).d(
+            "event=android_txt_lines_scanned bookId=$bookId lines=$totalLines blankLines=$blankLines nonBlankLines=$nonBlankLines " +
+                "repeatedSpaceLines=$linesWithRepeatedSpaces edgeSpaceLines=$linesWithLeadingOrTrailingSpaces maxLineLength=$maxLineLength " +
+                "firstNonBlank=${firstNonBlankLine.orEmpty().txtFormatTracePreview()} " +
+                "firstRepeatedSpace=${firstRepeatedSpaceLine.orEmpty().txtFormatTracePreview()}"
+        )
+
         flushChapter()
 
         if (chapters.isEmpty()) {
-            currentChapterContent.append("<p>(Empty File)</p>")
+            currentChapterContent.append(
+                "<p class=\"$TXT_PREFORMATTED_CLASS\" style=\"$TXT_PREFORMATTED_INLINE_STYLE\">(Empty File)</p>"
+            )
             flushChapter()
         }
 
         Timber.d("Imported TXT split into ${chapters.size} chapters.")
 
         Timber.tag("FileOpenPerf").d("[TXT] parsePlainText COMPLETE | chapters=${chapters.size} | totalElapsed=${System.currentTimeMillis() - parseStart}ms")
+        Timber.tag(TXT_FORMAT_TRACE_TAG).d(
+            "event=android_txt_parse_done bookId=$bookId chapters=${chapters.size} " +
+                "totalPlainChars=${chapters.sumOf { it.plainTextLength }} extraction=${extractionDir.absolutePath.txtFormatTracePreview()} " +
+                "files=${extractionDir.htmlDebugFileList().txtFormatTracePreview()}"
+        )
 
         val book = EpubBook(
             fileName = originalBookNameHint,
@@ -566,7 +643,7 @@ class SingleFileImporter(private val context: Context) {
             css = emptyMap()
         )
 
-        writeSingleFileMetadata(metadataFile, book, "TXT")
+        writeSingleFileMetadata(txtCacheMetadataFile, book, "TXT_PREWRAP_INLINE")
 
         return@withContext book
     }

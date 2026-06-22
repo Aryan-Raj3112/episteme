@@ -65,6 +65,26 @@ class HtmlParserTest {
     }
 
     @Test
+    fun htmlToSemanticBlocks_preformattedTxtParagraph_preservesLineBreaksAndSpacing() {
+        val blocks = parse(
+            """
+            <p class="reader-txt-preformatted" style="white-space: pre-wrap !important; text-indent: 0 !important;">[ID]          72694621
+[Title]       DAMN.
+[Artists]     Kendrick Lamar
+
+===========CD 1=============
+[1]     BLOOD.</p>
+            """.trimIndent()
+        )
+
+        val paragraph = blocks.single() as SemanticParagraph
+        assertThat(paragraph.text).contains("[ID]          72694621\n[Title]       DAMN.")
+        assertThat(paragraph.text).contains("[Artists]     Kendrick Lamar\n\n===========CD 1=============")
+        assertThat(paragraph.text).doesNotContain("[ID] 72694621 [Title] DAMN.")
+        assertThat(paragraph.style.whiteSpace).isEqualTo("pre-wrap")
+    }
+
+    @Test
     fun htmlToSemanticBlocks_headerTag_createsSemanticHeaderWithCorrectLevel() {
         val blocks = parse("<h2>Chapter 2</h2>")
 

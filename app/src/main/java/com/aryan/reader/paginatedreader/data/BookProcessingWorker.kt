@@ -276,6 +276,7 @@ class BookProcessingWorker(
                             }
 
                             val document = Jsoup.parse(htmlToParse, chapter.absPath)
+                            document.outputSettings().prettyPrint(false)
                             val mathElements = document.select("math")
                             val svgResults = mutableMapOf<String, String>()
 

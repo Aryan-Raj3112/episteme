@@ -34,6 +34,17 @@ import org.jsoup.nodes.Node
 import timber.log.Timber
 import java.io.File
 
+private const val TXT_FORMAT_TRACE_TAG = "TxtFormatTrace"
+
+private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
+    return replace("\\", "\\\\")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
+}
+
 data class ChapterLoadingResult(
     val head: String,
     val chunks: List<String>,
@@ -102,6 +113,7 @@ suspend fun loadChapterContent(
 
         val (headContent, chunks, chunkElementStartIndices, chunkElementCounts) = if (htmlFile.exists()) {
             val doc = Jsoup.parse(htmlFile, "UTF-8")
+            doc.outputSettings().prettyPrint(false)
             val head = doc.head().html()
             doc.select("script").remove()
             applyBookReplacementsToHtmlDocument(
@@ -111,6 +123,16 @@ suspend fun loadChapterContent(
             )
             val bodyNodes = doc.body().childNodes().toList()
             val htmlChunks = splitBodyNodesIntoReaderChunks(bodyNodes)
+            val chunkPreviewSource = htmlChunks.firstOrNull()?.html.orEmpty()
+            Timber.tag(TXT_FORMAT_TRACE_TAG).d(
+                "event=android_txt_chunk_split chapter=${chapterIndex + 1} file=${chapter.contentFilePath().txtFormatTracePreview()} " +
+                    "headChars=${head.length} bodyNodes=${bodyNodes.size} chunks=${htmlChunks.size} " +
+                    "headHasPreWrap=${head.contains("white-space: pre-wrap") || head.contains("white-space:pre-wrap")} " +
+                    "chunkHasTxtClass=${chunkPreviewSource.contains("reader-txt-preformatted")} " +
+                    "chunkHasInlinePreWrap=${chunkPreviewSource.contains("white-space: pre-wrap !important")} " +
+                    "chunkHasAlbumMarker=${chunkPreviewSource.contains("===========CD 1=============")} " +
+                    "chunkPreview=${chunkPreviewSource.txtFormatTracePreview()}"
+            )
             if (htmlChunks.isEmpty()) {
                 ChapterHtmlPayload(
                     head = head,

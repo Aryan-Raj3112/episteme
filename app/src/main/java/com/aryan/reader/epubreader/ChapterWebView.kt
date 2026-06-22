@@ -251,6 +251,17 @@ private fun buildCustomFontCssForWebView(customFontPath: String?, phase: String)
     return css
 }
 
+private const val TxtFormatTraceTag = "TxtFormatTrace"
+
+private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
+    return replace("\\", "\\\\")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
+}
+
 private fun getJsToInject(context: Context): String {
     return try {
         context.assets.open("epub_reader.js").use { inputStream ->
@@ -805,6 +816,11 @@ fun ChapterWebView(
                                         )
                                     }
 
+                                    message.startsWith("TxtFormatTrace:") -> {
+                                        Timber.tag(TxtFormatTraceTag)
+                                            .d("JS -> ${message.substringAfter("TxtFormatTrace: ")}")
+                                    }
+
                                     message.startsWith("NavDiag:") -> {
                                         Timber.tag("NavDiag")
                                             .d("JS -> ${message.substringAfter("NavDiag: ")}")
@@ -887,7 +903,7 @@ fun ChapterWebView(
                             }
                             if (url != null) {
                                 Timber.tag(TAG_LINK_NAV)
-                                    .d("[INTERNAL-LINK-PASSED] url='$url' from chapter '$chapterTitle' — allowing WebView to handle")
+                                    .d("[INTERNAL-LINK-PASSED] url='$url' from chapter '$chapterTitle' - allowing WebView to handle")
                             }
                             return false
                         }
@@ -1017,6 +1033,29 @@ fun ChapterWebView(
 
                             view?.evaluateJavascript(
                                 "javascript:window.updateReaderStyles($currentFontSize, $currentLineHeight, '$fontNameForJs', '${currentTextAlign.cssValue}', $currentParagraphGap, $currentImageSize, $currentHorizontalMargin, $currentVerticalMargin);",
+                                null
+                            )
+
+                            view?.evaluateJavascript(
+                                """
+                                    javascript:setTimeout(function() {
+                                        var p = document.querySelector('p.reader-txt-preformatted') || document.querySelector('p');
+                                        if (!p) {
+                                            console.log('TxtFormatTrace: event=android_webview_computed noParagraph=true');
+                                            return;
+                                        }
+                                        var style = window.getComputedStyle(p);
+                                        var textPreview = (p.textContent || '').slice(0, 180).replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+                                        console.log(
+                                            'TxtFormatTrace: event=android_webview_computed class=' + p.className +
+                                            ' whiteSpace=' + style.whiteSpace +
+                                            ' textIndent=' + style.textIndent +
+                                            ' textAlign=' + style.textAlign +
+                                            ' fontFamily=' + style.fontFamily +
+                                            ' textPreview=' + textPreview
+                                        );
+                                    }, 250);
+                                """.trimIndent(),
                                 null
                             )
 
@@ -1157,6 +1196,17 @@ fun ChapterWebView(
                     this.setBackgroundColor(Color.TRANSPARENT)
                     Timber.d(
                         "WebView loading initial data with base URL: $baseUrl (Key: $key)"
+                    )
+                    val txtTraceContainsPreWrap = initialHtmlContent.contains("white-space: pre-wrap") || initialHtmlContent.contains("white-space:pre-wrap")
+                    val txtTraceContainsTxtClass = initialHtmlContent.contains("reader-txt-preformatted")
+                    val txtTraceContainsInlinePreWrap = initialHtmlContent.contains("white-space: pre-wrap !important")
+                    val txtTraceContainsAlbumMarker = initialHtmlContent.contains("===========CD 1=============")
+                    Timber.tag(TxtFormatTraceTag).d(
+                        "event=android_webview_load key=${key.toString().txtFormatTracePreview()} baseUrl=${baseUrl.orEmpty().txtFormatTracePreview()} " +
+                            "htmlChars=${initialHtmlContent.length} newlines=${initialHtmlContent.count { it == '\n' }} " +
+                            "containsPreWrap=$txtTraceContainsPreWrap containsTxtClass=$txtTraceContainsTxtClass " +
+                            "containsInlinePreWrap=$txtTraceContainsInlinePreWrap containsAlbumMarker=$txtTraceContainsAlbumMarker " +
+                            "preview=${initialHtmlContent.txtFormatTracePreview()}"
                     )
                     loadDataWithBaseURL(baseUrl, initialHtmlContent, "text/html", "UTF-8", null)
                 }

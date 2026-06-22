@@ -140,6 +140,17 @@ private data class PageNavigationEntry(
     val anchors: Set<String>
 )
 
+private const val TxtFormatTraceTag = "TxtFormatTrace"
+
+private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
+    return replace("\\", "\\\\")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
+}
+
 @OptIn(ExperimentalSerializationApi::class)
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 @Stable
@@ -996,7 +1007,16 @@ class BookPaginator(
             }
         }
 
+        val txtTraceContainsPreWrap = htmlToParse.contains("white-space: pre-wrap") || htmlToParse.contains("white-space:pre-wrap")
+        val txtTraceContainsAlbumMarker = htmlToParse.contains("===========CD 1=============")
+        Timber.tag(TxtFormatTraceTag).d(
+            "event=android_paginator_html_input bookId=$bookId chapter=$chapterIndex title=${chapter.title.txtFormatTracePreview()} " +
+                "htmlChars=${htmlToParse.length} newlines=${htmlToParse.count { it == '\n' }} " +
+                "plainChars=${chapter.plainTextCharacterCount()} containsPreWrap=$txtTraceContainsPreWrap " +
+                "containsAlbumMarker=$txtTraceContainsAlbumMarker preview=${htmlToParse.txtFormatTracePreview()}"
+        )
         val document = Jsoup.parse(htmlToParse, chapter.absPath)
+        document.outputSettings().prettyPrint(false)
         val htmlInputHasProductEzoic = htmlToParse.contains("productEzoicAds", ignoreCase = true)
         val parsedBlockedNodeCount = document.select("script, style, noscript, template").size
         val parsedBodyTextHasProductEzoic = document.body().text().contains("productEzoicAds", ignoreCase = true)
@@ -1040,6 +1060,15 @@ class BookPaginator(
             parsingCssRules = parsingCssRules.merge(bookCssResult.rules)
         }
 
+        val txtTraceProcessedHasInlinePreWrap = processedHtml.contains("white-space: pre-wrap !important")
+        Timber.tag(TxtFormatTraceTag).d(
+            "event=android_paginator_processed_html bookId=$bookId chapter=$chapterIndex " +
+                "htmlChars=${processedHtml.length} newlines=${processedHtml.count { it == '\n' }} " +
+                "containsInlinePreWrap=$txtTraceProcessedHasInlinePreWrap " +
+                "containsAlbumMarker=${processedHtml.contains("===========CD 1=============")} " +
+                "preview=${processedHtml.txtFormatTracePreview()}"
+        )
+
         val semanticBlocks = androidHtmlToSemanticBlocks(
             html = processedHtml,
             cssRules = parsingCssRules,
@@ -1055,6 +1084,16 @@ class BookPaginator(
         Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
             "semantic_parse_result chapter=$chapterIndex " +
                 semanticBlocks.readerSemanticLinkDiagSummary()
+        )
+        val firstTxtSemantic = semanticBlocks.filterIsInstance<SemanticTextBlock>()
+            .firstOrNull { it.text.contains("===========CD 1=============") || it.text.contains("[ID]") }
+        Timber.tag(TxtFormatTraceTag).d(
+            "event=android_paginator_semantic_result bookId=$bookId chapter=$chapterIndex " +
+                "textBlocks=${semanticBlocks.filterIsInstance<SemanticTextBlock>().size} " +
+                "firstTxtChars=${firstTxtSemantic?.text?.length ?: 0} " +
+                "firstTxtNewlines=${firstTxtSemantic?.text?.count { it == '\n' } ?: 0} " +
+                "firstTxtHasRepeatedSpaces=${firstTxtSemantic?.text?.let { Regex(" {2,}").containsMatchIn(it) } == true} " +
+                "preview=${firstTxtSemantic?.text.orEmpty().txtFormatTracePreview()}"
         )
 
         if (!isDisposed()) paginatorScope.launch(Dispatchers.IO) {

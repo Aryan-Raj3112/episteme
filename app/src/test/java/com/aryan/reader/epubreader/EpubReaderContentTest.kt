@@ -54,6 +54,37 @@ class EpubReaderContentTest {
     }
 
     @Test
+    fun `loadChapterContent preserves txt preformatted whitespace when chunking body`() = runTest {
+        val root = temp.newFolder("txt-preformatted")
+        val body = """
+            <p class="reader-txt-preformatted" style="white-space: pre-wrap !important; text-indent: 0 !important;">[ID]          72694621
+[Title]       DAMN.
+[Artists]     Kendrick Lamar
+
+===========CD 1=============
+[1]     BLOOD.</p>
+        """.trimIndent()
+        writeChapter(root, "part_1.html", "<html><body>$body</body></html>")
+        val book = epubBook(root, listOf(chapter("part_1.html")))
+
+        val result = loadChapterContent(
+            context = contextWithStrings(),
+            epubBook = book,
+            chapterIndex = 0,
+            chunkTargetOverride = null,
+            isInitialCfiLoad = false,
+            cfiToLoad = null,
+            locatorConverter = mockk()
+        )
+
+        val chunk = result.chunks.single()
+        assertTrue(chunk.contains("class=\"reader-txt-preformatted\""))
+        assertTrue(chunk.contains("[ID]          72694621\n[Title]       DAMN."))
+        assertTrue(chunk.contains("[Artists]     Kendrick Lamar\n\n===========CD 1============="))
+        assertFalse(chunk.contains("[ID] 72694621 [Title] DAMN."))
+    }
+
+    @Test
     fun `loadChapterContent records element starts independently from whitespace text nodes`() = runTest {
         val root = temp.newFolder("content-whitespace")
         val body = (1..25).joinToString(separator = "\n", prefix = "\n", postfix = "\n") { index ->

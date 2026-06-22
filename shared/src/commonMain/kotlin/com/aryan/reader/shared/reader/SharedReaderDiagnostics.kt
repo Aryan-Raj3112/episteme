@@ -3,6 +3,7 @@ package com.aryan.reader.shared.reader
 internal const val SharedReaderDiagnosticsProperty = "episteme.desktop.diagnostics"
 internal const val SharedReaderDiagnosticsTagsProperty = "episteme.desktop.diagnostics.tags"
 internal const val SharedEpubCutoffDiagnosticsTag = "EpistemeEpubCutoff"
+internal const val TxtFormatTraceTag = "TxtFormatTrace"
 
 internal expect val SharedReaderDiagnosticsEnabled: Boolean
 internal expect fun isSharedReaderDiagnosticTagEnabled(tag: String): Boolean

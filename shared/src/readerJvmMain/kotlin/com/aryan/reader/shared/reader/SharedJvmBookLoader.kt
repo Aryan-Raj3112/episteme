@@ -45,6 +45,15 @@ private fun Long.jvmBookOpenTraceElapsedMs(nowNanos: Long = System.nanoTime()): 
     return ((nowNanos - this).coerceAtLeast(0L)) / 1_000_000L
 }
 
+private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
+    return replace("\\", "\\\\")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+        .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+        .replace("\"", "\\\"")
+}
+
 private fun String.jvmBookOpenTracePreview(maxLength: Int = 96): String {
     return replace(Regex("\\s+"), " ")
         .trim()
@@ -361,6 +370,15 @@ object SharedJvmBookLoader {
 
     private fun loadPlainText(file: File): SharedEpubBook {
         val text = file.readTextLenient()
+        logSharedReaderDiagnostic(TxtFormatTraceTag) {
+            val lines = text.replace("\r\n", "\n").replace("\r", "\n").split('\n')
+            val nonBlankLines = lines.count { it.isNotBlank() }
+            val repeatedSpaceLines = lines.count { Regex(" {2,}").containsMatchIn(it) }
+            "event=shared_jvm_txt_loaded file=\"${file.name.txtFormatTracePreview()}\" bytes=${file.length()} " +
+                "chars=${text.length} lines=${lines.size} nonBlankLines=$nonBlankLines repeatedSpaceLines=$repeatedSpaceLines " +
+                "firstNonBlank=\"${lines.firstOrNull { it.isNotBlank() }.orEmpty().txtFormatTracePreview()}\" " +
+                "preview=\"${text.txtFormatTracePreview()}\""
+        }
         return SharedTextBookFactory.fromPlainText(
             id = file.absolutePath,
             fileName = file.name,

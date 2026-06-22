@@ -3897,11 +3897,33 @@ object ReaderHtmlDocumentBuilder {
     }
 
     private fun SharedEpubChapter.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
+        val normalizedText = normalizedReaderText()
         semanticBlocks.takeIf { it.isNotEmpty() }?.let { blocks ->
+            val prewrapBlocks = blocks.flattenHtmlSemanticBlocks()
+                .filterIsInstance<SemanticTextBlock>()
+                .count { it.text.needsPreservedWhitespace() }
+            logSharedReaderDiagnostic(TxtFormatTraceTag) {
+                "event=shared_html_chapter_route route=semantic chapter=\"${title.txtFormatTracePreview()}\" " +
+                    "plainChars=${plainText.length} normalizedChars=${normalizedText.length} blocks=${blocks.size} prewrapBlocks=$prewrapBlocks " +
+                    "htmlChars=${htmlContent.length} preview=\"${normalizedText.txtFormatTracePreview()}\""
+            }
             return blocks.joinToString("") { it.toHtml(searchQuery, searchOptions) }
         }
-        htmlContent.takeIf { it.isNotBlank() }?.let { return it }
-        return normalizedReaderText().textToParagraphHtml(searchQuery, searchOptions)
+        htmlContent.takeIf { it.isNotBlank() }?.let { html ->
+            logSharedReaderDiagnostic(TxtFormatTraceTag) {
+                "event=shared_html_chapter_route route=htmlContent chapter=\"${title.txtFormatTracePreview()}\" " +
+                    "plainChars=${plainText.length} normalizedChars=${normalizedText.length} htmlChars=${html.length} " +
+                    "containsPreWrap=${html.contains("white-space: pre-wrap") || html.contains("white-space:pre-wrap")} " +
+                    "htmlPreview=\"${html.txtFormatTracePreview()}\" plainPreview=\"${normalizedText.txtFormatTracePreview()}\""
+            }
+            return html
+        }
+        logSharedReaderDiagnostic(TxtFormatTraceTag) {
+            "event=shared_html_chapter_route route=plainFallback chapter=\"${title.txtFormatTracePreview()}\" " +
+                "plainChars=${plainText.length} normalizedChars=${normalizedText.length} " +
+                "needsWhitespace=${normalizedText.needsPreservedWhitespace()} preview=\"${normalizedText.txtFormatTracePreview()}\""
+        }
+        return normalizedText.textToParagraphHtml(searchQuery, searchOptions)
     }
 
     private fun List<SemanticBlock>.blocksForPage(page: ReaderPage): List<SemanticBlock> {
@@ -4063,9 +4085,9 @@ object ReaderHtmlDocumentBuilder {
 
     private fun SemanticBlock.toHtml(searchQuery: String, searchOptions: ReaderSearchOptions): String {
         return when (this) {
-            is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}${styleAttribute()}>${textHtml(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
-            is SemanticParagraph -> "<p${textOffsetAttributes()}${styleAttribute()}>${textHtml(searchQuery, searchOptions)}</p>"
-            is SemanticListItem -> "<li${textOffsetAttributes()}${listItemStyleAttribute()}>${textHtml(searchQuery, searchOptions)}</li>"
+            is SemanticHeader -> "<h${level.coerceIn(1, 6)}${textOffsetAttributes()}${styleAttribute(preservedWhitespaceStyle())}>${textHtml(searchQuery, searchOptions)}</h${level.coerceIn(1, 6)}>"
+            is SemanticParagraph -> "<p${textOffsetAttributes()}${styleAttribute(preservedWhitespaceStyle())}>${textHtml(searchQuery, searchOptions)}</p>"
+            is SemanticListItem -> "<li${textOffsetAttributes()}${listItemStyleAttribute(preservedWhitespaceStyle())}>${textHtml(searchQuery, searchOptions)}</li>"
             is SemanticList -> {
                 val tag = if (isOrdered) "ol" else "ul"
                 "<$tag${styleAttribute()}>${items.joinToString("") { it.toHtml(searchQuery, searchOptions) }}</$tag>"
@@ -4081,7 +4103,7 @@ object ReaderHtmlDocumentBuilder {
             }
             is SemanticFlexContainer -> children.joinToString("", "<div${styleAttribute()}>", "</div>") { it.toHtml(searchQuery, searchOptions) }
             is SemanticWrappingBlock -> floatedImage.toHtml(searchQuery, searchOptions) + paragraphsToWrap.joinToString("") { it.toHtml(searchQuery, searchOptions) }
-            is SemanticTextBlock -> "<p${textOffsetAttributes()}${styleAttribute()}>${textHtml(searchQuery, searchOptions)}</p>"
+            is SemanticTextBlock -> "<p${textOffsetAttributes()}${styleAttribute(preservedWhitespaceStyle())}>${textHtml(searchQuery, searchOptions)}</p>"
         }
     }
 
@@ -4090,13 +4112,37 @@ object ReaderHtmlDocumentBuilder {
         searchOptions: ReaderSearchOptions,
         baseOffset: Int = 0
     ): String {
-        return paragraphSegments()
+        val segments = paragraphSegments()
+        logSharedReaderDiagnostic(TxtFormatTraceTag) {
+            "event=shared_plain_fallback_segments baseOffset=$baseOffset chars=$length segments=${segments.size} " +
+                "prewrapSegments=${segments.count { it.text.needsPreservedWhitespace() }} " +
+                "firstSegment=\"${segments.firstOrNull()?.text.orEmpty().txtFormatTracePreview()}\""
+        }
+        return segments
             .joinToString("") { paragraph ->
                 val start = baseOffset + paragraph.startOffset
                 val end = start + paragraph.text.length
-                """<p data-reader-text-start="$start" data-reader-text-end="$end">${paragraph.text.highlightAndEscape(searchQuery, searchOptions)}</p>"""
+                val whitespaceStyle = if (paragraph.text.needsPreservedWhitespace()) {
+                    """ style="white-space:pre-wrap"""
+                } else {
+                    ""
+                }
+                """<p data-reader-text-start="$start" data-reader-text-end="$end"$whitespaceStyle>${paragraph.text.highlightAndEscape(searchQuery, searchOptions)}</p>"""
             }
             .ifBlank { "<p></p>" }
+    }
+
+    private fun String.needsPreservedWhitespace(): Boolean {
+        return any { it == '\n' || it == '\t' } || contains(Regex(" {2,}"))
+    }
+
+    private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
+        return replace("\\", "\\\\")
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+            .replace("\t", "\\t")
+            .let { if (it.length <= maxLength) it else it.take(maxLength) + "..." }
+            .replace("\"", "\\\"")
     }
 
     private fun String.paragraphSegments(): List<TextSegment> {
@@ -4238,12 +4284,17 @@ object ReaderHtmlDocumentBuilder {
         return style.toStyleAttribute(extra)
     }
 
-    private fun SemanticListItem.listItemStyleAttribute(): String {
+    private fun SemanticTextBlock.preservedWhitespaceStyle(): String? {
+        return if (text.needsPreservedWhitespace()) "white-space:pre-wrap" else null
+    }
+
+    private fun SemanticListItem.listItemStyleAttribute(extra: String? = null): String {
         val markerStyle = itemMarkerImage
             ?.takeIf { it.isNotBlank() }
             ?.takeIf { style.blockStyle.listStyleImage.isNullOrBlank() }
             ?.let { "list-style-image:url('${it.escapeHtml()}')" }
-        return style.toStyleAttribute(markerStyle)
+        val extras = listOfNotNull(markerStyle, extra).joinToString(";").takeIf { it.isNotBlank() }
+        return style.toStyleAttribute(extras)
     }
 
     private fun CssStyle.toStyleAttribute(extra: String? = null): String {

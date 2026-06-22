@@ -54,13 +54,54 @@ class SingleFileImporterTest {
         assertEquals("Plain", book.title)
         assertEquals(1, book.chapters.size)
         assertEquals("Part 1", book.chapters.single().title)
-        assertTrue(book.chapters.single().plainTextContent.contains("First <line> continues"))
-        assertTrue(File(book.extractionBasePath, "part_1.html").readText().contains("First &lt;line&gt;"))
-        val metadata = File(book.extractionBasePath, "book_metadata.json")
+        assertTrue(book.chapters.single().plainTextContent.contains("First <line>\ncontinues"))
+        val chapterHtml = File(book.extractionBasePath, "part_1.html").readText()
+        assertTrue(chapterHtml.contains("white-space: pre-wrap"))
+        assertTrue(chapterHtml.contains("class=\"reader-txt-preformatted\""))
+        assertTrue(chapterHtml.contains("white-space: pre-wrap !important; text-indent: 0 !important;"))
+        assertTrue(chapterHtml.contains("First &lt;line&gt;\ncontinues"))
+        val metadata = File(book.extractionBasePath, "book_metadata_txt_preformatted_v3.json")
         assertTrue(metadata.isFile)
         val metadataText = metadata.readText()
-        assertFalse(metadataText.contains("First <line> continues"))
+        assertFalse(metadataText.contains("First <line>\ncontinues"))
         assertTrue(metadataText.contains("plainTextLength"))
+    }
+
+    @Test
+    fun `plain text import preserves track list line breaks and alignment`() = runTest {
+        val cache = temp.newFolder("txt-track-list-cache")
+        val importer = SingleFileImporter(contextWithCache(cache))
+        val text = """
+            [ID]          72694621
+            [Title]       DAMN.
+            [Artists]     Kendrick Lamar
+            [ReleaseDate] 2017-04-14
+            [SongNum]     14
+            [Duration]    3294
+
+            ===========CD 1=============
+            [1]     BLOOD.
+            [2]     DNA.
+            [3]     YAH.
+        """.trimIndent()
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(text.toByteArray()),
+            type = FileType.TXT,
+            originalBookNameHint = "AlbumInfo.txt",
+            bookId = "album-info"
+        )
+
+        val chapter = book.chapters.single()
+        val html = File(book.extractionBasePath, chapter.htmlFilePath).readText()
+        assertTrue(chapter.plainTextContent.contains("[ID]          72694621\n[Title]       DAMN."))
+        assertTrue(chapter.plainTextContent.contains("[Duration]    3294\n\n===========CD 1============="))
+        assertTrue(chapter.plainTextContent.contains("===========CD 1=============\n[1]     BLOOD."))
+        assertTrue(html.contains("white-space: pre-wrap"))
+        assertTrue(html.contains("class=\"reader-txt-preformatted\""))
+        assertTrue(html.contains("white-space: pre-wrap !important; text-indent: 0 !important;"))
+        assertTrue(html.contains("[ID]          72694621\n[Title]       DAMN."))
+        assertTrue(html.contains("===========CD 1=============\n[1]     BLOOD.\n[2]     DNA."))
     }
 
     @Test
