@@ -4,10 +4,10 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.reader.SharedJvmBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import java.awt.Color
 import java.awt.Font
-import java.awt.GradientPaint
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.File
@@ -15,7 +15,6 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
 import javax.imageio.ImageIO
-import kotlin.math.max
 
 data class DesktopFolderMetadataExtractionResult(
     val books: List<BookItem>,
@@ -39,6 +38,9 @@ data class DesktopFolderMetadataExtractionStats(
 }
 
 object DesktopFolderMetadataExtractor {
+    private const val MAX_TEXT_SOURCE_CHARS = 256 * 1024
+    private const val MAX_PREVIEW_TEXT_CHARS = 2_400
+
     private val textMetadataTypes = setOf(
         FileType.PDF,
         FileType.EPUB,
@@ -50,6 +52,16 @@ object DesktopFolderMetadataExtractor {
         FileType.FODT
     )
     private val generatedCoverTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
+    private val replaceableContentPreviewTypes = setOf(
+        FileType.TXT,
+        FileType.MD,
+        FileType.HTML,
+        FileType.MOBI,
+        FileType.FB2,
+        FileType.DOCX,
+        FileType.ODT,
+        FileType.FODT
+    )
     private val rasterCoverExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
 
     fun enrichFolderBooks(
@@ -115,7 +127,11 @@ object DesktopFolderMetadataExtractor {
         val file = File(path)
         if (!file.isFile) return false
         val needsTextMetadata = type in textMetadataTypes && !folderTextMetadataParsed
-        val needsCover = type in generatedCoverTypes && coverImagePath?.let { File(it).isFile } != true
+        val existingCoverPath = coverImagePath?.takeIf { File(it).isFile }
+        val needsCover = type in generatedCoverTypes && (
+            existingCoverPath == null ||
+                shouldReplaceWithContentPreview(existingCoverPath)
+            )
         return needsTextMetadata || needsCover
     }
 
@@ -168,10 +184,12 @@ object DesktopFolderMetadataExtractor {
             else -> Unit
         }
 
-        val coverPath = book.coverImagePath?.takeIf { File(it).isFile }
+        val existingCoverPath = book.coverImagePath?.takeIf { File(it).isFile }
+            ?.takeUnless { book.shouldReplaceWithContentPreview(it) }
+        val coverPath = existingCoverPath
             ?: saveEmbeddedCover(book, embeddedCover)
             ?: renderReaderSurfaceCover(book, file)
-            ?: saveGeneratedCover(book)
+            ?: saveContentPreviewCover(book, file)
 
         val nextTitle = if (book.shouldApplyExtractedTitle(file)) {
             extractedTitle ?: book.title ?: file.nameWithoutExtension
@@ -356,12 +374,15 @@ object DesktopFolderMetadataExtractor {
 
     private fun renderReaderSurfaceCover(book: BookItem, file: File): String? {
         if (book.type == FileType.PDF && !DesktopPdfium.isAvailable()) return null
-        if (book.type != FileType.PDF && !DesktopComicArchive.canLoad(book.type)) return null
+        val canRenderSurface = book.type == FileType.PDF ||
+            book.type == FileType.PPTX ||
+            DesktopComicArchive.canLoad(book.type)
+        if (!canRenderSurface) return null
         return runCatching {
-            val document = if (book.type == FileType.PDF) {
-                DesktopPdfium.load(file)
-            } else {
-                DesktopPdfium.loadComic(file, book.type)
+            val document = when (book.type) {
+                FileType.PDF -> DesktopPdfium.load(file)
+                FileType.PPTX -> DesktopPdfium.loadPptx(file)
+                else -> DesktopPdfium.loadComic(file, book.type)
             }
             try {
                 if (document.pageCount <= 0) {
@@ -383,15 +404,13 @@ object DesktopFolderMetadataExtractor {
         }.getOrNull()
     }
 
-    private fun saveGeneratedCover(book: BookItem): String? {
-        if (book.type !in generatedCoverTypes) return null
-        return saveCoverImage(book, generatedCoverImage(book))
-    }
-
-    private fun saveCoverImage(book: BookItem, image: BufferedImage): String? {
+    private fun saveCoverImage(
+        book: BookItem,
+        image: BufferedImage,
+        target: File = coverCacheFile(book, "png")
+    ): String? {
         return runCatching {
             deleteExistingCoverFiles(book)
-            val target = coverCacheFile(book, "png")
             target.parentFile?.mkdirs()
             val temp = File(target.parentFile, "${target.name}.tmp")
             ImageIO.write(image, "png", temp)
@@ -400,41 +419,119 @@ object DesktopFolderMetadataExtractor {
         }.getOrNull()
     }
 
-    private fun generatedCoverImage(book: BookItem): BufferedImage {
+    private fun saveContentPreviewCover(book: BookItem, file: File): String? {
+        if (book.type !in generatedCoverTypes) return null
+        val text = extractContentPreviewText(file, book.type) ?: return null
+        return saveCoverImage(book, contentPreviewImage(text), contentCoverCacheFile(book))
+    }
+
+    private fun extractContentPreviewText(file: File, type: FileType): String? {
+        return runCatching {
+            when (type) {
+                FileType.TXT, FileType.MD -> file.readTextPreview()
+                FileType.HTML -> file.readTextPreview().htmlToPlainText()
+                FileType.DOCX -> readDocxText(file)
+                FileType.ODT -> readOdtText(file)
+                FileType.FODT -> file.readTextPreview().xmlBodyToPlainText("office:text")
+                    ?: file.readTextPreview().xmlToPlainText()
+                FileType.EPUB -> readEpubContentText(file)
+                FileType.MOBI -> readSharedJvmBookText(file, type)
+                FileType.FB2 -> file.readTextPreview().xmlBodyToPlainText("body")
+                    ?: file.readTextPreview().xmlToPlainText()
+                else -> null
+            }?.normalizePreviewText()
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun readDocxText(file: File): String? {
+        return ZipFile(file).use { zip ->
+            zip.readTextOrNull("word/document.xml")
+                ?.extractXmlTextNodes("t")
+                ?.normalizePreviewText()
+        }
+    }
+
+    private fun readOdtText(file: File): String? {
+        return ZipFile(file).use { zip ->
+            zip.readTextOrNull("content.xml")
+                ?.xmlBodyToPlainText("office:text")
+                ?.normalizePreviewText()
+        }
+    }
+
+    private fun readSharedJvmBookText(file: File, type: FileType): String? {
+        return SharedJvmBookLoader.load(
+            file = file,
+            type = type,
+            semanticMode = SharedJvmBookLoadSemanticMode.SKIP
+        )
+            .chapters
+            .firstOrNull { it.plainText.isNotBlank() }
+            ?.plainText
+            ?.normalizePreviewText()
+    }
+
+    private fun readEpubContentText(file: File): String? {
+        return ZipFile(file).use { zip ->
+            val containerXml = zip.readTextOrNull("META-INF/container.xml")
+            val opfPath = containerXml
+                ?.let(::parseEpubRootfilePath)
+                ?: zip.entries().asSequence()
+                    .map { it.name }
+                    .firstOrNull { it.endsWith(".opf", ignoreCase = true) }
+            val basePath = opfPath
+                ?.substringBeforeLast('/', missingDelimiterValue = "")
+                ?.let { if (it.isBlank()) "" else "$it/" }
+                .orEmpty()
+            val manifest = opfPath
+                ?.let { zip.readTextOrNull(it) }
+                ?.let(::parseEpubManifest)
+                .orEmpty()
+
+            val contentPath = manifest
+                .firstOrNull { item -> item.mediaType.equals("application/xhtml+xml", ignoreCase = true) }
+                ?.href
+                ?: manifest.firstOrNull { item -> item.href.endsWith(".html", ignoreCase = true) }?.href
+                ?: manifest.firstOrNull { item -> item.href.endsWith(".xhtml", ignoreCase = true) }?.href
+                ?: zip.entries().asSequence()
+                    .map { it.name }
+                    .firstOrNull { it.endsWith(".html", ignoreCase = true) || it.endsWith(".xhtml", ignoreCase = true) }
+
+            contentPath
+                ?.let { normalizeZipPath(if (it.contains('/')) it else basePath + it) }
+                ?.let { zip.readTextOrNull(it) }
+                ?.htmlToPlainText()
+                ?.normalizePreviewText()
+        }
+    }
+
+    private fun contentPreviewImage(text: String): BufferedImage {
         val width = 480
         val height = 720
         val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-        val base = coverColor(book.type)
-        val title = book.title?.takeIf { it.isNotBlank() }
-            ?: book.displayName.substringBeforeLast('.', missingDelimiterValue = book.displayName)
-        val author = book.author?.takeIf { it.isNotBlank() }
+        val margin = 48
 
         val g = image.createGraphics()
         try {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g.paint = GradientPaint(0f, 0f, base.brighter(), 0f, height.toFloat(), base.darker())
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+            g.color = Color(252, 250, 245)
             g.fillRect(0, 0, width, height)
+            g.color = Color(226, 220, 209)
+            g.fillRect(0, 0, 18, height)
+            g.color = Color(198, 188, 170)
+            g.drawLine(34, 0, 34, height)
 
-            g.color = Color(255, 255, 255, 36)
-            g.fillRoundRect(42, 42, width - 84, height - 84, 36, 36)
-            g.color = Color(255, 255, 255, 210)
-            g.font = Font("SansSerif", Font.BOLD, 34)
-            g.drawString(book.type.name, 64, 104)
-
-            g.font = Font("Serif", Font.BOLD, 48)
-            val titleLines = wrapText(title, g.fontMetrics, width - 128, maxLines = 6)
-            var y = 250
-            titleLines.forEach { line ->
-                g.drawString(line, 64, y)
-                y += 58
-            }
-
-            g.font = Font("SansSerif", Font.PLAIN, 28)
-            val footer = author ?: book.displayName
-            val footerLines = wrapText(footer, g.fontMetrics, width - 128, maxLines = 2)
-            val footerStart = max(y + 40, height - 150)
-            footerLines.forEachIndexed { index, line ->
-                g.drawString(line, 64, footerStart + index * 34)
+            g.color = Color(38, 35, 31)
+            g.font = Font("Serif", Font.PLAIN, 25)
+            val metrics = g.fontMetrics
+            val lineHeight = metrics.height + 7
+            val lines = wrapPreviewText(text, metrics, width - margin * 2)
+            var y = 74
+            for (line in lines) {
+                if (y + metrics.descent >= height - 46) break
+                g.drawString(line, margin, y)
+                y += lineHeight
             }
         } finally {
             g.dispose()
@@ -442,9 +539,9 @@ object DesktopFolderMetadataExtractor {
         return image
     }
 
-    private fun wrapText(text: String, metrics: java.awt.FontMetrics, maxWidth: Int, maxLines: Int): List<String> {
+    private fun wrapPreviewText(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): List<String> {
         val words = text.replace(Regex("\\s+"), " ").trim().split(' ').filter { it.isNotBlank() }
-        if (words.isEmpty()) return listOf("Untitled")
+        if (words.isEmpty()) return emptyList()
         val lines = mutableListOf<String>()
         var current = ""
 
@@ -456,10 +553,9 @@ object DesktopFolderMetadataExtractor {
                 if (current.isNotBlank()) lines += current
                 current = trimToWidth(word, metrics, maxWidth)
             }
-            if (lines.size == maxLines) break
         }
-        if (lines.size < maxLines && current.isNotBlank()) lines += current
-        return lines.take(maxLines)
+        if (current.isNotBlank()) lines += current
+        return lines
     }
 
     private fun trimToWidth(text: String, metrics: java.awt.FontMetrics, maxWidth: Int): String {
@@ -471,29 +567,34 @@ object DesktopFolderMetadataExtractor {
         return "$candidate..."
     }
 
-    private fun coverColor(type: FileType): Color {
-        return when (type) {
-            FileType.PDF -> Color(156, 65, 70)
-            FileType.EPUB -> Color(0, 108, 76)
-            FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT -> Color(112, 93, 73)
-            FileType.MD -> Color(83, 101, 120)
-            FileType.HTML -> Color(122, 87, 42)
-            FileType.TXT -> Color(74, 92, 112)
-            else -> Color(93, 107, 130)
-        }
+    private fun BookItem.shouldReplaceWithContentPreview(existingCoverPath: String): Boolean {
+        if (type !in replaceableContentPreviewTypes) return false
+        return File(existingCoverPath).name != contentCoverCacheFile(this).name
+    }
+    private fun coverCacheFile(book: BookItem, extension: String): File {
+        return coverCacheFile(book, extension, prefix = "cover")
     }
 
-    private fun coverCacheFile(book: BookItem, extension: String): File {
+    private fun contentCoverCacheFile(book: BookItem): File {
+        return coverCacheFile(book, "png", prefix = "content_cover")
+    }
+
+    private fun coverCacheFile(book: BookItem, extension: String, prefix: String): File {
         val key = book.path?.takeIf { it.isNotBlank() } ?: book.id
         val hash = Integer.toUnsignedString(key.hashCode())
-        return File(coverCacheDir(), "cover_$hash.$extension")
+        return File(coverCacheDir(), "${prefix}_$hash.$extension")
     }
 
     private fun deleteExistingCoverFiles(book: BookItem) {
         val key = book.path?.takeIf { it.isNotBlank() } ?: book.id
         val hash = Integer.toUnsignedString(key.hashCode())
         coverCacheDir().listFiles()
-            ?.filter { it.isFile && it.name.startsWith("cover_$hash.") }
+            ?.filter { file ->
+                file.isFile && (
+                    file.name.startsWith("cover_$hash.") ||
+                        file.name.startsWith("content_cover_$hash.")
+                    )
+            }
             ?.forEach { runCatching { it.delete() } }
     }
 
@@ -578,6 +679,65 @@ object DesktopFolderMetadataExtractor {
             .replace(Regex("&#(\\d+);")) { match ->
                 match.groupValues[1].toIntOrNull()?.toChar()?.toString().orEmpty()
             }
+    }
+
+    private fun File.readTextPreview(): String {
+        return inputStream().bufferedReader(Charsets.UTF_8).use { reader ->
+            val buffer = CharArray(4096)
+            val builder = StringBuilder()
+            while (builder.length < MAX_TEXT_SOURCE_CHARS) {
+                val remaining = MAX_TEXT_SOURCE_CHARS - builder.length
+                val read = reader.read(buffer, 0, minOf(buffer.size, remaining))
+                if (read <= 0) break
+                builder.append(buffer, 0, read)
+            }
+            builder.toString()
+        }
+    }
+
+    private fun String.htmlToPlainText(): String {
+        return removeScriptAndStyleBlocks()
+            .tagInnerContent("body")
+            .takeIf { it.isNotBlank() }
+            ?: removeScriptAndStyleBlocks().xmlToPlainText()
+    }
+
+    private fun String.xmlBodyToPlainText(tag: String): String? {
+        return tagInnerContent(tag)
+            .takeIf { it.isNotBlank() }
+            ?.xmlToPlainText()
+    }
+
+    private fun String.xmlToPlainText(): String {
+        return replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("</(?:p|div|h[1-6]|li|tr|text:p)>\\s*", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("<[^>]+>"), " ")
+            .decodeEntities()
+    }
+
+    private fun String.extractXmlTextNodes(tag: String): String {
+        return Regex(
+            "<(?:[^:>]+:)?$tag\\b[^>]*>(.*?)</(?:[^:>]+:)?$tag>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+            .findAll(this)
+            .joinToString(" ") { match -> match.groupValues[1].decodeEntities() }
+    }
+
+    private fun String.removeScriptAndStyleBlocks(): String {
+        return replace(
+            Regex("<script\\b[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+            " "
+        ).replace(
+            Regex("<style\\b[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)),
+            " "
+        )
+    }
+
+    private fun String.normalizePreviewText(): String {
+        return replace(Regex("\\s+"), " ")
+            .trim()
+            .take(MAX_PREVIEW_TEXT_CHARS)
     }
 
     private fun normalizeZipPath(path: String): String {

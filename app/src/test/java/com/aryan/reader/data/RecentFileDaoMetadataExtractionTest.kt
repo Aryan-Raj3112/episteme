@@ -2,6 +2,8 @@ package com.aryan.reader.data
 
 import androidx.room.Room
 import com.aryan.reader.FileType
+import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedFileCapabilities
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -74,6 +76,27 @@ class RecentFileDaoMetadataExtractionTest {
 
         assertEquals(1, pending.size)
         assertEquals("book-2", pending.single().bookId)
+    }
+
+    @Test
+    fun `cover metadata candidate query includes every readable file type`() = runTest {
+        val readableTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID)
+        readableTypes.forEach { type ->
+            dao.insertOrUpdateFile(
+                recentFileEntity(
+                    bookId = "book-${type.name.lowercase()}",
+                    folderTextMetadataParsed = true,
+                    folderCoverMetadataParsed = false,
+                    type = type
+                )
+            )
+        }
+
+        val pending = dao.getFolderBooksNeedingTextMetadata("content://folder", limit = 100)
+            .map { it.type }
+            .toSet()
+
+        assertEquals(readableTypes, pending)
     }
 
     @Test
@@ -206,13 +229,14 @@ class RecentFileDaoMetadataExtractionTest {
         bookId: String = "book-1",
         timestamp: Long = 1_000L,
         folderTextMetadataParsed: Boolean = false,
-        folderCoverMetadataParsed: Boolean = false
+        folderCoverMetadataParsed: Boolean = false,
+        type: FileType = FileType.EPUB
     ): RecentFileEntity {
         return RecentFileEntity(
             bookId = bookId,
             uriString = "content://books/$bookId",
-            type = FileType.EPUB,
-            displayName = "$bookId.epub",
+            type = type,
+            displayName = "$bookId.${type.name.lowercase()}",
             timestamp = timestamp,
             coverImagePath = null,
             title = "One",

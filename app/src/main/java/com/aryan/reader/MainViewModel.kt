@@ -4737,6 +4737,35 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
         }
+        if (coverPath == null) {
+            val thumbnailItem = RecentFileItem(
+                bookId = bookId,
+                uriString = uri.toString(),
+                type = type,
+                displayName = displayName,
+                timestamp = System.currentTimeMillis(),
+                title = title,
+                author = author,
+                isRecent = isRecent,
+                sourceFolderUri = sourceFolderUri,
+                fileSize = fileSize,
+                fileContentModifiedTimestamp = fileContentModifiedTimestamp,
+                seriesName = seriesName,
+                seriesIndex = seriesIndex,
+                description = description
+            )
+            try {
+                ContentThumbnailGenerator(appContext).generate(thumbnailItem)?.let { thumbnail ->
+                    try {
+                        coverPath = recentFilesRepository.saveCoverToCache(thumbnail, uri)
+                    } finally {
+                        thumbnail.recycle()
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to generate content thumbnail for $displayName")
+            }
+        }
 
         val newLastModifiedTimestamp =
             existingItem?.lastModifiedTimestamp ?: System.currentTimeMillis()

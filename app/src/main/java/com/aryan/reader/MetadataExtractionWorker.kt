@@ -14,6 +14,8 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.pdf.PdfiumCoreProvider
 import com.aryan.reader.pdf.PdfiumEngineProvider
+import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedFileCapabilities
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -27,6 +29,7 @@ class MetadataExtractionWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     private val recentFilesRepository = RecentFilesRepository(appContext)
+    private val contentThumbnailGenerator = ContentThumbnailGenerator(appContext)
 
     companion object {
         const val WORK_NAME = "MetadataExtractionWorker"
@@ -43,6 +46,7 @@ class MetadataExtractionWorker(
             FileType.FODT,
             FileType.DOCX
         )
+        private val CONTENT_THUMBNAIL_TYPES = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID)
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -108,12 +112,16 @@ class MetadataExtractionWorker(
 
                 var needsTextMetadata = item.type in TEXT_METADATA_TYPES && !item.folderTextMetadataParsed
                 var needsEmbeddedCover = false
+                var needsContentThumbnail = false
 
                 try {
                     val uri = item.uriString?.toUri() ?: return@forEach
                     val fileSize = item.fileSize.takeIf { it > 0L } ?: queryFileSize(uri)
                     val existingCoverIsAvailable = item.coverImagePath?.let { File(it).isFile } == true
                     needsEmbeddedCover = EmbeddedEbookMetadataExtractor.canExtractEmbeddedCover(item.type) &&
+                        !item.folderCoverMetadataParsed &&
+                        !existingCoverIsAvailable
+                    needsContentThumbnail = item.type in CONTENT_THUMBNAIL_TYPES &&
                         !item.folderCoverMetadataParsed &&
                         !existingCoverIsAvailable
 
@@ -157,12 +165,22 @@ class MetadataExtractionWorker(
                         }
                     } else {
                         null
+                    } ?: if (needsContentThumbnail) {
+                        contentThumbnailGenerator.generate(item)?.let { thumbnail ->
+                            try {
+                                recentFilesRepository.saveCoverToCache(thumbnail, uri)
+                            } finally {
+                                thumbnail.recycle()
+                            }
+                        }
+                    } else {
+                        null
                     }
                     val coverChanged = coverPath != null && coverPath != item.coverImagePath
-                    val coverMetadataParsed = item.folderCoverMetadataParsed || needsEmbeddedCover
+                    val coverMetadataParsed = item.folderCoverMetadataParsed || needsEmbeddedCover || needsContentThumbnail
                     val textMetadataParsed = item.folderTextMetadataParsed || needsTextMetadata
 
-                    if (needsTextMetadata || needsEmbeddedCover || sizeChanged || titleChanged || authorChanged || descriptionChanged || seriesChanged || seriesIndexChanged || coverChanged) {
+                    if (needsTextMetadata || needsEmbeddedCover || needsContentThumbnail || sizeChanged || titleChanged || authorChanged || descriptionChanged || seriesChanged || seriesIndexChanged || coverChanged) {
                         pendingUpdates.add(
                             item.copy(
                                 coverImagePath = coverPath ?: item.coverImagePath,
@@ -194,11 +212,11 @@ class MetadataExtractionWorker(
                 } catch (e: Exception) {
                     failed++
                     Timber.tag("MetadataWorker").e(e, "Failed metadata extraction for ${item.displayName}")
-                    if (needsTextMetadata || needsEmbeddedCover) {
+                    if (needsTextMetadata || needsEmbeddedCover || needsContentThumbnail) {
                         pendingUpdates.add(
                             item.copy(
                                 folderTextMetadataParsed = item.folderTextMetadataParsed || needsTextMetadata,
-                                folderCoverMetadataParsed = item.folderCoverMetadataParsed || needsEmbeddedCover
+                                folderCoverMetadataParsed = item.folderCoverMetadataParsed || needsEmbeddedCover || needsContentThumbnail
                             )
                         )
                         if (pendingUpdates.size >= METADATA_DB_BATCH_SIZE) {
