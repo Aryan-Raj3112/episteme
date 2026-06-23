@@ -141,6 +141,7 @@ private data class PageNavigationEntry(
 )
 
 private const val TxtFormatTraceTag = "TxtFormatTrace"
+private const val NATIVE_VERTICAL_LOAD_LOG_TAG = "NativeVerticalLoad"
 
 private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
     return replace("\\", "\\\\")
@@ -1119,7 +1120,29 @@ class BookPaginator(
         coroutineContext.ensureActive()
         if (isDisposed()) return@withContext null
         val chapter = chapters.getOrNull(chapterIndex) ?: return@withContext null
-        getCachedBlocksForChapter(chapter, chapterIndex)
+        val startMs = System.currentTimeMillis()
+        val memoryHit = blockCache[chapterIndex] != null
+        Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d(
+            "flow_blocks_start chapter=$chapterIndex memoryHit=$memoryHit"
+        )
+        try {
+            getCachedBlocksForChapter(chapter, chapterIndex).also { blocks ->
+                Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d(
+                    "flow_blocks_done chapter=$chapterIndex blocks=${blocks.size} memoryHit=$memoryHit durationMs=${System.currentTimeMillis() - startMs}"
+                )
+            }
+        } catch (e: CancellationException) {
+            Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d(
+                "flow_blocks_cancelled chapter=$chapterIndex memoryHit=$memoryHit durationMs=${System.currentTimeMillis() - startMs}"
+            )
+            throw e
+        } catch (e: Exception) {
+            Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).e(
+                e,
+                "flow_blocks_error chapter=$chapterIndex memoryHit=$memoryHit durationMs=${System.currentTimeMillis() - startMs}"
+            )
+            throw e
+        }
     }
 
     private fun startPaginationWorker(): Job = paginatorScope.launch(Dispatchers.IO) {

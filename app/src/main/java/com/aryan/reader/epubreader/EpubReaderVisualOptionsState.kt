@@ -12,3 +12,15 @@ internal fun shouldShowEpubPageInfoBar(
         PageInfoMode.HIDDEN -> false
     }
 }
+
+internal fun shouldReserveEpubPageInfoBarSpace(
+    pageInfoMode: PageInfoMode,
+    showReaderChrome: Boolean,
+    isNativeVerticalMode: Boolean
+): Boolean {
+    if (isNativeVerticalMode) return false
+    return shouldShowEpubPageInfoBar(
+        pageInfoMode = pageInfoMode,
+        showReaderChrome = showReaderChrome
+    )
+}

@@ -44,4 +44,29 @@ class EpubReaderVisualOptionsStateTest {
             )
         )
     }
+
+    @Test
+    fun `native vertical page info does not reserve reader space when synced with chrome`() {
+        assertFalse(
+            shouldReserveEpubPageInfoBarSpace(
+                pageInfoMode = PageInfoMode.SYNC,
+                showReaderChrome = true,
+                isNativeVerticalMode = true
+            )
+        )
+        assertFalse(
+            shouldReserveEpubPageInfoBarSpace(
+                pageInfoMode = PageInfoMode.SYNC,
+                showReaderChrome = false,
+                isNativeVerticalMode = true
+            )
+        )
+        assertTrue(
+            shouldReserveEpubPageInfoBarSpace(
+                pageInfoMode = PageInfoMode.SYNC,
+                showReaderChrome = true,
+                isNativeVerticalMode = false
+            )
+        )
+    }
 }

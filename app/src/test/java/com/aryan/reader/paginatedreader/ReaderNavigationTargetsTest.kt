@@ -80,4 +80,72 @@ class ReaderNavigationTargetsTest {
             nativeVerticalInitialChapterPrefetchOrder(chapterCount = 6, initialChapter = 3)
         )
     }
+
+    @Test
+    fun `native vertical failed flow load keeps chapter retryable`() {
+        val placeholders = listOf(
+            NativeVerticalFlowChapter(
+                chapterIndex = 0,
+                title = "Chapter",
+                blocks = emptyList(),
+                isLoaded = false,
+                estimatedLocationWeight = 42
+            )
+        )
+
+        val updated = nativeVerticalFlowChaptersAfterLoadResult(
+            currentChapters = placeholders,
+            placeholderChapters = placeholders,
+            chapterIndex = 0,
+            title = "Chapter",
+            blocks = null,
+            estimatedLocationWeight = 42
+        )
+
+        assertEquals(null, updated)
+    }
+
+    @Test
+    fun `native vertical empty flow load marks chapter loaded`() {
+        val placeholders = listOf(
+            NativeVerticalFlowChapter(
+                chapterIndex = 0,
+                title = "Chapter",
+                blocks = emptyList(),
+                isLoaded = false,
+                estimatedLocationWeight = 42
+            )
+        )
+
+        val updated = nativeVerticalFlowChaptersAfterLoadResult(
+            currentChapters = placeholders,
+            placeholderChapters = placeholders,
+            chapterIndex = 0,
+            title = "Chapter",
+            blocks = emptyList(),
+            estimatedLocationWeight = 42
+        )
+
+        assertEquals(true, updated?.single()?.isLoaded)
+    }
+
+    @Test
+    fun `native vertical warmup prioritizes anchor then nearby chapters`() {
+        assertEquals(
+            listOf(3, 4, 2, 5, 6),
+            nativeVerticalChapterWarmupOrder(chapterCount = 7, anchorChapter = 3)
+        )
+    }
+
+    @Test
+    fun `native vertical warmup clamps anchor and bounds neighbors`() {
+        assertEquals(
+            listOf(0, 1, 2),
+            nativeVerticalChapterWarmupOrder(chapterCount = 3, anchorChapter = -4)
+        )
+        assertEquals(
+            listOf(2, 1),
+            nativeVerticalChapterWarmupOrder(chapterCount = 3, anchorChapter = 9)
+        )
+    }
 }

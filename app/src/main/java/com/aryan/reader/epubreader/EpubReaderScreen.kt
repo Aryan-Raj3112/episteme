@@ -4408,25 +4408,26 @@ fun EpubReaderHost(
                 stableTopPadding = currentTopPadding
             }
 
-            val effectiveTopPadding = if (currentRenderMode == RenderMode.PAGINATED) {
-                if (systemUiMode == SystemUiMode.HIDDEN) {
-                    0.dp
-                } else {
-                    val insets = ViewCompat.getRootWindowInsets(view)
-                    val ignoringVisibilityTopPx = insets?.getInsetsIgnoringVisibility(
-                        WindowInsetsCompat.Type.statusBars())?.top ?: 0
-                    val ignoringVisibilityTop = with(density) { ignoringVisibilityTopPx.toDp() }
-
-                    if (ignoringVisibilityTop > 0.dp) {
-                        ignoringVisibilityTop
-                    } else if (stableTopPadding > 0.dp) {
-                        stableTopPadding
-                    } else {
-                        24.dp
-                    }
-                }
+            val stableChromeTopPadding = if (systemUiMode == SystemUiMode.HIDDEN) {
+                0.dp
             } else {
-                currentTopPadding
+                val insets = ViewCompat.getRootWindowInsets(view)
+                val ignoringVisibilityTopPx = insets?.getInsetsIgnoringVisibility(
+                    WindowInsetsCompat.Type.statusBars())?.top ?: 0
+                val ignoringVisibilityTop = with(density) { ignoringVisibilityTopPx.toDp() }
+
+                if (ignoringVisibilityTop > 0.dp) {
+                    ignoringVisibilityTop
+                } else if (stableTopPadding > 0.dp) {
+                    stableTopPadding
+                } else {
+                    24.dp
+                }
+            }
+            val effectiveTopPadding = when {
+                currentRenderMode == RenderMode.PAGINATED -> stableChromeTopPadding
+                isNativeVerticalMode -> stableChromeTopPadding
+                else -> currentTopPadding
             }
 
             val epubJumpBackLabel = epubJumpHistory.backLocator?.epubJumpLabel()
@@ -4597,7 +4598,7 @@ fun EpubReaderHost(
             ) {
                 when (currentRenderMode) {
                     RenderMode.VERTICAL_SCROLL -> {
-                        val pageInfoReserve = if (isPageInfoVisible) pageInfoBarHeight else 0.dp
+                        val pageInfoReserve = if (shouldReserveEpubPageInfoBarSpace(pageInfoMode, showBars, isNativeVerticalMode)) pageInfoBarHeight else 0.dp
                         val contentTopPadding = if (pageInfoPosition == PageInfoPosition.TOP) pageInfoReserve else 0.dp
                         val contentBottomPadding = if (pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoReserve else 0.dp
 

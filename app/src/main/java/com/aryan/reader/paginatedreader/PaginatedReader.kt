@@ -175,16 +175,20 @@ import com.aryan.reader.paginatedreader.data.BookCacheDatabase
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.jsoup.Jsoup
@@ -333,7 +337,7 @@ private data class AndroidEpubRenderedBlockBounds(
     val bottomPx: Int = topPx + heightPx
 }
 
-private data class NativeVerticalFlowChapter(
+internal data class NativeVerticalFlowChapter(
     val chapterIndex: Int,
     val title: String?,
     val blocks: List<ContentBlock>,
@@ -379,6 +383,52 @@ internal fun nativeVerticalInitialChapterPrefetchOrder(
         for (offset in 1..backwardCount.coerceAtLeast(0)) {
             val chapterIndex = start - offset
             if (chapterIndex >= 0) add(chapterIndex)
+        }
+    }
+}
+
+internal fun nativeVerticalFlowChaptersAfterLoadResult(
+    currentChapters: List<NativeVerticalFlowChapter>?,
+    placeholderChapters: List<NativeVerticalFlowChapter>,
+    chapterIndex: Int,
+    title: String?,
+    blocks: List<ContentBlock>?,
+    estimatedLocationWeight: Int
+): List<NativeVerticalFlowChapter>? {
+    if (blocks == null || chapterIndex !in placeholderChapters.indices) return null
+    val current = currentChapters ?: placeholderChapters
+    if (chapterIndex !in current.indices) return null
+    return current.toMutableList().also { updated ->
+        updated[chapterIndex] = NativeVerticalFlowChapter(
+            chapterIndex = chapterIndex,
+            title = title,
+            blocks = blocks,
+            isLoaded = true,
+            estimatedLocationWeight = estimatedLocationWeight
+        )
+    }
+}
+
+internal fun nativeVerticalChapterWarmupOrder(
+    chapterCount: Int,
+    anchorChapter: Int,
+    forwardCount: Int = 4,
+    backwardCount: Int = 1
+): List<Int> {
+    if (chapterCount <= 0) return emptyList()
+    val anchor = anchorChapter.coerceIn(0, chapterCount - 1)
+    val maxDistance = maxOf(forwardCount.coerceAtLeast(0), backwardCount.coerceAtLeast(0))
+    return buildList {
+        add(anchor)
+        for (distance in 1..maxDistance) {
+            if (distance <= forwardCount) {
+                val next = anchor + distance
+                if (next < chapterCount) add(next)
+            }
+            if (distance <= backwardCount) {
+                val previous = anchor - distance
+                if (previous >= 0) add(previous)
+            }
         }
     }
 }
@@ -446,6 +496,7 @@ private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 private const val TAG_ANDROID_HIGHLIGHT_RENDER_DIAG = "AndroidHighlightRenderDiag"
 private const val EXPLICIT_NAVIGATION_SHIFT_ANCHOR_WINDOW_MS = 10_000L
 private const val DEBUG_PAGE_TURN_DIAG = false
+private const val NATIVE_VERTICAL_LOAD_LOG_TAG = "NativeVerticalLoad"
 
 private fun highlightDiagSnippet(text: String, maxLength: Int = 80): String {
     return text
@@ -3354,8 +3405,8 @@ fun NativeVerticalReaderScreen(
             val uniqueBookId = bookId ?: if (book.fileName.length > 20) book.fileName else book.title
             val initialChapter = initialLocator?.chapterIndex ?: 0
 
-            Timber.tag("NativeVerticalReader").d(
-                "Instantiating BookPaginator for native vertical. initialChapter=$initialChapter"
+            Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d(
+                "paginator_create initialChapter=$initialChapter constraints=${textConstraints.maxWidth}x${textConstraints.maxHeight}"
             )
             BookPaginator(
                 coroutineScope = coroutineScope,
@@ -3392,7 +3443,9 @@ fun NativeVerticalReaderScreen(
         }
 
         DisposableEffect(paginator) {
+            Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d("native_screen_attached paginator=${paginator.hashCode()}")
             onDispose {
+                Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d("native_screen_disposed paginator=${paginator.hashCode()}")
                 paginator.dispose()
             }
         }
@@ -3419,6 +3472,7 @@ fun NativeVerticalReaderScreen(
         val flowItemLayoutMap = remember(paginator) { mutableStateMapOf<String, LayoutCoordinates>() }
         var flowChapters by remember(paginator) { mutableStateOf<List<NativeVerticalFlowChapter>?>(null) }
         val flowItems = remember(flowChapters) { buildNativeVerticalFlowItems(flowChapters.orEmpty()) }
+        val latestFlowItems by rememberUpdatedState(flowItems)
         var isFlowLoading by remember(paginator) { mutableStateOf(true) }
         val initialNativeLocator = remember(paginator) { initialLocator }
         val initialNativePageIndex = remember(paginator) { initialPageIndexInBook }
@@ -3435,6 +3489,7 @@ fun NativeVerticalReaderScreen(
             }
         }
         val flowChapterLoadsInFlight = remember(paginator) { mutableStateMapOf<Int, Boolean>() }
+        val flowChapterLoadMutex = remember(paginator) { Mutex() }
 
         fun ensurePlaceholderFlowChapters() {
             val current = flowChapters
@@ -3443,7 +3498,7 @@ fun NativeVerticalReaderScreen(
             }
         }
 
-        suspend fun loadFlowChapter(chapterIndex: Int): Boolean {
+        suspend fun loadFlowChapter(chapterIndex: Int, reason: String = "demand"): Boolean {
             if (chapterIndex !in placeholderFlowChapters.indices) return false
             flowChapters?.getOrNull(chapterIndex)?.takeIf { it.isLoaded }?.let { return true }
             while (flowChapterLoadsInFlight[chapterIndex] == true) {
@@ -3451,28 +3506,47 @@ fun NativeVerticalReaderScreen(
                 flowChapters?.getOrNull(chapterIndex)?.takeIf { it.isLoaded }?.let { return true }
             }
 
-            flowChapterLoadsInFlight[chapterIndex] = true
-            return try {
-                val chapter = book.chaptersForPagination.getOrNull(chapterIndex) ?: return false
-                val blocks = try {
-                    paginator.getFlowBlocksForChapter(chapterIndex).orEmpty()
-                } catch (e: Exception) {
-                    Timber.e(e, "Native vertical flow failed to load chapter $chapterIndex")
-                    emptyList()
-                }
-                val current = flowChapters ?: placeholderFlowChapters
-                val updated = current.toMutableList()
-                updated[chapterIndex] = NativeVerticalFlowChapter(
-                    chapterIndex = chapterIndex,
-                    title = chapter.title,
-                    blocks = blocks,
-                    isLoaded = true,
-                    estimatedLocationWeight = chapter.plainTextCharacterCount().coerceAtLeast(24)
+            return flowChapterLoadMutex.withLock {
+                flowChapters?.getOrNull(chapterIndex)?.takeIf { it.isLoaded }?.let { return@withLock true }
+                flowChapterLoadsInFlight[chapterIndex] = true
+                val startMs = System.currentTimeMillis()
+                Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d(
+                    "chapter_load_start reason=$reason chapter=$chapterIndex loaded=${flowChapters?.getOrNull(chapterIndex)?.isLoaded == true}"
                 )
-                flowChapters = updated
-                true
-            } finally {
-                flowChapterLoadsInFlight.remove(chapterIndex)
+                try {
+                    val chapter = book.chaptersForPagination.getOrNull(chapterIndex) ?: return@withLock false
+                    val blocks = try {
+                        paginator.getFlowBlocksForChapter(chapterIndex)
+                    } catch (e: CancellationException) {
+                        Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d(
+                            "chapter_load_cancelled reason=$reason chapter=$chapterIndex durationMs=${System.currentTimeMillis() - startMs}"
+                        )
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).e(e, "chapter_load_error reason=$reason chapter=$chapterIndex")
+                        null
+                    }
+                    val updated = nativeVerticalFlowChaptersAfterLoadResult(
+                        currentChapters = flowChapters,
+                        placeholderChapters = placeholderFlowChapters,
+                        chapterIndex = chapterIndex,
+                        title = chapter.title,
+                        blocks = blocks,
+                        estimatedLocationWeight = chapter.plainTextCharacterCount().coerceAtLeast(24)
+                    ) ?: run {
+                        Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).w(
+                            "chapter_load_retryable reason=$reason chapter=$chapterIndex durationMs=${System.currentTimeMillis() - startMs}"
+                        )
+                        return@withLock false
+                    }
+                    flowChapters = updated
+                    Timber.tag(NATIVE_VERTICAL_LOAD_LOG_TAG).d(
+                        "chapter_load_done reason=$reason chapter=$chapterIndex blocks=${blocks?.size ?: 0} durationMs=${System.currentTimeMillis() - startMs}"
+                    )
+                    true
+                } finally {
+                    flowChapterLoadsInFlight.remove(chapterIndex)
+                }
             }
         }
 
@@ -3485,7 +3559,7 @@ fun NativeVerticalReaderScreen(
             if (locator == null) return false
             ensurePlaceholderFlowChapters()
             if (flowChapters?.getOrNull(locator.chapterIndex)?.isLoaded != true) {
-                loadFlowChapter(locator.chapterIndex)
+                loadFlowChapter(locator.chapterIndex, reason = "locator")
                 withFrameNanos { }
             }
             val chapters = flowChapters ?: return false
@@ -3601,22 +3675,33 @@ fun NativeVerticalReaderScreen(
                     ?: paginator.findChapterIndexForPage(initialNativePageIndex)
                     ?: 0
                 ).coerceIn(0, placeholderFlowChapters.lastIndex)
-            val prefetchOrder = nativeVerticalInitialChapterPrefetchOrder(
-                chapterCount = placeholderFlowChapters.size,
-                initialChapter = initialChapter
-            )
-
-            loadFlowChapter(initialChapter)
+            loadFlowChapter(initialChapter, reason = "initial")
             isFlowLoading = false
+        }
 
-            prefetchOrder.forEach { chapterIndex ->
-                if (!isActive) return@LaunchedEffect
-                while (isActive && listState.isScrollInProgress) {
-                    delay(80L)
-                }
-                loadFlowChapter(chapterIndex)
-                delay(80L)
+        LaunchedEffect(paginator, placeholderFlowChapters.size) {
+            snapshotFlow {
+                didInitialScroll to latestFlowItems.getOrNull(listState.firstVisibleItemIndex)?.chapterIndex
             }
+                .distinctUntilChanged()
+                .collectLatest { (initialScrollComplete, visibleChapter) ->
+                    if (!initialScrollComplete) return@collectLatest
+                    val anchorChapter = visibleChapter ?: return@collectLatest
+                    val warmupOrder = nativeVerticalChapterWarmupOrder(
+                        chapterCount = placeholderFlowChapters.size,
+                        anchorChapter = anchorChapter
+                    )
+                    warmupOrder.forEachIndexed { priority, chapterIndex ->
+                        if (!isActive) return@collectLatest
+                        if (priority > 0) {
+                            while (isActive && listState.isScrollInProgress) {
+                                delay(80L)
+                            }
+                        }
+                        loadFlowChapter(chapterIndex, reason = if (priority == 0) "visible" else "visible_prefetch_$priority")
+                        if (priority > 0) delay(48L)
+                    }
+                }
         }
 
         LaunchedEffect(flowChapters, totalPageCount, rootWindowBounds) {
@@ -3927,7 +4012,7 @@ fun NativeVerticalReaderScreen(
                         if (block == null) {
                             if (item.kind == NativeVerticalFlowItemKind.UNLOADED_CHAPTER) {
                                 LaunchedEffect(chapterIndex, item.kind) {
-                                    loadFlowChapter(chapterIndex)
+                                    loadFlowChapter(chapterIndex, reason = "placeholder_visible")
                                 }
                             }
                             val spacerHeight = when (item.kind) {
