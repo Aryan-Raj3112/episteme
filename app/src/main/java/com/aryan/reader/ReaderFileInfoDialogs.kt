@@ -90,6 +90,7 @@ internal fun ReaderFileInfoDialogs(
             onToggleTag = { tagId, assign ->
                 viewModel.toggleTagForBooks(tagId, uiState.showTagSelectionDialogFor, assign)
             },
+            onDeleteTag = { tag -> viewModel.deleteTag(tag.id) },
             onDismiss = viewModel::closeTagSelection
         )
     }

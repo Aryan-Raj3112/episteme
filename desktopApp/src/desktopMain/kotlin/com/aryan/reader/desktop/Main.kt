@@ -381,6 +381,7 @@ internal fun EpistemeDesktopApp(
     var showCreateSmartShelfDialog by remember { mutableStateOf(false) }
     var shelfToRename by remember { mutableStateOf<Shelf?>(null) }
     var shelfToDelete by remember { mutableStateOf<Shelf?>(null) }
+    var tagToDelete by remember { mutableStateOf<Shelf?>(null) }
     var folderToRemove by remember { mutableStateOf<Shelf?>(null) }
     var addToShelfBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var addToShelfClearsSelection by remember { mutableStateOf(false) }
@@ -3141,6 +3142,12 @@ internal fun EpistemeDesktopApp(
         }
     }
 
+    fun deleteTag(tagShelf: Shelf) {
+        val tagId = tagShelf.id.removePrefix("tag_").takeIf { it.isNotBlank() } ?: return
+        SharedLibraryEditor.deleteTag(state, shelfRecords, shelfRefs, tagId)?.let {
+            replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
+        }
+    }
     fun applyBookMetadataUpdate(updated: BookItem) {
         val result = SharedLibraryEditor.updateBookMetadata(state, shelfRecords, shelfRefs, updated, System.currentTimeMillis())
         replaceLibrary(result.state, records = result.shelfRecords, refs = result.shelfRefs)
@@ -4266,6 +4273,7 @@ internal fun EpistemeDesktopApp(
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
+                            onDeleteTag = { tagToDelete = it },
                             onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
                             onAddSelectedBooksToShelf = {
@@ -4317,6 +4325,7 @@ internal fun EpistemeDesktopApp(
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
+                            onDeleteTag = { tagToDelete = it },
                             onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
                             onAddSelectedBooksToShelf = {
@@ -5071,6 +5080,18 @@ internal fun EpistemeDesktopApp(
             )
         }
 
+        tagToDelete?.let { tagShelf ->
+            SharedConfirmDialog(
+                title = readerString("menu_delete_tag", "Delete tag"),
+                body = readerString("desktop_delete_tag_desc", "Delete tag \"%1\$s\"? It will be removed from every book.", tagShelf.name),
+                confirmLabel = readerString("action_delete", "Delete"),
+                onDismiss = { tagToDelete = null },
+                onConfirm = {
+                    deleteTag(tagShelf)
+                    tagToDelete = null
+                }
+            )
+        }
         folderToRemove?.let { folder ->
             SharedConfirmDialog(
                 title = readerString("menu_remove_folder", "Remove folder"),

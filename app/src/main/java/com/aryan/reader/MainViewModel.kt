@@ -896,6 +896,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun deleteTag(tagId: String) {
+        val cleanTagId = tagId.trim().takeIf { it.isNotBlank() } ?: return
+        viewModelScope.launch {
+            recentFilesRepository.deleteTag(cleanTagId)
+            val currentFilters = _internalState.value.libraryFilters
+            if (cleanTagId in currentFilters.tagIds) {
+                updateLibraryFilters(currentFilters.copy(tagIds = currentFilters.tagIds - cleanTagId))
+            }
+        }
+    }
     private fun buildDefaultTags(): List<TagEntity> {
         val now = System.currentTimeMillis()
         return listOf(

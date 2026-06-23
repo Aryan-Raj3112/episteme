@@ -58,4 +58,7 @@ interface TagDao {
 
     @Query("DELETE FROM book_tag_cross_ref WHERE tagId = :tagId AND bookId = :bookId")
     suspend fun removeTagFromBook(tagId: String, bookId: String)
+
+    @Query("DELETE FROM tags WHERE id = :tagId")
+    suspend fun deleteTag(tagId: String)
 }

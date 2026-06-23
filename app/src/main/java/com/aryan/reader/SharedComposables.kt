@@ -2020,10 +2020,12 @@ fun TagSelectionBottomSheet(
     booksWithTags: List<RecentFileItem>,
     onCreateAndAssign: (String) -> Unit,
     onToggleTag: (String, Boolean) -> Unit,
+    onDeleteTag: (TagEntity) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var searchQuery by remember { mutableStateOf("") }
+    var tagPendingDeletion by remember { mutableStateOf<TagEntity?>(null) }
 
     val filteredTags = remember(allTags, searchQuery) {
         if (searchQuery.isBlank()) allTags else allTags.filter { it.name.contains(searchQuery, ignoreCase = true) }
@@ -2092,10 +2094,42 @@ fun TagSelectionBottomSheet(
                             }
                         }
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text(tag.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            tag.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { tagPendingDeletion = tag }) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.menu_delete_tag),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    tagPendingDeletion?.let { tag ->
+        AlertDialog(
+            onDismissRequest = { tagPendingDeletion = null },
+            title = { Text(stringResource(R.string.menu_delete_tag)) },
+            text = { Text(stringResource(R.string.dialog_delete_tag_desc, tag.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDeleteTag(tag)
+                    tagPendingDeletion = null
+                }) {
+                    Text(stringResource(R.string.action_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { tagPendingDeletion = null }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
     }
 }

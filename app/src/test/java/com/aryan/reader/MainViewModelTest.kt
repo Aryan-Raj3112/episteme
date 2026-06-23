@@ -185,6 +185,7 @@ class MainViewModelTest {
         coEvery { anyConstructed<RecentFilesRepository>().seedTagsIfEmpty(any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().assignTagToBook(any(), any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().removeTagFromBook(any(), any()) } just Runs
+        coEvery { anyConstructed<RecentFilesRepository>().deleteTag(any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().removeBooksFromShelf(any(), any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().addShelf(any()) } just Runs
         coEvery { anyConstructed<RecentFilesRepository>().addBooksToShelf(any(), any()) } just Runs
@@ -900,6 +901,21 @@ class MainViewModelTest {
         coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().assignTagToBook("book", " ") }
     }
 
+    @Test
+    fun `deleteTag deletes tag and removes it from persisted filters`() = runTest(testDispatcher) {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect {}
+        }
+        viewModel.updateLibraryFilters(LibraryFilters(tagIds = setOf("favorite", "keep")))
+        viewModel.uiState.first { it.libraryFilters.tagIds == setOf("favorite", "keep") }
+
+        viewModel.deleteTag(" favorite ")
+        advanceUntilIdle()
+
+        coVerify { anyConstructed<RecentFilesRepository>().deleteTag("favorite") }
+        assertEquals(setOf("keep"), viewModel.uiState.value.libraryFilters.tagIds)
+        verify { mockEditor.putStringSet(KEY_FILTER_TAG_IDS, setOf("keep")) }
+    }
     @Test
     fun `add selected to shelf dialog ignores empty targets and dismisses cleanly`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {

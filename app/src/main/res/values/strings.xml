@@ -940,6 +940,8 @@
     <string name="banner_shelf_renamed">Renamed shelf to &quot;%1$s&quot;.</string>
     <!-- Shared library mutation banner. %1$s = shelf name. Example: "Deleted shelf \"Old Notes\"." -->
     <string name="banner_shelf_deleted">Deleted shelf &quot;%1$s&quot;.</string>
+    <!-- Shared library mutation banner. %1$s = tag name. Example: "Deleted tag \"Favorites\"." -->
+    <string name="banner_tag_deleted">Deleted tag &quot;%1$s&quot;.</string>
     <!-- Shared library mutation banner. %1$s = book title. Example: "Updated \"Dracula\"." -->
     <string name="banner_book_updated">Updated &quot;%1$s&quot;.</string>
     <!-- Shared import result banner shown when selected files already exist in the library. -->
@@ -952,6 +954,8 @@
     <!-- External link warning body. %1$s = the full URL of the external link the user tapped. Example: "You clicked on an external link:\n\nhttps://example.com\n\nWhat would you like to do?" -->
     <string name="dialog_external_link_desc">You clicked on an external link:\n\n%1$s\n\nWhat would you like to do?</string>
     <string name="action_open">Open</string>
+    <string name="menu_delete_tag">Delete tag</string>
+    <string name="dialog_delete_tag_desc">Delete tag &quot;%1$s&quot;? It will be removed from every book.</string>
     <string name="error_no_browser">No browser found to open the link.</string>
 
     <!-- Annotations & Notes -->

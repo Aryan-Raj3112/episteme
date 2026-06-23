@@ -152,6 +152,10 @@ class RecentFilesRepository(private val context: Context) {
         AppDatabase.getDatabase(context).tagDao().removeTagFromBook(tagId, bookId)
     }
 
+    suspend fun deleteTag(tagId: String) = withContext(Dispatchers.IO) {
+        AppDatabase.getDatabase(context).tagDao().deleteTag(tagId)
+    }
+
     suspend fun clearAllLocalData() = withContext(Dispatchers.IO) {
         recentFileDao.clearAll()
         if (coverCacheDir.exists()) {

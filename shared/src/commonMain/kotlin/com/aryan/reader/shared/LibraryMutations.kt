@@ -211,6 +211,37 @@ object SharedLibraryEditor {
         )
     }
 
+    fun deleteTag(
+        state: SharedReaderScreenState,
+        shelfRecords: List<ShelfRecord>,
+        shelfRefs: List<BookShelfRef>,
+        tagId: String
+    ): SharedLibraryMutationResult? {
+        val cleanTagId = tagId.trim().takeIf { it.isNotBlank() } ?: return null
+        val tag = state.allTags.firstOrNull { it.id == cleanTagId }
+            ?: state.rawLibraryBooks.asSequence()
+                .flatMap { it.tags.asSequence() }
+                .firstOrNull { it.id == cleanTagId }
+            ?: return null
+        return SharedLibraryMutationResult(
+            state = state.copy(
+                rawLibraryBooks = state.rawLibraryBooks.map { book ->
+                    book.copy(tags = book.tags.filterNot { it.id == cleanTagId })
+                },
+                allTags = state.allTags.filterNot { it.id == cleanTagId },
+                libraryFilters = state.libraryFilters.copy(
+                    tagIds = state.libraryFilters.tagIds - cleanTagId
+                ),
+                bannerMessage = BannerMessage.string(
+                    "banner_tag_deleted",
+                    "Deleted tag \"%1\$s\".",
+                    tag.name
+                )
+            ),
+            shelfRecords = shelfRecords,
+            shelfRefs = shelfRefs
+        )
+    }
     fun removeFolder(
         state: SharedReaderScreenState,
         shelfRecords: List<ShelfRecord>,

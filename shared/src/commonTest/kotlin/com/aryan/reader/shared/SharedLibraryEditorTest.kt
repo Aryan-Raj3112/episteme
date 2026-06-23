@@ -246,6 +246,37 @@ class SharedLibraryEditorTest {
     }
 
     @Test
+    fun `deleteTag removes tag from books all tags and active filters`() {
+        val favorite = Tag(id = "favorite", name = "Favorite")
+        val keep = Tag(id = "keep", name = "Keep")
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(
+                book("one", tags = listOf(favorite, keep)),
+                book("two", tags = listOf(favorite)),
+                book("three", tags = listOf(keep))
+            ),
+            allTags = listOf(favorite, keep),
+            libraryFilters = LibraryFilters(tagIds = setOf("favorite", "keep"))
+        )
+
+        val result = SharedLibraryEditor.deleteTag(
+            state = state,
+            shelfRecords = emptyList(),
+            shelfRefs = emptyList(),
+            tagId = " favorite "
+        )
+
+        requireNotNull(result)
+        assertEquals(listOf(keep), result.state.allTags)
+        assertEquals(listOf(keep), result.state.rawLibraryBooks.first { it.id == "one" }.tags)
+        assertTrue(result.state.rawLibraryBooks.first { it.id == "two" }.tags.isEmpty())
+        assertEquals(listOf(keep), result.state.rawLibraryBooks.first { it.id == "three" }.tags)
+        assertEquals(setOf("keep"), result.state.libraryFilters.tagIds)
+        assertEquals("Deleted tag \"Favorite\".", result.state.bannerMessage?.message)
+        assertEquals("banner_tag_deleted", result.state.bannerMessage?.text?.name)
+    }
+
+    @Test
     fun `updateBookMetadata updates book timestamp and merges tags`() {
         val old = book("book", title = "Old")
         val newTag = Tag("new", "New")
