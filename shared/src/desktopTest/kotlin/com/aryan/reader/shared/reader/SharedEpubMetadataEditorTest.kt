@@ -85,6 +85,39 @@ class SharedEpubMetadataEditorTest {
     }
 
     @Test
+    fun `rewrite replaces explicit cover image and preserves metadata`() = withTempDir { dir ->
+        val source = File(dir, "source.epub")
+        val output = File(dir, "output.epub")
+        writeEpub(source, includeCover = true)
+
+        val result = SharedEpubMetadataEditor.rewrite(
+            source = source,
+            destination = output,
+            update = update().copy(cover = SharedEpubCoverUpdate("new-cover".toByteArray(), "png"))
+        )
+
+        assertEquals("New Title", result.title)
+        ZipFile(output).use { zip ->
+            val coverEntry = assertNotNull(zip.getEntry("OEBPS/images/cover.png"))
+            assertEquals("new-cover", zip.getInputStream(coverEntry).reader().readText())
+            val opf = zip.getInputStream(assertNotNull(zip.getEntry("OEBPS/content.opf"))).reader().readText()
+            assertTrue(opf.contains("properties=\"cover-image\""))
+            assertTrue(opf.contains("name=\"cover\""))
+        }
+    }
+
+    @Test
+    fun `read cover returns original cover for restore`() = withTempDir { dir ->
+        val source = File(dir, "source.epub")
+        writeEpub(source, includeCover = true, coverBytes = "original-cover".toByteArray())
+
+        val cover = assertNotNull(SharedEpubMetadataEditor.readCover(source))
+
+        assertEquals("png", cover.extension)
+        assertEquals("original-cover", cover.bytes.toString(Charsets.UTF_8))
+    }
+
+    @Test
     fun `rewrite in place rejects invalid epub without replacing source`() = withTempDir { dir ->
         val source = File(dir, "broken.epub").apply { writeText("not an epub") }
         val backup = File(dir, "backup.epub")
@@ -113,7 +146,9 @@ class SharedEpubMetadataEditorTest {
             <metadata>
               <dc:title>Old</dc:title>
             </metadata>
-        """.trimIndent()
+        """.trimIndent(),
+        includeCover: Boolean = false,
+        coverBytes: ByteArray = "old-cover".toByteArray()
     ) {
         ZipOutputStream(target.outputStream()).use { zip ->
             zip.putStoredText("mimetype", "application/epub+zip")
@@ -126,18 +161,30 @@ class SharedEpubMetadataEditorTest {
                 """
                 <package xmlns:dc="http://purl.org/dc/elements/1.1/">
                   $metadata
-                  <manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" /></manifest>
+                  <manifest>
+                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" />
+                    ${if (includeCover) "<item id=\"cover-image\" href=\"images/cover.png\" media-type=\"image/png\" properties=\"cover-image\" />" else ""}
+                  </manifest>
                   <spine><itemref idref="chapter" /></spine>
                 </package>
                 """.trimIndent()
             )
             zip.putText("OEBPS/chapter.xhtml", "chapter")
+            if (includeCover) {
+                zip.putBytes("OEBPS/images/cover.png", coverBytes)
+            }
         }
     }
 
     private fun ZipOutputStream.putText(name: String, text: String) {
         putNextEntry(ZipEntry(name))
         write(text.toByteArray())
+        closeEntry()
+    }
+
+    private fun ZipOutputStream.putBytes(name: String, bytes: ByteArray) {
+        putNextEntry(ZipEntry(name))
+        write(bytes)
         closeEntry()
     }
 

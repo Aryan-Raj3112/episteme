@@ -55,6 +55,7 @@ class RecentFileDaoMetadataExtractionTest {
             seriesName = null,
             seriesIndex = null,
             description = null,
+            coverImagePath = null,
             fileSize = 0L,
             fileContentModifiedTimestamp = 0L,
             textMetadataParsed = false,
@@ -118,6 +119,7 @@ class RecentFileDaoMetadataExtractionTest {
             seriesName = null,
             seriesIndex = null,
             description = null,
+            coverImagePath = null,
             fileSize = 0L,
             fileContentModifiedTimestamp = 0L,
             textMetadataParsed = true,
@@ -150,6 +152,7 @@ class RecentFileDaoMetadataExtractionTest {
             seriesName = null,
             seriesIndex = null,
             description = null,
+            coverImagePath = null,
             fileSize = 0L,
             fileContentModifiedTimestamp = 0L,
             textMetadataParsed = true,
@@ -181,7 +184,7 @@ class RecentFileDaoMetadataExtractionTest {
             )
         )
 
-        dao.restoreOriginalMetadata("book-1", fileSize = 0L, fileContentModifiedTimestamp = 0L, timestamp = 9_000L)
+        dao.restoreOriginalMetadata("book-1", coverImagePath = null, fileSize = 0L, fileContentModifiedTimestamp = 0L, timestamp = 9_000L)
 
         val saved = dao.getFileByBookId("book-1")!!
         assertEquals("Original title", saved.title)
@@ -212,6 +215,7 @@ class RecentFileDaoMetadataExtractionTest {
             seriesName = null,
             seriesIndex = null,
             description = null,
+            coverImagePath = null,
             fileSize = 0L,
             fileContentModifiedTimestamp = 0L,
             timestamp = 5_000L

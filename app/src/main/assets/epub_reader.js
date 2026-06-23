@@ -27,7 +27,8 @@
 
         // CHANGED: Colors now use rgba() with 0.5 opacity for blending
         style.innerHTML = ` html {
-                margin: 0; padding: 0; height: 100%; overflow-y: scroll;
+                margin: 0; padding: 0; height: 100%; overflow-y: scroll; overflow-x: hidden;
+                width: 100%; max-width: 100%;
             }
 
             body {
@@ -37,13 +38,55 @@
                 text-rendering: optimizeLegibility; -webkit-user-select: none;
                 -moz-user-select: none; -ms-user-select: none; user-select: none;
                 scroll-behavior: auto !important;
+                overflow-x: hidden !important;
+                width: 100% !important;
+                max-width: 100% !important;
             }
 
             #content-container {
                 will-change: transform;
                 transition: none !important;
+                box-sizing: border-box;
+                overflow-x: hidden !important;
+                width: 100%;
+                max-width: 100%;
             }
 
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+            }
+
+            #content-container *,
+            body > * {
+                max-width: 100% !important;
+                min-width: 0 !important;
+            }
+
+            p, div, li, blockquote, section, article, aside, header, footer, main, td, th, span, a {
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+
+            pre, code, samp, kbd, .reader-txt-preformatted {
+                white-space: pre-wrap !important;
+                overflow-wrap: anywhere !important;
+                word-break: break-word !important;
+                max-width: 100% !important;
+            }
+
+            table {
+                width: 100% !important;
+                max-width: 100% !important;
+                table-layout: fixed !important;
+                border-collapse: collapse;
+            }
+
+            td, th {
+                overflow-wrap: anywhere !important;
+                word-break: break-word !important;
+            }
             p, div, li, td, th, span {
                 font-size: 1em; line-height: inherit;
             }
@@ -970,6 +1013,43 @@
                 padding-right: ${horizontalPaddingPx}px !important;
                 padding-top: ${verticalPaddingPx}px !important;
                 padding-bottom: ${verticalPaddingPx}px !important;
+                overflow-x: hidden !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+        `;
+
+        var viewportContainmentCss = `
+            html,
+            body,
+            #content-container {
+                overflow-x: hidden !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            #content-container *,
+            body > * {
+                max-width: 100% !important;
+                min-width: 0 !important;
+            }
+            p, div, li, blockquote, section, article, aside, header, footer, main, td, th, span, a {
+                overflow-wrap: anywhere !important;
+                word-break: break-word !important;
+            }
+            pre, code, samp, kbd, .reader-txt-preformatted {
+                white-space: pre-wrap !important;
+                overflow-wrap: anywhere !important;
+                word-break: break-word !important;
+                max-width: 100% !important;
+            }
+            table {
+                width: 100% !important;
+                max-width: 100% !important;
+                table-layout: fixed !important;
+            }
+            td, th {
+                overflow-wrap: anywhere !important;
+                word-break: break-word !important;
             }
         `;
 
@@ -998,7 +1078,7 @@
             }
         `;
 
-        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, imageCss, horizontalMarginCss].join("\n");
+        dynamicStyleElement.innerHTML = [sizeCss, lineHeightCss, fontCss, alignCss, gapCss, viewportContainmentCss, imageCss, horizontalMarginCss].join("\n");
         applyReaderImageAnchors();
         setTimeout(applyReaderImageAnchors, 80);
         logVerticalJitter(

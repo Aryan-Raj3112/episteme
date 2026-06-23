@@ -1586,6 +1586,12 @@
     <string name="label_summary">Summary</string>
     <string name="label_library_tags">Library tags</string>
     <string name="label_editable_metadata">Editable metadata</string>
+    <string name="label_cover">Cover</string>
+    <string name="label_current_cover_kept">Current cover will be kept</string>
+    <string name="label_current_cover">Current cover</string>
+    <string name="label_current_cover_generated">Generated cover preview</string>
+    <string name="action_change_cover">Change cover</string>
+    <string name="action_clear_selection">Clear selection</string>
     <string name="label_display_name">Display name</string>
     <string name="label_name_shown_in_reader">Name shown in Reader</string>
     <!-- File metadata row. %1$s = original file name. Example: "Original file: Dracula.epub". -->

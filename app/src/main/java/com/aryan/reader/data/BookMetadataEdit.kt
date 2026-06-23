@@ -5,5 +5,7 @@ data class BookMetadataEdit(
     val author: String?,
     val seriesName: String?,
     val seriesIndex: Double?,
-    val description: String?
+    val description: String?,
+    val coverImageUri: String? = null,
+    val restoreOriginalCover: Boolean = false
 )

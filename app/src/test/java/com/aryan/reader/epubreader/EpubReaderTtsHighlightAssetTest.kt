@@ -18,6 +18,21 @@ class EpubReaderTtsHighlightAssetTest {
         assertTrue(js.contains("word-spacing: normal !important;"))
     }
 
+    @Test
+    fun `vertical webview CSS constrains chapter content to viewport width`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("overflow-x: hidden !important;"))
+        assertTrue(js.contains("#content-container *,"))
+        assertTrue(js.contains("body > *"))
+        assertTrue(js.contains("max-width: 100% !important;"))
+        assertTrue(js.contains("min-width: 0 !important;"))
+        assertTrue(js.contains("overflow-wrap: anywhere !important;"))
+        assertTrue(js.contains("table-layout: fixed !important;"))
+        assertTrue(js.contains("viewportContainmentCss"))
+        assertTrue(js.contains("gapCss, viewportContainmentCss, imageCss"))
+    }
+
     private fun epubReaderAsset(): File {
         val candidates = listOf(
             File("src/main/assets/epub_reader.js"),

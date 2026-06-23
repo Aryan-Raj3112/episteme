@@ -57,7 +57,8 @@ internal fun BookItem.hasEmbeddedMetadataChange(updated: BookItem): Boolean {
         author != updated.author ||
         description != updated.description ||
         seriesName != updated.seriesName ||
-        seriesIndex != updated.seriesIndex
+        seriesIndex != updated.seriesIndex ||
+        coverImagePath != updated.coverImagePath
 }
 
 internal fun String.toDesktopSafeFileName(): String {

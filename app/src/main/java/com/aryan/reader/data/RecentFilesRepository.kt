@@ -331,7 +331,8 @@ class RecentFilesRepository(private val context: Context) {
         bookId: String,
         metadata: BookMetadataEdit,
         fileSize: Long = 0L,
-        fileContentModifiedTimestamp: Long = 0L
+        fileContentModifiedTimestamp: Long = 0L,
+        coverImagePath: String? = null
     ) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
         recentFileDao.updateUserEditableMetadata(
@@ -341,6 +342,7 @@ class RecentFilesRepository(private val context: Context) {
             seriesName = metadata.seriesName,
             seriesIndex = metadata.seriesIndex,
             description = metadata.description,
+            coverImagePath = coverImagePath,
             fileSize = fileSize,
             fileContentModifiedTimestamp = fileContentModifiedTimestamp,
             timestamp = currentTime
@@ -357,10 +359,11 @@ class RecentFilesRepository(private val context: Context) {
     suspend fun restoreOriginalMetadata(
         bookId: String,
         fileSize: Long = 0L,
-        fileContentModifiedTimestamp: Long = 0L
+        fileContentModifiedTimestamp: Long = 0L,
+        coverImagePath: String? = null
     ) = withContext(Dispatchers.IO) {
         val currentTime = System.currentTimeMillis()
-        recentFileDao.restoreOriginalMetadata(bookId, fileSize, fileContentModifiedTimestamp, currentTime)
+        recentFileDao.restoreOriginalMetadata(bookId, coverImagePath, fileSize, fileContentModifiedTimestamp, currentTime)
         Timber.d("Restored original metadata for $bookId")
     }
 
@@ -786,7 +789,7 @@ class RecentFilesRepository(private val context: Context) {
 
     suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri): String? = withContext(Dispatchers.IO) {
         val cacheDir = getCoverCacheDirInternal()
-        val filename = "cover_${uri.toString().hashCode()}.png"
+        val filename = "cover_${uri.toString().hashCode()}_${System.currentTimeMillis()}.png"
         val file = File(cacheDir, filename)
         var fos: FileOutputStream? = null
         var scaledCopy: Bitmap? = null
@@ -851,7 +854,7 @@ class RecentFilesRepository(private val context: Context) {
 
     private fun saveEmbeddedCoverBytesToCache(bytes: ByteArray, uri: Uri, extension: String): String? {
         val cacheDir = getCoverCacheDirInternal()
-        val filename = "cover_${uri.toString().hashCode()}.$extension"
+        val filename = "cover_${uri.toString().hashCode()}_${System.currentTimeMillis()}.$extension"
         val file = File(cacheDir, filename)
         return try {
             deleteCoverCacheVariants(uri)
@@ -866,9 +869,10 @@ class RecentFilesRepository(private val context: Context) {
     }
 
     private fun deleteCoverCacheVariants(uri: Uri) {
-        val prefix = "cover_${uri.toString().hashCode()}."
+        val exactPrefix = "cover_${uri.toString().hashCode()}."
+        val versionedPrefix = "cover_${uri.toString().hashCode()}_"
         getCoverCacheDirInternal().listFiles()
-            ?.filter { it.isFile && it.name.startsWith(prefix) }
+            ?.filter { it.isFile && (it.name.startsWith(exactPrefix) || it.name.startsWith(versionedPrefix)) }
             ?.forEach { runCatching { it.delete() } }
     }
 

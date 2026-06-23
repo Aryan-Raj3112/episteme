@@ -91,6 +91,25 @@ internal fun chooseFontFile(platform: DesktopPlatform = currentDesktopPlatform()
     return File(directory, file)
 }
 
+
+internal fun chooseCoverImageFile(platform: DesktopPlatform = currentDesktopPlatform()): File? {
+    val extensions = listOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
+    if (platform.shouldUseSwingFileChooser()) {
+        return chooseFilesWithSwing(
+            title = desktopDialogString("action_change_cover", "Change cover"),
+            extensions = extensions,
+            multiple = false
+        ).firstOrNull()
+    }
+    val dialog = FileDialog(null as Frame?, desktopDialogString("action_change_cover", "Change cover"), FileDialog.LOAD).apply {
+        file = "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp"
+        isVisible = true
+    }
+    val directory = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(directory, file)
+}
+
 internal fun chooseReaderTextureFile(platform: DesktopPlatform = currentDesktopPlatform()): File? {
     if (platform.shouldUseSwingFileChooser()) {
         return chooseFilesWithSwing(

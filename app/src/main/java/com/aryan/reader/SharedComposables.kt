@@ -26,6 +26,7 @@ import android.net.Uri
 import android.text.TextUtils
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
+import androidx.documentfile.provider.DocumentFile
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -118,6 +119,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.toArgb
@@ -138,6 +140,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -146,6 +149,8 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import androidx.core.text.HtmlCompat
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLegalLinks
 import com.aryan.reader.shared.SharedLegalProfile
@@ -155,6 +160,7 @@ import com.aryan.reader.shared.SharedText
 import com.aryan.reader.shared.sharedLegalLinksForProfile
 import com.aryan.reader.shared.ui.SharedMarkdownText
 import timber.log.Timber
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -581,6 +587,17 @@ fun FileInfoDialog(
         mutableStateOf(item.customName ?: item.cardTitle(usePdfFileNameAsDisplayName))
     }
     var showRestoreConfirmation by remember(item.bookId) { mutableStateOf(false) }
+    var selectedCoverUri by remember(item.bookId) { mutableStateOf<Uri?>(null) }
+    var selectedCoverName by remember(item.bookId) { mutableStateOf<String?>(null) }
+    val coverPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            selectedCoverUri = uri
+            selectedCoverName = DocumentFile.fromSingleUri(context, uri)?.name ?: uri.lastPathSegment
+        }
+    }
 
     val formattedDate = remember(item.timestamp) {
         SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.getDefault()).format(Date(item.timestamp))
@@ -655,6 +672,7 @@ fun FileInfoDialog(
                     if (isEditing) {
                         if (canEditEmbeddedMetadata) {
                             BookMetadataEditContent(
+                                item = item,
                                 titleInput = titleInput,
                                 onTitleChange = { titleInput = it },
                                 authorInput = authorInput,
@@ -664,7 +682,15 @@ fun FileInfoDialog(
                                 seriesIndexInput = seriesIndexInput,
                                 onSeriesIndexChange = { seriesIndexInput = it },
                                 descriptionInput = descriptionInput,
-                                onDescriptionChange = { descriptionInput = it }
+                                onDescriptionChange = { descriptionInput = it },
+                                currentCoverPath = item.coverImagePath,
+                                selectedCoverUri = selectedCoverUri,
+                                selectedCoverName = selectedCoverName,
+                                onChooseCover = { coverPickerLauncher.launch(arrayOf("image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp")) },
+                                onClearCover = {
+                                    selectedCoverUri = null
+                                    selectedCoverName = null
+                                }
                             )
                         } else if (canRenameDisplayName) {
                             BookDisplayNameEditContent(
@@ -711,7 +737,8 @@ fun FileInfoDialog(
                                     author = authorInput.toMetadataValue(),
                                     seriesName = seriesInput.toMetadataValue(),
                                     seriesIndex = seriesIndexInput.toSeriesIndexOrNull(),
-                                    description = descriptionInput.toMetadataValue()
+                                    description = descriptionInput.toMetadataValue(),
+                                    coverImageUri = selectedCoverUri?.toString()
                                 )
                             )
                         } else if (canRenameDisplayName) {
@@ -896,6 +923,7 @@ private fun BookMetadataInfoContent(
 
 @Composable
 private fun BookMetadataEditContent(
+    item: RecentFileItem,
     titleInput: String,
     onTitleChange: (String) -> Unit,
     authorInput: String,
@@ -905,7 +933,12 @@ private fun BookMetadataEditContent(
     seriesIndexInput: String,
     onSeriesIndexChange: (String) -> Unit,
     descriptionInput: String,
-    onDescriptionChange: (String) -> Unit
+    onDescriptionChange: (String) -> Unit,
+    currentCoverPath: String?,
+    selectedCoverUri: Uri?,
+    selectedCoverName: String?,
+    onChooseCover: () -> Unit,
+    onClearCover: () -> Unit
 ) {
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -954,6 +987,97 @@ private fun BookMetadataEditContent(
                 minLines = 4,
                 maxLines = 10
             )
+            MetadataCoverPreview(
+                item = item,
+                currentCoverPath = currentCoverPath,
+                selectedCoverUri = selectedCoverUri,
+                selectedCoverName = selectedCoverName,
+                onChooseCover = onChooseCover,
+                onClearCover = onClearCover
+            )
+        }
+    }
+}
+
+@Composable
+private fun MetadataCoverPreview(
+    item: RecentFileItem,
+    currentCoverPath: String?,
+    selectedCoverUri: Uri?,
+    selectedCoverName: String?,
+    onChooseCover: () -> Unit,
+    onClearCover: () -> Unit
+) {
+    val context = LocalContext.current
+    val currentCoverFile = remember(currentCoverPath) {
+        currentCoverPath
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::File)
+            ?.takeIf { it.isFile }
+    }
+    val previewModel = selectedCoverUri ?: currentCoverFile
+    val previewRequest = remember(previewModel, context) {
+        previewModel?.let {
+            ImageRequest.Builder(context)
+                .data(it)
+                .crossfade(true)
+                .build()
+        }
+    }
+
+    Text(stringResource(R.string.label_cover), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 72.dp, height = 104.dp)
+                .clip(RoundedCornerShape(8.dp))
+        ) {
+            ThemedBookCover(
+                item = item,
+                modifier = Modifier.fillMaxSize(),
+                contentDescription = null
+            )
+            if (previewRequest != null) {
+                AsyncImage(
+                    model = previewRequest,
+                    contentDescription = stringResource(R.string.label_cover),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                selectedCoverName ?: if (currentCoverFile != null) {
+                    stringResource(R.string.label_current_cover)
+                } else {
+                    stringResource(R.string.label_current_cover_generated)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(onClick = onChooseCover) {
+                    Text(stringResource(R.string.action_change_cover))
+                }
+                if (selectedCoverName != null) {
+                    TextButton(onClick = onClearCover) {
+                        Text(stringResource(R.string.action_clear_selection))
+                    }
+                }
+            }
         }
     }
 }

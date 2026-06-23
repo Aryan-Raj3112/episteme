@@ -229,6 +229,7 @@ interface RecentFileDao {
             seriesName = :seriesName,
             seriesIndex = :seriesIndex,
             description = :description,
+            coverImagePath = COALESCE(:coverImagePath, coverImagePath),
             customName = NULL,
             originalTitle = COALESCE(originalTitle, title),
             originalAuthor = COALESCE(originalAuthor, author),
@@ -238,6 +239,7 @@ interface RecentFileDao {
             fileSize = CASE WHEN :fileSize > 0 THEN :fileSize ELSE fileSize END,
             fileContentModifiedTimestamp = CASE WHEN :fileContentModifiedTimestamp > 0 THEN :fileContentModifiedTimestamp ELSE fileContentModifiedTimestamp END,
             folderTextMetadataParsed = 1,
+            folderCoverMetadataParsed = CASE WHEN :coverImagePath IS NOT NULL THEN 1 ELSE folderCoverMetadataParsed END,
             lastModifiedTimestamp = :timestamp
         WHERE bookId = :bookId
     """)
@@ -248,6 +250,7 @@ interface RecentFileDao {
         seriesName: String?,
         seriesIndex: Double?,
         description: String?,
+        coverImagePath: String?,
         fileSize: Long,
         fileContentModifiedTimestamp: Long,
         timestamp: Long
@@ -261,15 +264,18 @@ interface RecentFileDao {
             seriesName = originalSeriesName,
             seriesIndex = originalSeriesIndex,
             description = originalDescription,
+            coverImagePath = COALESCE(:coverImagePath, coverImagePath),
             customName = NULL,
             fileSize = CASE WHEN :fileSize > 0 THEN :fileSize ELSE fileSize END,
             fileContentModifiedTimestamp = CASE WHEN :fileContentModifiedTimestamp > 0 THEN :fileContentModifiedTimestamp ELSE fileContentModifiedTimestamp END,
             folderTextMetadataParsed = 1,
+            folderCoverMetadataParsed = CASE WHEN :coverImagePath IS NOT NULL THEN 1 ELSE folderCoverMetadataParsed END,
             lastModifiedTimestamp = :timestamp
         WHERE bookId = :bookId
     """)
     suspend fun restoreOriginalMetadata(
         bookId: String,
+        coverImagePath: String?,
         fileSize: Long,
         fileContentModifiedTimestamp: Long,
         timestamp: Long

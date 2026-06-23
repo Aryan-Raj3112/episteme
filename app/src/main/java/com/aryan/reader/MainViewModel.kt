@@ -7166,11 +7166,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     seriesIndex = result.metadata.seriesIndex,
                     description = result.metadata.description
                 )
+                val coverPath = result.cover?.let { cover ->
+                    currentItem.uriString?.toUri()?.let { uri ->
+                        recentFilesRepository.saveEmbeddedCoverToCache(cover.bytes, uri, cover.extension)
+                    }
+                }
                 recentFilesRepository.updateUserEditableMetadata(
                     bookId = bookId,
                     metadata = savedMetadata,
                     fileSize = result.fileSize,
-                    fileContentModifiedTimestamp = result.fileContentModifiedTimestamp
+                    fileContentModifiedTimestamp = result.fileContentModifiedTimestamp,
+                    coverImagePath = coverPath
                 )
                 val updatedItem = recentFilesRepository.getFileByBookId(bookId)
                 if (updatedItem != null && uiState.value.isSyncEnabled && updatedItem.sourceFolderUri == null) {
@@ -7204,7 +7210,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 author = currentItem.originalAuthor,
                 seriesName = currentItem.originalSeriesName,
                 seriesIndex = currentItem.originalSeriesIndex,
-                description = currentItem.originalDescription
+                description = currentItem.originalDescription,
+                restoreOriginalCover = true
             )
             val editResult = epubMetadataFileEditor.writeMetadata(currentItem, metadata)
             editResult.onFailure { error ->
@@ -7212,10 +7219,16 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 showBanner("Could not restore EPUB metadata.", isError = true)
             }.onSuccess { result ->
                 cleanupBookDataLocally(bookId)
+                val coverPath = result.cover?.let { cover ->
+                    currentItem.uriString?.toUri()?.let { uri ->
+                        recentFilesRepository.saveEmbeddedCoverToCache(cover.bytes, uri, cover.extension)
+                    }
+                }
                 recentFilesRepository.restoreOriginalMetadata(
                     bookId = bookId,
                     fileSize = result.fileSize,
-                    fileContentModifiedTimestamp = result.fileContentModifiedTimestamp
+                    fileContentModifiedTimestamp = result.fileContentModifiedTimestamp,
+                    coverImagePath = coverPath
                 )
                 val restoredItem = recentFilesRepository.getFileByBookId(bookId)
                 if (restoredItem != null && uiState.value.isSyncEnabled && restoredItem.sourceFolderUri == null) {

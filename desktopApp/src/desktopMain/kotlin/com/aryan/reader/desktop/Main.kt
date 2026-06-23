@@ -87,6 +87,7 @@ import com.aryan.reader.shared.reader.ReaderPaginationMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.SharedEpubCoverUpdate
 import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
 import com.aryan.reader.shared.reader.SharedEpubMetadataUpdate
 import com.aryan.reader.shared.reader.SharedEpubPaginationCache
@@ -3156,6 +3157,14 @@ internal fun EpistemeDesktopApp(
             File(desktopUserDataRoot(), "metadata_backups").apply { mkdirs() },
             "${original.id.toDesktopSafeFileName()}.epub"
         )
+        val coverUpdate = when {
+            updated.coverImagePath == original.coverImagePath -> null
+            updated.coverImagePath.isNullOrBlank() -> SharedEpubMetadataEditor.readCover(backup)
+                ?.let { cover -> SharedEpubCoverUpdate(bytes = cover.bytes, extension = cover.extension) }
+            else -> File(updated.coverImagePath).takeIf { it.isFile }?.let { coverFile ->
+                SharedEpubCoverUpdate(bytes = coverFile.readBytes(), extension = coverFile.extension)
+            }
+        }
         val snapshot = SharedEpubMetadataEditor.rewriteInPlace(
             source = file,
             backup = backup,
@@ -3164,7 +3173,8 @@ internal fun EpistemeDesktopApp(
                 author = updated.author,
                 description = updated.description,
                 seriesName = updated.seriesName,
-                seriesIndex = updated.seriesIndex
+                seriesIndex = updated.seriesIndex,
+                cover = coverUpdate
             )
         )
         return updated.copy(
@@ -3178,6 +3188,7 @@ internal fun EpistemeDesktopApp(
             originalSeriesName = original.originalSeriesName ?: original.seriesName,
             originalSeriesIndex = original.originalSeriesIndex ?: original.seriesIndex,
             originalDescription = original.originalDescription ?: original.description,
+            coverImagePath = updated.coverImagePath ?: original.coverImagePath,
             fileSize = file.length(),
             fileContentModifiedTimestamp = file.lastModified()
         )
@@ -5139,6 +5150,7 @@ internal fun EpistemeDesktopApp(
                 canEditEmbeddedMetadata = canEditEmbeddedMetadata,
                 canRenameDisplayName = canRenameDisplayName,
                 canRestoreEmbeddedMetadata = canEditEmbeddedMetadata,
+                onChooseCover = { chooseCoverImageFile()?.absolutePath },
                 onDismiss = {
                     bookInfoInitiallyEditing = false
                     bookInfoDialogFor = null
@@ -5149,7 +5161,7 @@ internal fun EpistemeDesktopApp(
                     bookInfoDialogFor = null
                 },
                 onRestore = { restored ->
-                    updateBookMetadata(restored)
+                    updateBookMetadata(restored.copy(coverImagePath = null))
                     bookInfoInitiallyEditing = false
                     bookInfoDialogFor = null
                 }

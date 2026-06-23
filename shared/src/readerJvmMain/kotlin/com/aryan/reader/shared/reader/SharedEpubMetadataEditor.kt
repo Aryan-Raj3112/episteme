@@ -19,7 +19,8 @@ data class SharedEpubMetadataUpdate(
     val author: String?,
     val description: String?,
     val seriesName: String?,
-    val seriesIndex: Double?
+    val seriesIndex: Double?,
+    val cover: SharedEpubCoverUpdate? = null
 )
 
 data class SharedEpubMetadataSnapshot(
@@ -28,6 +29,19 @@ data class SharedEpubMetadataSnapshot(
     val description: String?,
     val seriesName: String?,
     val seriesIndex: Double?
+)
+
+data class SharedEpubCoverUpdate(
+    val bytes: ByteArray,
+    val extension: String
+) {
+    val normalizedExtension: String = extension.lowercase().trimStart('.')
+    val mediaType: String = normalizedExtension.coverMediaType()
+}
+
+data class SharedEpubCoverSnapshot(
+    val bytes: ByteArray,
+    val extension: String
 )
 
 object SharedEpubMetadataEditor {
@@ -39,6 +53,21 @@ object SharedEpubMetadataEditor {
                 val opf = zip.getEntry(opfPath)?.let { zip.readUtf8(it) } ?: return null
                 val metadata = parseOpfMetadata(opf) ?: return null
                 metadata.toSnapshot()
+            }
+        }.getOrNull()
+    }
+
+    fun readCover(source: File): SharedEpubCoverSnapshot? {
+        if (!source.isFile) return null
+        return runCatching {
+            ZipFile(source).use { zip ->
+                val opfPath = findOpfPath(zip) ?: return null
+                val opf = zip.getEntry(opfPath)?.let { zip.readUtf8(it) } ?: return null
+                val coverPath = findCoverPath(opf, opfPath) ?: return null
+                val entry = zip.getEntry(coverPath) ?: return null
+                val extension = coverPath.substringAfterLast('.', "").lowercase()
+                    .takeIf { it in SupportedCoverExtensions } ?: return null
+                SharedEpubCoverSnapshot(bytes = zip.readBytes(entry), extension = extension)
             }
         }.getOrNull()
     }
@@ -55,7 +84,14 @@ object SharedEpubMetadataEditor {
             val opfPath = findOpfPath(zip) ?: error("EPUB package document was not found.")
             val opfEntry = zip.getEntry(opfPath) ?: error("EPUB package document entry is missing.")
             val originalOpf = zip.readUtf8(opfEntry)
-            val updatedOpf = rewriteOpf(originalOpf, update)
+            val coverPath = update.cover?.let { cover ->
+                require(cover.bytes.isNotEmpty()) { "EPUB cover image is empty." }
+                require(cover.normalizedExtension in SupportedCoverExtensions) {
+                    "Unsupported EPUB cover image type: ${cover.extension}"
+                }
+                resolveCoverPath(originalOpf, opfPath, cover.normalizedExtension)
+            }
+            val updatedOpf = rewriteOpf(originalOpf, update, coverPath?.relativeToOpf)
             val updatedOpfBytes = updatedOpf.toByteArray(StandardCharsets.UTF_8)
 
             if (destination.exists()) destination.delete()
@@ -69,9 +105,13 @@ object SharedEpubMetadataEditor {
                     when {
                         entry.name == "mimetype" -> Unit
                         entry.name == opfPath -> output.putDeflatedEntry(entry.name, updatedOpfBytes, entry.time)
+                        coverPath != null && entry.name == coverPath.zipEntry -> Unit
                         entry.isDirectory -> output.putDirectoryEntry(entry)
                         else -> output.putCopiedEntry(entry, zip.readBytes(entry))
                     }
+                }
+                if (coverPath != null) {
+                    output.putDeflatedEntry(coverPath.zipEntry, update.cover.bytes, System.currentTimeMillis())
                 }
             }
         }
@@ -109,7 +149,7 @@ object SharedEpubMetadataEditor {
     }
 }
 
-private fun rewriteOpf(opf: String, update: SharedEpubMetadataUpdate): String {
+private fun rewriteOpf(opf: String, update: SharedEpubMetadataUpdate, coverHref: String?): String {
     val document = Jsoup.parse(opf, "", Parser.xmlParser())
     document.outputSettings()
         .syntax(Document.OutputSettings.Syntax.xml)
@@ -127,6 +167,12 @@ private fun rewriteOpf(opf: String, update: SharedEpubMetadataUpdate): String {
     metadata.upsertDcText("description", update.description)
     metadata.upsertMetaContent("calibre:series", update.seriesName)
     metadata.upsertMetaContent("calibre:series_index", update.seriesIndex?.formatSeriesIndex())
+    if (coverHref != null) {
+        val manifest = document.getAllElements().firstOrNull { it.localNameEquals("manifest") }
+            ?: error("EPUB package manifest section is missing.")
+        val coverId = manifest.upsertCoverItem(coverHref)
+        metadata.upsertMetaContent("cover", coverId)
+    }
 
     return document.outerHtml()
 }
@@ -200,6 +246,33 @@ private fun Element.upsertMetaContent(name: String, value: String?) {
     existing.drop(1).forEach { it.remove() }
 }
 
+private fun Element.upsertCoverItem(href: String): String {
+    val mediaType = href.substringAfterLast('.', "").lowercase().coverMediaType()
+    val existingCover = children().firstOrNull { child ->
+        child.localNameEquals("item") &&
+            child.attr("properties").split(Regex("\\s+")).any { it.equals("cover-image", ignoreCase = true) }
+    } ?: children().firstOrNull { child ->
+        child.localNameEquals("item") && child.attr("id").equals("cover-image", ignoreCase = true)
+    } ?: children().firstOrNull { child ->
+        child.localNameEquals("item") && child.attr("id").equals("cover", ignoreCase = true)
+    }
+
+    val target = existingCover ?: Element(Tag.valueOf("item"), "").also { appendChild(it) }
+    val id = target.attr("id").takeIf { it.isNotBlank() } ?: "cover-image"
+    target.attr("id", id)
+    target.attr("href", href)
+    target.attr("media-type", mediaType)
+    val properties = target.attr("properties")
+        .split(Regex("\\s+"))
+        .filter { it.isNotBlank() }
+        .toMutableList()
+    if (properties.none { it.equals("cover-image", ignoreCase = true) }) {
+        properties.add("cover-image")
+    }
+    target.attr("properties", properties.joinToString(" "))
+    return id
+}
+
 private fun Element.firstChildText(localName: String): String? {
     return children()
         .firstOrNull { it.localNameEquals(localName) }
@@ -225,6 +298,58 @@ private fun Double.formatSeriesIndex(): String {
         toInt().toString()
     } else {
         toString().trimEnd('0').trimEnd('.')
+    }
+}
+
+private data class CoverPath(
+    val zipEntry: String,
+    val relativeToOpf: String
+)
+
+private val SupportedCoverExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
+
+private fun resolveCoverPath(opf: String, opfPath: String, extension: String): CoverPath {
+    val existing = findCoverPath(opf, opfPath)
+    val zipEntry = existing?.takeIf { it.substringAfterLast('.', "").lowercase() in SupportedCoverExtensions }
+        ?: opfPath.substringBeforeLast('/', missingDelimiterValue = "")
+            .let { base -> listOf(base, "Images", "cover.$extension").filter { it.isNotBlank() }.joinToString("/") }
+    val basePath = opfPath.substringBeforeLast('/', missingDelimiterValue = "")
+    val relative = if (basePath.isBlank()) zipEntry else zipEntry.removePrefix("$basePath/")
+    return CoverPath(zipEntry = zipEntry, relativeToOpf = relative)
+}
+
+private fun findCoverPath(opf: String, opfPath: String): String? {
+    val document = Jsoup.parse(opf, "", Parser.xmlParser())
+    val manifest = document.getAllElements().firstOrNull { it.localNameEquals("manifest") } ?: return null
+    val metadata = document.getAllElements().firstOrNull { it.localNameEquals("metadata") }
+    val coverId = metadata?.children()?.firstOrNull { child ->
+        child.localNameEquals("meta") && child.attr("name").equals("cover", ignoreCase = true)
+    }?.attr("content")?.takeIf { it.isNotBlank() }
+
+    val item = manifest.children().firstOrNull { child ->
+        coverId != null && child.localNameEquals("item") && child.attr("id") == coverId
+    } ?: manifest.children().firstOrNull { child ->
+        child.localNameEquals("item") &&
+            child.attr("properties").split(Regex("\\s+")).any { it.equals("cover-image", ignoreCase = true) }
+    } ?: manifest.children().firstOrNull { child ->
+        child.localNameEquals("item") &&
+            child.attr("media-type").startsWith("image/", ignoreCase = true) &&
+            child.attr("href").contains("cover", ignoreCase = true)
+    }
+
+    val href = item?.attr("href")?.trim()?.trimStart('/')?.takeIf { it.isNotBlank() } ?: return null
+    val basePath = opfPath.substringBeforeLast('/', missingDelimiterValue = "")
+    return if (basePath.isBlank() || href.contains("://")) href else "$basePath/$href"
+}
+
+private fun String.coverMediaType(): String {
+    return when (this) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "bmp" -> "image/bmp"
+        else -> "application/octet-stream"
     }
 }
 

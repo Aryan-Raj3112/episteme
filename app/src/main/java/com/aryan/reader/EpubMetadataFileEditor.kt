@@ -6,18 +6,24 @@ import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.reader.SharedEpubCoverSnapshot
+import com.aryan.reader.shared.reader.SharedEpubCoverUpdate
 import com.aryan.reader.shared.reader.SharedEpubMetadataEditor
 import com.aryan.reader.shared.reader.SharedEpubMetadataSnapshot
 import com.aryan.reader.shared.reader.SharedEpubMetadataUpdate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 import java.util.UUID
+
+private const val MAX_METADATA_COVER_BYTES = 12L * 1024L * 1024L
 
 data class AndroidEpubMetadataEditResult(
     val metadata: SharedEpubMetadataSnapshot,
     val fileSize: Long,
-    val fileContentModifiedTimestamp: Long
+    val fileContentModifiedTimestamp: Long,
+    val cover: SharedEpubCoverSnapshot?
 )
 
 class EpubMetadataFileEditor(private val context: Context) {
@@ -34,6 +40,15 @@ class EpubMetadataFileEditor(private val context: Context) {
 
             try {
                 copyUriToFile(sourceUri, sourceCopy)
+                val backupFile = backupOriginalIfNeeded(item, sourceCopy)
+                val coverUpdate = metadata.coverImageUri?.toUri()?.let(::readCoverUpdate)
+                    ?: if (metadata.restoreOriginalCover) {
+                        SharedEpubMetadataEditor.readCover(backupFile)?.let { cover ->
+                            SharedEpubCoverUpdate(bytes = cover.bytes, extension = cover.extension)
+                        }
+                    } else {
+                        null
+                    }
                 val rewritten = SharedEpubMetadataEditor.rewrite(
                     source = sourceCopy,
                     destination = editedCopy,
@@ -42,17 +57,18 @@ class EpubMetadataFileEditor(private val context: Context) {
                         author = metadata.author,
                         description = metadata.description,
                         seriesName = metadata.seriesName,
-                        seriesIndex = metadata.seriesIndex
+                        seriesIndex = metadata.seriesIndex,
+                        cover = coverUpdate
                     )
                 )
-                backupOriginalIfNeeded(item, sourceCopy)
                 replaceUriBytes(sourceUri, editedCopy)
 
                 AndroidEpubMetadataEditResult(
                     metadata = rewritten,
                     fileSize = queryFileSize(sourceUri).takeIf { it > 0L } ?: editedCopy.length(),
                     fileContentModifiedTimestamp = queryLastModified(sourceUri).takeIf { it > 0L }
-                        ?: System.currentTimeMillis()
+                        ?: System.currentTimeMillis(),
+                    cover = SharedEpubMetadataEditor.readCover(editedCopy)
                 )
             } finally {
                 sourceCopy.delete()
@@ -65,6 +81,29 @@ class EpubMetadataFileEditor(private val context: Context) {
         context.contentResolver.openInputStream(uri)?.use { input ->
             destination.outputStream().use { output -> input.copyTo(output) }
         } ?: error("Unable to read EPUB source.")
+    }
+
+    private fun readCoverUpdate(uri: Uri): SharedEpubCoverUpdate {
+        val extension = coverExtension(uri) ?: error("Choose a JPG, PNG, GIF, WebP, or BMP cover image.")
+        val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+            input.readBytesLimited(MAX_METADATA_COVER_BYTES)
+        } ?: error("Unable to read cover image.")
+        return SharedEpubCoverUpdate(bytes = bytes, extension = extension)
+    }
+
+    private fun coverExtension(uri: Uri): String? {
+        val mimeExtension = when (context.contentResolver.getType(uri)?.lowercase(Locale.US)) {
+            "image/jpeg", "image/jpg" -> "jpg"
+            "image/png" -> "png"
+            "image/gif" -> "gif"
+            "image/webp" -> "webp"
+            "image/bmp" -> "bmp"
+            else -> null
+        }
+        return mimeExtension ?: DocumentFile.fromSingleUri(context, uri)?.name
+            ?.substringAfterLast('.', "")
+            ?.lowercase(Locale.US)
+            ?.takeIf { it in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp") }
     }
 
     private fun replaceUriBytes(uri: Uri, editedFile: File) {
@@ -81,7 +120,7 @@ class EpubMetadataFileEditor(private val context: Context) {
         } ?: error("Unable to write EPUB source.")
     }
 
-    private fun backupOriginalIfNeeded(item: RecentFileItem, sourceCopy: File) {
+    private fun backupOriginalIfNeeded(item: RecentFileItem, sourceCopy: File): File {
         val backupFile = File(
             File(context.filesDir, "metadata_backups").apply { mkdirs() },
             "${item.bookId.toSafeBackupName()}.epub"
@@ -91,6 +130,7 @@ class EpubMetadataFileEditor(private val context: Context) {
                 backupFile.outputStream().use { output -> input.copyTo(output) }
             }
         }
+        return backupFile
     }
 
     private fun queryFileSize(uri: Uri): Long {
@@ -108,6 +148,20 @@ class EpubMetadataFileEditor(private val context: Context) {
             DocumentFile.fromSingleUri(context, uri)?.lastModified() ?: 0L
         }
     }
+}
+
+private fun java.io.InputStream.readBytesLimited(maxBytes: Long): ByteArray {
+    val output = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var total = 0L
+    while (true) {
+        val read = read(buffer)
+        if (read == -1) break
+        total += read
+        require(total <= maxBytes) { "Cover image is too large." }
+        output.write(buffer, 0, read)
+    }
+    return output.toByteArray()
 }
 
 private fun String.toSafeBackupName(): String {
