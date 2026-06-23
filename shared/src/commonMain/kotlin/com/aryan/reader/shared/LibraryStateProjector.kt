@@ -42,7 +42,7 @@ class SharedLibraryStateProjector(
             .withPinnedFirst(current.pinnedLibraryBookIds)
         val visibleRecentBooks = sortBooks(
             allLibraryBooks.filter { it.isRecent },
-            current.sortOrder
+            SortOrder.RECENT
         )
             .withPinnedFirst(current.pinnedHomeBookIds)
             .take(if (current.recentFilesLimit > 0) current.recentFilesLimit else Int.MAX_VALUE)

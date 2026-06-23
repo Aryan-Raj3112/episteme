@@ -57,7 +57,7 @@ class SharedLibraryProjectorTest {
                 ),
                 selectedBookIds = setOf("old", "archived"),
                 recentLimit = 1,
-                sortOrder = SortOrder.RECENT
+                sortOrder = SortOrder.TITLE_ASC
             )
         )
 
@@ -147,6 +147,26 @@ class SharedLibraryProjectorTest {
 
         assertEquals(listOf("older", "newer"), result.recentBooks.ids())
         assertEquals(listOf("older", "newer"), result.libraryBooks.ids())
+    }
+
+    @Test
+    fun `SharedLibraryStateProjector keeps recent books ordered by recency when library sort changes`() {
+        val olderTitleFirst = book("alpha", title = "Alpha", timestamp = 1L)
+        val newerTitleLast = book("zulu", title = "Zulu", timestamp = 3L)
+        val middleNotRecent = book("middle", title = "Middle", timestamp = 2L, isRecent = false)
+
+        val result = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = SharedReaderScreenState(sortOrder = SortOrder.TITLE_ASC),
+                booksFromStore = listOf(olderTitleFirst, newerTitleLast, middleNotRecent),
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                tags = emptyList()
+            )
+        )
+
+        assertEquals(listOf("alpha", "middle", "zulu"), result.libraryBooks.ids())
+        assertEquals(listOf("zulu", "alpha"), result.recentBooks.ids())
     }
 
     @Test

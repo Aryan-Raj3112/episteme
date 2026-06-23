@@ -549,7 +549,7 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setSortOrder persists preference and reorders visible home and library lists`() = runTest(testDispatcher) {
+    fun `setSortOrder persists preference and reorders library while keeping recents by recency`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
@@ -565,7 +565,7 @@ class MainViewModelTest {
                 it.allRecentFiles.map { item -> item.bookId } == listOf("alpha", "beta", "gamma")
         }
 
-        assertEquals(listOf("alpha", "beta"), state.recentFiles.map { it.bookId })
+        assertEquals(listOf("beta", "alpha"), state.recentFiles.map { it.bookId })
         assertEquals(listOf("alpha", "beta", "gamma"), state.allRecentFiles.map { it.bookId })
         verify { mockEditor.putString("sort_order", SortOrder.TITLE_ASC.name) }
     }

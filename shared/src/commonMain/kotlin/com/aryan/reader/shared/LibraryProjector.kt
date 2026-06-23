@@ -2,7 +2,7 @@ package com.aryan.reader.shared
 
 class LibraryProjector {
     fun home(state: LibraryState): HomeScreenModel {
-        val recentBooks = sortBooks(state.books.filter { it.isRecent }, state.sortOrder)
+        val recentBooks = sortBooks(state.books.filter { it.isRecent }, SortOrder.RECENT)
             .take(state.recentLimit)
         return HomeScreenModel(
             recentBooks = recentBooks,

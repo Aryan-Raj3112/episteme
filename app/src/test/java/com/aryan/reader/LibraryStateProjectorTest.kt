@@ -214,7 +214,7 @@ class LibraryStateProjectorTest {
 
         assertEquals(listOf("beta", "gamma", "alpha"), result.allRecentFiles.ids())
         assertEquals(listOf("alpha", "beta", "gamma"), result.rawLibraryFiles.ids())
-        assertEquals(listOf("beta"), result.recentFiles.ids())
+        assertEquals(listOf("alpha"), result.recentFiles.ids())
         assertEquals(listOf("beta"), result.openTabs.ids())
         assertEquals(listOf("beta"), result.openTabIds)
         assertNull(result.activeTabBookId)
@@ -274,6 +274,27 @@ class LibraryStateProjectorTest {
         assertEquals(listOf("match"), result.allRecentFiles.ids())
         assertEquals(listOf("search_miss", "filter_miss", "match"), result.rawLibraryFiles.ids())
         assertEquals(listOf(tag), result.allTags)
+    }
+
+    @Test
+    fun `project keeps recent files ordered by recency when library sort changes`() {
+        val olderTitleFirst = recentFile("alpha", title = "Alpha", timestamp = 1L)
+        val newerTitleLast = recentFile("zulu", title = "Zulu", timestamp = 3L)
+        val middleNotRecent = recentFile("middle", title = "Middle", timestamp = 2L, isRecent = false)
+
+        val result = LibraryStateProjector().project(
+            LibraryProjectionInput(
+                state = ReaderScreenState(sortOrder = SortOrder.TITLE_ASC),
+                recentFilesFromDb = listOf(olderTitleFirst, newerTitleLast, middleNotRecent),
+                dbShelves = emptyList(),
+                shelfRefs = emptyList(),
+                dbTags = emptyList(),
+                tagRefs = emptyList()
+            )
+        )
+
+        assertEquals(listOf("alpha", "middle", "zulu"), result.allRecentFiles.ids())
+        assertEquals(listOf("zulu", "alpha"), result.recentFiles.ids())
     }
 
     @Test
