@@ -60,6 +60,7 @@ object NativePdfiumBridge {
         rasterPixelOffsets: IntArray,
         rasterPixels: IntArray,
         highlightPageIndices: IntArray,
+        highlightSubtypes: IntArray,
         highlightColors: IntArray,
         highlightRectOffsets: IntArray,
         highlightRectCounts: IntArray,
@@ -79,6 +80,9 @@ object NativePdfiumBridge {
     const val ANNOT_TEXT = PdfiumAnnotationSubtype.TEXT
     const val ANNOT_LINK = PdfiumAnnotationSubtype.LINK
     const val ANNOT_HIGHLIGHT = PdfiumAnnotationSubtype.HIGHLIGHT
+    const val ANNOT_UNDERLINE = PdfiumAnnotationSubtype.UNDERLINE
+    const val ANNOT_SQUIGGLY = PdfiumAnnotationSubtype.SQUIGGLY
+    const val ANNOT_STRIKEOUT = PdfiumAnnotationSubtype.STRIKEOUT
     const val ANNOT_INK = PdfiumAnnotationSubtype.INK
     const val ANNOT_WIDGET = PdfiumAnnotationSubtype.WIDGET
 }

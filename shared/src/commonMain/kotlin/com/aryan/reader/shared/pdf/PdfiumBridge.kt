@@ -35,8 +35,11 @@ interface PdfiumBridge {
 object PdfiumAnnotationSubtype {
     const val TEXT = 1
     const val LINK = 2
-    const val HIGHLIGHT = 8
-    const val INK = 12
+    const val HIGHLIGHT = 9
+    const val UNDERLINE = 10
+    const val SQUIGGLY = 11
+    const val STRIKEOUT = 12
+    const val INK = 15
     const val WIDGET = 19
 }
 

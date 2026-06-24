@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.HighlightStyle
 import kotlin.math.sqrt
 
 data class SharedPdfAnnotationExportPayload(
@@ -25,6 +26,7 @@ data class SharedPdfHighlightAnnotationExport(
     val pageIndex: Int,
     val boundsList: List<PdfPageBounds>,
     val colorArgb: Int,
+    val style: HighlightStyle = HighlightStyle.BACKGROUND,
     val contents: String,
     val comments: List<SharedPdfHighlightCommentExport> = emptyList()
 )
@@ -85,6 +87,7 @@ object SharedPdfAnnotationExportMapper {
             pageIndex = pageIndex,
             boundsList = exportBounds,
             colorArgb = colorArgb,
+            style = highlightStyle,
             contents = note?.trim().orEmpty(),
             comments = comments.toHighlightCommentExports(highlightId = id)
         )

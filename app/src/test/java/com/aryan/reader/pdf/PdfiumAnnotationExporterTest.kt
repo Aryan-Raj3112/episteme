@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -195,6 +196,43 @@ class PdfiumAnnotationExporterTest {
         )
 
         assertArrayEquals(intArrayOf(persistedColor.toArgb()), payload.highlightColors)
+    }
+
+    @Test
+    fun `buildPayload maps highlight styles to native PDF text markup subtypes`() {
+        val highlights = listOf(
+            HighlightStyle.BACKGROUND,
+            HighlightStyle.UNDERLINE,
+            HighlightStyle.WAVY_UNDERLINE,
+            HighlightStyle.STRIKETHROUGH
+        ).mapIndexed { index, style ->
+            PdfUserHighlight(
+                id = "highlight-$index",
+                pageIndex = 0,
+                bounds = listOf(RectF(10f, 90f, 40f, 80f)),
+                color = PdfHighlightColor.YELLOW,
+                style = style,
+                text = "Selected text",
+                range = 0 to 13
+            )
+        }
+
+        val payload = PdfiumAnnotationExporter.buildPayload(
+            inkAnnotations = emptyMap(),
+            textBoxes = emptyList(),
+            highlights = highlights,
+            pageSizes = listOf(PdfiumPageSize(width = 100, height = 100))
+        )
+
+        assertArrayEquals(
+            intArrayOf(
+                PDFIUM_ANNOT_HIGHLIGHT,
+                PDFIUM_ANNOT_UNDERLINE,
+                PDFIUM_ANNOT_SQUIGGLY,
+                PDFIUM_ANNOT_STRIKEOUT
+            ),
+            payload.highlightSubtypes
+        )
     }
 
     @Test

@@ -610,6 +610,9 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_extractImagePixels(JNIEnv *env, jcl
 
 static constexpr int kPdfAnnotText = 1;
 static constexpr int kPdfAnnotHighlight = 9;
+static constexpr int kPdfAnnotUnderline = 10;
+static constexpr int kPdfAnnotSquiggly = 11;
+static constexpr int kPdfAnnotStrikeOut = 12;
 static constexpr int kPdfAnnotInk = 15;
 static constexpr int kAnnotColor = 0;
 static constexpr int kAnnotFlagPrint = 1 << 2;
@@ -626,6 +629,18 @@ struct PdfiumFileWriter {
     FPDF_FILEWRITE_BRIDGE base;
     FILE* file;
 };
+
+static int normalize_text_markup_subtype(int subtype) {
+    switch (subtype) {
+        case kPdfAnnotUnderline:
+        case kPdfAnnotSquiggly:
+        case kPdfAnnotStrikeOut:
+        case kPdfAnnotHighlight:
+            return subtype;
+        default:
+            return kPdfAnnotHighlight;
+    }
+}
 
 static int write_pdf_block(FPDF_FILEWRITE_BRIDGE* self, const void* data, unsigned long size) {
     auto* writer = reinterpret_cast<PdfiumFileWriter*>(self);
@@ -1122,6 +1137,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         jintArray rasterPixelOffsetsArray,
         jintArray rasterPixelsArray,
         jintArray highlightPageIndicesArray,
+        jintArray highlightSubtypesArray,
         jintArray highlightColorsArray,
         jintArray highlightRectOffsetsArray,
         jintArray highlightRectCountsArray,
@@ -1187,6 +1203,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
     }
 
     std::vector<jint> highlightPageIndices = read_int_array(env, highlightPageIndicesArray);
+    std::vector<jint> highlightSubtypes = read_int_array(env, highlightSubtypesArray);
     std::vector<jint> highlightColors = read_int_array(env, highlightColorsArray);
     std::vector<jint> highlightRectOffsets = read_int_array(env, highlightRectOffsetsArray);
     std::vector<jint> highlightRectCounts = read_int_array(env, highlightRectCountsArray);
@@ -1312,7 +1329,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
     }
 
     for (size_t i = 0; i < highlightPageIndices.size(); i++) {
-        if (i >= highlightColors.size() || i >= highlightRectOffsets.size() || i >= highlightRectCounts.size()) {
+        if (i >= highlightSubtypes.size() || i >= highlightColors.size() || i >= highlightRectOffsets.size() || i >= highlightRectCounts.size()) {
             hadFailure = true;
             break;
         }
@@ -1381,7 +1398,8 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             continue;
         }
 
-        void* annot = create_annot_func(page, kPdfAnnotHighlight);
+        int highlightSubtype = normalize_text_markup_subtype(highlightSubtypes[i]);
+        void* annot = create_annot_func(page, highlightSubtype);
         if (!annot) {
             close_page_func(page);
             hadFailure = true;
@@ -1398,7 +1416,7 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
 
         unsigned int r, g, b, a;
         argb_to_rgba(highlightColors[i], &r, &g, &b, &a);
-        if (a == 255) a = 102;
+        if (a == 255) a = highlightSubtype == kPdfAnnotHighlight ? 102 : 235;
         set_annot_color_func(annot, kAnnotColor, r, g, b, a);
         if (set_annot_flags_func) set_annot_flags_func(annot, kAnnotFlagPrint);
 

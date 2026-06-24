@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.HighlightStyle
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -44,13 +45,15 @@ class SharedPdfAnnotationExportMapperTest {
                 PdfPageBounds(0.5f, 0.3f, 0.8f, 0.35f)
             ),
             text = "Selected text",
-            colorArgb = 0x8C64B5F6.toInt()
+            colorArgb = 0x8C64B5F6.toInt(),
+            highlightStyle = HighlightStyle.WAVY_UNDERLINE
         )
 
         val payload = SharedPdfAnnotationExportMapper.build(listOf(highlight))
 
         assertEquals(listOf("highlight-1"), payload.highlightAnnotations.map { it.id })
         assertEquals(highlight.boundsList, payload.highlightAnnotations.single().boundsList)
+        assertEquals(HighlightStyle.WAVY_UNDERLINE, payload.highlightAnnotations.single().style)
         assertEquals("", payload.highlightAnnotations.single().contents)
         assertEquals(
             "Actual note",
