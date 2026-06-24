@@ -99,6 +99,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
@@ -1786,12 +1787,7 @@ fun SharedPdfAnnotationOverlay(
                         val highlightBounds = annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }
                         val style = sharedPdfHighlightAnnotationOverlayStyle(annotation)
                         highlightBounds.forEach { bounds ->
-                            drawRect(
-                                color = style.color,
-                                topLeft = bounds.topLeft(canvasSize),
-                                size = bounds.size(canvasSize),
-                                blendMode = style.blendMode
-                            )
+                            drawSharedPdfHighlightAnnotation(annotation, bounds, canvasSize, style)
                         }
                     }
                     PdfAnnotationKind.INK -> {
@@ -1874,9 +1870,89 @@ fun SharedPdfAnnotationOverlay(
     }
 }
 
+private fun DrawScope.drawSharedPdfHighlightAnnotation(
+    annotation: SharedPdfAnnotation,
+    bounds: PdfPageBounds,
+    canvasSize: IntSize,
+    overlayStyle: SharedPdfHighlightAnnotationOverlayStyle
+) {
+    val topLeft = bounds.topLeft(canvasSize)
+    val size = bounds.size(canvasSize)
+    when (annotation.highlightStyle) {
+        HighlightStyle.BACKGROUND -> drawRect(
+            color = overlayStyle.color,
+            topLeft = topLeft,
+            size = size,
+            blendMode = overlayStyle.blendMode
+        )
+        HighlightStyle.UNDERLINE -> drawSharedPdfHighlightLine(
+            color = overlayStyle.lineColor,
+            topLeft = topLeft,
+            size = size,
+            y = topLeft.y + size.height * 0.86f
+        )
+        HighlightStyle.WAVY_UNDERLINE -> drawSharedPdfHighlightWave(
+            color = overlayStyle.lineColor,
+            topLeft = topLeft,
+            size = size,
+            baselineY = topLeft.y + size.height * 0.86f
+        )
+        HighlightStyle.STRIKETHROUGH -> drawSharedPdfHighlightLine(
+            color = overlayStyle.lineColor,
+            topLeft = topLeft,
+            size = size,
+            y = topLeft.y + size.height * 0.52f
+        )
+    }
+}
+
+private fun DrawScope.drawSharedPdfHighlightLine(
+    color: Color,
+    topLeft: Offset,
+    size: Size,
+    y: Float
+) {
+    if (size.width <= 0f || size.height <= 0f) return
+    drawLine(
+        color = color,
+        start = Offset(topLeft.x, y),
+        end = Offset(topLeft.x + size.width, y),
+        strokeWidth = (size.height * 0.08f).coerceIn(1.5f, 4f),
+        cap = StrokeCap.Round
+    )
+}
+
+private fun DrawScope.drawSharedPdfHighlightWave(
+    color: Color,
+    topLeft: Offset,
+    size: Size,
+    baselineY: Float
+) {
+    if (size.width <= 0f || size.height <= 0f) return
+    val amplitude = (size.height * 0.08f).coerceIn(1.2f, 3.5f)
+    val wavelength = (size.height * 0.62f).coerceIn(6f, 14f)
+    val path = Path()
+    var x = topLeft.x
+    val endX = topLeft.x + size.width
+    path.moveTo(x, baselineY)
+    while (x < endX) {
+        val midX = (x + wavelength / 2f).coerceAtMost(endX)
+        val nextX = (x + wavelength).coerceAtMost(endX)
+        path.quadraticBezierTo(x + wavelength / 4f, baselineY - amplitude, midX, baselineY)
+        path.quadraticBezierTo(x + wavelength * 0.75f, baselineY + amplitude, nextX, baselineY)
+        x += wavelength
+    }
+    drawPath(
+        path = path,
+        color = color,
+        style = Stroke(width = (size.height * 0.06f).coerceIn(1.2f, 3f), cap = StrokeCap.Round)
+    )
+}
+
 internal data class SharedPdfHighlightAnnotationOverlayStyle(
     val color: Color,
-    val blendMode: BlendMode
+    val blendMode: BlendMode,
+    val lineColor: Color
 )
 
 internal fun sharedPdfHighlightAnnotationOverlayStyle(
@@ -1889,7 +1965,8 @@ internal fun sharedPdfHighlightAnnotationOverlayStyle(
         ?: SharedPdfAndroidHighlightColors.RenderAlpha
     return SharedPdfHighlightAnnotationOverlayStyle(
         color = storedColor.copy(alpha = renderAlpha),
-        blendMode = BlendMode.Multiply
+        blendMode = BlendMode.Multiply,
+        lineColor = storedColor.copy(alpha = storedColor.alpha.takeIf { it > 0f } ?: 0.92f)
     )
 }
 

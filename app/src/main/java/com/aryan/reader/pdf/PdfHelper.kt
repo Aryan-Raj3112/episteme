@@ -27,6 +27,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -96,6 +97,7 @@ import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrLine
 import com.aryan.reader.pdf.ocr.OcrResult
 import com.aryan.reader.pdf.ocr.OcrSymbol
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.DEFAULT_SHARED_PDF_COMMENT_AUTHOR
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import com.aryan.reader.shared.pdf.pdfCommentChildren
@@ -143,6 +145,7 @@ data class PdfUserHighlight(
     val colorArgb: Int? = null,
     val text: String,
     val range: Pair<Int, Int>,
+    val style: HighlightStyle = HighlightStyle.BACKGROUND,
     val note: String? = null,
     val comments: List<SharedPdfAnnotationComment> = emptyList()
 ) {
@@ -163,7 +166,8 @@ internal data class CustomPdfMenuState(
     val author: String? = null,
     val annotation: EmbeddedAnnotation? = null,
     val note: String? = null,
-    val selectedColor: PdfHighlightColor? = null
+    val selectedColor: PdfHighlightColor? = null,
+    val selectedStyle: HighlightStyle = HighlightStyle.BACKGROUND
 )
 
 internal enum class PdfSelectionMethod {
@@ -234,6 +238,16 @@ private fun CommentThread(replies: List<EmbeddedAnnotation>, depth: Int) {
     }
 }
 
+
+private fun pdfHighlightStyleIconRes(style: HighlightStyle): Int {
+    return when (style) {
+        HighlightStyle.BACKGROUND -> R.drawable.font_background
+        HighlightStyle.UNDERLINE -> R.drawable.format_underlined
+        HighlightStyle.WAVY_UNDERLINE -> R.drawable.format_underlined_squiggle
+        HighlightStyle.STRIKETHROUGH -> R.drawable.strikethrough
+    }
+}
+
 @Composable
 internal fun PdfSelectionMenuPopup(
     menuState: CustomPdfMenuState,
@@ -246,15 +260,20 @@ internal fun PdfSelectionMenuPopup(
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
     onSelectAll: () -> Unit,
-    onColorSelected: (PdfHighlightColor) -> Unit,
+    onColorSelected: (PdfHighlightColor, HighlightStyle) -> Unit,
     onDelete: () -> Unit,
     onTts: (() -> Unit)? = null,
-    onNote: (() -> Unit)? = null
+    onNote: ((HighlightStyle) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val selectionMenuMaxHeight = (configuration.screenHeightDp.dp - 32.dp).coerceAtLeast(160.dp)
     val menuScrollState = rememberScrollState()
+    var selectedHighlightStyle by remember(menuState.highlightId, menuState.selectedStyle) {
+        mutableStateOf(
+            if (menuState.selectedStyle == HighlightStyle.BACKGROUND) loadPreferredPdfHighlightStyle(context) else menuState.selectedStyle
+        )
+    }
 
     Popup(
         popupPositionProvider = popupPositionProvider,
@@ -355,6 +374,42 @@ internal fun PdfSelectionMenuPopup(
                     }
                 } else {
                     Row(
+                        modifier = Modifier.padding(top = 8.dp, start = 10.dp, end = 10.dp)
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        HighlightStyle.entries.forEach { style ->
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 3.dp)
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (selectedHighlightStyle == style) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (selectedHighlightStyle == style) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .clickable {
+                                        selectedHighlightStyle = style
+                                        savePreferredPdfHighlightStyle(context, style)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = pdfHighlightStyleIconRes(style)),
+                                    contentDescription = style.id,
+                                    tint = if (selectedHighlightStyle == style) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                    Row(
                         modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp)
                             .fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center,
@@ -367,8 +422,9 @@ internal fun PdfSelectionMenuPopup(
                                     .background(displayColor, CircleShape).clip(CircleShape)
                                     .clickable {
                                         Timber.tag("PdfHighlightDebug")
-                                            .d("Color box clicked: $colorEnum")
-                                        onColorSelected(colorEnum)
+                                            .d("Color box clicked: $colorEnum style=$selectedHighlightStyle")
+                                        savePreferredPdfHighlightStyle(context, selectedHighlightStyle)
+                                        onColorSelected(colorEnum, selectedHighlightStyle)
                                     })
                         }
                         if (onPaletteClick != null) {
@@ -402,7 +458,7 @@ internal fun PdfSelectionMenuPopup(
 
                     if (onNote != null) {
                         val noteLabel = context.getString(if (menuState.note.isNullOrBlank()) R.string.label_note else R.string.label_edit)
-                        actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = noteLabel, onClick = onNote))
+                        actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = noteLabel, onClick = { onNote(selectedHighlightStyle) }))
                     }
 
                     if (!menuState.isExistingHighlight) {
@@ -714,6 +770,46 @@ fun PdfHighlightColorRow(
     }
 }
 
+@Composable
+private fun PdfHighlightStyleRow(
+    selectedStyle: HighlightStyle,
+    onStyleSelect: (HighlightStyle) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HighlightStyle.entries.forEach { style ->
+            val selected = style == selectedStyle
+            Surface(
+                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
+                contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                ),
+                modifier = Modifier
+                    .size(width = 38.dp, height = 30.dp)
+                    .clickable { onStyleSelect(style) }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(id = pdfHighlightStyleIconRes(style)),
+                        contentDescription = style.id,
+                        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
 private enum class PdfAnnotationSheetSection {
     NOTE,
     COMMENTS
@@ -728,6 +824,7 @@ fun PdfAnnotationBottomSheet(
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
     onPaletteClick: (() -> Unit)? = null,
     onColorChange: (PdfHighlightColor) -> Unit,
+    onStyleChange: (HighlightStyle) -> Unit,
     onDismiss: () -> Unit,
     onSave: (String, List<SharedPdfAnnotationComment>) -> Unit,
     onUpdate: (String, List<SharedPdfAnnotationComment>) -> Unit = { _, _ -> },
@@ -737,6 +834,7 @@ fun PdfAnnotationBottomSheet(
     onTranslate: () -> Unit,
     onSearch: () -> Unit
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var noteText by remember { mutableStateOf(highlight.note ?: "") }
     var comments by remember(highlight.id) { mutableStateOf(highlight.comments) }
@@ -772,6 +870,15 @@ fun PdfAnnotationBottomSheet(
                 .padding(bottom = 24.dp)
         ) {
             val displayColor = highlight.resolvedColor(customHighlightColors)
+
+            PdfHighlightStyleRow(
+                selectedStyle = highlight.style,
+                onStyleSelect = {
+                    savePreferredPdfHighlightStyle(context, it)
+                    onStyleChange(it)
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
 
             PdfHighlightColorRow(
                 selectedColor = highlight.color,

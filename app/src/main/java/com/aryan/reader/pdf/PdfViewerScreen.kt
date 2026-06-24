@@ -277,6 +277,7 @@ import com.aryan.reader.saveReaderSliderToggled
 import com.aryan.reader.saveTtsReplacementPreferences
 import com.aryan.reader.scaledToCanvasLimit
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.ReaderMinimalSlider
@@ -1721,7 +1722,7 @@ fun PdfViewerScreen(
     }
 
     val onHighlightAdd = remember(pdfDocument, currentBookId, customHighlightColors) {
-        { pageIndex: Int, range: Pair<Int, Int>, text: String, color: PdfHighlightColor ->
+        { pageIndex: Int, range: Pair<Int, Int>, text: String, color: PdfHighlightColor, style: HighlightStyle ->
             Timber.tag("PdfExportDebug").i("onHighlightAdd: Adding persistent highlight. Page: $pageIndex, Text: ${text.take(20)}...")
             coroutineScope.launch {
                 val doc = pdfDocument
@@ -1763,6 +1764,7 @@ fun PdfViewerScreen(
                                     bounds = mergedPdfRects,
                                     color = color,
                                     colorArgb = customHighlightColors[color]?.toArgb() ?: color.color.toArgb(),
+                                    style = style,
                                     text = fullText,
                                     range = Pair(newStart, newEnd)
                                 )
@@ -1787,14 +1789,15 @@ fun PdfViewerScreen(
     }
 
     val onHighlightUpdate = remember(customHighlightColors) {
-        { id: String, newColor: PdfHighlightColor ->
+        { id: String, newColor: PdfHighlightColor, newStyle: HighlightStyle? ->
             Timber.tag("PdfHighlightDebug").d("onHighlightUpdate triggered: id=$id, newColor=$newColor")
             val index = userHighlights.indexOfFirst { it.id == id }
             if (index != -1) {
                 val old = userHighlights[index]
                 userHighlights[index] = old.copy(
                     color = newColor,
-                    colorArgb = customHighlightColors[newColor]?.toArgb() ?: newColor.color.toArgb()
+                    colorArgb = customHighlightColors[newColor]?.toArgb() ?: newColor.color.toArgb(),
+                    style = newStyle ?: old.style
                 )
                 Timber.tag("PdfHighlightDebug").d("Highlight successfully updated")
             } else {
@@ -8039,7 +8042,15 @@ fun PdfViewerScreen(
                 onColorChange = { newColor ->
                     onHighlightUpdate(
                         targetHighlight.id,
-                        newColor
+                        newColor,
+                        targetHighlight.style
+                    )
+                },
+                onStyleChange = { newStyle ->
+                    onHighlightUpdate(
+                        targetHighlight.id,
+                        targetHighlight.color,
+                        newStyle
                     )
                 },
                 onDismiss = { highlightToNoteId = null },

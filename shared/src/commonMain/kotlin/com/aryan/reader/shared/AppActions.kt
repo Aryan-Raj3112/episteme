@@ -59,7 +59,8 @@ sealed interface ReaderAction {
     data class HighlightUpdated(
         val highlightId: String,
         val color: HighlightColor? = null,
-        val note: String? = null
+        val note: String? = null,
+        val style: HighlightStyle? = null
     ) : ReaderAction
     data class HighlightDeleted(val highlightId: String) : ReaderAction
 }

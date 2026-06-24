@@ -10,6 +10,7 @@ import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 
 internal const val VERTICAL_SCROLL_TAG = "PdfVerticalScroll"
@@ -235,6 +236,16 @@ internal fun saveCustomHighlightColors(context: Context, colors: Map<PdfHighligh
             putInt("custom_highlight_${colorEnum.name}", color.toArgb())
         }
     }
+}
+
+internal fun savePreferredPdfHighlightStyle(context: Context, style: HighlightStyle) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString("pdf_preferred_highlight_style", style.id) }
+}
+
+internal fun loadPreferredPdfHighlightStyle(context: Context): HighlightStyle {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return HighlightStyle.fromId(prefs.getString("pdf_preferred_highlight_style", null))
 }
 
 internal fun saveKeepScreenOn(context: Context, isEnabled: Boolean) {

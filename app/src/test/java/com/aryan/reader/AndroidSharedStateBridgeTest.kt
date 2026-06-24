@@ -117,12 +117,35 @@ class AndroidSharedStateBridgeTest {
                 openTabIds = listOf("old"),
                 activeTabBookId = "old"
             ),
-            projectedState = ReaderScreenState(),
+            projectedState = ReaderScreenState(openTabIds = listOf("old"), activeTabBookId = "old"),
             bookId = "new"
         )
 
         assertEquals(true, result.isTabsEnabled)
         assertEquals(listOf("old", "new"), result.openTabIds)
+        assertEquals("new", result.activeTabBookId)
+    }
+
+    @Test
+    fun `openBookTab ignores stale persisted tab ids missing from projection`() {
+        val staleIds = (1..20).map { "missing_$it" }
+
+        val result = AndroidSharedStateBridge.openBookTab(
+            current = ReaderScreenState(
+                isTabsEnabled = true,
+                openTabIds = staleIds,
+                activeTabBookId = staleIds.last()
+            ),
+            projectedState = ReaderScreenState(
+                isTabsEnabled = true,
+                openTabIds = emptyList(),
+                activeTabBookId = null
+            ),
+            bookId = "new"
+        )
+
+        assertEquals(true, result.isTabsEnabled)
+        assertEquals(listOf("new"), result.openTabIds)
         assertEquals("new", result.activeTabBookId)
     }
 
@@ -134,7 +157,7 @@ class AndroidSharedStateBridgeTest {
                 openTabIds = listOf("one", "two", "three"),
                 activeTabBookId = "three"
             ),
-            projectedState = ReaderScreenState(),
+            projectedState = ReaderScreenState(openTabIds = listOf("one", "two", "three"), activeTabBookId = "three"),
             bookId = "three"
         )
 

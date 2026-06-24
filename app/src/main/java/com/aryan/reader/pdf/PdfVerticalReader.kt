@@ -108,6 +108,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.SearchResult
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.pdf.data.PdfAnnotation
@@ -316,8 +317,8 @@ internal fun PdfVerticalReader(
     isHighlighterSnapEnabled: Boolean = false,
     userHighlights: List<PdfUserHighlight> = emptyList(),
     userHighlightsByPage: Map<Int, List<PdfUserHighlight>> = emptyMap(),
-    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
-    onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
+    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor, HighlightStyle) -> Unit = { _,_,_,_,_ -> },
+    onHighlightUpdate: (String, PdfHighlightColor, HighlightStyle?) -> Unit = { _,_,_ -> },
     onHighlightDelete: (String) -> Unit = {},
     onNoteRequested: (String?) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },

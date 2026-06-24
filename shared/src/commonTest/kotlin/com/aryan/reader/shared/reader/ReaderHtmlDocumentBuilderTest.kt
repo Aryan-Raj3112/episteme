@@ -135,7 +135,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertEquals(1, Regex("<span class=\"reader-user-highlight").findAll(html).count())
-        assertTrue(html.contains("""alpha beta <span class="reader-user-highlight user-highlight-yellow" style="background-color:#12ABEF !important" data-reader-highlight-id="highlight-1" data-cfi="desktop:0:11:16" data-reader-start-offset="11" data-reader-end-offset="16">alpha</span> beta"""))
+        assertTrue(html.contains("""alpha beta <span class="reader-user-highlight user-highlight-yellow" style="background-color:#12ABEF !important" data-reader-highlight-style="background" data-reader-highlight-id="highlight-1" data-cfi="desktop:0:11:16" data-reader-start-offset="11" data-reader-end-offset="16">alpha</span> beta"""))
     }
 
     @Test

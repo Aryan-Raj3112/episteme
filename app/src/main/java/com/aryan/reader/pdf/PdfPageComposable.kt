@@ -70,10 +70,13 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -127,6 +130,7 @@ import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.VirtualPage
 import com.aryan.reader.pdf.ocr.OcrElement
 import com.aryan.reader.pdf.ocr.OcrResult
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
@@ -300,8 +304,8 @@ internal fun PdfPageComposable(
     isAutoScrollPlaying: Boolean = false,
     isHighlighterSnapEnabled: Boolean = false,
     userHighlights: List<PdfUserHighlight> = emptyList(),
-    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit = { _,_,_,_ -> },
-    onHighlightUpdate: (String, PdfHighlightColor) -> Unit = { _,_ -> },
+    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor, HighlightStyle) -> Unit = { _,_,_,_,_ -> },
+    onHighlightUpdate: (String, PdfHighlightColor, HighlightStyle?) -> Unit = { _,_,_ -> },
     onHighlightDelete: (String) -> Unit = {},
     onNoteRequested: (String?) -> Unit = {},
     onTts: (Int, Int) -> Unit = { _, _ -> },
@@ -4757,16 +4761,98 @@ private fun PdfHighlightsLayer(
                 val displayColor = highlight.resolvedColor(customHighlightColors)
                 screenRects.forEach { r ->
                     if (isVisible(r)) {
-                        drawRect(
-                            color = displayColor.copy(alpha = 0.4f),
-                            topLeft = Offset(r.left.toFloat(), r.top.toFloat()),
-                            size = Size(r.width().toFloat(), r.height().toFloat())
+                        drawPdfUserHighlight(
+                            color = displayColor,
+                            style = highlight.style,
+                            rect = r
                         )
                     }
                 }
             }
         }
     }
+}
+
+private fun DrawScope.drawPdfUserHighlight(
+    color: Color,
+    style: HighlightStyle,
+    rect: Rect
+) {
+    val left = rect.left.toFloat()
+    val top = rect.top.toFloat()
+    val width = rect.width().toFloat()
+    val height = rect.height().toFloat()
+    if (width <= 0f || height <= 0f) return
+    when (style) {
+        HighlightStyle.BACKGROUND -> drawRect(
+            color = color.copy(alpha = 0.4f),
+            topLeft = Offset(left, top),
+            size = Size(width, height)
+        )
+        HighlightStyle.UNDERLINE -> drawPdfHighlightLine(
+            color = color.copy(alpha = 0.92f),
+            left = left,
+            right = left + width,
+            y = top + height * 0.86f,
+            height = height
+        )
+        HighlightStyle.WAVY_UNDERLINE -> drawPdfHighlightWave(
+            color = color.copy(alpha = 0.92f),
+            left = left,
+            right = left + width,
+            baselineY = top + height * 0.86f,
+            height = height
+        )
+        HighlightStyle.STRIKETHROUGH -> drawPdfHighlightLine(
+            color = color.copy(alpha = 0.92f),
+            left = left,
+            right = left + width,
+            y = top + height * 0.52f,
+            height = height
+        )
+    }
+}
+
+private fun DrawScope.drawPdfHighlightLine(
+    color: Color,
+    left: Float,
+    right: Float,
+    y: Float,
+    height: Float
+) {
+    drawLine(
+        color = color,
+        start = Offset(left, y),
+        end = Offset(right, y),
+        strokeWidth = (height * 0.08f).coerceIn(1.5f, 4f),
+        cap = StrokeCap.Round
+    )
+}
+
+private fun DrawScope.drawPdfHighlightWave(
+    color: Color,
+    left: Float,
+    right: Float,
+    baselineY: Float,
+    height: Float
+) {
+    val amplitude = (height * 0.08f).coerceIn(1.2f, 3.5f)
+    val wavelength = (height * 0.62f).coerceIn(6f, 14f)
+    val path = Path()
+    var x = left
+    path.moveTo(x, baselineY)
+    while (x < right) {
+        val midX = (x + wavelength / 2f).coerceAtMost(right)
+        val nextX = (x + wavelength).coerceAtMost(right)
+        path.quadraticBezierTo(x + wavelength / 4f, baselineY - amplitude, midX, baselineY)
+        path.quadraticBezierTo(x + wavelength * 0.75f, baselineY + amplitude, nextX, baselineY)
+        x += wavelength
+    }
+    drawPath(
+        path = path,
+        color = color,
+        style = Stroke(width = (height * 0.06f).coerceIn(1.2f, 3f), cap = StrokeCap.Round)
+    )
 }
 
 @Suppress("SameParameterValue")
@@ -5025,8 +5111,8 @@ private fun PdfPageRenderer(
     draggingBoxId: String? = null,
     customHighlightColors: Map<PdfHighlightColor, Color> = emptyMap(),
     onPaletteClick: (() -> Unit)? = null,
-    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor) -> Unit,
-    onHighlightUpdate: (String, PdfHighlightColor) -> Unit,
+    onHighlightAdd: (Int, Pair<Int, Int>, String, PdfHighlightColor, HighlightStyle) -> Unit,
+    onHighlightUpdate: (String, PdfHighlightColor, HighlightStyle?) -> Unit,
     onHighlightDelete: (String) -> Unit,
     onTts: (Int, Int) -> Unit,
     activeToolThickness: Float,
@@ -5428,13 +5514,14 @@ private fun PdfPageRenderer(
                     onTranslate = onTranslate,
                     onSearch = onSearch,
                     onSelectAll = onSelectAll,
-                    onColorSelected = { color ->
+                    onColorSelected = { color, style ->
                         if (menuState.isExistingHighlight && menuState.highlightId != null) {
-                            onHighlightUpdate(menuState.highlightId, color)
+                            onHighlightUpdate(menuState.highlightId, color, style)
                         } else {
                             onHighlightAdd(
                                 selectionData.pageIndex, menuState.charRange, menuState.selectedText,
-                                color
+                                color,
+                                style
                             )
                         }
                         onMenuDismiss()
@@ -5449,14 +5536,15 @@ private fun PdfPageRenderer(
                         onTts(selectionData.pageIndex, menuState.charRange.first)
                         onMenuDismiss()
                     },
-                    onNote = {
+                    onNote = { style ->
                         if (menuState.isExistingHighlight && menuState.highlightId != null) {
                             onNote(menuState.highlightId)
                         } else {
                             onNote(null)
                             onHighlightAdd(
                                 selectionData.pageIndex, menuState.charRange, menuState.selectedText,
-                                PdfHighlightColor.YELLOW
+                                PdfHighlightColor.YELLOW,
+                                style
                             )
                         }
                         onMenuDismiss()

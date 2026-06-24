@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.localFolderSyncSha256ShortHex
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -267,6 +268,7 @@ object SharedPdfAnnotationSidecarCodec {
                 note = obj.string("note"),
                 comments = obj.array("comments").toSharedPdfAnnotationComments(),
                 colorArgb = SharedPdfAndroidHighlightColors.argbForName(colorName),
+                highlightStyle = HighlightStyle.fromId(obj.string("style")),
                 rangeStartIndex = rangeStart,
                 rangeEndIndex = inclusiveRangeEnd
             )
@@ -341,6 +343,7 @@ object SharedPdfAnnotationSidecarCodec {
                             put("id", JsonPrimitive(annotation.id))
                             put("pageIndex", JsonPrimitive(annotation.pageIndex))
                             put("color", JsonPrimitive(SharedPdfAndroidHighlightColors.nearestName(annotation.colorArgb)))
+                            put("style", JsonPrimitive(annotation.highlightStyle.id))
                             put("text", JsonPrimitive(annotation.text))
                             val rangeStart = annotation.rangeStartIndex ?: 0
                             val rangeEnd = annotation.rangeEndIndex?.plus(1)?.coerceAtLeast(rangeStart) ?: rangeStart

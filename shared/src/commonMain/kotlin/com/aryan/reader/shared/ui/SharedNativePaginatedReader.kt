@@ -121,6 +121,7 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
@@ -449,11 +450,11 @@ fun SharedNativePaginatedReader(
                         onSelectionAction(action, selection.text, selection.toReaderLocator())
                         updateActiveSelection(null)
                     },
-                    onHighlight = { color ->
-                        val highlight = sharedNativeReaderHighlightForSelection(selection, color)
+                    onHighlight = { color, style ->
+                        val highlight = sharedNativeReaderHighlightForSelection(selection, color, style)
                         logSharedReaderDiagnostic(DesktopHighlightMapLogTag) {
                             "native_highlight_create_click id=\"${highlight.id.sharedNativeLogPreview(64)}\" " +
-                                "color=${color.id} chapter=${highlight.chapterIndex} page=${highlight.locator.pageIndex} " +
+                                "color=${color.id} style=${style.id} chapter=${highlight.chapterIndex} page=${highlight.locator.pageIndex} " +
                                 "offsets=${highlight.locator.startOffset}..${highlight.locator.endOffset} " +
                                 "block=${highlight.locator.blockIndex} char=${highlight.locator.charOffset} " +
                                 "cfi=\"${highlight.cfi.sharedNativeLogPreview(160)}\" text=\"${highlight.text.sharedNativeLogPreview(120)}\""
@@ -755,8 +756,8 @@ fun SharedNativeVerticalReader(
                         onSelectionAction(action, selection.text, selection.toReaderLocator())
                         updateActiveSelection(null)
                     },
-                    onHighlight = { color ->
-                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, color))
+                    onHighlight = { color, style ->
+                        onHighlightCreated(sharedNativeReaderHighlightForSelection(selection, color, style))
                         updateActiveSelection(null)
                     },
                     onOpenHighlightPaletteManager = onOpenHighlightPaletteManager,
@@ -1046,7 +1047,7 @@ private fun SharedNativeSelectionMenu(
     foreground: Color,
     onCopy: () -> Unit,
     onSelectionAction: (SharedNativeReaderSelectionAction) -> Unit,
-    onHighlight: (HighlightColor) -> Unit,
+    onHighlight: (HighlightColor, HighlightStyle) -> Unit,
     onOpenHighlightPaletteManager: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -1055,6 +1056,7 @@ private fun SharedNativeSelectionMenu(
     val borderColor = foreground.copy(alpha = 0.18f)
     val hoverIconBackground = foreground.copy(alpha = 0.09f)
     val iconColor = foreground.copy(alpha = 0.86f)
+    var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
     val actions = buildList {
         add(SharedNativeSelectionMenuAction("Copy", SharedNativeSelectionVectorIcons.Copy, onCopy))
         if (SharedNativeReaderSelectionAction.DEFINE in enabledSelectionActions) {
@@ -1105,10 +1107,20 @@ private fun SharedNativeSelectionMenu(
                 Row(
                     modifier = Modifier
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    HighlightStyle.entries.forEach { style ->
+                        SharedNativeHighlightStyleButton(
+                            style = style,
+                            selected = selectedStyle == style,
+                            foreground = foreground,
+                            borderColor = borderColor,
+                            onClick = { selectedStyle = style }
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
                     highlightPalette.forEach { color ->
                         Box(
                             modifier = Modifier
@@ -1121,7 +1133,7 @@ private fun SharedNativeSelectionMenu(
                                     color = borderColor,
                                     shape = CircleShape
                                 )
-                                .clickable { onHighlight(color) }
+                                .clickable { onHighlight(color, selectedStyle) }
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
@@ -1154,6 +1166,34 @@ private fun SharedNativeSelectionMenu(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SharedNativeHighlightStyleButton(
+    style: HighlightStyle,
+    selected: Boolean,
+    foreground: Color,
+    borderColor: Color,
+    onClick: () -> Unit
+) {
+    val label = when (style) {
+        HighlightStyle.BACKGROUND -> "B"
+        HighlightStyle.UNDERLINE -> "U"
+        HighlightStyle.WAVY_UNDERLINE -> "~"
+        HighlightStyle.STRIKETHROUGH -> "S"
+    }
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .size(28.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(foreground.copy(alpha = if (selected) 0.18f else 0.05f))
+            .border(1.dp, if (selected) foreground.copy(alpha = 0.55f) else borderColor, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = foreground, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -3826,7 +3866,7 @@ private fun AnnotatedString.Builder.applyHighlightToTextRange(
 ) {
     fun applyRange(range: SharedNativeReaderTextRange) {
         addStyle(
-            style = SpanStyle(background = highlight.renderColor(legacyAlpha = 0.38f)),
+            style = highlight.nativeSpanStyle(),
             start = range.start,
             end = range.end
         )
@@ -3893,6 +3933,14 @@ private fun AnnotatedString.Builder.applyHighlightToTextRange(
         return
     }
     logResult("no_match", null)
+}
+
+private fun UserHighlight.nativeSpanStyle(): SpanStyle {
+    return when (style) {
+        HighlightStyle.BACKGROUND -> SpanStyle(background = renderColor(legacyAlpha = 0.38f))
+        HighlightStyle.UNDERLINE, HighlightStyle.WAVY_UNDERLINE -> SpanStyle(textDecoration = TextDecoration.Underline)
+        HighlightStyle.STRIKETHROUGH -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+    }
 }
 
 private fun logNativeHighlightMapResult(
@@ -4780,7 +4828,8 @@ private fun sharedNativeCompareCfiPathParts(first: List<Int>, second: List<Int>)
 
 internal fun sharedNativeReaderHighlightForSelection(
     selection: SharedNativeReaderTextSelection,
-    color: HighlightColor
+    color: HighlightColor,
+    style: HighlightStyle = HighlightStyle.BACKGROUND
 ): UserHighlight {
     val locator = selection.toReaderLocator()
     return UserHighlight(
@@ -4789,6 +4838,7 @@ internal fun sharedNativeReaderHighlightForSelection(
         text = selection.text,
         color = color,
         chapterIndex = selection.chapterIndex,
+        style = style,
         locator = locator
     )
 }

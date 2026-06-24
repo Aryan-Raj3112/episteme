@@ -3050,7 +3050,7 @@
     }
 
     window.HighlightBridgeHelper = {
-        updateHighlightStyle: function (cfi, newColorClass, colorId, colorCss) {
+        updateHighlightStyle: function (cfi, newColorClass, colorId, colorCss, highlightStyle) {
             console.log(`${HL_LOG_TAG}: updateHighlightStyle called. CFI: ${cfi}, Class: ${newColorClass}`);
 
             var allSpans = document.querySelectorAll('span[class*="user-highlight-"]');
@@ -3070,22 +3070,47 @@
                     classesToRemove.forEach((cls) => span.classList.remove(cls));
 
                     span.classList.add(newColorClass);
-                    if (colorCss) {
-                        span.style.setProperty("background-color", colorCss, "important");
-                    } else {
-                        span.style.removeProperty("background-color");
-                    }
+                    this.applyHighlightVisualStyle(span, colorCss, highlightStyle);
                 }
             });
 
             if (window.HighlightBridge) {
                 var sampleSpan = document.querySelector(`span[data-cfi*='${cfi}']`);
                 var text = sampleSpan ? sampleSpan.textContent : "";
-                window.HighlightBridge.onHighlightCreated(cfi, text, colorId);
+                window.HighlightBridge.onHighlightCreated(cfi, text, colorId, highlightStyle || "background");
             }
         },
 
-        createUserHighlight: function (colorClass, colorId, colorCss) {
+
+        applyHighlightVisualStyle: function (span, colorCss, highlightStyle) {
+            var style = highlightStyle || "background";
+            span.setAttribute("data-highlight-style", style);
+            span.setAttribute("data-reader-highlight-style", style);
+            span.style.removeProperty("background-color");
+            span.style.removeProperty("text-decoration-line");
+            span.style.removeProperty("text-decoration-style");
+            span.style.removeProperty("text-decoration-color");
+            span.style.removeProperty("text-decoration-thickness");
+            span.style.removeProperty("text-underline-offset");
+            if (style === "underline" || style === "wavy_underline") {
+                span.style.setProperty("background-color", "transparent", "important");
+                span.style.setProperty("text-decoration-line", "underline", "important");
+                span.style.setProperty("text-decoration-style", style === "wavy_underline" ? "wavy" : "solid", "important");
+                if (colorCss) span.style.setProperty("text-decoration-color", colorCss, "important");
+                span.style.setProperty("text-decoration-thickness", "0.12em", "important");
+                span.style.setProperty("text-underline-offset", "0.18em", "important");
+            } else if (style === "strikethrough") {
+                span.style.setProperty("background-color", "transparent", "important");
+                span.style.setProperty("text-decoration-line", "line-through", "important");
+                span.style.setProperty("text-decoration-style", "solid", "important");
+                if (colorCss) span.style.setProperty("text-decoration-color", colorCss, "important");
+                span.style.setProperty("text-decoration-thickness", "0.12em", "important");
+            } else if (colorCss) {
+                span.style.setProperty("background-color", colorCss, "important");
+            }
+        },
+
+        createUserHighlight: function (colorClass, colorId, colorCss, highlightStyle) {
             console.log(`$ {
                     HL_LOG_TAG
                 }
@@ -3167,12 +3192,12 @@
                     `);
 
                 range = this.normalizeRangeBoundaries(range);
-                this.highlightRangeSafe(range, colorClass, finalCfi, colorCss);
+                this.highlightRangeSafe(range, colorClass, finalCfi, colorCss, highlightStyle);
 
                 selection.removeAllRanges();
 
                 if (window.HighlightBridge) {
-                    window.HighlightBridge.onHighlightCreated(finalCfi, text, colorId);
+                    window.HighlightBridge.onHighlightCreated(finalCfi, text, colorId, highlightStyle || "background");
                 }
             } catch (e) {
                 console.log(
@@ -3209,7 +3234,7 @@
             return range;
         },
 
-        highlightRangeSafe: function (range, className, newCfi, colorCss) {
+        highlightRangeSafe: function (range, className, newCfi, colorCss, highlightStyle) {
             var nodes = this.getTextNodesInRange(range);
 
             nodes.forEach((node) => {
@@ -3222,13 +3247,13 @@
                     if (!cfiList.includes(newCfi)) {
                         parent.setAttribute("data-cfi", currentCfi ? (currentCfi + ";;" + newCfi) : newCfi);
                     }
-                    if (colorCss) parent.style.setProperty("background-color", colorCss, "important");
+                    this.applyHighlightVisualStyle(parent, colorCss, highlightStyle);
                 } else {
                     if (node.nodeValue.trim().length === 0) return;
                     var span = document.createElement("span");
                     span.className = className;
                     span.setAttribute("data-cfi", newCfi);
-                    if (colorCss) span.style.setProperty("background-color", colorCss, "important");
+                    this.applyHighlightVisualStyle(span, colorCss, highlightStyle);
                     node.parentNode.insertBefore(span, node);
                     span.appendChild(node);
                 }
@@ -3437,7 +3462,7 @@
                 " text='" + hlRenderPreview(highlight.text || "", 80) + "' " +
                 hlRenderLocatorLabel(highlight.locator || {})
             );
-            this.applyHighlight(highlight.cfi, highlight.text, highlight.cssClass, highlight.locator || null, highlight.colorCss || null);
+            this.applyHighlight(highlight.cfi, highlight.text, highlight.cssClass, highlight.locator || null, highlight.colorCss || null, highlight.style || "background");
         },
 
         highlightTextRoot: function () {
@@ -3736,7 +3761,7 @@
             return range;
         },
 
-        applyHighlight: function (cfi, text, cssClass, locator, colorCss) {
+        applyHighlight: function (cfi, text, cssClass, locator, colorCss, highlightStyle) {
             try {
                 cssClass = cssClass || "user-highlight-yellow";
                 var alreadyApplied = false;
@@ -3790,7 +3815,7 @@
                     return;
                 }
                 var normalizedRange = this.normalizeRangeBoundaries(range);
-                this.highlightRangeSafe(normalizedRange, cssClass, cfi, colorCss);
+                this.highlightRangeSafe(normalizedRange, cssClass, cfi, colorCss, highlightStyle);
                 hlRenderLog(
                     "webview_apply_result applied=true cfi=" + hlRenderPreview(cfi || "", 120) +
                     " source=" + rangeSource +

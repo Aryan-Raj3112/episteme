@@ -5,6 +5,7 @@ import com.aryan.reader.RenderMode
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
+import com.aryan.reader.shared.HighlightStyle
 import kotlinx.coroutines.test.runTest
 import org.json.JSONArray
 import org.json.JSONObject
@@ -72,19 +73,19 @@ class EpubReaderBridgeAndControlsTest {
 
     @Test
     fun `highlight bridge forwards create and click events`() {
-        var created: Triple<String, String, String>? = null
+        var created: List<Any>? = null
         var clicked: List<Any>? = null
         val bridge = HighlightJsBridge(
-            onCreateCallback = { cfi, text, color -> created = Triple(cfi, text, color) },
+            onCreateCallback = { cfi, text, color, style -> created = listOf(cfi, text, color, style) },
             onClickCallback = { cfi, text, left, top, right, bottom ->
                 clicked = listOf(cfi, text, left, top, right, bottom)
             }
         )
 
-        bridge.onHighlightCreated("/4", "Text", "yellow")
+        bridge.onHighlightCreated("/4", "Text", "yellow", "wavy_underline")
         bridge.onHighlightClicked("/4", "Text", 1, 2, 3, 4)
 
-        assertEquals(Triple("/4", "Text", "yellow"), created)
+        assertEquals(listOf("/4", "Text", "yellow", HighlightStyle.WAVY_UNDERLINE), created)
         assertEquals(listOf("/4", "Text", 1, 2, 3, 4), clicked)
     }
 

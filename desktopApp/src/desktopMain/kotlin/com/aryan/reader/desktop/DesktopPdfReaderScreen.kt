@@ -90,6 +90,7 @@ import com.aryan.reader.shared.SaveMode
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SummarizationResult
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
@@ -1672,7 +1673,8 @@ internal fun PdfReaderScreen(
         pageIndex: Int,
         selection: DesktopPdfTextSelection,
         canvasSize: IntSize,
-        colorArgb: Int = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb
+        colorArgb: Int = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).colorArgb,
+        highlightStyle: HighlightStyle = HighlightStyle.BACKGROUND
     ) {
         val now = System.currentTimeMillis()
         val highlightBounds = DesktopPdfium.textRectsForRange(
@@ -1713,6 +1715,7 @@ internal fun PdfReaderScreen(
             boundsList = highlightBounds,
             text = selection.text,
             colorArgb = SharedPdfHighlighterPalette(listOf(colorArgb)).sanitized().colors.first(),
+            highlightStyle = highlightStyle,
             rangeStartIndex = selection.startIndex,
             rangeEndIndex = selection.endIndex,
             createdAt = now
@@ -4156,9 +4159,9 @@ internal fun PdfReaderScreen(
                                     textSelection?.let(::copySelection)
                                     clearSelection()
                                 },
-                                onHighlight = { colorArgb ->
+                                onHighlight = { colorArgb, style ->
                                     textSelection?.let { selection ->
-                                        highlightSelection(pageIndex, selection, pageCanvasSize, colorArgb)
+                                        highlightSelection(pageIndex, selection, pageCanvasSize, colorArgb, style)
                                     }
                                     clearSelection()
                                 },

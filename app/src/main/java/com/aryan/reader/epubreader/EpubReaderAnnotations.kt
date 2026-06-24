@@ -69,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.edit
@@ -88,6 +89,7 @@ private const val BOOKMARK_PREFS_NAME = "epub_reader_bookmarks"
 
 typealias Bookmark = com.aryan.reader.shared.EpubBookmark
 typealias HighlightColor = com.aryan.reader.shared.HighlightColor
+typealias HighlightStyle = com.aryan.reader.shared.HighlightStyle
 typealias UserHighlight = com.aryan.reader.shared.UserHighlight
 
 fun escapeJsString(value: String): String {
@@ -126,6 +128,16 @@ fun loadHighlightPalette(context: Context): List<Int> {
         if (list.size == 4) return list
     }
     return DefaultHighlightPaletteArgb
+}
+
+fun savePreferredHighlightStyle(context: Context, style: HighlightStyle) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString("preferred_highlight_style", style.id) }
+}
+
+fun loadPreferredHighlightStyle(context: Context): HighlightStyle {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return HighlightStyle.fromId(prefs.getString("preferred_highlight_style", null))
 }
 
 private fun sanitizeHighlightPalette(palette: List<Int>): List<Int> {
@@ -218,7 +230,8 @@ fun processAndAddHighlight(
         cfi = newCfi,
         textQuote = newText
     ),
-    newColorArgb: Int? = null
+    newColorArgb: Int? = null,
+    newStyle: HighlightStyle = HighlightStyle.BACKGROUND
 ): String {
     return EpubAnnotationSerializer.processAndAddHighlight(
         newCfi = newCfi,
@@ -227,7 +240,8 @@ fun processAndAddHighlight(
         chapterIndex = chapterIndex,
         currentList = currentList,
         locator = locator,
-        newColorArgb = newColorArgb
+        newColorArgb = newColorArgb,
+        newStyle = newStyle
     )
 }
 
@@ -494,6 +508,56 @@ fun PaletteManagerDialog(
     }
 }
 
+fun highlightStyleIconRes(style: HighlightStyle): Int {
+    return when (style) {
+        HighlightStyle.BACKGROUND -> R.drawable.font_background
+        HighlightStyle.UNDERLINE -> R.drawable.format_underlined
+        HighlightStyle.WAVY_UNDERLINE -> R.drawable.format_underlined_squiggle
+        HighlightStyle.STRIKETHROUGH -> R.drawable.strikethrough
+    }
+}
+
+@Composable
+private fun HighlightStyleRow(
+    selectedStyle: HighlightStyle,
+    effectiveText: Color,
+    onStyleSelect: (HighlightStyle) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HighlightStyle.entries.forEach { style ->
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 4.dp)
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selectedStyle == style) effectiveText.copy(alpha = 0.16f)
+                        else effectiveText.copy(alpha = 0.06f)
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = if (selectedStyle == style) effectiveText.copy(alpha = 0.55f) else effectiveText.copy(alpha = 0.24f),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .clickable { onStyleSelect(style) },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(id = highlightStyleIconRes(style)),
+                    contentDescription = style.id,
+                    tint = effectiveText,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AnnotationBottomSheet(
@@ -502,6 +566,7 @@ fun AnnotationBottomSheet(
     effectiveText: Color,
     activeHighlightPalette: List<Int>,
     onColorChange: (Int) -> Unit,
+    onStyleChange: (HighlightStyle) -> Unit,
     onOpenPaletteManager: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
@@ -511,6 +576,7 @@ fun AnnotationBottomSheet(
     onTranslate: () -> Unit,
     onSearch: () -> Unit
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var noteText by remember { mutableStateOf(highlight.note ?: "") }
 
@@ -527,7 +593,16 @@ fun AnnotationBottomSheet(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp)
         ) {
-            // Top: Highlight Colors
+            // Top: Highlight Style + Colors
+            HighlightStyleRow(
+                selectedStyle = highlight.style,
+                effectiveText = effectiveText,
+                onStyleSelect = {
+                    savePreferredHighlightStyle(context, it)
+                    onStyleChange(it)
+                },
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
             HighlightColorRow(
                 activeHighlightPalette = activeHighlightPalette,
                 selectedColorArgb = highlight.colorArgb ?: highlight.color.color.toArgb(),
@@ -730,8 +805,8 @@ fun PaginatedTextSelectionMenu(
     onDictionary: () -> Unit,
     onTranslate: () -> Unit,
     onSearch: () -> Unit,
-    onHighlight: ((Int) -> Unit)?,
-    onNote: (() -> Unit)? = null,
+    onHighlight: ((Int, HighlightStyle) -> Unit)?,
+    onNote: ((HighlightStyle) -> Unit)? = null,
     onDelete: (() -> Unit)?,
     onTts: (() -> Unit)?,
     @Suppress("unused") isProUser: Boolean,
@@ -739,8 +814,13 @@ fun PaginatedTextSelectionMenu(
     activeHighlightPalette: List<Int> = emptyList(),
     onOpenPaletteManager: (() -> Unit)? = null,
     existingNote: String? = null,
-    selectedColorArgb: Int? = null
+    selectedColorArgb: Int? = null,
+    selectedStyle: HighlightStyle = HighlightStyle.BACKGROUND
 ) {
+    val context = LocalContext.current
+    var selectedHighlightStyle by remember(selectedStyle) {
+        mutableStateOf(if (selectedStyle == HighlightStyle.BACKGROUND) loadPreferredHighlightStyle(context) else selectedStyle)
+    }
     Surface(
         shape = RoundedCornerShape(12.dp),
         shadowElevation = 6.dp,
@@ -748,12 +828,23 @@ fun PaginatedTextSelectionMenu(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 180.dp)) {
-            // 1. Colors Row
+            // 1. Highlight style and colors row
             if (onHighlight != null) {
+                HighlightStyleRow(
+                    selectedStyle = selectedHighlightStyle,
+                    effectiveText = MaterialTheme.colorScheme.onSurface,
+                    onStyleSelect = {
+                        selectedHighlightStyle = it
+                        savePreferredHighlightStyle(context, it)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 2.dp)
+                )
                 HighlightColorRow(
                     activeHighlightPalette = activeHighlightPalette,
                     selectedColorArgb = selectedColorArgb,
-                    onColorSelect = onHighlight,
+                    onColorSelect = { onHighlight(it, selectedHighlightStyle) },
                     onOpenPaletteManager = onOpenPaletteManager
                 )
                 HorizontalDivider()
@@ -813,7 +904,7 @@ fun PaginatedTextSelectionMenu(
 
             if (onNote != null) {
                 val noteLabel = if (existingNote.isNullOrBlank()) stringResource(R.string.label_note) else stringResource(R.string.label_edit)
-                actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = noteLabel, onClick = onNote))
+                actions.add(MenuActionItem(imageVector = Icons.Default.Edit, label = noteLabel, onClick = { onNote(selectedHighlightStyle) }))
             }
 
             if (onSelectAll != null) {

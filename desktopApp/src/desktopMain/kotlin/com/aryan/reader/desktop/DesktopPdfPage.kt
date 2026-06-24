@@ -40,6 +40,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.SearchHighlightMode
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
@@ -106,7 +107,7 @@ internal fun DesktopVerticalPdfPage(
     showPageNumberOverlay: Boolean = true,
     onSelectPage: (Int) -> Unit,
     onCopySelection: (DesktopPdfTextSelection) -> Unit,
-    onHighlightSelection: (Int, DesktopPdfTextSelection, IntSize, Int) -> Unit,
+    onHighlightSelection: (Int, DesktopPdfTextSelection, IntSize, Int, HighlightStyle) -> Unit,
     onExternalSearchSelection: (DesktopPdfTextSelection) -> Unit,
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onDefineSelection: (DesktopPdfTextSelection) -> Unit,
@@ -954,8 +955,8 @@ internal fun DesktopVerticalPdfPage(
                             textSelection?.let(onCopySelection)
                             clearSelection()
                         },
-                        onHighlight = { colorArgb ->
-                            textSelection?.let { onHighlightSelection(pageIndex, it, pageCanvasSize, colorArgb) }
+                        onHighlight = { colorArgb, style ->
+                            textSelection?.let { onHighlightSelection(pageIndex, it, pageCanvasSize, colorArgb, style) }
                             clearSelection()
                         },
                         onSearch = {

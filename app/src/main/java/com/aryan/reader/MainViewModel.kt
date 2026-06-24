@@ -732,9 +732,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        val currentState = _internalState.value
+        val projectedState = uiState.value
+        val currentState = AndroidSharedStateBridge.reconcileTabState(_internalState.value, projectedState)
         if (bookId !in currentState.openTabIds) {
-            if (currentState.openTabIds.size >= 20) {
+            if (currentState.openTabIds.size >= MAX_OPEN_PDF_TABS) {
                 viewModelScope.launch(Dispatchers.Main) {
                     showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
                 }
@@ -743,7 +744,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
         val tabState = AndroidSharedStateBridge.openBookTab(
             current = currentState,
-            projectedState = uiState.value,
+            projectedState = projectedState,
             bookId = bookId
         )
 
@@ -1002,10 +1003,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeTab(bookId: String) {
         Timber.tag("PdfTabSync").i("ViewModel: closeTab called for $bookId")
-        val currentState = _internalState.value
+        val projectedState = uiState.value
+        val currentState = AndroidSharedStateBridge.reconcileTabState(_internalState.value, projectedState)
         val tabState = AndroidSharedStateBridge.closeBookTab(
             current = currentState,
-            projectedState = uiState.value,
+            projectedState = projectedState,
             bookId = bookId
         )
 
@@ -5614,10 +5616,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        val currentTabState = _internalState.value
+        val projectedState = uiState.value
+        val currentTabState = AndroidSharedStateBridge.reconcileTabState(_internalState.value, projectedState)
         if (currentTabState.isTabsEnabled && type == FileType.PDF) {
             if (bookId !in currentTabState.openTabIds) {
-                if (currentTabState.openTabIds.size >= 20) {
+                if (currentTabState.openTabIds.size >= MAX_OPEN_PDF_TABS) {
                     viewModelScope.launch(Dispatchers.Main) {
                         showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
                     }
@@ -5626,7 +5629,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             }
             val tabState = AndroidSharedStateBridge.openBookTab(
                 current = currentTabState,
-                projectedState = uiState.value,
+                projectedState = projectedState,
                 bookId = bookId
             )
             persistTabState(tabState.openTabIds, tabState.activeTabBookId)
@@ -7585,6 +7588,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         internal const val KEY_PINNED_HOME = "pinned_home_books"
         internal const val KEY_PINNED_LIBRARY = "pinned_library_books"
         private const val KEY_RECENT_FILES_LIMIT = "recent_files_limit"
+        private const val MAX_OPEN_PDF_TABS = 20
         private const val KEY_TABS_ENABLED = "tabs_enabled"
         private const val KEY_OPEN_TAB_IDS = "open_tab_ids"
         private const val KEY_ACTIVE_TAB = "active_tab_book_id"

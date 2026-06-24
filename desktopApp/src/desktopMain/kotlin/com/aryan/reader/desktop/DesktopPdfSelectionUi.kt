@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.ui.SharedHsvColorPickerDialog
@@ -278,7 +279,7 @@ internal fun PdfSelectionMenu(
     highlighterPalette: List<Int> = SharedPdfHighlighterPalette.defaultColors,
     onHighlighterPaletteChange: (SharedPdfHighlighterPalette) -> Unit,
     onCopy: () -> Unit,
-    onHighlight: (Int) -> Unit,
+    onHighlight: (Int, HighlightStyle) -> Unit,
     onSearch: () -> Unit,
     onDefine: () -> Unit,
     onSpeak: () -> Unit,
@@ -299,6 +300,9 @@ internal fun PdfSelectionMenu(
     }
     var editingHighlighterDraftColors by remember(selection.startIndex, selection.endIndex, paletteColors) {
         mutableStateOf<List<Int>>(emptyList())
+    }
+    var selectedHighlightStyle by remember(selection.startIndex, selection.endIndex) {
+        mutableStateOf(HighlightStyle.BACKGROUND)
     }
     val actions = buildList {
         add(PdfSelectionMenuAction(readerString("action_copy", "Copy"), DesktopPdfSelectionMenuIcons.Copy, onCopy))
@@ -382,12 +386,38 @@ internal fun PdfSelectionMenu(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    HighlightStyle.entries.forEach { style ->
+                        val selected = selectedHighlightStyle == style
+                        Surface(
+                            modifier = Modifier
+                                .padding(horizontal = 3.dp)
+                                .size(width = 30.dp, height = 28.dp)
+                                .clickable { selectedHighlightStyle = style },
+                            color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent,
+                            contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = when (style) {
+                                        HighlightStyle.BACKGROUND -> "B"
+                                        HighlightStyle.UNDERLINE -> "U"
+                                        HighlightStyle.WAVY_UNDERLINE -> "~"
+                                        HighlightStyle.STRIKETHROUGH -> "S"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                     paletteColors.forEach { colorArgb ->
                         Surface(
                             modifier = Modifier
                                 .padding(horizontal = 4.dp)
                                 .size(28.dp)
-                                .clickable { onHighlight(colorArgb) },
+                                .clickable { onHighlight(colorArgb, selectedHighlightStyle) },
                             color = Color(colorArgb),
                             shape = RoundedCornerShape(16.dp),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),

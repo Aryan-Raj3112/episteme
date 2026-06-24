@@ -15,6 +15,7 @@ import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.paginatedreader.BorderStyle
 import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.UserHighlight
@@ -4669,7 +4670,7 @@ object ReaderHtmlDocumentBuilder {
             if (startIndex >= endIndex || endIndex > html.length) return@fold html
             val markedText = html.substring(startIndex, endIndex)
             if (markedText.visibleHtmlText().isBlank()) return@fold html
-            val markerStart = """<span class="reader-user-highlight ${highlight.color.cssClass}"${highlight.colorStyleAttribute()} data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">"""
+            val markerStart = """<span class="reader-user-highlight ${highlight.color.cssClass}"${highlight.highlightAttributes()} data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">"""
             html.replaceRange(startIndex, endIndex, markedText.wrapVisibleHtmlText(markerStart, "</span>"))
         }
 
@@ -4679,22 +4680,39 @@ object ReaderHtmlDocumentBuilder {
             .fold(rangedHtml) { html, highlight ->
                 val text = highlight.text.trim().takeIf { it.isNotBlank() } ?: return@fold html
                 val escapedText = text.escapeHtml()
-                val markedText = """<span class="reader-user-highlight ${highlight.color.cssClass}"${highlight.colorStyleAttribute()} data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}">$escapedText</span>"""
+                val markedText = """<span class="reader-user-highlight ${highlight.color.cssClass}"${highlight.highlightAttributes()} data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}">$escapedText</span>"""
                 html.replaceFirst(escapedText, markedText)
             }
     }
 
-    private fun RenderedHighlight.colorStyleAttribute(): String {
-        return colorStyleAttribute(colorArgb)
+    private fun RenderedHighlight.highlightAttributes(): String {
+        return highlightAttributes(style, colorArgb)
     }
 
-    private fun UserHighlight.colorStyleAttribute(): String {
-        return colorStyleAttribute(colorArgb)
+    private fun UserHighlight.highlightAttributes(): String {
+        return highlightAttributes(style, colorArgb)
     }
 
-    private fun colorStyleAttribute(colorArgb: Int?): String {
-        val rgb = colorArgb?.let { it and 0x00FFFFFF } ?: return ""
-        return " style=\"background-color:#${rgb.toString(16).padStart(6, '0').uppercase()} !important\""
+    private fun highlightAttributes(style: HighlightStyle, colorArgb: Int?): String {
+        val declarations = highlightStyleDeclarations(style, colorArgb)
+        val styleAttribute = declarations.takeIf { it.isNotBlank() }?.let { " style=\"$it\"" }.orEmpty()
+        return "$styleAttribute data-reader-highlight-style=\"${style.id}\""
+    }
+
+    private fun highlightStyleDeclarations(style: HighlightStyle, colorArgb: Int?): String {
+        val rgb = colorArgb?.let { it and 0x00FFFFFF }
+        val colorCss = rgb?.let { "#${it.toString(16).padStart(6, '0').uppercase()}" }
+        return when (style) {
+            HighlightStyle.BACKGROUND -> colorCss?.let { "background-color:$it !important" }.orEmpty()
+            HighlightStyle.UNDERLINE -> highlightLineStyle(colorCss, "underline", "solid")
+            HighlightStyle.WAVY_UNDERLINE -> highlightLineStyle(colorCss, "underline", "wavy")
+            HighlightStyle.STRIKETHROUGH -> highlightLineStyle(colorCss, "line-through", "solid")
+        }
+    }
+
+    private fun highlightLineStyle(colorCss: String?, line: String, decorationStyle: String): String {
+        val colorDeclaration = colorCss?.let { "; text-decoration-color:$it !important" }.orEmpty()
+        return "background-color:transparent !important; text-decoration-line:$line !important; text-decoration-style:$decorationStyle !important$colorDeclaration"
     }
 
     private fun String.wrapVisibleHtmlText(markerStart: String, markerEnd: String): String {
@@ -4952,6 +4970,7 @@ object ReaderHtmlDocumentBuilder {
             cfi = cfi,
             color = source.color,
             colorArgb = source.colorArgb,
+            style = source.style,
             absoluteStart = boundedStart,
             absoluteEnd = boundedEnd,
             relativeStart = boundedStart - contentStartOffset,
@@ -5234,6 +5253,7 @@ object ReaderHtmlDocumentBuilder {
         val cfi: String,
         val color: HighlightColor,
         val colorArgb: Int?,
+        val style: HighlightStyle,
         val absoluteStart: Int,
         val absoluteEnd: Int,
         val relativeStart: Int,

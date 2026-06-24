@@ -16,6 +16,7 @@ class EpubAnnotationSerializerTest {
                 cfi = "epubcfi(/6/2!/4/2)",
                 text = "A marked sentence",
                 color = HighlightColor.BLUE,
+                style = HighlightStyle.WAVY_UNDERLINE,
                 chapterIndex = 2,
                 note = "Important",
                 colorArgb = 0xFF12ABEF.toInt(),
@@ -40,7 +41,9 @@ class EpubAnnotationSerializerTest {
 
         assertEquals(highlights, decoded)
         assertEquals(0xFF12ABEF.toInt(), decoded.single().colorArgb)
+        assertEquals(HighlightStyle.WAVY_UNDERLINE, decoded.single().style)
         assertEquals(HighlightColor.YELLOW, legacyDecoded.single().color)
+        assertEquals(HighlightStyle.BACKGROUND, legacyDecoded.single().style)
         assertEquals(null, legacyDecoded.single().colorArgb)
         assertEquals(null, legacyDecoded.single().note)
         assertEquals(1, legacyDecoded.single().locator.chapterIndex)
@@ -117,7 +120,8 @@ class EpubAnnotationSerializerTest {
             newColor = HighlightColor.GREEN,
             chapterIndex = 0,
             currentList = highlights,
-            newColorArgb = 0xFF654321.toInt()
+            newColorArgb = 0xFF654321.toInt(),
+            newStyle = HighlightStyle.STRIKETHROUGH
         )
         EpubAnnotationSerializer.processAndAddHighlight(
             newCfi = "other-cfi",
@@ -133,6 +137,7 @@ class EpubAnnotationSerializerTest {
         assertEquals("Updated", highlights.first().text)
         assertEquals(HighlightColor.GREEN, highlights.first().color)
         assertEquals(0xFF654321.toInt(), highlights.first().colorArgb)
+        assertEquals(HighlightStyle.STRIKETHROUGH, highlights.first().style)
         assertNotEquals(initialId, highlights.last().id)
     }
 

@@ -212,7 +212,8 @@ fun ReaderSessionState.reduce(action: ReaderAction, readerEngine: ReaderEngine):
             state = this,
             highlightId = action.highlightId,
             color = action.color,
-            note = action.note
+            note = action.note,
+            style = action.style
         )
         is ReaderAction.HighlightDeleted -> readerEngine.deleteHighlight(this, action.highlightId)
     }

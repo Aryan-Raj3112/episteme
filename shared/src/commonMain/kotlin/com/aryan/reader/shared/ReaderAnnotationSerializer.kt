@@ -76,7 +76,8 @@ object EpubAnnotationSerializer {
             cfi = newCfi,
             textQuote = newText
         ),
-        newColorArgb: Int? = null
+        newColorArgb: Int? = null,
+        newStyle: HighlightStyle = HighlightStyle.BACKGROUND
     ): String {
         val normalizedLocator = locator.withFallbacks(
             chapterIndex = chapterIndex,
@@ -94,6 +95,7 @@ object EpubAnnotationSerializer {
                 cfi = newCfi,
                 color = newColor,
                 colorArgb = newColorArgb,
+                style = newStyle,
                 text = newText,
                 locator = existing.locator.copy(cfi = newCfi, textQuote = newText).withFallbacks(
                     chapterIndex = chapterIndex,
@@ -112,6 +114,7 @@ object EpubAnnotationSerializer {
                 color = newColor,
                 chapterIndex = chapterIndex,
                 colorArgb = newColorArgb,
+                style = newStyle,
                 note = null,
                 locator = normalizedLocator
             )
@@ -181,6 +184,7 @@ object EpubAnnotationSerializer {
         val color = HighlightColor.entries.firstOrNull { it.id == colorId } ?: HighlightColor.YELLOW
         val note = string("note")?.takeIf { it.isNotBlank() }
         val colorArgb = int("colorArgb") ?: long("colorArgb")?.toInt()
+        val style = HighlightStyle.fromId(string("style"))
         return UserHighlight(
             id = string("id")?.takeIf { it.isNotBlank() } ?: stableHighlightId(cfi, chapterIndex),
             cfi = cfi,
@@ -189,6 +193,7 @@ object EpubAnnotationSerializer {
             chapterIndex = chapterIndex,
             note = note,
             colorArgb = colorArgb,
+            style = style,
             locator = this["locator"]
                 ?.takeUnless { it is JsonNull }
                 ?.asReaderLocatorOrNull()
@@ -229,6 +234,7 @@ object EpubAnnotationSerializer {
                 "text" to JsonPrimitive(text),
                 "colorId" to JsonPrimitive(color.id),
                 "colorArgb" to (colorArgb?.let { JsonPrimitive(it) } ?: JsonNull),
+                "style" to JsonPrimitive(style.id),
                 "chapterIndex" to JsonPrimitive(chapterIndex),
                 "note" to (note ?: "").asJson(),
                 "locator" to locator.toJsonObject()

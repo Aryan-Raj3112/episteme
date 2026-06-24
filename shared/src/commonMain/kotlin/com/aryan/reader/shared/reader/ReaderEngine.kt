@@ -10,6 +10,7 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.toStableReaderPositionCfi
 
@@ -654,6 +655,7 @@ class ReaderEngine(
                 text = normalized.text,
                 color = normalized.color,
                 colorArgb = normalized.colorArgb,
+                style = normalized.style,
                 chapterIndex = normalized.chapterIndex,
                 locator = normalized.locator
             )
@@ -671,7 +673,8 @@ class ReaderEngine(
         state: ReaderSessionState,
         highlightId: String,
         color: HighlightColor? = null,
-        note: String? = null
+        note: String? = null,
+        style: HighlightStyle? = null
     ): ReaderSessionState {
         return state.copy(
             highlights = state.highlights.map { highlight ->
@@ -679,7 +682,8 @@ class ReaderEngine(
                     highlight.copy(
                         color = color ?: highlight.color,
                         colorArgb = if (color != null) null else highlight.colorArgb,
-                        note = if (note != null) note.takeIf { it.isNotBlank() } else highlight.note
+                        note = if (note != null) note.takeIf { it.isNotBlank() } else highlight.note,
+                        style = style ?: highlight.style
                     )
                 } else {
                     highlight

@@ -9,6 +9,7 @@ import com.aryan.reader.pdf.data.HighlightSerializer
 import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.pdf.data.TextBoxSerializer
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -167,6 +168,7 @@ class PdfReaderSerializerTest {
                 pageIndex = 5,
                 bounds = listOf(RectF(0f, 0f, 1f, 1f)),
                 color = PdfHighlightColor.BLUE,
+                style = HighlightStyle.UNDERLINE,
                 colorArgb = Color(0xFF123456).toArgb(),
                 text = "Selected text",
                 range = 7 to 20,
@@ -195,6 +197,7 @@ class PdfReaderSerializerTest {
         assertEquals("highlight-1", decoded.id)
         assertEquals(5, decoded.pageIndex)
         assertEquals(PdfHighlightColor.BLUE, decoded.color)
+        assertEquals(HighlightStyle.UNDERLINE, decoded.style)
         assertEquals(Color(0xFF123456).toArgb(), decoded.colorArgb)
         assertEquals("Selected text", decoded.text)
         assertEquals(7 to 20, decoded.range)
@@ -236,6 +239,7 @@ class PdfReaderSerializerTest {
         assertNull(decodedLegacy.colorArgb)
         assertEquals("", decodedLegacy.text)
         assertEquals(0 to 0, decodedLegacy.range)
+        assertEquals(HighlightStyle.BACKGROUND, decodedLegacy.style)
     }
 
     private fun assertRectFEquals(expected: RectF, actual: RectF) {

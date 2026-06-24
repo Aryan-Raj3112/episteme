@@ -28,6 +28,7 @@ import com.aryan.reader.pdf.InkType
 import com.aryan.reader.pdf.PdfHighlightColor
 import com.aryan.reader.pdf.PdfPoint
 import com.aryan.reader.pdf.PdfUserHighlight
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import org.json.JSONArray
 import org.json.JSONObject
@@ -236,6 +237,7 @@ object HighlightSerializer {
             obj.put("text", h.text)
             obj.put("rangeStart", h.range.first)
             obj.put("rangeEnd", h.range.second)
+            obj.put("style", h.style.id)
 
             if (!h.note.isNullOrBlank()) {
                 obj.put("note", h.note)
@@ -287,6 +289,7 @@ object HighlightSerializer {
                         colorArgb = obj.optNullableInt("colorArgb"),
                         text = obj.optString("text", ""),
                         range = Pair(obj.optInt("rangeStart", 0), obj.optInt("rangeEnd", 0)),
+                        style = HighlightStyle.fromId(if (obj.has("style")) obj.optString("style") else null),
                         note = obj.optString("note").takeIf { !it.isNullOrBlank() },
                         comments = obj.optJSONArray("comments").toSharedPdfAnnotationComments()
                     )

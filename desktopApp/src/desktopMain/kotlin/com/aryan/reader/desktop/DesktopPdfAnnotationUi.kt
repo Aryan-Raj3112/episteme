@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.DEFAULT_SHARED_PDF_COMMENT_AUTHOR
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -83,6 +84,47 @@ internal val DesktopPdfAnnotationTools = listOf(
 private enum class DesktopPdfAnnotationSheetSection {
     NOTE,
     COMMENTS
+}
+
+@Composable
+private fun DesktopPdfHighlightStyleRow(
+    selectedStyle: HighlightStyle,
+    onStyleChange: (HighlightStyle) -> Unit
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HighlightStyle.entries.forEach { style ->
+            val selected = selectedStyle == style
+            Surface(
+                modifier = Modifier
+                    .size(width = 38.dp, height = 30.dp)
+                    .clickable { onStyleChange(style) },
+                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent,
+                contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                )
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = when (style) {
+                            HighlightStyle.BACKGROUND -> "B"
+                            HighlightStyle.UNDERLINE -> "U"
+                            HighlightStyle.WAVY_UNDERLINE -> "~"
+                            HighlightStyle.STRIKETHROUGH -> "S"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -228,6 +270,13 @@ internal fun DesktopPdfAnnotationEditor(
                     highlighterColors
                 } else {
                     SharedPdfAnnotationDefaults.penPalette
+                }
+                if (isHighlighterAnnotation) {
+                    Text(readerString("highlight_style", "Style"), style = MaterialTheme.typography.labelLarge)
+                    DesktopPdfHighlightStyleRow(
+                        selectedStyle = annotation.highlightStyle,
+                        onStyleChange = { onUpdate(annotation.copy(highlightStyle = it)) }
+                    )
                 }
                 Text(readerString("desktop_color", "Color"), style = MaterialTheme.typography.labelLarge)
                 Row(

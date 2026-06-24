@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.epubreader.SystemUiMode
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import io.mockk.every
@@ -195,6 +196,22 @@ class PdfReaderPreferencesTest {
         assertTrue(loadPdfAutoScrollUseSlider(context))
         assertTrue(loadPdfAutoScrollLocalMode(context, "book"))
         assertEquals(Triple(5.5f, 0.5f, 9f), loadPdfAutoScrollLocalSettings(context, "book"))
+    }
+
+    @Test
+    fun `preferred pdf highlight style round trips and defaults invalid values`() {
+        val prefs = InMemorySharedPreferences()
+        val context = contextWithPrefs(prefs)
+
+        assertEquals(HighlightStyle.BACKGROUND, loadPreferredPdfHighlightStyle(context))
+
+        savePreferredPdfHighlightStyle(context, HighlightStyle.STRIKETHROUGH)
+
+        assertEquals(HighlightStyle.STRIKETHROUGH, loadPreferredPdfHighlightStyle(context))
+        assertEquals(
+            HighlightStyle.BACKGROUND,
+            loadPreferredPdfHighlightStyle(contextWithPrefs(InMemorySharedPreferences("pdf_preferred_highlight_style" to "missing")))
+        )
     }
 
     @Test

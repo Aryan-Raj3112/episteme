@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.HighlightStyle
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -162,6 +163,7 @@ class SharedPdfAnnotationSerializerTest {
                     )
                 ),
                 colorArgb = 0x8C64B5F6.toInt(),
+                highlightStyle = HighlightStyle.STRIKETHROUGH,
                 rangeStartIndex = 7,
                 rangeEndIndex = 21
             )
@@ -189,6 +191,7 @@ class SharedPdfAnnotationSerializerTest {
         )
         assertEquals(1, legacy.getValue("highlights").jsonArray.size)
         assertEquals("BLUE", legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("color").jsonPrimitive.content)
+        assertEquals("strikethrough", legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("style").jsonPrimitive.content)
         assertEquals("Synced note", legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("note").jsonPrimitive.content)
         assertEquals(22, legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("rangeEnd").jsonPrimitive.content.toInt())
         val comments = legacy.getValue("highlights").jsonArray[0].jsonObject.getValue("comments").jsonArray

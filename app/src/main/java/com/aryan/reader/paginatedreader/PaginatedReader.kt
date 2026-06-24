@@ -103,6 +103,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -173,6 +174,7 @@ import com.aryan.reader.epubreader.ReaderTextAlign
 import com.aryan.reader.epubreader.TtsHighlightInfo
 import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
@@ -2470,7 +2472,7 @@ fun PaginatedReaderScreen(
     onFootnoteRequested: (String) -> Unit,
     onInternalLinkNavigated: (Int, Locator?) -> Unit = { _, _ -> },
     userHighlights: List<UserHighlight>,
-    onHighlightCreated: (String, String, String, SharedReaderLocator) -> Unit,
+    onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
@@ -3235,7 +3237,7 @@ fun NativeVerticalReaderScreen(
     onFootnoteRequested: (String) -> Unit = {},
     onInternalLinkNavigated: (Int, Locator?) -> Unit = { _, _ -> },
     userHighlights: List<UserHighlight>,
-    onHighlightCreated: (String, String, String, SharedReaderLocator) -> Unit,
+    onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
@@ -4139,7 +4141,7 @@ fun NativeVerticalReaderScreen(
                                 onSearch(sel.text)
                                 activeSelection = null
                             },
-                            onHighlight = { color ->
+                            onHighlight = { color, style ->
                                 val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
                                 val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                 val finalCfi =
@@ -4170,10 +4172,10 @@ fun NativeVerticalReaderScreen(
                                         "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                         "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
-                                onHighlightCreated(finalCfi, sel.text, color.toString(), locator)
+                                onHighlightCreated(finalCfi, sel.text, color.toString(), locator, style)
                                 activeSelection = null
                             },
-                            onNote = {
+                            onNote = { style ->
                                 onNoteRequested(null)
                                 val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
                                 val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
@@ -4205,7 +4207,7 @@ fun NativeVerticalReaderScreen(
                                         "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                         "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
-                                onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator)
+                                onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator, style)
                                 activeSelection = null
                             },
                             onTts = {
@@ -5564,6 +5566,53 @@ private fun logAndroidEpubTextCutoffIfNeeded(
     return signature
 }
 
+private fun DrawScope.drawPaginatedHighlightLineStyle(
+    layout: TextLayoutResult,
+    range: IntRange,
+    color: Color,
+    style: HighlightStyle
+) {
+    val start = range.first.coerceIn(0, layout.layoutInput.text.length)
+    val endExclusive = (range.last + 1).coerceIn(start, layout.layoutInput.text.length)
+    if (endExclusive <= start) return
+    val startLine = layout.getLineForOffset(start)
+    val endLine = layout.getLineForOffset((endExclusive - 1).coerceAtLeast(start))
+    for (line in startLine..endLine) {
+        val lineStart = maxOf(start, layout.getLineStart(line))
+        val lineEnd = minOf(endExclusive, layout.getLineEnd(line, visibleEnd = true))
+        if (lineEnd <= lineStart) continue
+        val bounds = layout.getPathForRange(lineStart, lineEnd).getBounds()
+        if (bounds.width <= 0f || bounds.height <= 0f) continue
+        val y = when (style) {
+            HighlightStyle.STRIKETHROUGH -> bounds.top + bounds.height * 0.52f
+            else -> bounds.bottom - bounds.height * 0.12f
+        }
+        if (style == HighlightStyle.WAVY_UNDERLINE) {
+            val amplitude = (bounds.height * 0.08f).coerceIn(1.2f, 3.5f)
+            val wavelength = (bounds.height * 0.62f).coerceIn(6f, 14f)
+            val path = Path()
+            var x = bounds.left
+            path.moveTo(x, y)
+            while (x < bounds.right) {
+                val midX = (x + wavelength / 2f).coerceAtMost(bounds.right)
+                val nextX = (x + wavelength).coerceAtMost(bounds.right)
+                path.quadraticBezierTo(x + wavelength / 4f, y - amplitude, midX, y)
+                path.quadraticBezierTo(x + wavelength * 0.75f, y + amplitude, nextX, y)
+                x += wavelength
+            }
+            drawPath(path, color = color.copy(alpha = 0.92f), style = Stroke(width = (bounds.height * 0.06f).coerceIn(1.2f, 3f), cap = StrokeCap.Round))
+        } else {
+            drawLine(
+                color = color.copy(alpha = 0.92f),
+                start = Offset(bounds.left, y),
+                end = Offset(bounds.right, y),
+                strokeWidth = (bounds.height * 0.08f).coerceIn(1.5f, 4f),
+                cap = StrokeCap.Round
+            )
+        }
+    }
+}
+
 @Composable
 private fun TextWithEmphasis(
     text: AnnotatedString,
@@ -5605,12 +5654,13 @@ private fun TextWithEmphasis(
     }
 
     data class EmphasisMarkInfo(val center: Offset, val radius: Float, val color: Color)
+    data class HighlightDrawInfo(val path: Path, val color: Color, val style: HighlightStyle, val range: IntRange)
     data class UnderlineDrawInfo(val path: Path?, val effect: PathEffect?, val minX: Float, val maxX: Float, val y: Float, val decoStyle: String, val decoColor: Color)
 
     // --- CACHING DECORATIONS FOR PERFORMANCE ---
     val cachedHighlights = remember(block, userHighlights, textLayoutResult, pressedHighlightCfi) {
         val startTime = System.currentTimeMillis()
-        val paths = mutableListOf<Pair<Path, Color>>()
+        val paths = mutableListOf<HighlightDrawInfo>()
         val layout = textLayoutResult
         if (layout != null && userHighlights.isNotEmpty()) {
             userHighlights.forEach { highlight ->
@@ -5635,9 +5685,9 @@ private fun TextWithEmphasis(
                                 highlight.androidHighlightRenderLabel()
                         )
                         val path = layout.getPathForRange(range.first, range.last + 1)
-                        paths.add(path to highlight.renderColor(legacyAlpha = 0.4f))
+                        paths.add(HighlightDrawInfo(path, highlight.renderColor(legacyAlpha = 0.4f), highlight.style, range))
                         if (highlight.cfi == pressedHighlightCfi) {
-                            paths.add(path to Color.Black.copy(alpha = 0.1f))
+                            paths.add(HighlightDrawInfo(path, Color.Black.copy(alpha = 0.1f), HighlightStyle.BACKGROUND, range))
                         }
                     } catch (e: Exception) {
                         Timber.tag("DecorationsDiag").e(e, "Highlight path out of bounds")
@@ -5847,8 +5897,16 @@ private fun TextWithEmphasis(
                 }
             }
 
-            cachedHighlights.forEach { (path, color) ->
-                drawPath(path, color, blendMode = BlendMode.SrcOver)
+            val layout = textLayoutResult
+            cachedHighlights.forEach { highlight ->
+                when (highlight.style) {
+                    HighlightStyle.BACKGROUND -> drawPath(highlight.path, highlight.color, blendMode = BlendMode.SrcOver)
+                    HighlightStyle.UNDERLINE,
+                    HighlightStyle.WAVY_UNDERLINE,
+                    HighlightStyle.STRIKETHROUGH -> if (layout != null) {
+                        drawPaginatedHighlightLineStyle(layout, highlight.range, highlight.color, highlight.style)
+                    }
+                }
             }
 
             cachedEmphasisMarks.forEach { mark ->
@@ -6150,7 +6208,7 @@ internal fun PaginatedReaderContent(
     onNoteRequested: (String?) -> Unit,
     onGetChapterInfo: (Int) -> Pair<String, Int?>?,
     userHighlights: List<UserHighlight>,
-    onHighlightCreated: (String, String, String, SharedReaderLocator) -> Unit,
+    onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
@@ -7995,7 +8053,7 @@ internal fun PaginatedReaderContent(
                                     onSearch(sel.text)
                                     activeSelection = null
                                 },
-                                onHighlight = { color ->
+                                onHighlight = { color, style ->
                                     val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
                                     val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
                                     val finalCfi =
@@ -8028,10 +8086,10 @@ internal fun PaginatedReaderContent(
                                             "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                             "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
-                                    onHighlightCreated(finalCfi, sel.text, color.toString(), locator)
+                                    onHighlightCreated(finalCfi, sel.text, color.toString(), locator, style)
                                     activeSelection = null
                                 },
-                                onNote = {
+                                onNote = { style ->
                                     onNoteRequested(null)
                                     val startAbsoluteOffset = sel.startBlockCharOffset + sel.startOffset
                                     val endAbsoluteOffset = sel.endBlockCharOffset + sel.endOffset
@@ -8065,7 +8123,7 @@ internal fun PaginatedReaderContent(
                                             "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                             "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
-                                    onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator)
+                                    onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator, style)
                                     activeSelection = null
                                 },
                                 onTts = {

@@ -8,6 +8,7 @@ import com.aryan.reader.pdf.data.AnnotationSettingsRepository
 import com.aryan.reader.pdf.data.AnnotationToolSettings
 import com.aryan.reader.pdf.data.TextStyleConfig
 import com.aryan.reader.pdf.data.ToolConfig
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
@@ -92,6 +93,42 @@ class PdfReaderSettingsAndSharedModelsTest {
         assertEquals(listOf(annotation), decoded)
         assertEquals(emptyList<SharedPdfAnnotation>(), SharedPdfAnnotationSerializer.decode(""))
         assertEquals(emptyList<SharedPdfAnnotation>(), SharedPdfAnnotationSerializer.decode("bad json"))
+    }
+
+
+    @Test
+    fun `SharedPdfAnnotationSerializer round trips highlight style and defaults legacy highlights`() {
+        val annotation = SharedPdfAnnotation(
+            id = "highlight-1",
+            pageIndex = 1,
+            kind = PdfAnnotationKind.HIGHLIGHT,
+            tool = PdfInkTool.HIGHLIGHTER,
+            bounds = PdfPageBounds(0.1f, 0.2f, 0.3f, 0.4f),
+            text = "Marked text",
+            colorArgb = 0x8C123456.toInt(),
+            highlightStyle = HighlightStyle.WAVY_UNDERLINE
+        )
+
+        val decoded = SharedPdfAnnotationSerializer.decode(
+            SharedPdfAnnotationSerializer.encode(listOf(annotation))
+        ).single()
+        val legacyDecoded = SharedPdfAnnotationSerializer.decode(
+            """
+            [
+              {
+                "id": "legacy-highlight",
+                "pageIndex": 1,
+                "kind": "HIGHLIGHT",
+                "tool": "HIGHLIGHTER",
+                "bounds": {"left":0.1,"top":0.2,"right":0.3,"bottom":0.4},
+                "colorArgb": -1
+              }
+            ]
+            """.trimIndent()
+        ).single()
+
+        assertEquals(HighlightStyle.WAVY_UNDERLINE, decoded.highlightStyle)
+        assertEquals(HighlightStyle.BACKGROUND, legacyDecoded.highlightStyle)
     }
 
     @Test

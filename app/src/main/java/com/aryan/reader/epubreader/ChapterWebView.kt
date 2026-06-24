@@ -35,6 +35,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,6 +55,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -73,6 +75,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.IntOffset
@@ -309,12 +312,12 @@ class TtsJsBridge(
 
 @Suppress("unused")
 class HighlightJsBridge(
-    private val onCreateCallback: (String, String, String) -> Unit, // Renamed to avoid recursion
+    private val onCreateCallback: (String, String, String, HighlightStyle) -> Unit,
     private val onClickCallback: ((String, String, Int, Int, Int, Int) -> Unit)? = null // Renamed
 ) {
     @JavascriptInterface
-    fun onHighlightCreated(cfi: String, text: String, colorId: String) {
-        onCreateCallback(cfi, text, colorId) // Calls the lambda property
+    fun onHighlightCreated(cfi: String, text: String, colorId: String, styleId: String) {
+        onCreateCallback(cfi, text, colorId, HighlightStyle.fromId(styleId))
     }
 
     @JavascriptInterface
@@ -444,7 +447,8 @@ private data class CustomMenuState(
     val cfi: String? = null,
     val isExistingHighlight: Boolean = false,
     val note: String? = null,
-    val selectedColor: HighlightColor? = null
+    val selectedColor: HighlightColor? = null,
+    val selectedStyle: HighlightStyle = HighlightStyle.BACKGROUND
 )
 
 internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): String {
@@ -456,6 +460,7 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
         obj.put("text", highlight.text)
         obj.put("cssClass", highlight.color.cssClass)
         obj.put("colorId", highlight.color.id)
+        obj.put("style", highlight.style.id)
         highlight.colorArgb?.let { argb ->
             obj.put("colorArgb", argb)
             obj.put("colorCss", colorCssForArgb(argb))
@@ -532,7 +537,7 @@ fun ChapterWebView(
     baseUrl: String,
     totalChunks: Int,
     userHighlights: List<UserHighlight>,
-    onHighlightCreated: (String, String, String) -> Unit,
+    onHighlightCreated: (String, String, String, HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     onChunkRequested: (Int) -> Unit,
     chapterTitle: String,
@@ -736,8 +741,8 @@ fun ChapterWebView(
 
                     addJavascriptInterface(
                         HighlightJsBridge(
-                            onCreateCallback = { cfi, text, colorId ->
-                                this.post { onHighlightCreated(cfi, text, colorId) }
+                            onCreateCallback = { cfi, text, colorId, style ->
+                                this.post { onHighlightCreated(cfi, text, colorId, style) }
                             },
                             onClickCallback = { cfi, text, left, top, right, bottom ->
                                 this.post {
@@ -1349,6 +1354,9 @@ fun ChapterWebView(
                     }
                 }
 
+            var selectedHighlightStyle by remember(state.cfi, state.selectedStyle) {
+                mutableStateOf(if (state.selectedStyle == HighlightStyle.BACKGROUND) loadPreferredHighlightStyle(context) else state.selectedStyle)
+            }
             Popup(
                 popupPositionProvider = popupPositionProvider, onDismissRequest = {
                     state.finishActionModeCallback()
@@ -1366,6 +1374,45 @@ fun ChapterWebView(
                             .heightIn(max = selectionMenuMaxHeight)
                             .verticalScroll(rememberScrollState())
                     ) {
+                        Row(
+                            modifier = Modifier
+                                .padding(top = 12.dp, bottom = 2.dp, start = 10.dp, end = 10.dp)
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            HighlightStyle.entries.forEach { style ->
+                                Box(
+                                    modifier = Modifier
+                                        .padding(horizontal = 3.dp)
+                                        .size(32.dp)
+                                        .background(
+                                            if (selectedHighlightStyle == style) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (selectedHighlightStyle == style) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .pointerInput(style) {
+                                            detectTapGestures {
+                                                selectedHighlightStyle = style
+                                                savePreferredHighlightStyle(context, style)
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = highlightStyleIconRes(style)),
+                                        contentDescription = style.id,
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
                         Row(
                             modifier = Modifier
                                 .padding(vertical = 8.dp, horizontal = 10.dp)
@@ -1386,12 +1433,12 @@ fun ChapterWebView(
                                                 Timber.d("Kotlin: Color clicked. Existing? ${state.isExistingHighlight}")
                                                 if (state.isExistingHighlight && state.cfi != null) {
                                                     localWebViewRef?.evaluateJavascript(
-                                                        "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${state.cfi}', '${colorEnum.cssClass}', '$colorArgb', '$colorCss');",
+                                                        "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${state.cfi}', '${colorEnum.cssClass}', '$colorArgb', '$colorCss', '${selectedHighlightStyle.id}');",
                                                         null
                                                     )
                                                 } else {
                                                     localWebViewRef?.evaluateJavascript(
-                                                        "javascript:window.HighlightBridgeHelper.createUserHighlight('${colorEnum.cssClass}', '$colorArgb', '$colorCss');",
+                                                        "javascript:window.HighlightBridgeHelper.createUserHighlight('${colorEnum.cssClass}', '$colorArgb', '$colorCss', '${selectedHighlightStyle.id}');",
                                                         null
                                                     )
                                                 }
@@ -1458,13 +1505,14 @@ fun ChapterWebView(
                                     }
                                     customMenuState = null
                                 },
-                                onNote = {
+                                onNote = { style ->
+                                    savePreferredHighlightStyle(context, style)
                                     if (state.isExistingHighlight && state.cfi != null) {
                                         onNoteRequested(state.cfi)
                                     } else {
                                         onNoteRequested(null)
                                         localWebViewRef?.evaluateJavascript(
-                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${HighlightColor.YELLOW.cssClass}', '${HighlightColor.YELLOW.color.toArgb()}', '${colorCssForArgb(HighlightColor.YELLOW.color.toArgb())}');", null
+                                            "javascript:window.HighlightBridgeHelper.createUserHighlight('${HighlightColor.YELLOW.cssClass}', '${HighlightColor.YELLOW.color.toArgb()}', '${colorCssForArgb(HighlightColor.YELLOW.color.toArgb())}', '${style.id}');", null
                                         )
                                     }
                                     state.finishActionModeCallback()

@@ -97,6 +97,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -1772,7 +1773,22 @@ fun EpubReaderHost(
             if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
                 val cssClass = legacyColor.cssClass
                 val colorCss = String.format("#%06X", 0xFFFFFF and newColorArgb)
-                val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '$newColorArgb', '$colorCss');"
+                val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '$newColorArgb', '$colorCss', '${targetHighlight.style.id}');"
+                webViewRefForTts?.evaluateJavascript(jsCommand, null)
+            }
+        }
+    }
+
+    val onHighlightStyleChange: (UserHighlight, HighlightStyle) -> Unit = { targetHighlight, newStyle ->
+        val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
+        if (index != -1) {
+            val current = userHighlights[index]
+            userHighlights[index] = current.copy(style = newStyle)
+            if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
+                val colorArgb = current.colorArgb ?: current.color.color.toArgb()
+                val cssClass = current.color.cssClass
+                val colorCss = String.format("#%06X", 0xFFFFFF and colorArgb)
+                val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '$colorArgb', '$colorCss', '${newStyle.id}');"
                 webViewRefForTts?.evaluateJavascript(jsCommand, null)
             }
         }
@@ -4728,7 +4744,7 @@ fun EpubReaderHost(
                                     userHighlights = userHighlights.filter { highlight ->
                                         highlight.chapterIndex in (currentChapterIndex - 1)..(currentChapterIndex + 1)
                                     },
-                                    onHighlightCreated = { cfi, text, colorId, locator ->
+                                    onHighlightCreated = { cfi, text, colorId, locator, style ->
                                         val chapterIndex = locator.chapterIndex ?: currentChapterIndex
                                         val (color, colorArgb) = highlightColorFromToken(colorId)
                                         val finalCfi = processAndAddHighlight(
@@ -4742,7 +4758,8 @@ fun EpubReaderHost(
                                                 cfi = cfi,
                                                 textQuote = text
                                             ),
-                                            newColorArgb = colorArgb
+                                            newColorArgb = colorArgb,
+                                            newStyle = style
                                         )
                                         if (pendingNoteForNewHighlight) {
                                             pendingNoteForNewHighlight = false
@@ -4953,7 +4970,7 @@ fun EpubReaderHost(
                                             userHighlights = userHighlights.filter { it.chapterIndex == targetChapterIndex },
                                             activeHighlightPalette = currentHighlightPalette,
                                             onUpdatePalette = onUpdateHighlightPalette,
-                                            onHighlightCreated = { cfi, text, colorId ->
+                                            onHighlightCreated = { cfi, text, colorId, style ->
                                                 Timber.d("Vertical Mode (Source): Creating Highlight. CFI: $cfi")
                                                 Timber.d("Vertical Mode (Source): Text Snippet: '${text.take(50)}...'")
                                                 val (color, colorArgb) = highlightColorFromToken(colorId)
@@ -4964,7 +4981,8 @@ fun EpubReaderHost(
                                                     newColor = color,
                                                     chapterIndex = currentChapterIndex,
                                                     currentList = userHighlights,
-                                                    newColorArgb = colorArgb
+                                                    newColorArgb = colorArgb,
+                                                    newStyle = style
                                                 )
 
                                                 if (pendingNoteForNewHighlight) {
@@ -5933,7 +5951,7 @@ fun EpubReaderHost(
                                     val currentChapter = currentChapterInPaginatedMode ?: return@filter false
                                     highlight.chapterIndex in (currentChapter - 1)..(currentChapter + 1)
                                 },
-                                onHighlightCreated = { cfi, text, colorId, locator ->
+                                onHighlightCreated = { cfi, text, colorId, locator, style ->
                                     val chapterIndex = locator.chapterIndex ?: currentChapterInPaginatedMode ?: 0
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "persist_request cfi=$cfi colorId=$colorId chapter=$chapterIndex " +
@@ -5953,7 +5971,8 @@ fun EpubReaderHost(
                                             cfi = cfi,
                                             textQuote = text
                                         ),
-                                        newColorArgb = colorArgb
+                                        newColorArgb = colorArgb,
+                                        newStyle = style
                                     )
                                     val savedHighlight = userHighlights.find {
                                         it.chapterIndex == chapterIndex && it.cfi == finalCfi
@@ -7300,6 +7319,7 @@ fun EpubReaderHost(
                             effectiveText = effectiveText,
                             activeHighlightPalette = currentHighlightPalette,
                             onColorChange = { newColor -> onHighlightColorChange(targetHighlight, newColor) },
+                            onStyleChange = { newStyle -> onHighlightStyleChange(targetHighlight, newStyle) },
                             onOpenPaletteManager = { showPaletteManager = true },
                             onDismiss = { highlightToNoteCfi = null },
                             onSave = { noteText ->

@@ -121,6 +121,7 @@ import com.aryan.reader.shared.fontFaceSummary
 import com.aryan.reader.shared.groupByFamily
 import com.aryan.reader.shared.hasVariableWeightFace
 import com.aryan.reader.shared.HighlightColor
+import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.ReaderAiByokSettings
@@ -866,6 +867,9 @@ fun SharedReaderScreen(
                     onColorChange = { color ->
                         dispatch(ReaderAction.HighlightUpdated(selectedHighlight.id, color = color))
                     },
+                    onStyleChange = { style ->
+                        dispatch(ReaderAction.HighlightUpdated(selectedHighlight.id, style = style))
+                    },
                     onOpenPaletteManager = ::openHighlightPaletteManager,
                     onSaveNote = { note ->
                         dispatch(ReaderAction.HighlightUpdated(selectedHighlight.id, note = note))
@@ -1132,6 +1136,7 @@ private fun SharedReaderHighlightSheet(
     palette: ReaderHighlightPalette,
     onDismiss: () -> Unit,
     onColorChange: (HighlightColor) -> Unit,
+    onStyleChange: (HighlightStyle) -> Unit,
     onOpenPaletteManager: () -> Unit,
     onSaveNote: (String) -> Unit,
     onDelete: () -> Unit,
@@ -1153,6 +1158,11 @@ private fun SharedReaderHighlightSheet(
         title = readerString("label_highlight_color", "Highlight"),
         onDismiss = onDismiss
     ) {
+        SharedReaderHighlightStyleSelector(
+            selectedStyle = highlight.style,
+            onStyleSelected = onStyleChange,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp)
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1269,6 +1279,48 @@ private fun SharedReaderHighlightSheet(
                 onDismiss()
             }) {
                 Text(readerString("action_save_note", "Save note"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedReaderHighlightStyleSelector(
+    selectedStyle: HighlightStyle,
+    onStyleSelected: (HighlightStyle) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HighlightStyle.entries.forEach { style ->
+            val label = when (style) {
+                HighlightStyle.BACKGROUND -> "B"
+                HighlightStyle.UNDERLINE -> "U"
+                HighlightStyle.WAVY_UNDERLINE -> "~"
+                HighlightStyle.STRIKETHROUGH -> "S"
+            }
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selectedStyle == style) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                    )
+                    .border(
+                        1.dp,
+                        if (selectedStyle == style) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.30f),
+                        RoundedCornerShape(8.dp)
+                    )
+                    .clickable { onStyleSelected(style) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.HighlightStyle
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -93,6 +94,7 @@ data class SharedPdfAnnotation(
     val note: String? = null,
     val comments: List<SharedPdfAnnotationComment> = emptyList(),
     val colorArgb: Int,
+    val highlightStyle: HighlightStyle = HighlightStyle.BACKGROUND,
     val backgroundArgb: Int = 0x00FFFFFF,
     val strokeWidth: Float = 2f,
     val fontSize: Float = 16f,

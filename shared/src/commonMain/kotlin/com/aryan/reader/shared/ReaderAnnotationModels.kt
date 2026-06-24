@@ -1,6 +1,7 @@
 package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
+import kotlinx.serialization.SerialName
 
 data class EpubBookmark(
     val cfi: String,
@@ -34,7 +35,22 @@ enum class HighlightColor(val id: String, val color: Color, val cssClass: String
     BLACK("black", Color(0xFF424242), "user-highlight-black"),
     WHITE("white", Color(0xFFF5F5F5), "user-highlight-white")
 }
+enum class HighlightStyle(val id: String) {
+    @SerialName("background")
+    BACKGROUND("background"),
+    @SerialName("underline")
+    UNDERLINE("underline"),
+    @SerialName("wavy_underline")
+    WAVY_UNDERLINE("wavy_underline"),
+    @SerialName("strikethrough")
+    STRIKETHROUGH("strikethrough");
 
+    companion object {
+        fun fromId(id: String?): HighlightStyle {
+            return entries.firstOrNull { it.id == id || it.name.equals(id, ignoreCase = true) } ?: BACKGROUND
+        }
+    }
+}
 data class ReaderLocator(
     val chapterIndex: Int? = null,
     val chapterId: String? = null,
@@ -230,6 +246,7 @@ data class UserHighlight(
     val chapterIndex: Int,
     val note: String? = null,
     val colorArgb: Int? = null,
+    val style: HighlightStyle = HighlightStyle.BACKGROUND,
     val locator: ReaderLocator = ReaderLocator.fromLegacy(
         chapterIndex = chapterIndex,
         cfi = cfi,
