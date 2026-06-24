@@ -48,4 +48,19 @@ class AppNavigationBackTest {
             )
         )
     }
+
+    @Test
+    fun `selected reader file route sync does not close utility screens`() {
+        assertFalse(shouldSyncSelectedFileRoute(AppDestinations.PRO_SCREEN_ROUTE))
+        assertFalse(shouldSyncSelectedFileRoute(AppDestinations.SETTINGS_SCREEN_ROUTE))
+        assertFalse(shouldSyncSelectedFileRoute(AppDestinations.FEEDBACK_SCREEN_ROUTE))
+    }
+
+    @Test
+    fun `selected reader file route sync remains enabled for main and reader routes`() {
+        assertTrue(shouldSyncSelectedFileRoute(null))
+        assertTrue(shouldSyncSelectedFileRoute(AppDestinations.MAIN_ROUTE))
+        assertTrue(shouldSyncSelectedFileRoute(AppDestinations.PDF_VIEWER_ROUTE))
+        assertTrue(shouldSyncSelectedFileRoute(AppDestinations.EPUB_READER_ROUTE))
+    }
 }

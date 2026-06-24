@@ -90,6 +90,13 @@ fun shouldInterceptAppNavBack(
     return currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE
 }
 
+fun shouldSyncSelectedFileRoute(currentRoute: String?): Boolean {
+    return currentRoute == null ||
+        currentRoute == AppDestinations.MAIN_ROUTE ||
+        currentRoute == AppDestinations.PDF_VIEWER_ROUTE ||
+        currentRoute == AppDestinations.EPUB_READER_ROUTE
+}
+
 private fun NavHostController.isReadyForBackStackChange(): Boolean {
     return currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED
 }
@@ -183,7 +190,7 @@ fun AppNavigation(
     )
 
     LaunchedEffect(currentRoute, uiState.selectedFileType, uiState.isLoading, uiState.selectedEpubBook, uiState.selectedPdfUri) {
-        if (!uiState.isLoading) {
+        if (!uiState.isLoading && shouldSyncSelectedFileRoute(currentRoute)) {
             when (uiState.selectedFileType?.readerSurfaceOnAndroid()) {
                 ReaderFeatureSurface.PDF_VIEWER -> {
                     if (uiState.selectedPdfUri != null) {

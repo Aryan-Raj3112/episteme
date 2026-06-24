@@ -5,11 +5,18 @@ import java.util.Date
 import java.util.IllegalFormatException
 import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidStringFormatResourcesTest {
 
+    @Test
+    fun `oss flavor uses standard launcher label`() {
+        val ossStrings = readStringResources(File(findOssResDirectory(), "values/strings.xml"))
+
+        assertEquals("Episteme", ossStrings["app_name"])
+    }
     @Test
     fun `vietnamese strings cover translatable base resources`() {
         assertLocaleCoversTranslatableBaseResources(localeDirectory = "values-vi", localeName = "Vietnamese")
@@ -73,6 +80,13 @@ class AndroidStringFormatResourcesTest {
         return listOf(
             File("src/main/res"),
             File("app/src/main/res")
+        ).first { it.isDirectory }
+    }
+
+    private fun findOssResDirectory(): File {
+        return listOf(
+            File("src/oss/res"),
+            File("app/src/oss/res")
         ).first { it.isDirectory }
     }
 

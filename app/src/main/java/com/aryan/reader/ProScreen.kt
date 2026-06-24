@@ -66,6 +66,8 @@ import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Currency
 
+fun initialProScreenTabIndex(): Int = 0
+
 @Suppress("KotlinConstantConditions")
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -81,8 +83,8 @@ fun ProScreen(
 
     // Removed Free Tab, so tabCount is max 2
     val tabCount = if (BuildConfig.FLAVOR == "pro") 2 else 1
-    val pagerState = rememberPagerState(initialPage = 0, pageCount = { tabCount })
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    val pagerState = rememberPagerState(initialPage = initialProScreenTabIndex(), pageCount = { tabCount })
+    var selectedTabIndex by remember { mutableIntStateOf(initialProScreenTabIndex()) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(pagerState.currentPage) {
@@ -92,13 +94,6 @@ fun ProScreen(
     LaunchedEffect(selectedTabIndex) {
         scope.launch {
             pagerState.animateScrollToPage(selectedTabIndex)
-        }
-    }
-
-    // Default to the Credits tab if they already own Pro
-    LaunchedEffect(uiState.isProUser) {
-        if (uiState.isProUser && BuildConfig.FLAVOR == "pro") {
-            selectedTabIndex = 1
         }
     }
 

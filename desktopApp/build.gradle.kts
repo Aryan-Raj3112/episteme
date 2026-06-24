@@ -1413,7 +1413,7 @@ val desktopResolvedVersionName = providers.gradleProperty("desktopVersionName")
 val desktopPackageVersion = providers.gradleProperty("desktopPackageVersion")
     .orElse(desktopResolvedVersionName)
     .map(::normalizeDesktopPackageVersion)
-val desktopPackageName = if (isOssOfflineDesktop) "Episteme oss" else "Episteme"
+val desktopPackageName = "Episteme"
 val desktopLinuxPackageName = if (isOssOfflineDesktop) "episteme-oss" else "episteme"
 val desktopPackageDescription = if (isOssOfflineDesktop) {
     "Episteme oss offline desktop reader"
