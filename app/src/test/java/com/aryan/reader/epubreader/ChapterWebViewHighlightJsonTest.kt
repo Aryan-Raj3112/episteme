@@ -15,6 +15,7 @@ class ChapterWebViewHighlightJsonTest {
             text = "synced desktop text",
             color = HighlightColor.GREEN,
             chapterIndex = 6,
+            colorArgb = 0xFF12ABEF.toInt(),
             locator = ReaderLocator(
                 chapterIndex = 6,
                 pageIndex = 2,
@@ -30,6 +31,8 @@ class ChapterWebViewHighlightJsonTest {
 
         assertEquals("desktop:6:120:145", obj.getString("cfi"))
         assertEquals("user-highlight-green", obj.getString("cssClass"))
+        assertEquals(0xFF12ABEF.toInt(), obj.getInt("colorArgb"))
+        assertEquals("#12ABEF", obj.getString("colorCss"))
         assertEquals(6, locator.getInt("chapterIndex"))
         assertEquals(120, locator.getInt("startOffset"))
         assertEquals(145, locator.getInt("endOffset"))

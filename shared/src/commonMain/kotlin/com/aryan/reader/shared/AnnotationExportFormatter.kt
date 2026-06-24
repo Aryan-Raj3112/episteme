@@ -180,7 +180,7 @@ object AnnotationExportFormatter {
                 AnnotationExportEntry(
                     locationLabel = "Chapter $chapterNumber$page",
                     highlightedText = text,
-                    colorLabel = highlight.color.id,
+                    colorLabel = highlight.colorArgb?.toExportColorLabel() ?: highlight.color.id,
                     note = note,
                     sortIndex = highlight.chapterIndex
                 )

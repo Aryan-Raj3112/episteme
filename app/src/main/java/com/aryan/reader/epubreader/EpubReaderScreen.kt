@@ -905,7 +905,7 @@ fun EpubReaderHost(
         mutableStateOf(loadHighlightPalette(context))
     }
 
-    val onUpdateHighlightPalette: (Int, HighlightColor) -> Unit = { index, newColor ->
+    val onUpdateHighlightPalette: (Int, Int) -> Unit = { index, newColor ->
         val newList = currentHighlightPalette.toMutableList()
         if (index in newList.indices) {
             newList[index] = newColor
@@ -1764,13 +1764,15 @@ fun EpubReaderHost(
         }
     }
 
-    val onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit = { targetHighlight, newColor ->
+    val onHighlightColorChange: (UserHighlight, Int) -> Unit = { targetHighlight, newColorArgb ->
         val index = userHighlights.indexOfFirst { it.cfi == targetHighlight.cfi }
         if (index != -1) {
-            userHighlights[index] = targetHighlight.copy(color = newColor)
+            val legacyColor = legacyHighlightColorForArgb(newColorArgb)
+            userHighlights[index] = targetHighlight.copy(color = legacyColor, colorArgb = newColorArgb)
             if (currentRenderMode == RenderMode.VERTICAL_SCROLL && targetHighlight.chapterIndex == currentChapterIndex) {
-                val cssClass = newColor.cssClass
-                val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '${newColor.id}');"
+                val cssClass = legacyColor.cssClass
+                val colorCss = String.format("#%06X", 0xFFFFFF and newColorArgb)
+                val jsCommand = "javascript:window.HighlightBridgeHelper.updateHighlightStyle('${escapeJsString(targetHighlight.cfi)}', '$cssClass', '$newColorArgb', '$colorCss');"
                 webViewRefForTts?.evaluateJavascript(jsCommand, null)
             }
         }
@@ -4728,7 +4730,7 @@ fun EpubReaderHost(
                                     },
                                     onHighlightCreated = { cfi, text, colorId, locator ->
                                         val chapterIndex = locator.chapterIndex ?: currentChapterIndex
-                                        val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
+                                        val (color, colorArgb) = highlightColorFromToken(colorId)
                                         val finalCfi = processAndAddHighlight(
                                             newCfi = cfi,
                                             newText = text,
@@ -4739,7 +4741,8 @@ fun EpubReaderHost(
                                                 chapterIndex = chapterIndex,
                                                 cfi = cfi,
                                                 textQuote = text
-                                            )
+                                            ),
+                                            newColorArgb = colorArgb
                                         )
                                         if (pendingNoteForNewHighlight) {
                                             pendingNoteForNewHighlight = false
@@ -4953,14 +4956,15 @@ fun EpubReaderHost(
                                             onHighlightCreated = { cfi, text, colorId ->
                                                 Timber.d("Vertical Mode (Source): Creating Highlight. CFI: $cfi")
                                                 Timber.d("Vertical Mode (Source): Text Snippet: '${text.take(50)}...'")
-                                                val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
+                                                val (color, colorArgb) = highlightColorFromToken(colorId)
 
                                                 val finalCfi = processAndAddHighlight(
                                                     newCfi = cfi,
                                                     newText = text,
                                                     newColor = color,
                                                     chapterIndex = currentChapterIndex,
-                                                    currentList = userHighlights
+                                                    currentList = userHighlights,
+                                                    newColorArgb = colorArgb
                                                 )
 
                                                 if (pendingNoteForNewHighlight) {
@@ -5937,7 +5941,7 @@ fun EpubReaderHost(
                                             "text='${epubHighlightDiagSnippet(text)}'"
                                     )
                                     Timber.d("EpubReaderScreen: onHighlightCreated. CFI: $cfi")
-                                    val color = HighlightColor.entries.find { it.id == colorId } ?: HighlightColor.YELLOW
+                                    val (color, colorArgb) = highlightColorFromToken(colorId)
                                     val finalCfi = processAndAddHighlight(
                                         newCfi = cfi,
                                         newText = text,
@@ -5948,7 +5952,8 @@ fun EpubReaderHost(
                                             chapterIndex = chapterIndex,
                                             cfi = cfi,
                                             textQuote = text
-                                        )
+                                        ),
+                                        newColorArgb = colorArgb
                                     )
                                     val savedHighlight = userHighlights.find {
                                         it.chapterIndex == chapterIndex && it.cfi == finalCfi

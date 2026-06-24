@@ -1,5 +1,6 @@
 package com.aryan.reader.shared
 
+import androidx.compose.ui.graphics.toArgb
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -17,6 +18,7 @@ class EpubAnnotationSerializerTest {
                 color = HighlightColor.BLUE,
                 chapterIndex = 2,
                 note = "Important",
+                colorArgb = 0xFF12ABEF.toInt(),
                 locator = ReaderLocator(
                     chapterIndex = 2,
                     chapterId = "chapter-2",
@@ -37,11 +39,31 @@ class EpubAnnotationSerializerTest {
         )
 
         assertEquals(highlights, decoded)
+        assertEquals(0xFF12ABEF.toInt(), decoded.single().colorArgb)
         assertEquals(HighlightColor.YELLOW, legacyDecoded.single().color)
+        assertEquals(null, legacyDecoded.single().colorArgb)
         assertEquals(null, legacyDecoded.single().note)
         assertEquals(1, legacyDecoded.single().locator.chapterIndex)
         assertEquals("legacy", legacyDecoded.single().locator.cfi)
         assertTrue(legacyDecoded.single().id.startsWith("highlight_"))
+    }
+
+    @Test
+    fun `highlight render color preserves custom argb alpha`() {
+        val custom = UserHighlight(
+            id = "custom",
+            cfi = "cfi",
+            text = "Text",
+            color = HighlightColor.YELLOW,
+            chapterIndex = 0,
+            colorArgb = 0x8C12ABEF.toInt()
+        )
+        val legacy = custom.copy(id = "legacy", colorArgb = null)
+        val opaqueCustom = custom.copy(id = "opaque", colorArgb = 0xFF12ABEF.toInt())
+
+        assertEquals(0x8C12ABEF.toInt(), custom.renderColor(legacyAlpha = 0.4f).toArgb())
+        assertEquals(0x6612ABEF, opaqueCustom.renderColor(legacyAlpha = 0.4f).toArgb())
+        assertEquals(HighlightColor.YELLOW.color.copy(alpha = 0.4f).toArgb(), legacy.renderColor(legacyAlpha = 0.4f).toArgb())
     }
 
     @Test
@@ -94,7 +116,8 @@ class EpubAnnotationSerializerTest {
             newText = "Updated",
             newColor = HighlightColor.GREEN,
             chapterIndex = 0,
-            currentList = highlights
+            currentList = highlights,
+            newColorArgb = 0xFF654321.toInt()
         )
         EpubAnnotationSerializer.processAndAddHighlight(
             newCfi = "other-cfi",
@@ -109,6 +132,7 @@ class EpubAnnotationSerializerTest {
         assertEquals(initialId, highlights.first().id)
         assertEquals("Updated", highlights.first().text)
         assertEquals(HighlightColor.GREEN, highlights.first().color)
+        assertEquals(0xFF654321.toInt(), highlights.first().colorArgb)
         assertNotEquals(initialId, highlights.last().id)
     }
 

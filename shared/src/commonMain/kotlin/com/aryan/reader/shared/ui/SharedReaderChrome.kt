@@ -1200,9 +1200,9 @@ private fun SharedReaderHighlightSheet(
             )
         }
         Surface(
-            color = highlight.color.color.copy(alpha = 0.10f),
+            color = highlight.effectiveColor.copy(alpha = 0.10f),
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, highlight.color.color.copy(alpha = 0.30f)),
+            border = BorderStroke(1.dp, highlight.effectiveColor.copy(alpha = 0.30f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(modifier = Modifier.heightIn(min = 76.dp)) {
@@ -1210,7 +1210,7 @@ private fun SharedReaderHighlightSheet(
                     modifier = Modifier
                         .width(6.dp)
                         .fillMaxHeight()
-                        .background(highlight.color.color)
+                        .background(highlight.effectiveColor)
                 )
                 Column(
                     modifier = Modifier.padding(14.dp),
@@ -4430,7 +4430,7 @@ private fun SharedReaderAnnotationsTab(
                                             modifier = Modifier
                                                 .width(12.dp)
                                                 .height(12.dp)
-                                                .background(highlight.color.color, RoundedCornerShape(2.dp))
+                                                .background(highlight.effectiveColor, RoundedCornerShape(2.dp))
                                         )
                                         Text(
                                             listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),

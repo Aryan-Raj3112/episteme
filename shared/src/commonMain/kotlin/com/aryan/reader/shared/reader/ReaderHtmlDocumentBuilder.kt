@@ -2892,9 +2892,18 @@ object ReaderHtmlDocumentBuilder {
                     if (offsets.start === null || offsets.end === null) return false;
                     return Math.abs(offsets.start - startOffset) <= 1 && Math.abs(offsets.end - endOffset) <= 1;
                   }
-                  function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset) {
+                  function readerHighlightCssColor(colorArgb) {
+                    if (colorArgb === undefined || colorArgb === null) return null;
+                    var value = Number(colorArgb);
+                    if (!Number.isFinite(value)) return null;
+                    var rgb = (value >>> 0) & 0xFFFFFF;
+                    return '#' + rgb.toString(16).padStart(6, '0').toUpperCase();
+                  }
+                  function createReaderHighlightMarker(highlightId, colorId, startOffset, endOffset, colorArgb) {
                     var marker = document.createElement('span');
                     marker.className = 'reader-user-highlight user-highlight-' + (colorId || 'yellow');
+                    var cssColor = readerHighlightCssColor(colorArgb);
+                    if (cssColor) marker.style.setProperty('background-color', cssColor, 'important');
                     if (highlightId) marker.setAttribute('data-reader-highlight-id', highlightId);
                     if (startOffset !== undefined && startOffset !== null) {
                       marker.setAttribute('data-reader-start-offset', String(startOffset));
@@ -3372,7 +3381,7 @@ object ReaderHtmlDocumentBuilder {
                         return;
                       }
                       wrapRangeTextSegments(range, function () {
-                        var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd);
+                        var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', segmentStart, segmentEnd, highlight.colorArgb);
                         marker.setAttribute('data-cfi', sourceCfi || highlight.cfi || ('desktop:' + chapterIndex + ':' + startOffset + ':' + endOffset));
                         return marker;
                       });
@@ -3432,7 +3441,7 @@ object ReaderHtmlDocumentBuilder {
                       return false;
                     }
                     wrapRangeTextSegments(range, function () {
-                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null);
+                      var marker = createReaderHighlightMarker(highlight.id, highlight.colorId || 'yellow', null, null, highlight.colorArgb);
                       marker.setAttribute('data-cfi', locator.cfi || highlight.cfi || '');
                       return marker;
                     });
@@ -3708,7 +3717,7 @@ object ReaderHtmlDocumentBuilder {
                         var wrappedSingle = false;
                         try {
                           wrappedSingle = wrapRangeTextSegments(localRange, function () {
-                            var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset);
+                            var marker = createReaderHighlightMarker(null, colorId || 'yellow', payload.locator.startOffset, payload.locator.endOffset, null);
                             marker.setAttribute('data-cfi', payload.cfi);
                             return marker;
                           });
@@ -3723,7 +3732,7 @@ object ReaderHtmlDocumentBuilder {
                         segments.forEach(function (segment, index) {
                           var payload = payloads[index];
                           var wrappedSegment = wrapRangeTextSegments(segment.range, function () {
-                            var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset);
+                            var marker = createReaderHighlightMarker(null, colorId || 'yellow', segment.startOffset, segment.endOffset, null);
                             marker.setAttribute('data-cfi', payload.cfi);
                             return marker;
                           });
@@ -4660,7 +4669,7 @@ object ReaderHtmlDocumentBuilder {
             if (startIndex >= endIndex || endIndex > html.length) return@fold html
             val markedText = html.substring(startIndex, endIndex)
             if (markedText.visibleHtmlText().isBlank()) return@fold html
-            val markerStart = """<span class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">"""
+            val markerStart = """<span class="reader-user-highlight ${highlight.color.cssClass}"${highlight.colorStyleAttribute()} data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">"""
             html.replaceRange(startIndex, endIndex, markedText.wrapVisibleHtmlText(markerStart, "</span>"))
         }
 
@@ -4670,9 +4679,22 @@ object ReaderHtmlDocumentBuilder {
             .fold(rangedHtml) { html, highlight ->
                 val text = highlight.text.trim().takeIf { it.isNotBlank() } ?: return@fold html
                 val escapedText = text.escapeHtml()
-                val markedText = """<span class="reader-user-highlight ${highlight.color.cssClass}" data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}">$escapedText</span>"""
+                val markedText = """<span class="reader-user-highlight ${highlight.color.cssClass}"${highlight.colorStyleAttribute()} data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}">$escapedText</span>"""
                 html.replaceFirst(escapedText, markedText)
             }
+    }
+
+    private fun RenderedHighlight.colorStyleAttribute(): String {
+        return colorStyleAttribute(colorArgb)
+    }
+
+    private fun UserHighlight.colorStyleAttribute(): String {
+        return colorStyleAttribute(colorArgb)
+    }
+
+    private fun colorStyleAttribute(colorArgb: Int?): String {
+        val rgb = colorArgb?.let { it and 0x00FFFFFF } ?: return ""
+        return " style=\"background-color:#${rgb.toString(16).padStart(6, '0').uppercase()} !important\""
     }
 
     private fun String.wrapVisibleHtmlText(markerStart: String, markerEnd: String): String {
@@ -4929,6 +4951,7 @@ object ReaderHtmlDocumentBuilder {
             id = source.id,
             cfi = cfi,
             color = source.color,
+            colorArgb = source.colorArgb,
             absoluteStart = boundedStart,
             absoluteEnd = boundedEnd,
             relativeStart = boundedStart - contentStartOffset,
@@ -5210,6 +5233,7 @@ object ReaderHtmlDocumentBuilder {
         val id: String,
         val cfi: String,
         val color: HighlightColor,
+        val colorArgb: Int?,
         val absoluteStart: Int,
         val absoluteEnd: Int,
         val relativeStart: Int,

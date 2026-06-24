@@ -41,6 +41,31 @@ class AnnotationExportFormatterTest {
         assertTrue(text.contains("Note:\n  Remember this point."))
     }
 
+
+    @Test
+    fun `epub custom highlight color exports as hex label`() {
+        val document = AnnotationExportFormatter.fromEpubHighlights(
+            bookTitle = "Example Book",
+            sourceType = FileType.EPUB,
+            highlights = listOf(
+                UserHighlight(
+                    id = "custom",
+                    cfi = "desktop:0:1:5",
+                    text = "Custom color passage.",
+                    color = HighlightColor.YELLOW,
+                    chapterIndex = 0,
+                    colorArgb = 0xFF12ABEF.toInt()
+                )
+            )
+        )
+
+        val markdown = AnnotationExportFormatter.render(document, AnnotationExportFormat.MARKDOWN)
+        val text = AnnotationExportFormatter.render(document, AnnotationExportFormat.TEXT)
+
+        assertTrue(markdown.contains("- Color: #12ABEF"))
+        assertTrue(text.contains("Color: #12ABEF"))
+    }
+
     @Test
     fun `pdf highlight with note and comment thread exports in page order`() {
         val annotations = listOf(

@@ -115,6 +115,7 @@ class ReaderHtmlDocumentBuilderTest {
             cfi = "desktop:0:11:16",
             text = "alpha",
             color = HighlightColor.YELLOW,
+            colorArgb = 0xFF12ABEF.toInt(),
             chapterIndex = 0,
             locator = ReaderLocator(
                 chapterIndex = 0,
@@ -134,7 +135,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertEquals(1, Regex("<span class=\"reader-user-highlight").findAll(html).count())
-        assertTrue(html.contains("""alpha beta <span class="reader-user-highlight user-highlight-yellow" data-reader-highlight-id="highlight-1" data-cfi="desktop:0:11:16" data-reader-start-offset="11" data-reader-end-offset="16">alpha</span> beta"""))
+        assertTrue(html.contains("""alpha beta <span class="reader-user-highlight user-highlight-yellow" style="background-color:#12ABEF !important" data-reader-highlight-id="highlight-1" data-cfi="desktop:0:11:16" data-reader-start-offset="11" data-reader-end-offset="16">alpha</span> beta"""))
     }
 
     @Test

@@ -229,12 +229,24 @@ data class UserHighlight(
     val color: HighlightColor,
     val chapterIndex: Int,
     val note: String? = null,
+    val colorArgb: Int? = null,
     val locator: ReaderLocator = ReaderLocator.fromLegacy(
         chapterIndex = chapterIndex,
         cfi = cfi,
         textQuote = text
     )
-)
+) {
+    val effectiveColor: Color
+        get() = colorArgb?.let { Color(it) } ?: color.color
+
+    fun renderColor(legacyAlpha: Float): Color {
+        val argb = colorArgb ?: return color.color.copy(alpha = legacyAlpha)
+        val storedAlpha = (argb ushr 24) and 0xFF
+        return Color(argb).let { storedColor ->
+            if (storedAlpha >= 0xFF) storedColor.copy(alpha = legacyAlpha) else storedColor
+        }
+    }
+}
 
 fun escapeJsString(value: String): String {
     return value

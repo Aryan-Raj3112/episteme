@@ -100,6 +100,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -2471,8 +2472,8 @@ fun PaginatedReaderScreen(
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator) -> Unit,
     onHighlightDeleted: (String) -> Unit,
-    activeHighlightPalette: List<HighlightColor>,
-    onUpdatePalette: (Int, HighlightColor) -> Unit,
+    activeHighlightPalette: List<Int>,
+    onUpdatePalette: (Int, Int) -> Unit,
     activeTextureId: String? = null,
     activeTextureAlpha: Float = 0.55f
 ) {
@@ -3236,8 +3237,8 @@ fun NativeVerticalReaderScreen(
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator) -> Unit,
     onHighlightDeleted: (String) -> Unit,
-    activeHighlightPalette: List<HighlightColor>,
-    onUpdatePalette: (Int, HighlightColor) -> Unit,
+    activeHighlightPalette: List<Int>,
+    onUpdatePalette: (Int, Int) -> Unit,
     activeTextureId: String? = null,
     activeTextureAlpha: Float = 0.55f
 ) {
@@ -4150,7 +4151,7 @@ fun NativeVerticalReaderScreen(
                                     cfi = finalCfi
                                 )
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                                    "create_request source=native_vertical_highlight_menu color=${color.id} " +
+                                    "create_request source=native_vertical_highlight_menu colorArgb=$color " +
                                         "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
@@ -4160,7 +4161,7 @@ fun NativeVerticalReaderScreen(
                                         "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
                                 Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                                    "create_request surface=native_vertical action=highlight color=${color.id} " +
+                                    "create_request surface=native_vertical action=highlight colorArgb=$color " +
                                         "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
                                         "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                         "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
@@ -4169,7 +4170,7 @@ fun NativeVerticalReaderScreen(
                                         "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                         "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
-                                onHighlightCreated(finalCfi, sel.text, color.id, locator)
+                                onHighlightCreated(finalCfi, sel.text, color.toString(), locator)
                                 activeSelection = null
                             },
                             onNote = {
@@ -4204,7 +4205,7 @@ fun NativeVerticalReaderScreen(
                                         "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                         "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                 )
-                                onHighlightCreated(finalCfi, sel.text, HighlightColor.YELLOW.id, locator)
+                                onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator)
                                 activeSelection = null
                             },
                             onTts = {
@@ -5634,7 +5635,7 @@ private fun TextWithEmphasis(
                                 highlight.androidHighlightRenderLabel()
                         )
                         val path = layout.getPathForRange(range.first, range.last + 1)
-                        paths.add(path to highlight.color.color.copy(alpha = 0.4f))
+                        paths.add(path to highlight.renderColor(legacyAlpha = 0.4f))
                         if (highlight.cfi == pressedHighlightCfi) {
                             paths.add(path to Color.Black.copy(alpha = 0.1f))
                         }
@@ -6151,8 +6152,8 @@ internal fun PaginatedReaderContent(
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator) -> Unit,
     onHighlightDeleted: (String) -> Unit,
-    activeHighlightPalette: List<HighlightColor>,
-    onUpdatePalette: (Int, HighlightColor) -> Unit,
+    activeHighlightPalette: List<Int>,
+    onUpdatePalette: (Int, Int) -> Unit,
     isDarkTheme: Boolean,
     pageTextureModifier: Modifier = Modifier,
     pageTextureBitmap: ImageBitmap? = null,
@@ -6225,7 +6226,6 @@ internal fun PaginatedReaderContent(
     val blockLayoutMap = remember {
         ReactiveBlockMap()
     }
-    var showColorPickerDialog by remember { mutableStateOf<Int?>(null) }
 
     var showPaletteManager by remember { mutableStateOf(false) }
     var pagerWindowBounds by remember { mutableStateOf(Rect.Zero) }
@@ -8007,7 +8007,7 @@ internal fun PaginatedReaderContent(
                                         cfi = finalCfi
                                     )
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
-                                        "create_request source=highlight_menu color=${color.id} " +
+                                        "create_request source=highlight_menu colorArgb=$color " +
                                             "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
                                             "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                             "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
@@ -8018,7 +8018,7 @@ internal fun PaginatedReaderContent(
                                             "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
                                     Timber.tag(TAG_ANDROID_HIGHLIGHT_RENDER_DIAG).d(
-                                        "create_request surface=paginated action=highlight color=${color.id} " +
+                                        "create_request surface=paginated action=highlight colorArgb=$color " +
                                             "savedCfi=$finalCfi absoluteCandidateCfi=$absoluteCandidateCfi " +
                                             "startPage=${sel.startPageIndex} endPage=${sel.endPageIndex} " +
                                             "startBlockIndex=${sel.startBlockIndex} endBlockIndex=${sel.endBlockIndex} " +
@@ -8028,7 +8028,7 @@ internal fun PaginatedReaderContent(
                                             "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                             "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
-                                    onHighlightCreated(finalCfi, sel.text, color.id, locator)
+                                    onHighlightCreated(finalCfi, sel.text, color.toString(), locator)
                                     activeSelection = null
                                 },
                                 onNote = {
@@ -8065,7 +8065,7 @@ internal fun PaginatedReaderContent(
                                             "absoluteOffsets=$startAbsoluteOffset..$endAbsoluteOffset " +
                                             "locator=${locator} textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
                                     )
-                                    onHighlightCreated(finalCfi, sel.text, HighlightColor.YELLOW.id, locator)
+                                    onHighlightCreated(finalCfi, sel.text, (activeHighlightPalette.firstOrNull() ?: HighlightColor.YELLOW.color.toArgb()).toString(), locator)
                                     activeSelection = null
                                 },
                                 onTts = {
@@ -8400,40 +8400,6 @@ internal fun PaginatedReaderContent(
                             )
                         }
                     }
-                }
-
-                if (showColorPickerDialog != null) {
-                    AlertDialog(
-                        onDismissRequest = { showColorPickerDialog = null },
-                        title = { Text(stringResource(R.string.dialog_select_color)) },
-                        text = {
-                            LazyVerticalGrid(
-                                columns = GridCells.Adaptive(minSize = 48.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                items(HighlightColor.entries) { colorOption ->
-                                    Box(
-                                        modifier = Modifier.size(48.dp)
-                                            .background(colorOption.color, CircleShape).border(
-                                                1.dp,
-                                                MaterialTheme.colorScheme.outline,
-                                                CircleShape
-                                            ).clickable {
-                                                onUpdatePalette(
-                                                    showColorPickerDialog!!,
-                                                    colorOption
-                                                )
-                                                showColorPickerDialog = null
-                                            })
-                                }
-                            }
-                        },
-                        confirmButton = {
-                            TextButton(onClick = {
-                                showColorPickerDialog = null
-                            }) { Text(stringResource(R.string.action_close)) }
-                        })
                 }
 
                 if (showPaletteManager) {

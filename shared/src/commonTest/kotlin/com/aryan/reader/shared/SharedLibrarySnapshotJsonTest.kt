@@ -104,6 +104,7 @@ class SharedLibrarySnapshotJsonTest {
                             color = HighlightColor.YELLOW,
                             chapterIndex = 0,
                             note = "Remember this",
+                            colorArgb = 0xFF12ABEF.toInt(),
                             locator = ReaderLocator(
                                 chapterIndex = 0,
                                 pageIndex = 4,
@@ -213,6 +214,7 @@ class SharedLibrarySnapshotJsonTest {
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))
 
         assertEquals(snapshot, decoded)
+        assertEquals(0xFF12ABEF.toInt(), decoded.books.single().readerHighlights.single().colorArgb)
     }
 
     @Test

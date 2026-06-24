@@ -3826,7 +3826,7 @@ private fun AnnotatedString.Builder.applyHighlightToTextRange(
 ) {
     fun applyRange(range: SharedNativeReaderTextRange) {
         addStyle(
-            style = SpanStyle(background = highlight.color.color.copy(alpha = 0.38f)),
+            style = SpanStyle(background = highlight.renderColor(legacyAlpha = 0.38f)),
             start = range.start,
             end = range.end
         )

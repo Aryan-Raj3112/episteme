@@ -85,6 +85,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -232,9 +233,9 @@ fun EpubReaderDrawerSheet(
     onRenameBookmark: (Bookmark, String) -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit,
     onEditNote: (UserHighlight) -> Unit,
-    activeHighlightPalette: List<HighlightColor>,
+    activeHighlightPalette: List<Int>,
     onOpenPaletteManager: () -> Unit,
-    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit
+    onHighlightColorChange: (UserHighlight, Int) -> Unit
 ) {
     ModalDrawerSheet(
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
@@ -874,9 +875,9 @@ private fun HighlightsList(
     onNavigateToHighlight: (UserHighlight) -> Unit,
     onDeleteHighlight: (UserHighlight) -> Unit,
     onEditNote: (UserHighlight) -> Unit,
-    activeHighlightPalette: List<HighlightColor>,
+    activeHighlightPalette: List<Int>,
     onOpenPaletteManager: () -> Unit,
-    onHighlightColorChange: (UserHighlight, HighlightColor) -> Unit
+    onHighlightColorChange: (UserHighlight, Int) -> Unit
 ) {
     if (userHighlights.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
@@ -938,7 +939,7 @@ private fun HighlightsList(
                                         Box(
                                             modifier = Modifier
                                                 .size(12.dp)
-                                                .background(highlight.color.color, CircleShape)
+                                                .background(highlight.effectiveColor, CircleShape)
                                         )
                                         Spacer(Modifier.width(8.dp))
                                         Text(
@@ -979,7 +980,7 @@ private fun HighlightsList(
                                     ) {
                                         HighlightColorRow(
                                             activeHighlightPalette = activeHighlightPalette,
-                                            selectedColor = highlight.color,
+                                            selectedColorArgb = highlight.colorArgb ?: highlight.color.color.toArgb(),
                                             onColorSelect = { color ->
                                                 onHighlightColorChange(highlight, color)
                                                 highlightMenuExpandedFor = null

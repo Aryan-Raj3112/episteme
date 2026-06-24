@@ -653,6 +653,7 @@ class ReaderEngine(
                 cfi = normalized.cfi,
                 text = normalized.text,
                 color = normalized.color,
+                colorArgb = normalized.colorArgb,
                 chapterIndex = normalized.chapterIndex,
                 locator = normalized.locator
             )
@@ -677,6 +678,7 @@ class ReaderEngine(
                 if (highlight.id == highlightId) {
                     highlight.copy(
                         color = color ?: highlight.color,
+                        colorArgb = if (color != null) null else highlight.colorArgb,
                         note = if (note != null) note.takeIf { it.isNotBlank() } else highlight.note
                     )
                 } else {

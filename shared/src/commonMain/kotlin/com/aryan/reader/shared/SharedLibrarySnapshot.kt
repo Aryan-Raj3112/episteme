@@ -665,6 +665,7 @@ private fun JsonElement.asReaderHighlightOrNull(): UserHighlight? {
         color = color,
         chapterIndex = chapterIndex,
         note = obj.string("note")?.takeIf { it.isNotBlank() },
+        colorArgb = obj.int("colorArgb"),
         locator = obj["locator"]
             ?.takeUnless { it is JsonNull }
             ?.asReaderLocatorOrNull()
@@ -794,6 +795,7 @@ private fun UserHighlight.toJsonObject(): JsonObject {
             "cfi" to JsonPrimitive(cfi),
             "text" to JsonPrimitive(text),
             "colorId" to JsonPrimitive(color.id),
+            "colorArgb" to colorArgb.asJson(),
             "chapterIndex" to JsonPrimitive(chapterIndex),
             "note" to note.asJson(),
             "locator" to locator.toJsonObject()

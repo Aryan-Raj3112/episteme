@@ -182,7 +182,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
         val prefs = TestSharedPreferences()
         val context = contextWithPrefs(SETTINGS_PREFS_NAME to prefs)
 
-        saveHighlightPalette(context, listOf(HighlightColor.CYAN, HighlightColor.MAGENTA, HighlightColor.LIME, HighlightColor.PINK))
+        saveHighlightPalette(context, listOf(HighlightColor.CYAN, HighlightColor.MAGENTA, HighlightColor.LIME, HighlightColor.PINK).map { it.color.toArgb() })
 
         assertEquals(
             listOf(HighlightColor.CYAN, HighlightColor.MAGENTA, HighlightColor.LIME, HighlightColor.PINK),

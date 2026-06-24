@@ -3050,7 +3050,7 @@
     }
 
     window.HighlightBridgeHelper = {
-        updateHighlightStyle: function (cfi, newColorClass, colorId) {
+        updateHighlightStyle: function (cfi, newColorClass, colorId, colorCss) {
             console.log(`${HL_LOG_TAG}: updateHighlightStyle called. CFI: ${cfi}, Class: ${newColorClass}`);
 
             var allSpans = document.querySelectorAll('span[class*="user-highlight-"]');
@@ -3070,6 +3070,11 @@
                     classesToRemove.forEach((cls) => span.classList.remove(cls));
 
                     span.classList.add(newColorClass);
+                    if (colorCss) {
+                        span.style.setProperty("background-color", colorCss, "important");
+                    } else {
+                        span.style.removeProperty("background-color");
+                    }
                 }
             });
 
@@ -3080,7 +3085,7 @@
             }
         },
 
-        createUserHighlight: function (colorClass, colorId) {
+        createUserHighlight: function (colorClass, colorId, colorCss) {
             console.log(`$ {
                     HL_LOG_TAG
                 }
@@ -3162,7 +3167,7 @@
                     `);
 
                 range = this.normalizeRangeBoundaries(range);
-                this.highlightRangeSafe(range, colorClass, finalCfi);
+                this.highlightRangeSafe(range, colorClass, finalCfi, colorCss);
 
                 selection.removeAllRanges();
 
@@ -3204,7 +3209,7 @@
             return range;
         },
 
-        highlightRangeSafe: function (range, className, newCfi) {
+        highlightRangeSafe: function (range, className, newCfi, colorCss) {
             var nodes = this.getTextNodesInRange(range);
 
             nodes.forEach((node) => {
@@ -3217,11 +3222,13 @@
                     if (!cfiList.includes(newCfi)) {
                         parent.setAttribute("data-cfi", currentCfi ? (currentCfi + ";;" + newCfi) : newCfi);
                     }
+                    if (colorCss) parent.style.setProperty("background-color", colorCss, "important");
                 } else {
                     if (node.nodeValue.trim().length === 0) return;
                     var span = document.createElement("span");
                     span.className = className;
                     span.setAttribute("data-cfi", newCfi);
+                    if (colorCss) span.style.setProperty("background-color", colorCss, "important");
                     node.parentNode.insertBefore(span, node);
                     span.appendChild(node);
                 }
@@ -3430,7 +3437,7 @@
                 " text='" + hlRenderPreview(highlight.text || "", 80) + "' " +
                 hlRenderLocatorLabel(highlight.locator || {})
             );
-            this.applyHighlight(highlight.cfi, highlight.text, highlight.cssClass, highlight.locator || null);
+            this.applyHighlight(highlight.cfi, highlight.text, highlight.cssClass, highlight.locator || null, highlight.colorCss || null);
         },
 
         highlightTextRoot: function () {
@@ -3729,7 +3736,7 @@
             return range;
         },
 
-        applyHighlight: function (cfi, text, cssClass, locator) {
+        applyHighlight: function (cfi, text, cssClass, locator, colorCss) {
             try {
                 cssClass = cssClass || "user-highlight-yellow";
                 var alreadyApplied = false;
@@ -3783,7 +3790,7 @@
                     return;
                 }
                 var normalizedRange = this.normalizeRangeBoundaries(range);
-                this.highlightRangeSafe(normalizedRange, cssClass, cfi);
+                this.highlightRangeSafe(normalizedRange, cssClass, cfi, colorCss);
                 hlRenderLog(
                     "webview_apply_result applied=true cfi=" + hlRenderPreview(cfi || "", 120) +
                     " source=" + rangeSource +
