@@ -6,6 +6,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -179,6 +180,24 @@ class LibraryScreenContentTest {
             }.getOrDefault(false)
         }
         assertBookAbove("epub_alpha", "pdf_beta")
+    }
+
+    @Test
+    fun compactSelectionToolbarShowsDeleteOutsideMoreMenu() {
+        composeTestRule.setContent {
+            MaterialTheme {
+                ContextualTopAppBar(
+                    selectedItemCount = 1,
+                    onNavIconClick = {},
+                    onDeleteClick = {},
+                    compactSelectionActions = true
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription(text(R.string.action_delete)).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_more_options)).performClick()
+        composeTestRule.onAllNodesWithText(text(R.string.action_delete)).assertCountEquals(0)
     }
 
     @Test

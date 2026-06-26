@@ -324,7 +324,7 @@ fun ContextualTopAppBar(
                     onExportAnnotationsClick = onExportAnnotationsClick,
                     onClearSelectionClick = onClearSelectionClick ?: onNavIconClick,
                     onDeleteClick = onDeleteClick,
-                    overflowDeleteLabelRes = overflowDeleteLabelRes
+                    deleteLabelRes = overflowDeleteLabelRes
                 )
             } else {
                 if (onTagClick != null) {
@@ -378,7 +378,7 @@ private fun CompactSelectionActions(
     onExportAnnotationsClick: (() -> Unit)?,
     onClearSelectionClick: () -> Unit,
     onDeleteClick: () -> Unit,
-    overflowDeleteLabelRes: Int
+    deleteLabelRes: Int
 ) {
     var showMoreMenu by remember { mutableStateOf(false) }
 
@@ -396,6 +396,9 @@ private fun CompactSelectionActions(
         IconButton(onClick = onSelectAllClick) {
             Icon(Icons.Filled.SelectAll, contentDescription = stringResource(R.string.select_all))
         }
+    }
+    IconButton(onClick = onDeleteClick) {
+        Icon(Icons.Filled.Delete, contentDescription = stringResource(deleteLabelRes))
     }
 
     Box {
@@ -462,14 +465,6 @@ private fun CompactSelectionActions(
                 onClick = {
                     showMoreMenu = false
                     onClearSelectionClick()
-                }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(overflowDeleteLabelRes)) },
-                leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                onClick = {
-                    showMoreMenu = false
-                    onDeleteClick()
                 }
             )
         }
