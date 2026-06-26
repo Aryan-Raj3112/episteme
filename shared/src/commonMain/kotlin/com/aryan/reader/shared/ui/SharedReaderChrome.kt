@@ -117,6 +117,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.aryan.reader.shared.BuiltInReaderThemes
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.filterReaderTocEntries
 import com.aryan.reader.shared.fontFaceSummary
 import com.aryan.reader.shared.groupByFamily
 import com.aryan.reader.shared.hasVariableWeightFace
@@ -4077,24 +4078,35 @@ private fun SharedReaderTocTab(
         }.toSet()
     }
     var expandedEntryIndices by remember(tocEntries) { mutableStateOf(allParentIndices) }
-    val visibleItemInfo by remember(tocEntries) {
+    var tocSearchQuery by remember(tocEntries) { mutableStateOf("") }
+    val isSearchingToc = tocSearchQuery.isNotBlank()
+    val visibleItemInfo by remember(tocEntries, tocSearchQuery) {
         derivedStateOf {
-            val result = mutableListOf<Pair<Int, SharedEpubTocEntry>>()
-            val visibilityStack = BooleanArray(50) { false }
-            visibilityStack[0] = true
+            if (tocSearchQuery.isNotBlank()) {
+                filterReaderTocEntries(
+                    entries = tocEntries,
+                    query = tocSearchQuery,
+                    labelOf = { it.label },
+                    depthOf = { it.depth }
+                ).map { it.originalIndex to it.entry }
+            } else {
+                val result = mutableListOf<Pair<Int, SharedEpubTocEntry>>()
+                val visibilityStack = BooleanArray(50) { false }
+                visibilityStack[0] = true
 
-            tocEntries.forEachIndexed { index, entry ->
-                val depth = entry.depth.coerceIn(0, visibilityStack.lastIndex)
-                if (visibilityStack[depth]) {
-                    result += index to entry
-                    if (depth + 1 < visibilityStack.size) {
-                        visibilityStack[depth + 1] = index in expandedEntryIndices
+                tocEntries.forEachIndexed { index, entry ->
+                    val depth = entry.depth.coerceIn(0, visibilityStack.lastIndex)
+                    if (visibilityStack[depth]) {
+                        result += index to entry
+                        if (depth + 1 < visibilityStack.size) {
+                            visibilityStack[depth + 1] = index in expandedEntryIndices
+                        }
+                    } else if (depth + 1 < visibilityStack.size) {
+                        visibilityStack[depth + 1] = false
                     }
-                } else if (depth + 1 < visibilityStack.size) {
-                    visibilityStack[depth + 1] = false
                 }
+                result
             }
-            result
         }
     }
     val currentChapterIndex = session.reader.currentPage?.chapterIndex
@@ -4135,6 +4147,36 @@ private fun SharedReaderTocTab(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        SharedStableOutlinedTextField(
+            value = tocSearchQuery,
+            onValueChange = { tocSearchQuery = it },
+            singleLine = true,
+            leadingIcon = {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+            },
+            trailingIcon = if (tocSearchQuery.isNotEmpty()) {
+                {
+                    IconButton(
+                        onClick = { tocSearchQuery = "" },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = readerString("tooltip_clear_search", "Clear search"),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            } else null,
+            placeholder = { Text(readerString("search_chapters_placeholder", "Search chapters")) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        )
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.SpaceEvenly
@@ -4151,54 +4193,67 @@ private fun SharedReaderTocTab(
         }
         HorizontalDivider()
         Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .sharedAcceleratedLazyWheelScroll(listState)
-                    .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                itemsIndexed(
-                    visibleItemInfo,
-                    key = { _, item -> "${item.first}_${item.second.href}_${item.second.fragmentId.orEmpty()}" }
-                ) { _, item ->
-                    val (originalIndex, entry) = item
-                    val nextItem = tocEntries.getOrNull(originalIndex + 1)
-                    val hasChildren = nextItem != null && nextItem.depth > entry.depth
-                    val isExpanded = originalIndex in expandedEntryIndices
-                    val targetChapterIndex = entry.targetChapterIndex(chapters)
-                    val selected = targetChapterIndex == currentChapterIndex
+            if (visibleItemInfo.isEmpty() && isSearchingToc) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = readerString("no_chapters_matching", "No chapters found for \"%1\$s\".", tocSearchQuery.trim()),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .sharedAcceleratedLazyWheelScroll(listState)
+                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    itemsIndexed(
+                        visibleItemInfo,
+                        key = { _, item -> "${item.first}_${item.second.href}_${item.second.fragmentId.orEmpty()}" }
+                    ) { _, item ->
+                        val (originalIndex, entry) = item
+                        val nextItem = tocEntries.getOrNull(originalIndex + 1)
+                        val hasChildren = nextItem != null && nextItem.depth > entry.depth
+                        val isExpanded = originalIndex in expandedEntryIndices
+                        val targetChapterIndex = entry.targetChapterIndex(chapters)
+                        val selected = targetChapterIndex == currentChapterIndex
 
-                    SharedReaderTocTreeItem(
-                        title = entry.label,
-                        pageLabel = targetChapterIndex?.let { readerString("desktop_chapter_short_format", "Ch. %1\$d", it + 1) },
-                        depth = entry.depth,
-                        isExpanded = isExpanded,
-                        hasChildren = hasChildren,
-                        isCurrent = selected,
-                        onToggleExpand = {
-                            expandedEntryIndices = if (isExpanded) {
-                                expandedEntryIndices - originalIndex
-                            } else {
-                                expandedEntryIndices + originalIndex
-                            }
-                        },
-                        onClick = {
-                            val chapterIndex = targetChapterIndex
-                            if (chapterIndex != null) {
-                                val fragment = entry.fragmentId
-                                if (fragment.isNullOrBlank()) {
-                                    onGoToChapter(chapterIndex)
+                        SharedReaderTocTreeItem(
+                            title = entry.label,
+                            pageLabel = targetChapterIndex?.let { readerString("desktop_chapter_short_format", "Ch. %1\$d", it + 1) },
+                            depth = entry.depth,
+                            isExpanded = isExpanded,
+                            hasChildren = hasChildren,
+                            isCurrent = selected,
+                            onToggleExpand = {
+                                expandedEntryIndices = if (isExpanded) {
+                                    expandedEntryIndices - originalIndex
                                 } else {
-                                    when (val target = readerEngine.resolveLink(session, "#$fragment", chapterIndex)) {
-                                        is ReaderLinkTarget.Internal -> onGoToLocator(target.locator)
-                                        else -> onGoToChapter(chapterIndex)
+                                    expandedEntryIndices + originalIndex
+                                }
+                            },
+                            onClick = {
+                                val chapterIndex = targetChapterIndex
+                                if (chapterIndex != null) {
+                                    val fragment = entry.fragmentId
+                                    if (fragment.isNullOrBlank()) {
+                                        onGoToChapter(chapterIndex)
+                                    } else {
+                                        when (val target = readerEngine.resolveLink(session, "#$fragment", chapterIndex)) {
+                                            is ReaderLinkTarget.Internal -> onGoToLocator(target.locator)
+                                            else -> onGoToChapter(chapterIndex)
+                                        }
                                     }
                                 }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             }
             SharedReaderVerticalScrollbar(

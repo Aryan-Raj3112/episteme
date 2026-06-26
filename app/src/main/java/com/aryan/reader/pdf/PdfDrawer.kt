@@ -5,6 +5,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -64,8 +67,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
@@ -85,6 +92,7 @@ import androidx.core.graphics.createBitmap
 import com.aryan.reader.cardTitle
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.pdf.data.VirtualPage
+import com.aryan.reader.shared.filterReaderTocEntries
 
 private const val MAX_FIXED_RECURSION = 128
 
@@ -662,6 +670,7 @@ internal fun PdfNavigationDrawerContent(
                         }
                     } else {
                         val listState = rememberLazyListState()
+                        val focusManager = LocalFocusManager.current
 
                         val allParentIndices = remember(flatTableOfContents) {
                             flatTableOfContents.indices.filter { i ->
@@ -673,33 +682,49 @@ internal fun PdfNavigationDrawerContent(
                         var expandedEntryIndices by rememberSaveable(flatTableOfContents) {
                             mutableStateOf(allParentIndices)
                         }
+                        var tocSearchQuery by rememberSaveable(flatTableOfContents) { mutableStateOf("") }
+                        var searchFieldCanFocus by remember(flatTableOfContents) { mutableStateOf(false) }
+                        val isSearchingToc = tocSearchQuery.isNotBlank()
 
-                        val visibleItemInfo by remember(flatTableOfContents) {
-                            derivedStateOf {
-                                val result = mutableListOf<Pair<Int, TocEntry>>()
-                                val visibilityStack = BooleanArray(20) { false }
-                                visibilityStack[0] = true
-
-                                for (i in flatTableOfContents.indices) {
-                                    val entry = flatTableOfContents[i]
-                                    val level = entry.nestLevel.coerceIn(0, 19)
-
-                                    if (visibilityStack[level]) {
-                                        result.add(i to entry)
-                                        val isExpanded = expandedEntryIndices.contains(i)
-                                        if (level + 1 < visibilityStack.size) {
-                                            visibilityStack[level + 1] = isExpanded
-                                        }
-                                    } else {
-                                        if (level + 1 < visibilityStack.size) {
-                                            visibilityStack[level + 1] = false
-                                        }
-                                    }
-                                }
-                                result
-                            }
+                        LaunchedEffect(flatTableOfContents) {
+                            searchFieldCanFocus = false
+                            focusManager.clearFocus(force = true)
                         }
 
+                        val visibleItemInfo by remember(flatTableOfContents, tocSearchQuery) {
+                            derivedStateOf {
+                                if (tocSearchQuery.isNotBlank()) {
+                                    filterReaderTocEntries(
+                                        entries = flatTableOfContents,
+                                        query = tocSearchQuery,
+                                        labelOf = { it.title },
+                                        depthOf = { it.nestLevel }
+                                    ).map { it.originalIndex to it.entry }
+                                } else {
+                                    val result = mutableListOf<Pair<Int, TocEntry>>()
+                                    val visibilityStack = BooleanArray(20) { false }
+                                    visibilityStack[0] = true
+
+                                    for (i in flatTableOfContents.indices) {
+                                        val entry = flatTableOfContents[i]
+                                        val level = entry.nestLevel.coerceIn(0, 19)
+
+                                        if (visibilityStack[level]) {
+                                            result.add(i to entry)
+                                            val isExpanded = expandedEntryIndices.contains(i)
+                                            if (level + 1 < visibilityStack.size) {
+                                                visibilityStack[level + 1] = isExpanded
+                                            }
+                                        } else {
+                                            if (level + 1 < visibilityStack.size) {
+                                                visibilityStack[level + 1] = false
+                                            }
+                                        }
+                                    }
+                                    result
+                                }
+                            }
+                        }
                         val currentTocEntry by remember(currentPage, flatTableOfContents) {
                             derivedStateOf {
                                 flatTableOfContents.lastOrNull { it.pageIndex <= currentPage }
@@ -742,6 +767,46 @@ internal fun PdfNavigationDrawerContent(
                         }
 
                         Column(modifier = Modifier.fillMaxSize()) {
+                            OutlinedTextField(
+                                value = tocSearchQuery,
+                                onValueChange = { tocSearchQuery = it },
+                                singleLine = true,
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                trailingIcon = if (tocSearchQuery.isNotEmpty()) {
+                                    {
+                                        IconButton(
+                                            onClick = { tocSearchQuery = "" },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = stringResource(R.string.tooltip_clear_search),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                } else null,
+                                placeholder = { Text(stringResource(R.string.search_chapters_placeholder)) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .pointerInput(flatTableOfContents) {
+                                        awaitEachGesture {
+                                            awaitFirstDown(requireUnconsumed = false)
+                                            searchFieldCanFocus = true
+                                        }
+                                    }
+                                    .focusProperties { canFocus = searchFieldCanFocus }
+                                    .onFocusChanged { state ->
+                                        if (!state.isFocused) searchFieldCanFocus = false
+                                    }
+                            )
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -762,41 +827,55 @@ internal fun PdfNavigationDrawerContent(
                             HorizontalDivider()
 
                             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier
-                                        .fillMaxHeight()
-                                        .padding(end = 12.dp)
-                                ) {
-                                    items(
-                                        items = visibleItemInfo,
-                                        key = { it.second.title + it.first }
-                                    ) { item ->
-                                        val (originalIndex, entry) = item
-
-                                        val nextItem = flatTableOfContents.getOrNull(originalIndex + 1)
-                                        val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
-                                        val isExpanded = expandedEntryIndices.contains(originalIndex)
-                                        val isCurrentChapter = entry == currentTocEntry
-
-                                        PdfTocTreeItem(
-                                            label = entry.title,
-                                            nestLevel = entry.nestLevel,
-                                            isExpanded = isExpanded,
-                                            hasChildren = hasChildren,
-                                            isCurrent = isCurrentChapter,
-                                            onToggleExpand = {
-                                                expandedEntryIndices = if (isExpanded) {
-                                                    expandedEntryIndices - originalIndex
-                                                } else {
-                                                    expandedEntryIndices + originalIndex
-                                                }
-                                            },
-                                            onClick = {
-                                                onCloseDrawer()
-                                                onPageSelected(entry.pageIndex)
-                                            }
+                                if (visibleItemInfo.isEmpty() && isSearchingToc) {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.no_chapters_matching, tocSearchQuery.trim()),
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            textAlign = TextAlign.Center,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        state = listState,
+                                        modifier = Modifier
+                                            .fillMaxHeight()
+                                            .padding(end = 12.dp)
+                                    ) {
+                                        items(
+                                            items = visibleItemInfo,
+                                            key = { it.second.title + it.first }
+                                        ) { item ->
+                                            val (originalIndex, entry) = item
+
+                                            val nextItem = flatTableOfContents.getOrNull(originalIndex + 1)
+                                            val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
+                                            val isExpanded = expandedEntryIndices.contains(originalIndex)
+                                            val isCurrentChapter = entry == currentTocEntry
+
+                                            PdfTocTreeItem(
+                                                label = entry.title,
+                                                nestLevel = entry.nestLevel,
+                                                isExpanded = isExpanded,
+                                                hasChildren = hasChildren,
+                                                isCurrent = isCurrentChapter,
+                                                onToggleExpand = {
+                                                    expandedEntryIndices = if (isExpanded) {
+                                                        expandedEntryIndices - originalIndex
+                                                    } else {
+                                                        expandedEntryIndices + originalIndex
+                                                    }
+                                                },
+                                                onClick = {
+                                                    onCloseDrawer()
+                                                    onPageSelected(entry.pageIndex)
+                                                }
+                                            )
+                                        }
                                     }
                                 }
 

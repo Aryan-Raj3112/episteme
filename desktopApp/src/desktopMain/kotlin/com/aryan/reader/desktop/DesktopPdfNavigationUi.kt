@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -67,10 +68,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfTocEntry
+import com.aryan.reader.shared.filterReaderTocEntries
 import com.aryan.reader.shared.pdf.PdfAnnotationKind
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfBookmark
 import com.aryan.reader.shared.ui.SharedReaderVerticalScrollbar
+import com.aryan.reader.shared.ui.SharedStableOutlinedTextField
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
 import kotlinx.coroutines.Dispatchers
@@ -233,6 +236,7 @@ internal fun DesktopPdfNavigationSidebar(
     var expandedPdfTocEntryIndices by remember(documentHandleId, document.toc) {
         mutableStateOf(pdfTocParentIndices)
     }
+    var pdfTocSearchQuery by remember(documentHandleId, document.toc) { mutableStateOf("") }
 
     Surface(
         modifier = Modifier
@@ -268,8 +272,20 @@ internal fun DesktopPdfNavigationSidebar(
                         DesktopPdfNavigationEmpty(readerString("desktop_no_table_of_contents", "No table of contents"))
                     } else {
                         val tocListState = rememberLazyListState()
-                        val visibleTocItems by remember(document.toc, expandedPdfTocEntryIndices) {
-                            derivedStateOf { desktopVisiblePdfTocEntries(document.toc, expandedPdfTocEntryIndices) }
+                        val isSearchingToc = pdfTocSearchQuery.isNotBlank()
+                        val visibleTocItems by remember(document.toc, expandedPdfTocEntryIndices, pdfTocSearchQuery) {
+                            derivedStateOf {
+                                if (pdfTocSearchQuery.isNotBlank()) {
+                                    filterReaderTocEntries(
+                                        entries = document.toc,
+                                        query = pdfTocSearchQuery,
+                                        labelOf = { it.title },
+                                        depthOf = { it.nestLevel }
+                                    ).map { it.originalIndex to it.entry }
+                                } else {
+                                    desktopVisiblePdfTocEntries(document.toc, expandedPdfTocEntryIndices)
+                                }
+                            }
                         }
                         val currentOriginalIndex = remember(document.toc, pageIndex) {
                             document.toc.indexOfLast { it.pageIndex <= pageIndex }
@@ -292,6 +308,36 @@ internal fun DesktopPdfNavigationSidebar(
                             }
                         }
                         Column(modifier = Modifier.fillMaxSize()) {
+                            SharedStableOutlinedTextField(
+                                value = pdfTocSearchQuery,
+                                onValueChange = { pdfTocSearchQuery = it },
+                                singleLine = true,
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                trailingIcon = if (pdfTocSearchQuery.isNotEmpty()) {
+                                    {
+                                        IconButton(
+                                            onClick = { pdfTocSearchQuery = "" },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Close,
+                                                contentDescription = readerString("tooltip_clear_search", "Clear search"),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                } else null,
+                                placeholder = { Text(readerString("search_chapters_placeholder", "Search chapters")) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                            )
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceEvenly
@@ -308,35 +354,48 @@ internal fun DesktopPdfNavigationSidebar(
                             }
                             HorizontalDivider()
                             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                                LazyColumn(
-                                    state = tocListState,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .sharedAcceleratedLazyWheelScroll(tocListState)
-                                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    items(
-                                        visibleTocItems,
-                                        key = { (index, entry) -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }
-                                    ) { (originalIndex, entry) ->
-                                        val nextItem = document.toc.getOrNull(originalIndex + 1)
-                                        val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
-                                        val isExpanded = originalIndex in expandedPdfTocEntryIndices
-                                        DesktopPdfTocTreeItem(
-                                            entry = entry,
-                                            selected = originalIndex == currentOriginalIndex,
-                                            hasChildren = hasChildren,
-                                            isExpanded = isExpanded,
-                                            onToggleExpand = {
-                                                expandedPdfTocEntryIndices = if (isExpanded) {
-                                                    expandedPdfTocEntryIndices - originalIndex
-                                                } else {
-                                                    expandedPdfTocEntryIndices + originalIndex
-                                                }
-                                            },
-                                            onClick = { onPageSelected(entry.pageIndex) }
+                                if (visibleTocItems.isEmpty() && isSearchingToc) {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = readerString("no_chapters_matching", "No chapters found for \"%1\$s\".", pdfTocSearchQuery.trim()),
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
+                                    }
+                                } else {
+                                    LazyColumn(
+                                        state = tocListState,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .sharedAcceleratedLazyWheelScroll(tocListState)
+                                            .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        items(
+                                            visibleTocItems,
+                                            key = { (index, entry) -> "nav_toc_${index}_${entry.pageIndex}_${entry.nestLevel}" }
+                                        ) { (originalIndex, entry) ->
+                                            val nextItem = document.toc.getOrNull(originalIndex + 1)
+                                            val hasChildren = nextItem != null && nextItem.nestLevel > entry.nestLevel
+                                            val isExpanded = originalIndex in expandedPdfTocEntryIndices
+                                            DesktopPdfTocTreeItem(
+                                                entry = entry,
+                                                selected = originalIndex == currentOriginalIndex,
+                                                hasChildren = hasChildren,
+                                                isExpanded = isExpanded,
+                                                onToggleExpand = {
+                                                    expandedPdfTocEntryIndices = if (isExpanded) {
+                                                        expandedPdfTocEntryIndices - originalIndex
+                                                    } else {
+                                                        expandedPdfTocEntryIndices + originalIndex
+                                                    }
+                                                },
+                                                onClick = { onPageSelected(entry.pageIndex) }
+                                            )
+                                        }
                                     }
                                 }
                                 SharedReaderVerticalScrollbar(

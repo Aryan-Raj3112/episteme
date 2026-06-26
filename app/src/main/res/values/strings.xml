@@ -802,6 +802,8 @@
 
     <!-- EpubReaderDrawer.kt -->
     <string name="tab_chapters">Chapters</string>
+    <string name="search_chapters_placeholder">Search chapters</string>
+    <string name="no_chapters_matching">No chapters found for &quot;%1$s&quot;.</string>
     <string name="tab_tabs">Tabs</string>
     <string name="tab_bookmarks">Bookmarks</string>
     <string name="tab_highlights">Highlights</string>
