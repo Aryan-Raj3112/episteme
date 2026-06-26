@@ -6,7 +6,5 @@
     <mapping directory="$PROJECT_DIR$/app/src/main/cpp/woff2/brotli" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/app/src/main/cpp/woff2/brotli/research/esaxx" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/app/src/main/cpp/woff2/brotli/research/libdivsufsort" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/episteme-bin" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/episteme-oss-bin" vcs="Git" />
   </component>
 </project>

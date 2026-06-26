@@ -32,6 +32,7 @@ import timber.log.Timber
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
 import java.util.UUID
@@ -46,7 +47,8 @@ import kotlinx.coroutines.delay
 
 private const val START_TIMEOUT_FAST_MS = 3000L
 private const val START_TIMEOUT_RETRY_MS = 4000L
-private const val PROCESS_TIMEOUT_MS = 15000L
+private const val PROCESS_IDLE_TIMEOUT_MS = 15000L
+private const val PROCESS_MAX_TIMEOUT_MS = 60000L
 private const val MAX_RETRY_ATTEMPTS = 3
 internal const val TTS_LOCAL_DIAG_TAG = "TTS_LOCAL_DIAG"
 
@@ -89,6 +91,15 @@ internal fun shouldResolveNativeTtsVoice(
     return isOfflineBuild || !preferredVoiceName.isNullOrBlank()
 }
 
+internal fun shouldTimeoutNativeTtsProcessing(
+    requestElapsedMs: Long,
+    idleElapsedMs: Long,
+    maxTimeoutMs: Long = PROCESS_MAX_TIMEOUT_MS,
+    idleTimeoutMs: Long = PROCESS_IDLE_TIMEOUT_MS
+): Boolean {
+    return requestElapsedMs >= maxTimeoutMs || idleElapsedMs >= idleTimeoutMs
+}
+
 class BaseTtsSynthesizer(private val context: Context) {
 
     private var tts: TextToSpeech? = null
@@ -103,6 +114,7 @@ class BaseTtsSynthesizer(private val context: Context) {
         val attempt: Int,
         val requestStartedAtMs: Long,
         var synthesisStartedAtMs: Long? = null,
+        var lastAudioAvailableAtMs: Long? = null,
         var audioChunkCount: Int = 0,
         var audioByteCount: Long = 0L
     )
@@ -164,6 +176,7 @@ class BaseTtsSynthesizer(private val context: Context) {
                     val bytes = audio?.size ?: 0
                     req.audioChunkCount += 1
                     req.audioByteCount += bytes.toLong()
+                    req.lastAudioAvailableAtMs = System.currentTimeMillis()
                     Timber.tag(TTS_LOCAL_DIAG_TAG).d(
                         "utterance-audio-chunk id=$id attempt=${req.attempt} " +
                             "chunk=${req.audioChunkCount} bytes=$bytes totalBytes=${req.audioByteCount} " +
@@ -399,31 +412,62 @@ class BaseTtsSynthesizer(private val context: Context) {
                         )
                     }
 
-                    try {
-                        val finalResult = withTimeout(PROCESS_TIMEOUT_MS) {
+                    var finalResult: Pair<File?, String?>? = null
+                    var lastObservedFileBytes = tempFile.length()
+                    var lastFileProgressAtMs = requestStartedAtMs
+                    while (finalResult == null) {
+                        val now = System.currentTimeMillis()
+                        val req = requests[utteranceId]
+                        val currentFileBytes = tempFile.length()
+                        if (currentFileBytes > lastObservedFileBytes) {
+                            lastObservedFileBytes = currentFileBytes
+                            lastFileProgressAtMs = now
+                        }
+                        val lastProgressAt = listOfNotNull(
+                            req?.lastAudioAvailableAtMs,
+                            req?.synthesisStartedAtMs,
+                            lastFileProgressAtMs,
+                            requestStartedAtMs
+                        ).maxOrNull() ?: requestStartedAtMs
+                        val requestElapsedMs = now - requestStartedAtMs
+                        val idleElapsedMs = now - lastProgressAt
+
+                        if (shouldTimeoutNativeTtsProcessing(requestElapsedMs, idleElapsedMs)) {
+                            Timber.w(
+                                "BaseTts: PROCESSING STUCK. No progress for ${idleElapsedMs}ms " +
+                                    "after ${requestElapsedMs}ms total."
+                            )
+                            Timber.tag(TTS_LOCAL_DIAG_TAG).w(
+                                "synthesize-process-timeout attempt=$attempt id=$utteranceId " +
+                                    "idleTimeoutMs=$PROCESS_IDLE_TIMEOUT_MS maxTimeoutMs=$PROCESS_MAX_TIMEOUT_MS " +
+                                    "idleElapsedMs=$idleElapsedMs totalMs=$requestElapsedMs pendingRequests=${requests.size} " +
+                                    "fileBytes=${tempFile.length()} audioChunks=${req?.audioChunkCount ?: -1} " +
+                                    "audioBytes=${req?.audioByteCount ?: -1}"
+                            )
+                            throw IllegalStateException("Processing Timeout")
+                        }
+
+                        val waitMs = minOf(
+                            PROCESS_IDLE_TIMEOUT_MS - idleElapsedMs,
+                            PROCESS_MAX_TIMEOUT_MS - requestElapsedMs
+                        ).coerceAtLeast(250L)
+                        finalResult = withTimeoutOrNull(waitMs) {
                             resultDeferred.await()
                         }
+                    }
 
-                        if (finalResult.first != null) {
-                            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
-                                "synthesize-success attempt=$attempt id=$utteranceId " +
-                                    "totalMs=${System.currentTimeMillis() - requestStartedAtMs} " +
-                                    "fileBytes=${finalResult.first?.length() ?: -1}"
-                            )
-                            result = finalResult
-                            break
-                        } else {
-                            Timber.w("BaseTts: onError received during processing.")
-                            throw IllegalStateException("TTS Engine reported onError")
-                        }
-
-                    } catch (_: TimeoutCancellationException) {
-                        Timber.w("BaseTts: PROCESSING STUCK. onDone not received within ${PROCESS_TIMEOUT_MS}ms.")
-                        Timber.tag(TTS_LOCAL_DIAG_TAG).w(
-                            "synthesize-process-timeout attempt=$attempt id=$utteranceId timeoutMs=$PROCESS_TIMEOUT_MS " +
-                                "pendingRequests=${requests.size} fileBytes=${tempFile.length()}"
+                    val completedResult = finalResult ?: throw IllegalStateException("TTS Engine did not complete")
+                    if (completedResult.first != null) {
+                        Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                            "synthesize-success attempt=$attempt id=$utteranceId " +
+                                "totalMs=${System.currentTimeMillis() - requestStartedAtMs} " +
+                                "fileBytes=${completedResult.first?.length() ?: -1}"
                         )
-                        throw IllegalStateException("Processing Timeout")
+                        result = completedResult
+                        break
+                    } else {
+                        Timber.w("BaseTts: onError received during processing.")
+                        throw IllegalStateException("TTS Engine reported onError")
                     }
 
                 } catch (e: kotlinx.coroutines.CancellationException) {

@@ -270,31 +270,67 @@ fun splitTextIntoChunks(text: String, maxLengthPerChunk: Int = TTS_CHUNK_MAX_LEN
     val chunks = mutableListOf<String>()
     val currentChunk = StringBuilder()
 
-    for (sentence in sentences) {
-        if (sentence.length > maxLengthPerChunk) {
-            if (currentChunk.isNotEmpty()) {
-                chunks.add(currentChunk.toString())
-                currentChunk.clear()
-            }
-            chunks.add(sentence)
-            continue
-        }
-
-        if (currentChunk.isNotEmpty() && currentChunk.length + sentence.length + 1 > maxLengthPerChunk) {
+    fun flushCurrentChunk() {
+        if (currentChunk.isNotEmpty()) {
             chunks.add(currentChunk.toString())
             currentChunk.clear()
-            currentChunk.append(sentence)
-        } else {
-            if (currentChunk.isNotEmpty()) {
-                currentChunk.append(" ")
-            }
-            currentChunk.append(sentence)
         }
     }
-    if (currentChunk.isNotEmpty()) {
-        chunks.add(currentChunk.toString())
+
+    for (sentence in sentences) {
+        val sentenceParts = splitLongTtsSentence(sentence, maxLengthPerChunk)
+        for (part in sentenceParts) {
+            if (part.length > maxLengthPerChunk) {
+                flushCurrentChunk()
+                chunks.add(part)
+                continue
+            }
+
+            if (currentChunk.isNotEmpty() && currentChunk.length + part.length + 1 > maxLengthPerChunk) {
+                flushCurrentChunk()
+                currentChunk.append(part)
+            } else {
+                if (currentChunk.isNotEmpty()) {
+                    currentChunk.append(" ")
+                }
+                currentChunk.append(part)
+            }
+        }
     }
+    flushCurrentChunk()
     return chunks
+}
+
+internal fun splitLongTtsSentence(sentence: String, maxLength: Int): List<String> {
+    val trimmed = sentence.trim()
+    if (trimmed.isEmpty()) return emptyList()
+    if (maxLength <= 0 || trimmed.length <= maxLength) return listOf(trimmed)
+
+    val parts = mutableListOf<String>()
+    var remaining = trimmed
+    while (remaining.length > maxLength) {
+        val splitIndex = findSmartTtsSplitIndex(remaining, maxLength)
+        val part = remaining.substring(0, splitIndex).trim()
+        if (part.isNotEmpty()) parts.add(part)
+        remaining = remaining.substring(splitIndex).trimStart()
+    }
+    if (remaining.isNotBlank()) parts.add(remaining.trim())
+    return parts
+}
+
+private fun findSmartTtsSplitIndex(text: String, maxLength: Int): Int {
+    val limit = maxLength.coerceIn(1, text.length)
+    val preferredFloor = ((limit * 55) / 100).coerceAtLeast(1)
+    val punctuation = setOf('.', ',', ';', ':', '!', '?', ')', ']', '}')
+
+    for (index in limit downTo preferredFloor) {
+        val char = text.getOrNull(index - 1)
+        if (char != null && char in punctuation) return index
+    }
+    for (index in limit downTo preferredFloor) {
+        if (text.getOrNull(index - 1)?.isWhitespace() == true) return index
+    }
+    return limit
 }
 
 @UnstableApi
