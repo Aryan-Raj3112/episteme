@@ -115,6 +115,38 @@ class TtsChunkNavigationTest {
         assertEquals(false, shouldStopTtsPrefetchAfterMissingChunk(isLoaded = false, playlistIndex = 2))
     }
 
+    @Test
+    fun `prefetch loop restarts when expected next chunk is missing`() {
+        assertEquals(
+            true,
+            shouldSkipExistingTtsPrefetchLoop(
+                currentChunkIndex = 3,
+                lastPrefetchIndex = 3,
+                isLoopActive = true,
+                nextChunkLoaded = false,
+                nextChunkPrefetching = true
+            )
+        )
+        assertEquals(
+            false,
+            shouldSkipExistingTtsPrefetchLoop(
+                currentChunkIndex = 3,
+                lastPrefetchIndex = 3,
+                isLoopActive = true,
+                nextChunkLoaded = false,
+                nextChunkPrefetching = false
+            )
+        )
+    }
+
+    @Test
+    fun `playlist exposure waits for contiguous previous chunk`() {
+        assertEquals(true, canExposeTtsChunkInPlaylist(2, listOf(0, 1)))
+        assertEquals(false, canExposeTtsChunkInPlaylist(3, listOf(0, 1)))
+        assertEquals(2, resolveContiguousTtsPlaylistInsertPosition(2, listOf(0, 1)))
+        assertNull(resolveContiguousTtsPlaylistInsertPosition(3, listOf(0, 1)))
+    }
+
     @androidx.annotation.OptIn(UnstableApi::class)
     @Test
     fun `reader tts mini bar is visible only for active reader playback outside reader routes`() {

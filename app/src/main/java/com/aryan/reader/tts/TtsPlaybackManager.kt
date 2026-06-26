@@ -178,6 +178,37 @@ internal fun shouldStopTtsPrefetchAfterMissingChunk(
     return !isLoaded && playlistIndex == null
 }
 
+internal fun shouldSkipExistingTtsPrefetchLoop(
+    currentChunkIndex: Int,
+    lastPrefetchIndex: Int,
+    isLoopActive: Boolean,
+    nextChunkLoaded: Boolean,
+    nextChunkPrefetching: Boolean
+): Boolean {
+    return currentChunkIndex == lastPrefetchIndex &&
+        isLoopActive &&
+        (nextChunkLoaded || nextChunkPrefetching)
+}
+
+internal fun canExposeTtsChunkInPlaylist(
+    targetChunkIndex: Int,
+    playlistChunkIds: List<Int>
+): Boolean {
+    if (targetChunkIndex < 0) return false
+    if (targetChunkIndex in playlistChunkIds) return true
+    return targetChunkIndex == 0 || (targetChunkIndex - 1) in playlistChunkIds
+}
+
+internal fun resolveContiguousTtsPlaylistInsertPosition(
+    targetChunkIndex: Int,
+    playlistChunkIds: List<Int>
+): Int? {
+    if (!canExposeTtsChunkInPlaylist(targetChunkIndex, playlistChunkIds)) return null
+    if (targetChunkIndex in playlistChunkIds) return null
+    val largerIndex = playlistChunkIds.indexOfFirst { it > targetChunkIndex }
+    return if (largerIndex >= 0) largerIndex else playlistChunkIds.size
+}
+
 @Suppress("UNUSED_PARAMETER")
 internal fun resolveNextPlayableTtsChunkIndex(
     currentChunkIndex: Int,
@@ -946,6 +977,58 @@ class TtsPlaybackManager(
         return null
     }
 
+    private fun playlistChunkIds(): List<Int> {
+        return buildList {
+            for (index in 0 until player.mediaItemCount) {
+                player.getMediaItemAt(index).mediaId.toIntOrNull()?.let(::add)
+            }
+        }
+    }
+
+    private fun preparedChunkPath(chunkIndex: Int): String? {
+        val streamId = chunkStreamIds[chunkIndex]
+        if (streamId != null) return "ttsstream://$streamId"
+        return audioFiles[chunkIndex]?.absolutePath
+    }
+
+    private fun insertPreparedContiguousChunksFrom(targetIndex: Int, generation: Int) {
+        var nextIndex = targetIndex
+        while (nextIndex < textChunks.size && loadedChunks.contains(nextIndex)) {
+            val insertPosition = resolveContiguousTtsPlaylistInsertPosition(
+                targetChunkIndex = nextIndex,
+                playlistChunkIds = playlistChunkIds()
+            ) ?: run {
+                if (findPlaylistIndexForChunk(nextIndex) == null) {
+                    logChunkNavMain(
+                        "prefetch-add-defer-non-contiguous",
+                        "targetChunk=$nextIndex generation=$generation"
+                    )
+                }
+                return
+            }
+            val chunk = textChunks.getOrNull(nextIndex) ?: return
+            val pathToUse = preparedChunkPath(nextIndex) ?: return
+            val mediaItem = createMediaItem(chunk.text, pathToUse, nextIndex, chunk)
+            logChunkNavMain(
+                "prefetch-add-before",
+                "targetChunk=$nextIndex insertPosition=$insertPosition exists=false generation=$generation"
+            )
+            player.addMediaItem(insertPosition, mediaItem)
+            if (currentTtsMode == TtsMode.BASE) {
+                val audioFile = audioFiles[nextIndex]
+                Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                    "manager-prefetch-playlist-add targetChunk=$nextIndex insertPosition=$insertPosition " +
+                        "generation=$generation mediaItems=${player.mediaItemCount} file=${audioFile?.name} fileBytes=${audioFile?.length() ?: -1}"
+                )
+            }
+            logChunkNavMain(
+                "prefetch-add-after",
+                "targetChunk=$nextIndex insertPosition=$insertPosition generation=$generation"
+            )
+            nextIndex += 1
+        }
+    }
+
     private fun findReusablePlaylistIndexForChunk(chunkIndex: Int, direction: Int): Int? {
         return resolveReusableTtsPlaylistIndex(findPlaylistIndexForChunk(chunkIndex), direction)
     }
@@ -1109,6 +1192,13 @@ class TtsPlaybackManager(
 
         val chunkStartTime = System.currentTimeMillis()
         Timber.tag("TTS_CLOUD_DIAG").i("Starting audio generation for first chunk (index=$startAtIndex).")
+        if (currentTtsMode == TtsMode.BASE) {
+            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                "manager-first-generate-start chunk=$startAtIndex totalChunks=${textChunks.size} generation=$generation " +
+                    "textChars=${firstChunk.text.length} spokenChars=${firstChunk.spokenText.ifBlank { firstChunk.text }.length} " +
+                    "speaker=$currentSpeakerId playWhenReady=$playWhenReady startPosition=$startAtPosition"
+            )
+        }
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "Preparing first chunk. startAtIndex=$startAtIndex, playWhenReady=$playWhenReady"
         )
@@ -1119,10 +1209,18 @@ class TtsPlaybackManager(
 
         val spokenText = firstChunk.spokenText.ifBlank { firstChunk.text }
         val ttsAudioData = generateAudioChunk(bookTitle ?: appContext.getString(R.string.tts_unknown_book), chapterTitle, startAtIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
-        Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${System.currentTimeMillis() - chunkStartTime}ms")
+        val generateElapsedMs = System.currentTimeMillis() - chunkStartTime
+        Timber.tag("TTS_CLOUD_DIAG").i("generateAudioChunk returned in ${generateElapsedMs}ms")
+        if (currentTtsMode == TtsMode.BASE) {
+            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                "manager-first-generate-complete chunk=$startAtIndex generation=$generation elapsedMs=$generateElapsedMs " +
+                    "audioFile=${ttsAudioData.audioFile?.name} fileBytes=${ttsAudioData.audioFile?.length() ?: -1} " +
+                    "serverText=${ttsAudioData.serverText != null} error=${ttsAudioData.error}"
+            )
+        }
         logChunkNav(
             "prepare-first-generated",
-            "chunk=$startAtIndex elapsedMs=${System.currentTimeMillis() - chunkStartTime} audioFile=${ttsAudioData.audioFile?.name} streamUri=${ttsAudioData.streamUri} error=${ttsAudioData.error}"
+            "chunk=$startAtIndex elapsedMs=$generateElapsedMs audioFile=${ttsAudioData.audioFile?.name} streamUri=${ttsAudioData.streamUri} error=${ttsAudioData.error}"
         )
         if (!isPlaybackGenerationActive(generation)) {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
@@ -1190,7 +1288,15 @@ class TtsPlaybackManager(
                     player.seekTo(startAtPosition)
                 }
                 player.playWhenReady = playWhenReady
-                Timber.tag("TTS_CLOUD_DIAG").i("ExoPlayer setMediaItem & prepare called in ${System.currentTimeMillis() - prepStartTime}ms")
+                val prepareElapsedMs = System.currentTimeMillis() - prepStartTime
+                Timber.tag("TTS_CLOUD_DIAG").i("ExoPlayer setMediaItem & prepare called in ${prepareElapsedMs}ms")
+                if (currentTtsMode == TtsMode.BASE) {
+                    Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                        "manager-first-player-prepared chunk=$startAtIndex generation=$generation prepareElapsedMs=$prepareElapsedMs " +
+                            "mediaId=${mediaItem.mediaId} file=${audioFile?.name} fileBytes=${audioFile?.length() ?: -1} " +
+                            "playWhenReady=${player.playWhenReady} playbackState=${player.playbackState}"
+                    )
+                }
                 Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
                     "Player prepared for TTS. mediaId=${mediaItem.mediaId}, title='${mediaItem.mediaMetadata.title}', playWhenReady=${player.playWhenReady}, playbackState=${player.playbackState}, mediaItems=${player.mediaItemCount}"
                 )
@@ -1324,6 +1430,13 @@ class TtsPlaybackManager(
             "reason=$reason playlistIndex=$newPlaylistIndex mediaId=${mediaItem?.mediaId}"
         )
         if (newPlaylistIndex == C.INDEX_UNSET) return
+        if (newPlaylistIndex !in 0 until player.mediaItemCount) {
+            logChunkNavWarnMain(
+                "media-transition-invalid-playlist-index",
+                "playlistIndex=$newPlaylistIndex mediaItems=${player.mediaItemCount} mediaId=${mediaItem?.mediaId}"
+            )
+            return
+        }
 
         val currentChunkIndex = mediaItem?.mediaId?.toIntOrNull() ?: return
 
@@ -1342,6 +1455,21 @@ class TtsPlaybackManager(
                     "previousChunk=$previousChunkIndex attemptedChunk=$currentChunkIndex previousStreamId=$previousStreamId"
                 )
                 retryTtsChunkAfterPrematureStreamEnd(previousChunkIndex)
+                return
+            }
+            if (previousChunkIndex != null && !shouldAdvanceToTtsPlaylistChunk(previousChunkIndex, currentChunkIndex, skippedChunks)) {
+                val expectedChunkIndex = resolveNextPlayableTtsChunkIndex(
+                    currentChunkIndex = previousChunkIndex,
+                    totalChunks = textChunks.size,
+                    skippedChunkIndices = skippedChunks
+                )
+                logChunkNavWarnMain(
+                    "media-transition-recover-non-contiguous",
+                    "previousChunk=$previousChunkIndex attemptedChunk=$currentChunkIndex expectedChunk=$expectedChunkIndex"
+                )
+                if (expectedChunkIndex != null) {
+                    recoverFromNonContiguousAutoTransition(expectedChunkIndex)
+                }
                 return
             }
         }
@@ -1418,6 +1546,46 @@ class TtsPlaybackManager(
                 "currentChunk=$currentIndex targetChunk=$targetIndex generation=$generation"
             )
             prefetchNextChunkAudio(currentIndex)
+        }
+    }
+
+    private fun recoverFromNonContiguousAutoTransition(chunkIndex: Int) {
+        val chunk = textChunks.getOrNull(chunkIndex) ?: return
+        val shouldResumePlayback = player.playWhenReady || _ttsState.value.isPlaying
+        val generation = advancePlaybackGeneration()
+        preparationJob?.cancel()
+        wordTrackingJob?.cancel()
+        cancelPrefetchWork()
+        onResetContext()
+
+        _ttsState.value = _ttsState.value.copy(
+            isLoading = true,
+            isPlaying = false,
+            currentText = chunk.text,
+            errorMessage = null,
+            currentChunkIndex = chunkIndex,
+            totalChunks = textChunks.size,
+            bookProgressPercent = calculateBookProgressPercent(chunkIndex),
+            sourceCfi = chunk.sourceCfi,
+            startOffsetInSource = chunk.startOffsetInSource,
+            currentWordSourceCfi = null,
+            currentWordStartOffset = -1,
+            sessionFinished = false
+        )
+
+        player.pause()
+        player.stop()
+        player.clearMediaItems()
+
+        preparationJob = scope.launch {
+            clearAudioFiles()
+            if (!isPlaybackGenerationActive(generation)) return@launch
+            prepareAndPlayFirstChunk(
+                startAtIndex = chunkIndex,
+                playWhenReady = shouldResumePlayback,
+                startAtPosition = 0L,
+                prefetchAfterPrepare = true
+            )
         }
     }
 
@@ -1567,10 +1735,22 @@ class TtsPlaybackManager(
     }
 
     private fun prefetchNextChunkAudio(currentIndex: Int) {
-        if (currentIndex == lastPrefetchIndex && prefetchLoopJob?.isActive == true) {
+        val nextChunkIndex = resolveNextPlayableTtsChunkIndex(
+            currentChunkIndex = currentIndex,
+            totalChunks = textChunks.size,
+            skippedChunkIndices = skippedChunks
+        )
+        if (shouldSkipExistingTtsPrefetchLoop(
+                currentChunkIndex = currentIndex,
+                lastPrefetchIndex = lastPrefetchIndex,
+                isLoopActive = prefetchLoopJob?.isActive == true,
+                nextChunkLoaded = nextChunkIndex?.let { loadedChunks.contains(it) } == true,
+                nextChunkPrefetching = nextChunkIndex?.let { prefetchingJobs.containsKey(it) } == true
+            )
+        ) {
             logChunkNav(
                 "prefetch-skip-existing-loop",
-                "currentChunk=$currentIndex generation=${currentPlaybackGeneration()}"
+                "currentChunk=$currentIndex expectedNext=$nextChunkIndex generation=${currentPlaybackGeneration()}"
             )
             return
         }
@@ -1580,8 +1760,12 @@ class TtsPlaybackManager(
             "prefetch-loop-start",
             "currentChunk=$currentIndex generation=$generation"
         )
+        if (currentTtsMode == TtsMode.BASE) {
+            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                "manager-prefetch-loop-start currentChunk=$currentIndex generation=$generation lookahead=$PREFETCH_LOOKAHEAD"
+            )
+        }
 
-        prefetchLoopJob?.cancel()
         prefetchLoopJob = scope.launch {
             for (i in 1..PREFETCH_LOOKAHEAD) {
                 if (!isPlaybackGenerationActive(generation)) {
@@ -1620,6 +1804,12 @@ class TtsPlaybackManager(
                         val nextChunk = textChunks[targetIndex]
                         val prefetchStartTime = System.currentTimeMillis()
                         Timber.tag("TTS_CLOUD_DIAG").i("Starting prefetch generation for chunk $targetIndex")
+                        if (currentTtsMode == TtsMode.BASE) {
+                            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                                "manager-prefetch-generate-start targetChunk=$targetIndex currentChunk=$currentIndex " +
+                                    "generation=$generation textChars=${nextChunk.text.length} spokenChars=${nextChunk.spokenText.ifBlank { nextChunk.text }.length}"
+                            )
+                        }
                         logChunkNav(
                             "prefetch-generate-start",
                             "targetChunk=$targetIndex generation=$generation"
@@ -1628,10 +1818,18 @@ class TtsPlaybackManager(
                         val spokenText = nextChunk.spokenText.ifBlank { nextChunk.text }
                         val ttsAudioData = generateAudioChunk(bookTitle ?: appContext.getString(R.string.tts_unknown_book), chapterTitle, targetIndex, textChunks.size, spokenText, currentSpeakerId, currentTtsMode, currentAuthToken)
 
-                        Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio setup for chunk $targetIndex took ${System.currentTimeMillis() - prefetchStartTime}ms")
+                        val prefetchElapsedMs = System.currentTimeMillis() - prefetchStartTime
+                        Timber.tag("TTS_CLOUD_DIAG").i("Prefetch audio setup for chunk $targetIndex took ${prefetchElapsedMs}ms")
+                        if (currentTtsMode == TtsMode.BASE) {
+                            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                                "manager-prefetch-generate-complete targetChunk=$targetIndex generation=$generation elapsedMs=$prefetchElapsedMs " +
+                                    "audioFile=${ttsAudioData.audioFile?.name} fileBytes=${ttsAudioData.audioFile?.length() ?: -1} " +
+                                    "serverText=${ttsAudioData.serverText != null} error=${ttsAudioData.error}"
+                            )
+                        }
                         logChunkNav(
                             "prefetch-generate-complete",
-                            "targetChunk=$targetIndex generation=$generation elapsedMs=${System.currentTimeMillis() - prefetchStartTime} audioFile=${ttsAudioData.audioFile?.name} streamUri=${ttsAudioData.streamUri} error=${ttsAudioData.error}"
+                            "targetChunk=$targetIndex generation=$generation elapsedMs=$prefetchElapsedMs audioFile=${ttsAudioData.audioFile?.name} streamUri=${ttsAudioData.streamUri} error=${ttsAudioData.error}"
                         )
                         if (!isPlaybackGenerationActive(generation)) {
                             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
@@ -1662,9 +1860,6 @@ class TtsPlaybackManager(
                             chunkGenerationFailures.remove(targetIndex)
                             skippedChunks.remove(targetIndex)
                             val updatedChunk = processWordTimings(nextChunk, serverText, ttsAudioData.wordTimings)
-                            val pathToUse = streamUri ?: audioFile!!.absolutePath
-                            val nextMediaItem = createMediaItem(updatedChunk.text, pathToUse, targetIndex, updatedChunk)
-
                             withContext(Dispatchers.Main) {
                                 if (!isPlaybackGenerationActive(generation)) {
                                     logChunkNavMain(
@@ -1691,37 +1886,13 @@ class TtsPlaybackManager(
 
                                 val wasLoading = _ttsState.value.isLoading
 
-                                var exists = false
-                                for (k in 0 until player.mediaItemCount) {
-                                    if (player.getMediaItemAt(k).mediaId == targetIndex.toString()) {
-                                        exists = true
-                                        break
-                                    }
-                                }
-
-                                if (!exists) {
-                                    var insertPosition = player.mediaItemCount
-                                    for (k in 0 until player.mediaItemCount) {
-                                        val id = player.getMediaItemAt(k).mediaId.toIntOrNull() ?: -1
-                                        if (id > targetIndex) {
-                                            insertPosition = k
-                                            break
-                                        }
-                                    }
-                                    logChunkNavMain(
-                                        "prefetch-add-before",
-                                        "targetChunk=$targetIndex insertPosition=$insertPosition exists=false generation=$generation"
-                                    )
-                                    player.addMediaItem(insertPosition, nextMediaItem)
-                                    logChunkNavMain(
-                                        "prefetch-add-after",
-                                        "targetChunk=$targetIndex insertPosition=$insertPosition generation=$generation"
-                                    )
-                                } else {
+                                if (findPlaylistIndexForChunk(targetIndex) != null) {
                                     logChunkNavMain(
                                         "prefetch-add-skip-existing-playlist",
                                         "targetChunk=$targetIndex generation=$generation"
                                     )
+                                } else {
+                                    insertPreparedContiguousChunksFrom(targetIndex, generation)
                                 }
 
                                 val currentChunkIndex = currentChunkIndexFromPlayer()

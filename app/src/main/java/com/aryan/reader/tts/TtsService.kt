@@ -958,7 +958,15 @@ class TtsService : MediaSessionService() {
 
     private val synthesizeBaseTtsChunk: suspend (String) -> TtsAudioData =
         { chunkToSpeak ->
+            val startedAtMs = System.currentTimeMillis()
+            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                "service-local-synthesize-start textChars=${chunkToSpeak.length}"
+            )
             val (file, text) = baseTtsSynthesizer.synthesizeToFile(chunkToSpeak)
+            Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                "service-local-synthesize-finish elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                    "success=${file != null && text != null} file=${file?.name} fileBytes=${file?.length() ?: -1} textChars=${text?.length ?: -1}"
+            )
             TtsAudioData(file, text, null)
         }
 
@@ -991,7 +999,12 @@ class TtsService : MediaSessionService() {
                         }
                     }
                 }
-                TtsMode.BASE -> synthesizeBaseTtsChunk(text)
+                TtsMode.BASE -> {
+                    Timber.tag(TTS_LOCAL_DIAG_TAG).i(
+                        "audio-generator-local chunk=$chunkIndex totalChunks=$totalChunks textChars=${text.length} speaker=$speaker"
+                    )
+                    synthesizeBaseTtsChunk(text)
+                }
             }
         }
 
@@ -1010,9 +1023,12 @@ class TtsService : MediaSessionService() {
         baseTtsSynthesizer = BaseTtsSynthesizer(this)
         scope.launch {
             try {
+                Timber.tag(TTS_LOCAL_DIAG_TAG).i("service-local-engine-warmup-start")
                 baseTtsSynthesizer.initialize()
+                Timber.tag(TTS_LOCAL_DIAG_TAG).i("service-local-engine-warmup-success")
             } catch (e: Exception) {
                 Timber.e(e, "Base TTS synthesizer failed to initialize")
+                Timber.tag(TTS_LOCAL_DIAG_TAG).e(e, "service-local-engine-warmup-failed")
             }
         }
 
