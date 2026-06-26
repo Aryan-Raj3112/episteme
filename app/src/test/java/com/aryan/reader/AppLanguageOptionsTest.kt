@@ -115,16 +115,15 @@ class AppLanguageOptionsTest {
     }
 
     @Test
-    fun `pro manifest declares Play license error activity`() {
-        val activity = readProAndroidManifest()
+    fun `pro manifest does not declare reserved Play installer check activity`() {
+        val reservedActivity = readProAndroidManifest()
             .getElementsByTagName("activity")
             .asElements()
             .singleOrNull {
                 it.androidAttribute("name") == "com.pairip.licensecheck.LicenseActivity"
             }
 
-        assertTrue(activity != null)
-        assertEquals("false", activity!!.androidAttribute("exported"))
+        assertEquals(null, reservedActivity)
     }
 
     private fun readLocaleConfigTags(): List<String> {
