@@ -7,7 +7,7 @@
 
   <p>A modern, offline-first, privacy-focused document and e-book reader for Android and desktop, built with Kotlin Multiplatform and Compose.</p>
 
-  <a href="https://epistemereader.com"><img alt="Download from epistemereader.com" src="https://img.shields.io/badge/Download-epistemereader.com-2f6f5e?style=for-the-badge" height="44" align="absmiddle"/></a>&nbsp;&nbsp;<a href="https://f-droid.org/packages/com.aryan.reader.oss/"><img alt="Get it on F-Droid" src="https://f-droid.org/badge/get-it-on.png" height="66" align="absmiddle"/></a>&nbsp;<a href="https://play.google.com/store/apps/details?id=com.aryan.reader"><img alt="Get it on Google Play" src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" height="44" align="absmiddle"/></a>&nbsp;&nbsp;&nbsp;<a href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/Aryan-Raj3112/episteme"><img alt="Get it on Obtainium" src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="44" align="absmiddle"/></a>
+  <a href="https://epistemereader.com"><img alt="Download from epistemereader.com" src="https://img.shields.io/badge/Download-epistemereader.com-2f6f5e?style=for-the-badge" height="44" align="absmiddle"/></a>&nbsp;&nbsp;<a href="https://f-droid.org/packages/com.aryan.reader.oss/"><img alt="Get it on F-Droid" src="https://f-droid.org/badge/get-it-on.png" height="66" align="absmiddle"/></a>&nbsp;<a href="https://play.google.com/store/apps/details?id=com.aryan.reader"><img alt="Get it on Google Play" src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" height="44" align="absmiddle"/></a>&nbsp;&nbsp;&nbsp;<a href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/Aryan-Raj3112/episteme"><img alt="Get it on Obtainium" src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" height="64" align="absmiddle"/></a>
 
 </div>
 
@@ -49,11 +49,11 @@ Available across supported editions unless noted in the edition table:
 
 | Edition | Platform | Network access | Distribution | Notes |
 |---|---|---|---|---|
-| **Play Store** | Android | Online-capable | Google Play | Full Android release with proprietary extras such as ML Kit OCR, cloud sync, AI tools, cloud TTS, and PDF bubble zoom. |
-| **OSS** | Android | Online-capable | [epistemereader.com](https://epistemereader.com), GitHub, F-Droid, Obtainium | Fully open-source Android build with OPDS, downloadable fonts, and BYOK access to AI and cloud features. |
-| **OSS Offline** | Android | Offline-only | [epistemereader.com](https://epistemereader.com), GitHub, Obtainium | Open-source Android build with network permissions removed. |
-| **Standard** | Windows desktop | Online-capable | [epistemereader.com](https://epistemereader.com), GitHub | Full-featured desktop release with the shared KMP reader core and online-capable services. |
-| **Offline** | Windows desktop | Offline-only | [epistemereader.com](https://epistemereader.com), GitHub | Desktop build focused on local reading with online services disabled. |
+| **Play Store** | Android | Online-capable | [Google Play](https://play.google.com/store/apps/details?id=com.aryan.reader) | Full Android release with proprietary extras such as ML Kit OCR, cloud sync, AI tools, cloud TTS, and PDF bubble zoom. |
+| **OSS** | Android | Online-capable | [epistemereader.com](https://epistemereader.com), [GitHub](https://github.com/Aryan-Raj3112/episteme/releases), [F-Droid](https://f-droid.org/packages/com.aryan.reader.oss/), [Obtainium](https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/Aryan-Raj3112/episteme) | Fully open-source Android build with OPDS, downloadable fonts, and BYOK access to AI and cloud features. |
+| **OSS Offline** | Android | Offline-only | [epistemereader.com](https://epistemereader.com), [GitHub](https://github.com/Aryan-Raj3112/episteme/releases), [Obtainium](https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/Aryan-Raj3112/episteme) | Open-source Android build with network permissions removed. |
+| **Standard** | Desktop (Linux, Windows) | Online-capable | [epistemereader.com](https://epistemereader.com), [GitHub](https://github.com/Aryan-Raj3112/episteme/releases) | Full-featured desktop release with the shared KMP reader core and online-capable services. |
+| **Offline** | Desktop (Linux, Windows) | Offline-only | [epistemereader.com](https://epistemereader.com), [GitHub](https://github.com/Aryan-Raj3112/episteme/releases) | Desktop build focused on local reading with online services disabled. |
 
 Future desktop platforms can use the same Standard and Offline model as support expands.
 
@@ -116,7 +116,7 @@ Thank you to the people helping keep Episteme Reader moving:
 
 | Supporter | Platform |
 |---|---|
-| <img src="https://github.com/Zorklo.png?size=48" width="24" height="24" valign="middle" alt="Zorklo avatar"> [Zorklo](https://github.com/Zorklo) | GitHub Sponsors |
+| <img src="https://github.com/Myshadowslullaby.png?size=48" width="24" height="24" valign="middle" alt="Myshadowslullaby avatar"> [Myshadowslullaby](https://github.com/Myshadowslullaby) | GitHub Sponsors |
 
 ## Support the Project
 
@@ -132,4 +132,4 @@ Help make Episteme Reader better:
 
 ## License
 
-Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the [LICENSE](LICENSE) file.
+Licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only). See the [LICENSE](../LICENSE) file.
