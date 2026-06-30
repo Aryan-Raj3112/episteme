@@ -494,6 +494,10 @@ private const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
 private const val AndroidEpubCutoffLogTag = "EpistemeEpubCutoff"
 private const val AndroidEpubCutoffTolerancePx = 1
 private const val AndroidEpubCutoffEdgeProbePx = 2
+private const val AndroidEpubLargeBottomGapMinPx = 72
+private const val AndroidEpubLargeBottomGapPageFraction = 0.18f
+private const val AndroidEpubWrapNarrowWidthFraction = 0.45f
+private const val AndroidEpubWrapShortLineFraction = 0.28f
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 private const val TAG_ANDROID_HIGHLIGHT_RENDER_DIAG = "AndroidHighlightRenderDiag"
@@ -1952,9 +1956,11 @@ private fun LinkAwareText(
     themeBackgroundColor: Color,
     themeTextColor: Color,
     onLinkClick: (String) -> Unit,
-    onGeneralTap: (Offset) -> Unit
+    onGeneralTap: (Offset) -> Unit,
+    wrapDiagnosticsContext: String? = null
 ) {
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var lastWrapDiagnosticsSignature by remember { mutableStateOf<String?>(null) }
     val viewConfiguration = LocalViewConfiguration.current
     val latestLayoutResult = rememberUpdatedState(layoutResult)
     val latestOnLinkClick = rememberUpdatedState(onLinkClick)
@@ -2011,6 +2017,33 @@ private fun LinkAwareText(
         },
         onTextLayout = {
             layoutResult = it
+            wrapDiagnosticsContext?.let { context ->
+                var maxLineWidthPx = 0
+                val samples = mutableListOf<String>()
+                val sampleLimit = minOf(it.lineCount, 6)
+                for (line in 0 until it.lineCount) {
+                    val lineStart = it.getLineStart(line)
+                    val lineEnd = it.getLineEnd(line, visibleEnd = true).coerceIn(lineStart, displayText.length)
+                    val lineWidth = abs(it.getLineRight(line) - it.getLineLeft(line)).roundToInt()
+                    maxLineWidthPx = maxOf(maxLineWidthPx, lineWidth)
+                    if (line < sampleLimit) {
+                        samples += "${line}:${lineStart}..$lineEnd:${lineWidth}px:'${displayText.text.substring(lineStart, lineEnd).replace('\n', ' ').take(24)}'"
+                    }
+                }
+                val lineOverflowPx = maxLineWidthPx - it.size.width
+                val signature = "$context:${it.size.width}x${it.size.height}:${it.lineCount}:$maxLineWidthPx"
+                if (signature != lastWrapDiagnosticsSignature && (it.lineCount > 1 || lineOverflowPx > AndroidEpubCutoffTolerancePx)) {
+                    lastWrapDiagnosticsSignature = signature
+                    logAndroidEpubCutoff(
+                        "cutoff_probe layer=android_table_text_wrap $context " +
+                            "layoutPx=${it.size.width}x${it.size.height} lineCount=${it.lineCount} " +
+                            "maxLineWidthPx=$maxLineWidthPx lineOverflowPx=$lineOverflowPx " +
+                            "textAlign=${it.layoutInput.style.textAlign} fontSize=${it.layoutInput.style.fontSize} " +
+                            "lineHeight=${it.layoutInput.style.lineHeight} textChars=${displayText.length} " +
+                            "lines=${samples.joinToString("|")}"
+                    )
+                }
+            }
             if (displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
                 Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                     "layout_text source=LinkAwareText size=${it.size.width}x${it.size.height} " +
@@ -5484,6 +5517,111 @@ private fun logAndroidEpubPageBlockBoundsIfNeeded(
         )
     }
 }
+private fun logAndroidEpubRenderedPageGapIfNeeded(
+    pageIndex: Int,
+    renderedBounds: Collection<AndroidEpubRenderedBlockBounds>,
+    pageContentBounds: AndroidEpubPageContentBounds?,
+    diagnosticsContext: String,
+    signatureAlreadyLogged: (String) -> Boolean,
+    markSignatureLogged: (String) -> Unit
+) {
+    val bounds = pageContentBounds ?: return
+    val sortedBounds = renderedBounds.sortedBy { it.topPx }
+    if (sortedBounds.isEmpty()) return
+
+    val lastBlock = sortedBounds.maxBy { it.bottomPx }
+    val contentBottomRelativePx = bounds.bottomPx - bounds.topPx
+    val pageClipBottomRelativePx = bounds.pageClipBottomPx - bounds.topPx
+    val contentBottomGapPx = contentBottomRelativePx - lastBlock.bottomPx
+    val pageClipBottomGapPx = pageClipBottomRelativePx - lastBlock.bottomPx
+    val minGapPx = maxOf(
+        AndroidEpubLargeBottomGapMinPx,
+        (bounds.heightPx * AndroidEpubLargeBottomGapPageFraction).roundToInt()
+    )
+    if (contentBottomGapPx < minGapPx) return
+
+    val expectedTotalHeightPx = sortedBounds.sumOf { it.expectedHeightPx.coerceAtLeast(0) }
+    val actualTotalHeightPx = sortedBounds.sumOf { it.heightPx.coerceAtLeast(0) }
+    val signature = "rendered_page_gap:$pageIndex:${sortedBounds.size}:${lastBlock.blockIndex}:${lastBlock.bottomPx}:$contentBottomGapPx"
+    if (signatureAlreadyLogged(signature)) return
+    markSignatureLogged(signature)
+
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=android_rendered_page_gap page=${pageIndex + 1} " +
+            "blockCount=${sortedBounds.size} lastBlock=${lastBlock.blockIndex} lastKind=${lastBlock.kind} " +
+            "lastBottomPx=${lastBlock.bottomPx} contentBottomPx=$contentBottomRelativePx " +
+            "contentBottomGapPx=$contentBottomGapPx pageClipBottomGapPx=$pageClipBottomGapPx minGapPx=$minGapPx " +
+            "contentPx=${bounds.widthPx}x${bounds.heightPx} pagePx=${bounds.pageWidthPx}x${bounds.pageHeightPx} " +
+            "expectedTotalHeightPx=$expectedTotalHeightPx actualTotalHeightPx=$actualTotalHeightPx " +
+            "lastExpectedHeightPx=${lastBlock.expectedHeightPx} lastActualHeightPx=${lastBlock.heightPx} " +
+            "lastSourceRange=${lastBlock.sourceRange} lastTextChars=${lastBlock.textChars} $diagnosticsContext"
+    )
+}
+
+private fun logAndroidEpubTextWrapIfNeeded(
+    pageIndex: Int,
+    block: TextContentBlock,
+    layout: TextLayoutResult,
+    coordinates: LayoutCoordinates,
+    pageContentBounds: AndroidEpubPageContentBounds?,
+    diagnosticsContext: String,
+    previousSignature: String?
+): String? {
+    val bounds = pageContentBounds ?: return previousSignature
+    val boxWidthPx = coordinates.size.width
+    if (boxWidthPx <= 0 || layout.lineCount <= 0) return previousSignature
+
+    var maxLineVisualWidthPx = 0
+    var maxLineRightPx = 0
+    var shortNonBlankLineCount = 0
+    var nonBlankLineCount = 0
+    val lineSamples = mutableListOf<String>()
+    val sampleLimit = minOf(layout.lineCount, 8)
+    for (line in 0 until layout.lineCount) {
+        val lineStart = layout.getLineStart(line)
+        val lineEnd = layout.getLineEnd(line, visibleEnd = true)
+        val lineEndSafe = lineEnd.coerceIn(lineStart, layout.layoutInput.text.length)
+        val lineText = layout.layoutInput.text.text.substring(lineStart, lineEndSafe)
+        val lineLeft = layout.getLineLeft(line)
+        val lineRight = layout.getLineRight(line)
+        val lineVisualWidth = abs(lineRight - lineLeft).roundToInt()
+        maxLineVisualWidthPx = maxOf(maxLineVisualWidthPx, lineVisualWidth)
+        maxLineRightPx = maxOf(maxLineRightPx, maxOf(lineLeft, lineRight).roundToInt())
+        if (lineText.isNotBlank()) {
+            nonBlankLineCount++
+            if (lineVisualWidth < boxWidthPx * AndroidEpubWrapShortLineFraction && lineText.length >= 2) {
+                shortNonBlankLineCount++
+            }
+        }
+        if (line < sampleLimit) {
+            lineSamples += "${line}:${lineStart}..$lineEnd:${lineVisualWidth}px:'${lineText.replace('\n', ' ').take(24)}'"
+        }
+    }
+
+    val lineOverflowPx = maxOf(maxLineRightPx - boxWidthPx, maxLineVisualWidthPx - boxWidthPx)
+    val narrowBox = boxWidthPx < (bounds.widthPx * AndroidEpubWrapNarrowWidthFraction).roundToInt()
+    val manyShortLines = nonBlankLineCount >= 3 && shortNonBlankLineCount >= maxOf(2, nonBlankLineCount / 3)
+    val textChars = block.content.text.length
+    if (lineOverflowPx <= AndroidEpubCutoffTolerancePx && !narrowBox && !manyShortLines) {
+        return previousSignature
+    }
+
+    val signature = "text_wrap:$pageIndex:${block.blockIndex}:$boxWidthPx:${layout.size.width}:${layout.lineCount}:$lineOverflowPx:$shortNonBlankLineCount"
+    if (signature == previousSignature) return previousSignature
+
+    val boxLeftRelativePx = coordinates.positionInWindow().x.roundToInt() - (bounds.pageWidthPx - bounds.widthPx) / 2
+    logAndroidEpubCutoff(
+        "cutoff_probe layer=android_text_wrap page=${pageIndex + 1} block=${block.blockIndex} " +
+            "kind=${block.androidEpubKindName()} boxWidthPx=$boxWidthPx layoutWidthPx=${layout.size.width} " +
+            "pageContentWidthPx=${bounds.widthPx} lineCount=${layout.lineCount} textChars=$textChars " +
+            "maxLineVisualWidthPx=$maxLineVisualWidthPx maxLineRightPx=$maxLineRightPx lineOverflowPx=$lineOverflowPx " +
+            "narrowBox=$narrowBox shortLines=$shortNonBlankLineCount/$nonBlankLineCount " +
+            "boxLeftApproxPx=$boxLeftRelativePx textAlign=${layout.layoutInput.style.textAlign} " +
+            "fontSize=${layout.layoutInput.style.fontSize} lineHeight=${layout.layoutInput.style.lineHeight} " +
+            "sourceRange=${block.androidEpubSourceRangeLabel()} lines=${lineSamples.joinToString("|")} $diagnosticsContext"
+    )
+    return signature
+}
 private fun logAndroidEpubTextCutoffIfNeeded(
     pageIndex: Int,
     block: TextContentBlock,
@@ -5637,6 +5775,7 @@ private fun TextWithEmphasis(
 ) {
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     var lastCutoffLogSignature by remember { mutableStateOf<String?>(null) }
+    var lastWrapLogSignature by remember { mutableStateOf<String?>(null) }
     val viewConfiguration = LocalViewConfiguration.current
     var layoutCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val scope = rememberCoroutineScope()
@@ -6005,6 +6144,15 @@ private fun TextWithEmphasis(
             pageContentBounds = pageContentBounds,
             diagnosticsContext = cutoffDiagnosticsContext,
             previousSignature = lastCutoffLogSignature
+        )
+        lastWrapLogSignature = logAndroidEpubTextWrapIfNeeded(
+            pageIndex = pageIndex,
+            block = block,
+            layout = layout,
+            coordinates = coordinates,
+            pageContentBounds = pageContentBounds,
+            diagnosticsContext = cutoffDiagnosticsContext,
+            previousSignature = lastWrapLogSignature
         )
     }
 
@@ -6784,6 +6932,18 @@ internal fun PaginatedReaderContent(
                                                                     }
                                                                 )
                                                             }
+                                                            logAndroidEpubRenderedPageGapIfNeeded(
+                                                                pageIndex = pageIndex,
+                                                                renderedBounds = renderedBlockBounds.values,
+                                                                pageContentBounds = pageContentBounds,
+                                                                diagnosticsContext = cutoffDiagnosticsContext,
+                                                                signatureAlreadyLogged = { signature ->
+                                                                    cutoffLogSignatures[signature] == true
+                                                                },
+                                                                markSignatureLogged = { signature ->
+                                                                    cutoffLogSignatures[signature] = true
+                                                                }
+                                                            )
                                                         }
                                                         if (block.expectedHeight > 0) {
                                                             val snippet = when (block) {
@@ -7720,7 +7880,13 @@ internal fun PaginatedReaderContent(
 
                                                         is TableBlock -> {
                                                             Column(modifier = paddingModifier) {
-                                                                block.rows.forEach { tableRow ->
+                                                                val stackRows = block.shouldStackRowsForNarrowPagination()
+                                                                val rowsForLayout = if (stackRows) {
+                                                                    block.rowsForNarrowPaginationLayout()
+                                                                } else {
+                                                                    block.rows
+                                                                }
+                                                                rowsForLayout.forEachIndexed { rowIndex, tableRow ->
                                                                     Row(
                                                                         Modifier.fillMaxWidth()
                                                                             .height(
@@ -7728,11 +7894,11 @@ internal fun PaginatedReaderContent(
                                                                             )
                                                                     ) {
                                                                         val hasFixedWidths =
-                                                                            tableRow.any {
+                                                                            !stackRows && tableRow.any {
                                                                                 it.style.blockStyle.width != Dp.Unspecified
                                                                             }
 
-                                                                        tableRow.forEach { cell ->
+                                                                        tableRow.forEachIndexed { cellIndex, cell ->
                                                                             val cellStyle =
                                                                                 cell.style.blockStyle
 
@@ -7753,14 +7919,20 @@ internal fun PaginatedReaderContent(
                                                                                 }
 
                                                                             val alignment =
-                                                                                when (cell.style.paragraphStyle.textAlign) {
-                                                                                    TextAlign.Center -> Alignment.CenterHorizontally
-                                                                                    TextAlign.End -> Alignment.End
-                                                                                    else -> Alignment.Start
+                                                                                if (stackRows) {
+                                                                                    Alignment.Start
+                                                                                } else {
+                                                                                    when (cell.style.paragraphStyle.textAlign) {
+                                                                                        TextAlign.Center -> Alignment.CenterHorizontally
+                                                                                        TextAlign.End -> Alignment.End
+                                                                                        else -> Alignment.Start
+                                                                                    }
                                                                                 }
 
+                                                                            val stackedSpeakerTopPadding =
+                                                                                if (stackRows && cell.isLikelyDramaSpeakerCell()) 24.dp else 0.dp
                                                                             val cellModifier =
-                                                                                cellContainerModifier.fillMaxHeight()
+                                                                                cellContainerModifier
                                                                                     .then(
                                                                                         if (cellStyle.backgroundColor.isSpecified) {
                                                                                             Modifier.background(
@@ -7774,22 +7946,22 @@ internal fun PaginatedReaderContent(
                                                                                         cellStyle,
                                                                                         density
                                                                                     ).padding(
-                                                                                        start = cellStyle.padding.left.coerceAtLeast(
+                                                                                        start = if (stackRows) 0.dp else cellStyle.padding.left.coerceAtLeast(
                                                                                             0.dp
                                                                                         ),
-                                                                                        top = cellStyle.padding.top.coerceAtLeast(
+                                                                                        top = if (stackRows) stackedSpeakerTopPadding else cellStyle.padding.top.coerceAtLeast(
                                                                                             0.dp
                                                                                         ),
-                                                                                        end = cellStyle.padding.right.coerceAtLeast(
+                                                                                        end = if (stackRows) 0.dp else cellStyle.padding.right.coerceAtLeast(
                                                                                             0.dp
                                                                                         ),
-                                                                                        bottom = cellStyle.padding.bottom.coerceAtLeast(
+                                                                                        bottom = if (stackRows) 0.dp else cellStyle.padding.bottom.coerceAtLeast(
                                                                                             0.dp
                                                                                         )
                                                                                     )
 
                                                                             Column(
-                                                                                modifier = cellModifier,
+                                                                                modifier = cellModifier.wrapContentHeight(Alignment.Top),
                                                                                 horizontalAlignment = alignment
                                                                             ) {
                                                                                 val cellTextStyle =
@@ -7812,7 +7984,8 @@ internal fun PaginatedReaderContent(
                                                                                                 themeBackgroundColor = effectiveBg,
                                                                                                 themeTextColor = effectiveText,
                                                                                                 onLinkClick = onLinkClickCallback,
-                                                                                                onGeneralTap = onGeneralTapCallback
+                                                                                                onGeneralTap = onGeneralTapCallback,
+                                                                                                wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
                                                                                             )
                                                                                         }
 
@@ -7827,7 +8000,8 @@ internal fun PaginatedReaderContent(
                                                                                                 themeBackgroundColor = effectiveBg,
                                                                                                 themeTextColor = effectiveText,
                                                                                                 onLinkClick = onLinkClickCallback,
-                                                                                                onGeneralTap = onGeneralTapCallback
+                                                                                                onGeneralTap = onGeneralTapCallback,
+                                                                                                wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
                                                                                             )
                                                                                         }
 
@@ -7855,7 +8029,8 @@ internal fun PaginatedReaderContent(
                                                                                                     themeBackgroundColor = effectiveBg,
                                                                                                     themeTextColor = effectiveText,
                                                                                                     onLinkClick = onLinkClickCallback,
-                                                                                                    onGeneralTap = onGeneralTapCallback
+                                                                                                    onGeneralTap = onGeneralTapCallback,
+                                                                                                    wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
                                                                                                 )
                                                                                             }
                                                                                         }
@@ -7902,7 +8077,8 @@ internal fun PaginatedReaderContent(
                                                                                                 themeBackgroundColor = effectiveBg,
                                                                                                 themeTextColor = effectiveText,
                                                                                                 onLinkClick = onLinkClickCallback,
-                                                                                                onGeneralTap = onGeneralTapCallback
+                                                                                                onGeneralTap = onGeneralTapCallback,
+                                                                                                wrapDiagnosticsContext = "page=${pageIndex + 1} source=table_cell tableBlock=${block.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
                                                                                             )
                                                                                         }
 
@@ -8733,19 +8909,26 @@ private fun RenderFlexChildBlock(
 
         is TableBlock -> {
             Column(modifier = Modifier.fillMaxWidth()) {
-                childBlock.rows.forEach { tableRow ->
+                val stackRows = childBlock.shouldStackRowsForNarrowPagination()
+                val rowsForLayout = if (stackRows) {
+                    childBlock.rowsForNarrowPaginationLayout()
+                } else {
+                    childBlock.rows
+                }
+                rowsForLayout.forEachIndexed { rowIndex, tableRow ->
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .height(IntrinsicSize.Min)
                     ) {
                         val hasFixedWidths =
-                            tableRow.any { it.style.blockStyle.width != Dp.Unspecified }
+                            !stackRows && tableRow.any { it.style.blockStyle.width != Dp.Unspecified }
 
-                        tableRow.forEach { cell ->
+                        tableRow.forEachIndexed { cellIndex, cell ->
                             val cellStyle = cell.style.blockStyle
+                            val stackedSpeakerTopPadding =
+                                if (stackRows && cell.isLikelyDramaSpeakerCell()) 24.dp else 0.dp
                             val cellModifier = Modifier
-                                .fillMaxHeight()
                                 .then(
                                     if (hasFixedWidths && cellStyle.width != Dp.Unspecified) Modifier.width(
                                         cellStyle.width
@@ -8762,25 +8945,32 @@ private fun RenderFlexChildBlock(
                                 )
                                 .drawCssBorders(cellStyle, density)
                                 .padding(
-                                    start = cellStyle.padding.left.coerceAtLeast(
+                                    start = if (stackRows) 0.dp else cellStyle.padding.left.coerceAtLeast(
                                         0.dp
                                     ),
-                                    top = cellStyle.padding.top.coerceAtLeast(0.dp),
-                                    end = cellStyle.padding.right.coerceAtLeast(
+                                    top = if (stackRows) stackedSpeakerTopPadding else cellStyle.padding.top.coerceAtLeast(0.dp),
+                                    end = if (stackRows) 0.dp else cellStyle.padding.right.coerceAtLeast(
                                         0.dp
                                     ),
-                                    bottom = cellStyle.padding.bottom.coerceAtLeast(
+                                    bottom = if (stackRows) 0.dp else cellStyle.padding.bottom.coerceAtLeast(
                                         0.dp
                                     )
                                 )
 
-                            val alignment = when (cell.style.paragraphStyle.textAlign) {
-                                TextAlign.Center -> Alignment.CenterHorizontally
-                                TextAlign.End -> Alignment.End
-                                else -> Alignment.Start
+                            val alignment = if (stackRows) {
+                                Alignment.Start
+                            } else {
+                                when (cell.style.paragraphStyle.textAlign) {
+                                    TextAlign.Center -> Alignment.CenterHorizontally
+                                    TextAlign.End -> Alignment.End
+                                    else -> Alignment.Start
+                                }
                             }
 
-                            Column(modifier = cellModifier, horizontalAlignment = alignment) {
+                            Column(
+                                modifier = cellModifier.wrapContentHeight(Alignment.Top),
+                                horizontalAlignment = alignment
+                            ) {
                                 val cellTextStyle =
                                     if (cell.isHeader) textStyle.copy(fontWeight = FontWeight.Bold)
                                     else textStyle
@@ -8794,7 +8984,8 @@ private fun RenderFlexChildBlock(
                                             themeBackgroundColor = themeBackgroundColor,
                                             themeTextColor = themeTextColor,
                                             onLinkClick = onLinkClickCallback,
-                                            onGeneralTap = onGeneralTapCallback
+                                            onGeneralTap = onGeneralTapCallback,
+                                            wrapDiagnosticsContext = "page=${pageIndex + 1} source=flex_table_cell tableBlock=${childBlock.blockIndex} row=$rowIndex cell=$cellIndex cellBlock=${blockInCell.blockIndex}"
                                         )
                                     } else if (blockInCell is ImageBlock) {
                                         AsyncImage(

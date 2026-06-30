@@ -64,9 +64,9 @@
                 min-width: 0 !important;
             }
 
-            p, div, li, blockquote, section, article, aside, header, footer, main, td, th, span, a {
-                overflow-wrap: anywhere;
-                word-break: break-word;
+            p, div, li, blockquote, section, article, aside, header, footer, main, span, a {
+                overflow-wrap: break-word;
+                word-break: normal;
             }
 
             pre, code, samp, kbd, .reader-txt-preformatted {
@@ -77,15 +77,13 @@
             }
 
             table {
-                width: 100% !important;
                 max-width: 100% !important;
-                table-layout: fixed !important;
                 border-collapse: collapse;
             }
 
             td, th {
-                overflow-wrap: anywhere !important;
-                word-break: break-word !important;
+                overflow-wrap: normal;
+                word-break: normal;
             }
             p, div, li, td, th, span {
                 font-size: 1em; line-height: inherit;
@@ -1032,9 +1030,9 @@
                 max-width: 100% !important;
                 min-width: 0 !important;
             }
-            p, div, li, blockquote, section, article, aside, header, footer, main, td, th, span, a {
-                overflow-wrap: anywhere !important;
-                word-break: break-word !important;
+            p, div, li, blockquote, section, article, aside, header, footer, main, span, a {
+                overflow-wrap: break-word !important;
+                word-break: normal !important;
             }
             pre, code, samp, kbd, .reader-txt-preformatted {
                 white-space: pre-wrap !important;
@@ -1043,13 +1041,11 @@
                 max-width: 100% !important;
             }
             table {
-                width: 100% !important;
                 max-width: 100% !important;
-                table-layout: fixed !important;
             }
             td, th {
-                overflow-wrap: anywhere !important;
-                word-break: break-word !important;
+                overflow-wrap: normal;
+                word-break: normal;
             }
         `;
 

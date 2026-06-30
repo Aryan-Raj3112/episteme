@@ -21,6 +21,12 @@ import org.robolectric.RobolectricTestRunner
 class EpubReaderBridgeAndControlsTest {
 
     @Test
+    fun `reader webview viewport policy follows device width css`() {
+        assertFalse(readerResponsiveViewportPolicy.useWideViewPort)
+        assertFalse(readerResponsiveViewportPolicy.loadWithOverviewMode)
+    }
+
+    @Test
     fun `sanitizePlaceholders keeps one header per toolbar section and inserts empty placeholders`() {
         val input = listOf(
             FlatToolItem("old_header", FlatItemType.SECTION_HEADER, section = ToolbarSection.BOTTOM),

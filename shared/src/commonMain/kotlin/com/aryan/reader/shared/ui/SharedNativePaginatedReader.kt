@@ -2225,7 +2225,6 @@ private fun SharedSemanticBlockView(
                                     foreground = foreground
                                 )
                                 val cellModifier = Modifier
-                                    .fillMaxHeight()
                                     .then(
                                         if (hasFixedWidths && cellBlockStyle.width.isPositiveSpecified()) {
                                             Modifier.width(cellBlockStyle.width)
@@ -2251,7 +2250,8 @@ private fun SharedSemanticBlockView(
                                     modifier = cellModifier,
                                     blockStyle = cellBlockStyle,
                                     blockIndex = cell.content.firstOrNull()?.blockIndex ?: block.blockIndex,
-                                    imageContent = imageContent
+                                    imageContent = imageContent,
+                                    contentAlignment = cell.style.sharedNativeTableCellContentAlignment(cellAlignment)
                                 ) { cellContentModifier ->
                                     Column(
                                         modifier = cellContentModifier,
@@ -2313,15 +2313,40 @@ private fun SharedSemanticBlockView(
     }
 }
 
+private fun CssStyle.sharedNativeTableCellContentAlignment(horizontalAlignment: Alignment.Horizontal): Alignment {
+    val horizontal = when (horizontalAlignment) {
+        Alignment.CenterHorizontally -> "center"
+        Alignment.End -> "end"
+        else -> "start"
+    }
+    val vertical = when (verticalAlign?.lowercase()) {
+        "middle", "center" -> "center"
+        "bottom", "text-bottom" -> "bottom"
+        else -> "top"
+    }
+    return when (vertical to horizontal) {
+        "center" to "center" -> Alignment.Center
+        "center" to "end" -> Alignment.CenterEnd
+        "center" to "start" -> Alignment.CenterStart
+        "bottom" to "center" -> Alignment.BottomCenter
+        "bottom" to "end" -> Alignment.BottomEnd
+        "bottom" to "start" -> Alignment.BottomStart
+        "top" to "center" -> Alignment.TopCenter
+        "top" to "end" -> Alignment.TopEnd
+        else -> Alignment.TopStart
+    }
+}
+
 @Composable
 private fun SharedNativeCssBlockContainer(
     modifier: Modifier,
     blockStyle: BlockStyle,
     blockIndex: Int,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)?,
+    contentAlignment: Alignment = Alignment.TopStart,
     content: @Composable (Modifier) -> Unit
 ) {
-    Box(modifier = modifier) {
+    Box(modifier = modifier, contentAlignment = contentAlignment) {
         val backgroundImage = remember(
             blockStyle.backgroundImage,
             blockStyle.objectFit,

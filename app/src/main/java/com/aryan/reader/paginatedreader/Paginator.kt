@@ -89,6 +89,7 @@ private fun logAndroidEpubCutoff(message: String) {
     Log.d(AndroidEpubCutoffLogTag, message)
 }
 
+
 private fun CharSequence.firstWordOrEmpty(): String {
     var start = 0
     while (start < length && this[start].isWhitespace()) start++
@@ -391,52 +392,70 @@ class SuspendingAndroidBlockMeasurementProvider(
         }
         currentHeight += decorationTop
 
-        for (i in block.rows.indices) {
+        val stackRows = block.shouldStackRowsForNarrowPagination()
+        val rowsForSplit = if (stackRows) block.rowsForNarrowPaginationLayout() else block.rows
+        for (i in rowsForSplit.indices) {
             coroutineContext.ensureActive()
-            val row = block.rows[i]
-            var maxRowHeight = 0
-            val totalColspan = row.sumOf { it.colspan }.toFloat().coerceAtLeast(1f)
+            val rowHeight = measureTableRowHeight(
+                row = rowsForSplit[i],
+                textMeasurer = textMeasurer,
+                constraints = constraints,
+                defaultStyle = textStyle,
+                headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
+                density = density,
+                imageSizeMultiplier = imageSizeMultiplier,
+                stackCellsVertically = stackRows
+            )
 
-            for (cell in row) {
-                coroutineContext.ensureActive()
-                val cellMaxWidth = ((constraints.maxWidth) * (cell.colspan.toFloat() / totalColspan)).roundToInt()
-                val cellConstraints = constraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
-
-                var cellHeight = 0
-                for (b in cell.content) {
-                    coroutineContext.ensureActive()
-                    cellHeight += measureBlockHeight(
-                        block = b,
+            if (currentHeight + rowHeight + decorationBottom > availableHeight) {
+                if (DEBUG_PAGINATION_LOGS) {
+                    Timber.tag("PAGINATION_DEBUG").d("SplitTable: Breaking at row $i. currentH=$currentHeight, rowH=$rowHeight stacked=$stackRows")
+                }
+                if (stackRows) {
+                    val rowsBeforeSplit = rowsForSplit.take(i)
+                    splitStackedTableRow(
+                        row = rowsForSplit[i],
+                        availableHeight = (availableHeight - currentHeight - decorationBottom).coerceAtLeast(0),
                         textMeasurer = textMeasurer,
-                        constraints = cellConstraints,
+                        constraints = constraints,
                         defaultStyle = textStyle,
                         headerStyle = textStyle.copy(fontWeight = FontWeight.Bold),
                         density = density,
                         imageSizeMultiplier = imageSizeMultiplier
+                    )?.let { (part1Row, part2Row) ->
+                        logAndroidEpubCutoff(
+                            "cutoff_probe layer=android_stacked_table_split_success block=${block.blockIndex} " +
+                                "rowIndex=$i rowsBefore=${rowsBeforeSplit.size} rowsAfter=${rowsForSplit.size - i - 1} " +
+                                "availableHeightPx=${(availableHeight - currentHeight - decorationBottom).coerceAtLeast(0)} " +
+                                "rowHeightPx=$rowHeight textChars=${rowsForSplit[i].sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } }}"
+                        )
+                        val part1 = block.copy(
+                            rows = rowsBeforeSplit + listOf(part1Row),
+                            style = block.style.copy(margin = block.style.margin.copy(bottom = 0.dp))
+                        )
+                        val part2 = block.copy(
+                            rows = listOf(part2Row) + rowsForSplit.drop(i + 1),
+                            style = block.style.copy(margin = block.style.margin.copy(top = 0.dp))
+                        )
+                        return part1 to part2
+                    }
+                    logAndroidEpubCutoff(
+                        "cutoff_probe layer=android_stacked_table_split_miss block=${block.blockIndex} " +
+                            "rowIndex=$i rowsBefore=${rowsBeforeSplit.size} availableHeightPx=${(availableHeight - currentHeight - decorationBottom).coerceAtLeast(0)} " +
+                            "rowHeightPx=$rowHeight rowCells=${rowsForSplit[i].size} " +
+                            "rowTextChars=${rowsForSplit[i].sumOf { cell -> cell.content.sumOf { it.paginationTextCharCount() } }}"
                     )
-                }
-                val cellDecoration = with(density) {
-                    cell.style.blockStyle.padding.top.toPx() + cell.style.blockStyle.padding.bottom.toPx() +
-                            (cell.style.blockStyle.borderTop?.width?.toPx() ?: 0f) +
-                            (cell.style.blockStyle.borderBottom?.width?.toPx() ?: 0f)
-                }.roundToInt()
-                maxRowHeight = maxOf(maxRowHeight, cellHeight + cellDecoration)
-            }
-
-            if (currentHeight + maxRowHeight + decorationBottom > availableHeight) {
-                if (DEBUG_PAGINATION_LOGS) {
-                    Timber.tag("PAGINATION_DEBUG").d("SplitTable: Breaking at row $i. currentH=$currentHeight, rowH=$maxRowHeight")
                 }
                 splitRowIndex = i
                 break
             }
-            currentHeight += maxRowHeight
+            currentHeight += rowHeight
         }
 
         if (splitRowIndex <= 0) return null
 
-        val part1Rows = block.rows.subList(0, splitRowIndex)
-        val part2Rows = block.rows.subList(splitRowIndex, block.rows.size)
+        val part1Rows = rowsForSplit.subList(0, splitRowIndex)
+        val part2Rows = rowsForSplit.subList(splitRowIndex, rowsForSplit.size)
 
         val part1 = block.copy(rows = part1Rows, style = block.style.copy(margin = block.style.margin.copy(bottom = 0.dp)))
         val part2 = block.copy(rows = part2Rows, style = block.style.copy(margin = block.style.margin.copy(top = 0.dp)))
@@ -790,6 +809,14 @@ suspend fun paginate(
                             .w("FORCING block ${block::class.simpleName} onto page because it is the first block, even though req($spaceRequired) > remaining($remainingHeight)")
                     }
                     val forcedHeight = blockHeight + spaceBetweenBlocks
+                    logAndroidEpubCutoff(
+                        "cutoff_probe layer=android_paginator_forced_oversize_block page=${pageIndex + 1} " +
+                            "block=${block.blockIndex} kind=${block::class.simpleName ?: "Block"} " +
+                            "pageHeightPx=$pageHeight remainingHeightPx=$remainingHeight " +
+                            "spaceRequiredPx=$spaceRequired forcedHeightPx=$forcedHeight blockHeightPx=$blockHeight " +
+                            "marginPx=$spaceBetweenBlocks textChars=${block.paginationTextCharCount()} " +
+                            "avoidsBreakInside=${block.style.avoidsBreakInside()}"
+                    )
                     val blockToAdd = setBlockExpectedHeight(block, forcedHeight)
                     currentPageContent.add(blockToAdd)
                 } else {
@@ -797,6 +824,14 @@ suspend fun paginate(
                         Timber.tag("PAGINATION_DEBUG")
                             .d("Block ${block::class.simpleName} did not fit and was not split. Moving to next page.")
                     }
+                    logAndroidEpubCutoff(
+                        "cutoff_probe layer=android_paginator_page_gap page=${pageIndex + 1} " +
+                            "nextPageBlock=${block.blockIndex} kind=${block::class.simpleName ?: "Block"} " +
+                            "remainingHeightPx=$remainingHeight heightForSplittingPx=$heightForSplitting " +
+                            "spaceRequiredPx=$spaceRequired blockHeightPx=$blockHeight marginPx=$spaceBetweenBlocks " +
+                            "currentPageBlocks=${currentPageContent.size} lastPageBlock=${currentPageContent.lastOrNull()?.blockIndex ?: -1} " +
+                            "avoidsBreakInside=${block.style.avoidsBreakInside()} textChars=${block.paginationTextCharCount()}"
+                    )
                     remainingBlocks.add(0, block)
                 }
             }
@@ -911,35 +946,20 @@ private suspend fun measureBlockHeight(
             height
         }
         is TableBlock -> {
-            var totalHeight = 0
-            for (row in block.rows) {
-                coroutineContext.ensureActive()
-                var maxRowHeight = 0
-                val totalColspan = row.sumOf { it.colspan }.toFloat().coerceAtLeast(1f)
-
-                for (cell in row) {
-                    coroutineContext.ensureActive()
-                    val cellBlockStyle = cell.style.blockStyle
-                    val cellMaxWidth = when {
-                        cellBlockStyle.width.isSpecified -> with(density) { cellBlockStyle.width.toPx().roundToInt() }
-                        else -> (adjustedConstraints.maxWidth * (cell.colspan.toFloat() / totalColspan)).roundToInt()
-                    }
-
-                    val cellConstraints = adjustedConstraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
-
-                    val cellContentHeight = calculateContentHeightWithMargins(cell.content, textMeasurer, cellConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
-
-                    var cellDecorationHeight = 0f
-                    with(density) {
-                        cellDecorationHeight = cellBlockStyle.padding.top.toPx() + cellBlockStyle.padding.bottom.toPx()
-                        cellDecorationHeight += (cellBlockStyle.borderTop?.width?.toPx() ?: 0f)
-                        cellDecorationHeight += (cellBlockStyle.borderBottom?.width?.toPx() ?: 0f)
-                    }
-                    maxRowHeight = maxOf(maxRowHeight, (cellContentHeight + cellDecorationHeight).roundToInt())
-                }
-                totalHeight += maxRowHeight
+            val stackRows = block.shouldStackRowsForNarrowPagination()
+            val rowsForMeasure = if (stackRows) block.rowsForNarrowPaginationLayout() else block.rows
+            rowsForMeasure.sumOf { row ->
+                measureTableRowHeight(
+                    row = row,
+                    textMeasurer = textMeasurer,
+                    constraints = adjustedConstraints,
+                    defaultStyle = defaultStyle,
+                    headerStyle = headerStyle,
+                    density = density,
+                    imageSizeMultiplier = imageSizeMultiplier,
+                    stackCellsVertically = stackRows
+                )
             }
-            totalHeight
         }
         is WrappingContentBlock -> {
             val imageBlock = block.floatedImage
@@ -1100,6 +1120,217 @@ private suspend fun measureBlockHeight(
     return finalHeight
 }
 
+private suspend fun measureTableRowHeight(
+    row: List<TableCell>,
+    textMeasurer: TextMeasurer,
+    constraints: Constraints,
+    defaultStyle: TextStyle,
+    headerStyle: TextStyle,
+    density: Density,
+    imageSizeMultiplier: Float,
+    stackCellsVertically: Boolean
+): Int {
+    coroutineContext.ensureActive()
+    var rowHeight = 0
+    val totalColspan = row.sumOf { it.colspan }.toFloat().coerceAtLeast(1f)
+
+    for (cell in row) {
+        coroutineContext.ensureActive()
+        val cellBlockStyle = cell.style.blockStyle
+        val cellMaxWidth = when {
+            stackCellsVertically -> constraints.maxWidth
+            cellBlockStyle.width.isSpecified -> with(density) { cellBlockStyle.width.toPx().roundToInt() }
+            else -> (constraints.maxWidth * (cell.colspan.toFloat() / totalColspan)).roundToInt()
+        }
+        val cellConstraints = constraints.copy(maxWidth = cellMaxWidth.coerceAtLeast(0))
+        val cellContentHeight = calculateContentHeightWithMargins(
+            cell.content,
+            textMeasurer,
+            cellConstraints,
+            defaultStyle,
+            headerStyle,
+            density,
+            imageSizeMultiplier
+        )
+
+        val cellDecorationHeight = tableCellVerticalDecorationHeightPx(
+            cell = cell,
+            density = density,
+            stackCellsVertically = stackCellsVertically
+        )
+        val cellHeight = cellContentHeight + cellDecorationHeight
+        rowHeight = if (stackCellsVertically) rowHeight + cellHeight else maxOf(rowHeight, cellHeight)
+    }
+
+    return rowHeight
+}
+private fun tableCellVerticalDecorationHeightPx(
+    cell: TableCell,
+    density: Density,
+    stackCellsVertically: Boolean
+): Int {
+    val cellBlockStyle = cell.style.blockStyle
+    return with(density) {
+        val stackedSpeakerTopPadding = if (stackCellsVertically && cell.isLikelyDramaSpeakerCell()) 24.dp.toPx() else 0f
+        val paddingHeight = if (stackCellsVertically) {
+            stackedSpeakerTopPadding
+        } else {
+            cellBlockStyle.padding.top.toPx() + cellBlockStyle.padding.bottom.toPx()
+        }
+        paddingHeight +
+            (cellBlockStyle.borderTop?.width?.toPx() ?: 0f) +
+            (cellBlockStyle.borderBottom?.width?.toPx() ?: 0f)
+    }.roundToInt()
+}
+private suspend fun splitStackedTableRow(
+    row: List<TableCell>,
+    availableHeight: Int,
+    textMeasurer: TextMeasurer,
+    constraints: Constraints,
+    defaultStyle: TextStyle,
+    headerStyle: TextStyle,
+    density: Density,
+    imageSizeMultiplier: Float
+): Pair<List<TableCell>, List<TableCell>>? {
+    coroutineContext.ensureActive()
+    if (row.size != 1 || availableHeight <= 0) return null
+    val cell = row.single()
+    val cellDecorationHeight = tableCellVerticalDecorationHeightPx(
+        cell = cell,
+        density = density,
+        stackCellsVertically = true
+    )
+    val contentAvailableHeight = (availableHeight - cellDecorationHeight).coerceAtLeast(0)
+    if (contentAvailableHeight <= 0) return null
+
+    val part1Content = mutableListOf<ContentBlock>()
+    val part2Content = mutableListOf<ContentBlock>()
+    var consumedHeight = 0
+    var splitOccurred = false
+    val cellConstraints = constraints.copy(maxWidth = constraints.maxWidth.coerceAtLeast(0))
+
+    for ((index, child) in cell.content.withIndex()) {
+        coroutineContext.ensureActive()
+        if (splitOccurred) {
+            part2Content.add(child)
+            continue
+        }
+
+        val childHeight = measureBlockHeight(
+            block = child,
+            textMeasurer = textMeasurer,
+            constraints = cellConstraints,
+            defaultStyle = defaultStyle,
+            headerStyle = headerStyle,
+            density = density,
+            imageSizeMultiplier = imageSizeMultiplier
+        )
+
+        if (consumedHeight + childHeight <= contentAvailableHeight) {
+            part1Content.add(child)
+            consumedHeight += childHeight
+            continue
+        }
+
+        val remainingForChild = (contentAvailableHeight - consumedHeight).coerceAtLeast(0)
+        if (remainingForChild > 0 && child is TextContentBlock) {
+            splitTextContentBlock(
+                block = child,
+                textMeasurer = textMeasurer,
+                constraints = cellConstraints,
+                textStyle = if (child is HeaderBlock) headerStyle else defaultStyle,
+                availableHeight = remainingForChild,
+                density = density
+            )?.let { (part1, part2) ->
+                part1Content.add(part1)
+                part2Content.add(part2)
+                part2Content.addAll(cell.content.drop(index + 1))
+                return listOf(cell.copy(content = part1Content)) to listOf(cell.copy(content = part2Content))
+            }
+        }
+
+        if (part1Content.isEmpty()) return null
+        part2Content.add(child)
+        part2Content.addAll(cell.content.drop(index + 1))
+        splitOccurred = true
+    }
+
+    if (!splitOccurred || part1Content.isEmpty() || part2Content.isEmpty()) return null
+    return listOf(cell.copy(content = part1Content)) to listOf(cell.copy(content = part2Content))
+}
+private suspend fun splitTextContentBlock(
+    block: TextContentBlock,
+    textMeasurer: TextMeasurer,
+    constraints: Constraints,
+    textStyle: TextStyle,
+    availableHeight: Int,
+    density: Density
+): Pair<ContentBlock, ContentBlock>? {
+    val paragraph = ParagraphBlock(
+        content = block.content,
+        textAlign = block.textAlignForPaginationSplit(),
+        style = block.style,
+        elementId = block.elementId,
+        cfi = block.cfi,
+        startCharOffsetInSource = block.startCharOffsetInSource,
+        endCharOffsetInSource = block.endCharOffsetInSource,
+        blockIndex = block.blockIndex,
+        expectedHeight = block.expectedHeight
+    )
+    val split = splitParagraphBlock(
+        block = paragraph,
+        textMeasurer = textMeasurer,
+        constraints = constraints,
+        textStyle = textStyle.copy(textAlign = paragraph.textAlign ?: textStyle.textAlign),
+        availableHeight = availableHeight,
+        density = density
+    ) ?: return null
+
+    return block.copyFromPaginationSplit(split.first) to block.copyFromPaginationSplit(split.second)
+}
+
+private fun TextContentBlock.textAlignForPaginationSplit(): TextAlign? {
+    return when (this) {
+        is ParagraphBlock -> textAlign
+        is HeaderBlock -> textAlign
+        is QuoteBlock -> textAlign
+        else -> null
+    }
+}
+
+private fun TextContentBlock.copyFromPaginationSplit(part: ParagraphBlock): ContentBlock {
+    return when (this) {
+        is ParagraphBlock -> copy(
+            content = part.content,
+            style = part.style,
+            startCharOffsetInSource = part.startCharOffsetInSource,
+            endCharOffsetInSource = part.endCharOffsetInSource,
+            expectedHeight = part.expectedHeight
+        )
+        is HeaderBlock -> copy(
+            content = part.content,
+            style = part.style,
+            startCharOffsetInSource = part.startCharOffsetInSource,
+            endCharOffsetInSource = part.endCharOffsetInSource,
+            expectedHeight = part.expectedHeight
+        )
+        is QuoteBlock -> copy(
+            content = part.content,
+            style = part.style,
+            startCharOffsetInSource = part.startCharOffsetInSource,
+            endCharOffsetInSource = part.endCharOffsetInSource,
+            expectedHeight = part.expectedHeight
+        )
+        is ListItemBlock -> copy(
+            content = part.content,
+            style = part.style,
+            startCharOffsetInSource = part.startCharOffsetInSource,
+            endCharOffsetInSource = part.endCharOffsetInSource,
+            expectedHeight = part.expectedHeight
+        )
+        else -> part
+    }
+}
 private suspend fun logJustifiedSplitGapIfSuspicious(
     block: ParagraphBlock,
     text: AnnotatedString,
