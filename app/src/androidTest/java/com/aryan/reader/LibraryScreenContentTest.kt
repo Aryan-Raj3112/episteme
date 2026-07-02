@@ -226,7 +226,8 @@ class LibraryScreenContentTest {
             composeTestRule.onAllNodesWithText(text(R.string.items_selected_count, 1)).fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_tag)).performClick()
+        composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_more_options)).performClick()
+        composeTestRule.onNodeWithText(text(R.string.content_desc_tag)).performClick()
         composeTestRule.onNodeWithContentDescription(text(R.string.pin_unpin)).performClick()
         composeTestRule.onNodeWithContentDescription(text(R.string.info)).performClick()
         composeTestRule.onNodeWithContentDescription(text(R.string.select_all)).performClick()
@@ -334,6 +335,7 @@ class LibraryScreenContentTest {
                     onClearFilters = { filters.value = LibraryFilters() },
                     onRemoveFilter = { filters.value = it },
                     onTagClick = onTagClick,
+                    onAddToShelfClick = {},
                     onPinClick = onPinClick,
                     onClearSelection = { selectedItems.value = emptySet() },
                     onItemClick = {},
@@ -341,6 +343,7 @@ class LibraryScreenContentTest {
                     onInfoClick = onInfoClick,
                     onSaveClick = null,
                     onShareClick = null,
+                    onExportAnnotationsClick = null,
                     onDeleteClick = onDeleteClick,
                     onSelectAllClick = onSelectAllClick,
                     onShelfClick = onShelfClick,

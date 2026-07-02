@@ -835,7 +835,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun addSelectedBooksToShelves(shelfIds: Set<String>, bookIds: Set<String>) {
         val sanitizedBookIds = SharedLibraryEditor.cleanBookIds(bookIds)
-        val mutableManualShelfIds = _internalState.value.shelves
+        val mutableManualShelfIds = uiState.value.shelves
             .filter { shelf -> shelf.type == ShelfType.MANUAL && SharedLibraryEditor.canMutateShelf(shelf.id) }
             .mapTo(mutableSetOf()) { shelf -> shelf.id }
         val sanitizedShelfIds = shelfIds
@@ -901,9 +901,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val cleanTagId = tagId.trim().takeIf { it.isNotBlank() } ?: return
         viewModelScope.launch {
             recentFilesRepository.deleteTag(cleanTagId)
+            val projectedFilters = uiState.value.libraryFilters
             val currentFilters = _internalState.value.libraryFilters
-            if (cleanTagId in currentFilters.tagIds) {
-                updateLibraryFilters(currentFilters.copy(tagIds = currentFilters.tagIds - cleanTagId))
+            val filtersToUpdate = if (cleanTagId in projectedFilters.tagIds) projectedFilters else currentFilters
+            if (cleanTagId in filtersToUpdate.tagIds) {
+                updateLibraryFilters(filtersToUpdate.copy(tagIds = filtersToUpdate.tagIds - cleanTagId))
             }
         }
     }

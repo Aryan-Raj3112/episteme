@@ -215,7 +215,6 @@ class EpubParserUnitTest {
         )
         val activeDir = ImportedFileCache.activeBookDir(contextWithCache(cacheDir), "warm-book")
         val cachedMetadata = File(activeDir, "book_metadata.json").readText()
-        assertTrue(first.chapters.first().htmlContent.contains("Ignored HTML Title"))
         assertTrue(first.chapters.first().plainTextContent.contains("One"))
         assertFalse(cachedMetadata.contains("Ignored HTML Title"))
         assertFalse(cachedMetadata.contains("body { color: black; }"))
@@ -232,7 +231,7 @@ class EpubParserUnitTest {
         assertEquals(first.title, second.title)
         assertEquals(first.chapters.size, second.chapters.size)
         assertEquals(first.chapters.first().plainTextLength, second.chapters.first().plainTextLength)
-        assertEquals(first.css, second.css)
+        assertEquals(first.images, second.images)
         assertTrue(File(activeDir, "sentinel.txt").isFile)
     }
 

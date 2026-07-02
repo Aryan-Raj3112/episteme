@@ -136,6 +136,6 @@ class PdfTopBarLayoutTest {
             .getUnclippedBoundsInRoot()
 
         assertThat(themeButtonBounds.left.value)
-            .isGreaterThan(hostBounds.left.value + hostBounds.width.value * 0.58f)
+            .isGreaterThan(hostBounds.left.value + (hostBounds.right.value - hostBounds.left.value) * 0.58f)
     }
 }

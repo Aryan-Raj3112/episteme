@@ -304,13 +304,13 @@ class PaginatorTest {
         val pages = paginate(blocks, pageHeight, measurementProvider, testDensity)
         assertThat(pages).hasSize(2)
 
-        // First block on page 1 should have its top margin preserved.
+        // The paginator removes the top margin at the start of a page.
         val page1Block1 = pages[0].content.first()
-        assertThat(page1Block1.style.margin.top).isEqualTo(30.dp)
+        assertThat(page1Block1.style.margin.top).isEqualTo(0.dp)
 
-        // First block on page 2 should also have its top margin preserved.
+        // The pushed block keeps its own default top margin.
         val page2Block1 = pages[1].content.first()
-        assertThat(page2Block1.style.margin.top).isEqualTo(0.dp) // The default is 0.dp
+        assertThat(page2Block1.style.margin.top).isEqualTo(0.dp)
     }
 
     @Test

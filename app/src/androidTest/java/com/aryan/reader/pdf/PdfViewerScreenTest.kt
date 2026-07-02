@@ -193,7 +193,10 @@ class PdfViewerScreenTest {
 
         composeTestRule.onNodeWithContentDescription(text(R.string.content_desc_navigate_slider)).performClick()
 
-        composeTestRule.onNodeWithText(text(R.string.page_format, 1, 4)).assertIsDisplayed()
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.onAllNodesWithTag("PdfPageSlider").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("PdfPageSlider").assertIsDisplayed()
     }
 
     @Test

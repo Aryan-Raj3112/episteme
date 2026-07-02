@@ -6228,6 +6228,7 @@ fun PdfViewerScreen(
                                 markerValue = sliderStartPage.toFloat(),
                                 markerColor = pdfReaderSliderColors.bookmarkColor,
                                 modifier = Modifier
+                                    .testTag("PdfPageSlider")
                                     .weight(1f)
                                     .height(32.dp)
                             )

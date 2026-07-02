@@ -418,6 +418,17 @@ private class SemanticHtmlParser(
                 inheritedCustomProperties = elementStyle.customProperties
             )
             elementStyle = elementStyle.merge(inlineStyle)
+            val inlineImportantStyle = CssParser.parseProperties(
+                inlineStyleAttribute,
+                textStyle.fontSize.value,
+                density.density,
+                constraints,
+                onlyImportant = true,
+                isDarkTheme = false,
+                adaptThemeColors = adaptThemeColors,
+                inheritedCustomProperties = elementStyle.customProperties
+            )
+            elementStyle = elementStyle.merge(inlineImportantStyle)
         }
 
         element.attr("align").takeIf { it.isNotBlank() }?.let { align ->

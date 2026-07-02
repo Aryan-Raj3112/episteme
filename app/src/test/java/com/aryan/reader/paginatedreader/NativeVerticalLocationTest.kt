@@ -1,6 +1,7 @@
 package com.aryan.reader.paginatedreader
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,27 +33,23 @@ class NativeVerticalLocationTest {
     @Test
     fun `scroll progress updates within visible item offset`() {
         val weights = listOf(100, 300, 600)
+        val halfScrolled = estimateNativeVerticalWeightedScrollProgressPercent(
+            itemWeights = weights,
+            firstVisibleItemIndex = 1,
+            firstVisibleItemScrollOffset = 500,
+            firstVisibleItemSize = 1000
+        )
+        val fullyScrolled = estimateNativeVerticalWeightedScrollProgressPercent(
+            itemWeights = weights,
+            firstVisibleItemIndex = 1,
+            firstVisibleItemScrollOffset = 1000,
+            firstVisibleItemSize = 1000
+        )
 
-        assertEquals(
-            25f,
-            estimateNativeVerticalWeightedScrollProgressPercent(
-                itemWeights = weights,
-                firstVisibleItemIndex = 1,
-                firstVisibleItemScrollOffset = 500,
-                firstVisibleItemSize = 1000
-            ),
-            0.001f
-        )
-        assertEquals(
-            40f,
-            estimateNativeVerticalWeightedScrollProgressPercent(
-                itemWeights = weights,
-                firstVisibleItemIndex = 1,
-                firstVisibleItemScrollOffset = 1000,
-                firstVisibleItemSize = 1000
-            ),
-            0.001f
-        )
+        assertNotNull(halfScrolled)
+        assertEquals(25f, halfScrolled!!, 0.001f)
+        assertNotNull(fullyScrolled)
+        assertEquals(40f, fullyScrolled!!, 0.001f)
     }
 
     @Test

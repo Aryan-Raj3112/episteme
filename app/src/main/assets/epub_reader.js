@@ -1058,8 +1058,8 @@
             body video,
             body canvas,
             body image {
-                width: min(100%, calc(100% * var(--reader-image-size))) !important;
-                max-width: 100% !important;
+                width: auto;
+                max-width: min(100%, calc(100% * var(--reader-image-size))) !important;
                 height: auto !important;
                 display: block !important;
                 float: none !important;

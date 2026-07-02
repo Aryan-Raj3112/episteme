@@ -21,6 +21,8 @@ import org.xmlpull.v1.XmlPullParser
 import timber.log.Timber
 import java.io.File
 import java.io.InputStream
+import java.net.URI
+import java.net.URLDecoder
 import java.util.UUID
 import java.util.zip.ZipInputStream
 import kotlin.math.ceil
@@ -56,7 +58,7 @@ internal class ContentThumbnailGenerator(context: Context) {
         targetHeight: Int
     ): Bitmap? {
         val embeddedThumbnail = runCatching {
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
+            openInputStream(uri)?.use { input ->
                 OdtParser(appContext).createOdtBook(
                     inputStream = input,
                     bookId = item.bookId,
@@ -73,7 +75,7 @@ internal class ContentThumbnailGenerator(context: Context) {
 
     private suspend fun generateMobiThumbnail(uri: Uri, item: RecentFileItem, targetHeight: Int): Bitmap? {
         return runCatching {
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
+            openInputStream(uri)?.use { input ->
                 val book = MobiParser(appContext).createMobiBook(
                     inputStream = input,
                     bookId = item.bookId,
@@ -92,7 +94,7 @@ internal class ContentThumbnailGenerator(context: Context) {
         var cacheFile: File? = null
         return try {
             cacheFile = File(appContext.cacheDir, "temp_archive_cover_${UUID.randomUUID()}.${type.name.lowercase()}")
-            appContext.contentResolver.openInputStream(uri)?.use { input ->
+            openInputStream(uri)?.use { input ->
                 cacheFile.outputStream().use { output -> input.copyTo(output) }
             } ?: return null
 
@@ -122,8 +124,28 @@ internal class ContentThumbnailGenerator(context: Context) {
         }
     }
 
+    private fun openInputStream(uri: Uri): InputStream? {
+        return if (uri.scheme.equals("file", ignoreCase = true)) {
+            fileFromUri(uri)?.inputStream()
+        } else {
+            appContext.contentResolver.openInputStream(uri)
+        }
+    }
+
+    private fun fileFromUri(uri: Uri): File? {
+        runCatching { File(URI(uri.toString())) }.getOrNull()?.let { return it }
+        uri.path?.takeIf { it.isNotBlank() }?.let { return File(it) }
+        val rawPath = uri.toString().removePrefix("file:").takeIf { it.isNotBlank() } ?: return null
+        val normalizedPath = when {
+            rawPath.startsWith("///") -> rawPath.drop(3)
+            rawPath.length > 2 && rawPath[0] == '/' && rawPath[2] == ':' -> rawPath.drop(1)
+            else -> rawPath
+        }
+        return File(URLDecoder.decode(normalizedPath, Charsets.UTF_8.name()))
+    }
+
     private fun generateTextPreview(uri: Uri, type: FileType, targetHeight: Int = 800): Bitmap? {
-        val text = appContext.contentResolver.openInputStream(uri)?.use { input ->
+        val text = openInputStream(uri)?.use { input ->
             when (type) {
                 FileType.FB2 -> extractXmlText(input, textTags = FB2_TEXT_TAGS, rootTag = "body")
                 FileType.HTML -> extractHtmlText(input)

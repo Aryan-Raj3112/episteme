@@ -509,25 +509,29 @@ class MainViewModelTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}
         }
-        val item = recentFile("external-book", type = FileType.PDF)
-        coEvery { anyConstructed<RecentFilesRepository>().getFileByBookId(item.bookId) } returns item
-        viewModel.trackExternalOpenForClose(
-            bookId = item.bookId,
-            importedCopyUriString = null,
+        val externalUri = mockUri("content://external/temp.pdf", path = "/temp.pdf", lastPathSegment = "temp.pdf")
+        val resolver = mockk<ContentResolver>()
+        every { mockApplication.contentResolver } returns resolver
+        every { resolver.getType(externalUri) } returns "application/pdf"
+        every { resolver.query(externalUri, null, null, null, null) } returns null
+
+        viewModel.onFileSelected(
+            externalUri,
+            isFromRecent = false,
+            isExternalIntent = true,
             isTemporaryExternalIntent = true
         )
-        viewModel.onRecentFileClicked(item)
         advanceUntilIdle()
-        viewModel.uiState.first { it.selectedBookId == item.bookId }
-        val finishEvent = backgroundScope.async { viewModel.temporaryExternalOpenFinished.first() }
+        val selected = viewModel.uiState.first { it.selectedBookId?.startsWith("temporary-") == true }
+        val finishEvent = async { viewModel.temporaryExternalOpenFinished.first() }
 
         viewModel.clearSelectedFile()
         advanceUntilIdle()
 
         assertEquals(null, viewModel.uiState.value.showExternalFileSavePromptFor)
-        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().deleteFilePermanently(listOf(item.bookId)) }
-        coVerify(exactly = 0) { anyConstructed<BookImporter>().deleteBookByUriString(item.uriString!!) }
-        assertTrue(finishEvent.isCompleted)
+        coVerify(exactly = 0) { anyConstructed<RecentFilesRepository>().deleteFilePermanently(listOf(selected.selectedBookId!!)) }
+        coVerify(exactly = 0) { anyConstructed<BookImporter>().deleteBookByUriString(externalUri.toString()) }
+        assertEquals(Unit, finishEvent.await())
     }
 
     @Test
@@ -913,7 +917,8 @@ class MainViewModelTest {
         advanceUntilIdle()
 
         coVerify { anyConstructed<RecentFilesRepository>().deleteTag("favorite") }
-        assertEquals(setOf("keep"), viewModel.uiState.value.libraryFilters.tagIds)
+        val filteredState = viewModel.uiState.first { it.libraryFilters.tagIds == setOf("keep") }
+        assertEquals(setOf("keep"), filteredState.libraryFilters.tagIds)
         verify { mockEditor.putStringSet(KEY_FILTER_TAG_IDS, setOf("keep")) }
     }
     @Test

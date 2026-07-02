@@ -1519,4 +1519,31 @@
     <string name="tts_replacements_replace_only_spoken">Asendage ainult see, mida räägitakse</string>
     <string name="tts_replacements_replace_only_spoken_desc">Lugeja tekst, esiletõstmised ja asukohad jäävad muutumatuks.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
+    <!-- TODO: Translate newly added fallback strings. -->
+    <string name="external_file_behavior_ask_desc">After closing an externally opened file, ask whether to keep it in the library or remove it.</string>
+    <string name="external_file_behavior_keep_desc">Externally opened files are copied into the library and kept after closing.</string>
+    <string name="external_file_behavior_delete_desc">Externally opened files are copied for reading, then removed after closing.</string>
+    <string name="external_file_behavior_temporary">Open Temporarily</string>
+    <string name="external_file_behavior_temporary_desc">Open directly from the source app in a temporary reader. Back returns to that app without adding the file to the library.</string>
+    <string name="banner_exporting_annotations">Exporting annotations...</string>
+    <string name="banner_annotations_exported">Annotations exported successfully.</string>
+    <string name="banner_no_annotations_to_export">No annotations to export.</string>
+    <string name="error_exporting_annotations">Error exporting annotations: %1$s</string>
+    <string name="search_chapters_placeholder">Search chapters</string>
+    <string name="no_chapters_matching">No chapters found for &quot;%1$s&quot;.</string>
+    <string name="banner_tag_deleted">Deleted tag &quot;%1$s&quot;.</string>
+    <string name="menu_delete_tag">Delete tag</string>
+    <string name="dialog_delete_tag_desc">Delete tag &quot;%1$s&quot;? It will be removed from every book.</string>
+    <string name="action_export_annotations">Export annotations</string>
+    <string name="dialog_export_annotations_title">Export annotations</string>
+    <string name="export_annotations_markdown">Markdown (.md)</string>
+    <string name="export_annotations_text">Text (.txt)</string>
+    <string name="label_cover">Cover</string>
+    <string name="label_current_cover_kept">Current cover will be kept</string>
+    <string name="label_current_cover">Current cover</string>
+    <string name="label_current_cover_generated">Generated cover preview</string>
+    <string name="action_change_cover">Change cover</string>
+    <string name="action_clear_selection">Clear selection</string>
+    <string name="desktop_dev_tools">Dev tools</string>
+    <string name="desktop_dev_tools_desc">Maintenance actions for debugging desktop reader behavior.</string>
 </resources>

@@ -39,10 +39,14 @@ class TtsUtilsTest {
     }
 
     @Test
-    fun splitTextIntoChunks_withLongSentence_doesNotSplitSentence() {
+    fun splitTextIntoChunks_withLongSentence_splitsOnWordsWhenNeeded() {
         val text = "This is a very long sentence that exceeds the maximum chunk length but has no punctuation to split on."
         val chunks = splitTextIntoChunks(text, 50)
-        assertThat(chunks).containsExactly(text)
+        assertThat(chunks).containsExactly(
+            "This is a very long sentence that exceeds the",
+            "maximum chunk length but has no punctuation to",
+            "split on."
+        ).inOrder()
     }
 
     @Test

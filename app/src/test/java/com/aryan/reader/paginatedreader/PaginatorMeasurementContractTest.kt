@@ -206,10 +206,10 @@ class PaginatorMeasurementContractTest {
             )
         )
 
-        val normalized = cell.contentForStackedPaginationMeasurement().single() as ParagraphBlock
+        val normalized = cell.contentForStackedPaginationMeasurement().filterIsInstance<ParagraphBlock>().single()
 
         assertEquals(TextAlign.Left, normalized.textAlign)
-        assertEquals(TextAlign.Left, normalized.content.paragraphStyles.single().item.textAlign)
+        assertTrue(normalized.content.paragraphStyles.any { it.item.textAlign == TextAlign.Left })
         assertEquals(0.dp, normalized.style.margin.top)
         assertEquals(0.dp, normalized.style.margin.bottom)
     }

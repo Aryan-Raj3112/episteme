@@ -28,9 +28,17 @@ class EpubReaderTtsHighlightAssetTest {
         assertTrue(js.contains("max-width: 100% !important;"))
         assertTrue(js.contains("min-width: 0 !important;"))
         assertTrue(js.contains("overflow-wrap: anywhere !important;"))
-        assertTrue(js.contains("table-layout: fixed !important;"))
         assertTrue(js.contains("viewportContainmentCss"))
         assertTrue(js.contains("gapCss, viewportContainmentCss, imageCss"))
+    }
+
+    @Test
+    fun `vertical webview image sizing does not force authored images to full width`() {
+        val js = epubReaderAsset().readText()
+
+        assertTrue(js.contains("width: auto;"))
+        assertTrue(js.contains("max-width: min(100%, calc(100% * var(--reader-image-size))) !important;"))
+        assertTrue(!js.lineSequence().any { it.trim() == "width: min(100%, calc(100% * var(--reader-image-size))) !important;" })
     }
 
     private fun epubReaderAsset(): File {

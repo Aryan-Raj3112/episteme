@@ -20,8 +20,6 @@
 package com.aryan.reader.pdf.data
 
 import android.graphics.RectF
-import android.util.JsonReader
-import android.util.JsonToken
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -107,22 +105,22 @@ object AnnotationSerializer {
     }
 
     fun fromJson(reader: Reader): Map<Int, List<PdfAnnotation>> {
+        return parseAnnotationArray(reader.readText())
+    }
+
+    private fun parseAnnotationArray(json: String): Map<Int, List<PdfAnnotation>> {
         val resultMap = mutableMapOf<Int, MutableList<PdfAnnotation>>()
+        if (json.isBlank()) return resultMap
         try {
-            JsonReader(reader).use { jsonReader ->
-                jsonReader.isLenient = true
-                if (jsonReader.peek() != JsonToken.BEGIN_ARRAY) return emptyMap()
-                jsonReader.beginArray()
-                var annotationsRead = 0
-                while (jsonReader.hasNext() && annotationsRead < MAX_ANNOTATIONS_PER_LOAD) {
-                    readAnnotation(jsonReader)?.let { annotation ->
-                        resultMap.getOrPut(annotation.pageIndex) { mutableListOf() }.add(annotation)
-                    }
-                    annotationsRead++
+            val rootArray = JSONArray(json)
+            val count = minOf(rootArray.length(), MAX_ANNOTATIONS_PER_LOAD)
+            for (index in 0 until count) {
+                readAnnotation(rootArray.optJSONObject(index))?.let { annotation ->
+                    resultMap.getOrPut(annotation.pageIndex) { mutableListOf() }.add(annotation)
                 }
-                if (jsonReader.hasNext()) {
-                    Timber.w("PDF ink annotation load capped at $MAX_ANNOTATIONS_PER_LOAD annotations")
-                }
+            }
+            if (rootArray.length() > MAX_ANNOTATIONS_PER_LOAD) {
+                Timber.w("PDF ink annotation load capped at $MAX_ANNOTATIONS_PER_LOAD annotations")
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to parse PDF ink annotations")
@@ -132,126 +130,57 @@ object AnnotationSerializer {
         return resultMap
     }
 
-    private fun readAnnotation(reader: JsonReader): PdfAnnotation? {
-        var pageIndex: Int? = null
-        var annTypeStr = AnnotationType.INK.name
-        var inkTypeStr = ""
-        var legacyInkTypeStr: String? = null
-        var colorInt: Int? = null
-        var strokeWidth: Float? = null
-        var id: String? = null
-        var note: String? = null
-        var points: List<PdfPoint> = emptyList()
-
-        reader.beginObject()
-        while (reader.hasNext()) {
-            when (reader.nextName()) {
-                "pageIndex" -> pageIndex = reader.nextIntSafely()
-                "annotationType" -> annTypeStr = reader.nextStringSafely().orEmpty()
-                "inkType" -> inkTypeStr = reader.nextStringSafely().orEmpty()
-                "type" -> legacyInkTypeStr = reader.nextStringSafely()
-                "color" -> colorInt = reader.nextIntSafely()
-                "strokeWidth" -> strokeWidth = reader.nextDoubleSafely()?.toFloat()
-                "id" -> id = reader.nextStringSafely()
-                "note" -> note = reader.nextStringSafely()
-                "points" -> points = readPoints(reader)
-                else -> reader.skipValue()
-            }
-        }
-        reader.endObject()
-
-        val resolvedPageIndex = pageIndex ?: return null
-        val resolvedColor = colorInt ?: return null
-        val resolvedStrokeWidth = strokeWidth ?: return null
-        val annType = runCatching { AnnotationType.valueOf(annTypeStr) }.getOrDefault(AnnotationType.INK)
-        val resolvedInkTypeStr = inkTypeStr.ifBlank { legacyInkTypeStr.orEmpty() }.ifBlank { InkType.PEN.name }
+    private fun readAnnotation(obj: JSONObject?): PdfAnnotation? {
+        if (obj == null) return null
+        val pageIndex = obj.optNumber("pageIndex")?.toInt() ?: return null
+        val colorInt = obj.optNumber("color")?.toInt() ?: return null
+        val strokeWidth = obj.optNumber("strokeWidth")?.toFloat() ?: return null
+        val annType = runCatching { AnnotationType.valueOf(obj.optString("annotationType", AnnotationType.INK.name)) }
+            .getOrDefault(AnnotationType.INK)
+        val resolvedInkTypeStr = obj.optString("inkType").ifBlank { obj.optString("type") }.ifBlank { InkType.PEN.name }
         val inkType = runCatching { InkType.valueOf(resolvedInkTypeStr) }.getOrDefault(InkType.PEN)
-
         return PdfAnnotation(
             type = annType,
             inkType = inkType,
-            pageIndex = resolvedPageIndex,
-            points = points,
-            color = Color(resolvedColor),
-            strokeWidth = resolvedStrokeWidth,
-            id = id?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
-            note = note?.takeIf { it.isNotBlank() }
+            pageIndex = pageIndex,
+            points = readPoints(obj.optJSONArray("points")),
+            color = Color(colorInt),
+            strokeWidth = strokeWidth,
+            id = obj.optString("id").takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
+            note = obj.optString("note").takeIf { it.isNotBlank() }
         )
     }
 
-    private fun readPoints(reader: JsonReader): List<PdfPoint> {
-        if (reader.peek() != JsonToken.BEGIN_ARRAY) {
-            reader.skipValue()
-            return emptyList()
+    private fun readPoints(array: JSONArray?): List<PdfPoint> {
+        if (array == null) return emptyList()
+        val count = minOf(array.length(), MAX_POINTS_PER_ANNOTATION)
+        val points = ArrayList<PdfPoint>(count)
+        for (index in 0 until count) {
+            readPoint(array.optJSONObject(index))?.let(points::add)
         }
-        val points = ArrayList<PdfPoint>()
-        reader.beginArray()
-        var pointCount = 0
-        while (reader.hasNext()) {
-            if (pointCount < MAX_POINTS_PER_ANNOTATION) {
-                readPoint(reader)?.let(points::add)
-            } else {
-                reader.skipValue()
-            }
-            pointCount++
-        }
-        reader.endArray()
-        if (pointCount > MAX_POINTS_PER_ANNOTATION) {
+        if (array.length() > MAX_POINTS_PER_ANNOTATION) {
             Timber.w("PDF ink annotation point list capped at $MAX_POINTS_PER_ANNOTATION points")
         }
         return points
     }
 
-    private fun readPoint(reader: JsonReader): PdfPoint? {
-        var x: Float? = null
-        var y: Float? = null
-        var timestamp = 0L
-        reader.beginObject()
-        while (reader.hasNext()) {
-            when (reader.nextName()) {
-                "x" -> x = reader.nextDoubleSafely()?.toFloat()
-                "y" -> y = reader.nextDoubleSafely()?.toFloat()
-                "t" -> timestamp = reader.nextLongSafely() ?: 0L
-                else -> reader.skipValue()
-            }
-        }
-        reader.endObject()
-        val resolvedX = x ?: return null
-        val resolvedY = y ?: return null
-        return PdfPoint(resolvedX, resolvedY, timestamp)
+    private fun readPoint(obj: JSONObject?): PdfPoint? {
+        if (obj == null) return null
+        val x = obj.optNumber("x")?.toFloat() ?: return null
+        val y = obj.optNumber("y")?.toFloat() ?: return null
+        val timestamp = obj.optNumber("t")?.toLong() ?: 0L
+        return PdfPoint(x, y, timestamp)
     }
 
-    private fun JsonReader.nextStringSafely(): String? {
-        return when (peek()) {
-            JsonToken.NULL -> {
-                nextNull()
-                null
-            }
-            JsonToken.STRING, JsonToken.NUMBER, JsonToken.BOOLEAN -> nextString()
-            else -> {
-                skipValue()
-                null
-            }
+    private fun JSONObject.optNumber(name: String): Number? {
+        if (!has(name) || isNull(name)) return null
+        return when (val value = opt(name)) {
+            is Number -> value
+            is String -> value.toDoubleOrNull()
+            else -> null
         }
     }
 
-    private fun JsonReader.nextDoubleSafely(): Double? {
-        return when (peek()) {
-            JsonToken.NULL -> {
-                nextNull()
-                null
-            }
-            JsonToken.NUMBER, JsonToken.STRING -> runCatching { nextDouble() }.getOrNull()
-            else -> {
-                skipValue()
-                null
-            }
-        }
-    }
-
-    private fun JsonReader.nextIntSafely(): Int? = nextDoubleSafely()?.toInt()
-
-    private fun JsonReader.nextLongSafely(): Long? = nextDoubleSafely()?.toLong()
 }
 
 object TextBoxSerializer {

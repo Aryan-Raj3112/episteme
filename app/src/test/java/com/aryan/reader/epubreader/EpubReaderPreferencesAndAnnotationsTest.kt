@@ -199,18 +199,22 @@ class EpubReaderPreferencesAndAnnotationsTest {
         val prefs = TestSharedPreferences()
         val context = contextWithPrefs(SETTINGS_PREFS_NAME to prefs)
 
-        saveHighlightPalette(context, listOf(HighlightColor.CYAN, HighlightColor.MAGENTA, HighlightColor.LIME, HighlightColor.PINK).map { it.color.toArgb() })
+        val customPalette = listOf(
+            HighlightColor.CYAN,
+            HighlightColor.MAGENTA,
+            HighlightColor.LIME,
+            HighlightColor.PINK
+        ).map { it.color.toArgb() }
 
-        assertEquals(
-            listOf(HighlightColor.CYAN, HighlightColor.MAGENTA, HighlightColor.LIME, HighlightColor.PINK),
-            loadHighlightPalette(context)
-        )
+        saveHighlightPalette(context, customPalette)
+
+        assertEquals(customPalette, loadHighlightPalette(context))
 
         val invalidContext = contextWithPrefs(
             SETTINGS_PREFS_NAME to TestSharedPreferences("highlight_palette_ids" to "yellow,unknown,blue")
         )
         assertEquals(
-            listOf(HighlightColor.YELLOW, HighlightColor.GREEN, HighlightColor.BLUE, HighlightColor.RED),
+            listOf(HighlightColor.YELLOW, HighlightColor.GREEN, HighlightColor.BLUE, HighlightColor.RED).map { it.color.toArgb() },
             loadHighlightPalette(invalidContext)
         )
     }
@@ -341,7 +345,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
             .put("snippet", "Valid")
             .put("chapterIndex", 0)
             .toString()
-        val malformed = "{"cfi":"/broken""
+        val malformed = """{"cfi":"/broken"""
         val context = contextWithPrefs()
 
         val bookmarks = loadBookmarks(context, "Book", listOf(chapter("Chapter")), JSONArray(listOf(valid, malformed)).toString())
@@ -351,9 +355,9 @@ class EpubReaderPreferencesAndAnnotationsTest {
 
     @Test
     fun `escapeJsString escapes all characters that break JavaScript string literals`() {
-        val raw = "\\ ' " \n \r \t \u2028 \u2029"
+        val raw = "\\ ' \" \n \r \t \u2028 \u2029"
 
-        assertEquals("\\\\ \\' \" \\n \\r \\t \\u2028 \\u2029", escapeJsString(raw))
+        assertEquals("\\\\ \\' \\\" \\n \\r \\t \\u2028 \\u2029", escapeJsString(raw))
     }
 
     @Test
