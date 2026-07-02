@@ -241,6 +241,7 @@ private const val PREF_AI_MODEL_SUMMARIZE = "model_summarize"
 private const val PREF_AI_MODEL_RECAP = "model_recap"
 private const val PREF_AI_TTS_MODEL = "tts_model"
 private const val PREF_AI_MODEL_EMPTY_MIGRATION_DONE = "model_empty_migration_done"
+private const val PREF_AI_SUMMARIZE_PROMPT = "summarize_prompt"
 private const val AI_KEYSTORE_ALIAS = "reader_ai_byok_key_v1"
 private const val ENCRYPTION_PREFIX = "v1:"
 const val GEMINI_CLOUD_TTS_MODEL = "gemini-3.1-flash-live-preview"
@@ -272,6 +273,17 @@ data class AiModelOption(
     val id: String = "$provider:$name"
 }
 
+const val DEFAULT_SUMMARIZE_PROMPT = """
+    System Role: You are an expert technical educator. You will be given an image of a page. Your task is to rewrite the provided page from a technical book into a clear, spoken-word explanation. You are not summarizing (don't skip details), and you are not translating literally (don't be robotic). You are explaining.
+    Task Instructions:
+        Preserve Technical Accuracy: Keep all specific terms, variables, and core logic. Do not omit the "meat" of the technical content.
+        Conversational Bridge: Use transition phrases like "Looking at the next section," "Essentially, this means," or "To put that into practice." This helps the listener follow along without seeing the page.
+        Handle Visuals/Code: If the text refers to a diagram or a code block, describe it briefly (e.g., "The code shows a loop where...") rather than reading out syntax like 'bracket, semicolon.'
+        Audio-First Formatting:
+            Write in full, flowing sentences.
+            Strictly No Markdown: No asterisks, bolding, or bullet points.
+            Use words for symbols if they are vital (e.g., say "plus" instead of "+")."""
+
 data class AiByokSettings(
     val geminiKey: String = "",
     val groqKey: String = "",
@@ -280,7 +292,8 @@ data class AiByokSettings(
     val defineModel: String = "",
     val summarizeModel: String = "",
     val recapModel: String = "",
-    val ttsModel: String = ""
+    val ttsModel: String = "",
+    val summarizePrompt: String = ""
 )
 
 val aiByokModelOptions = listOf(
@@ -366,7 +379,8 @@ fun loadAiByokSettings(context: Context): AiByokSettings {
         defineModel = prefs.getString(PREF_AI_MODEL_DEFINE, "") ?: "",
         summarizeModel = prefs.getString(PREF_AI_MODEL_SUMMARIZE, "") ?: "",
         recapModel = prefs.getString(PREF_AI_MODEL_RECAP, "") ?: "",
-        ttsModel = prefs.getString(PREF_AI_TTS_MODEL, "") ?: ""
+        ttsModel = prefs.getString(PREF_AI_TTS_MODEL, "") ?: "",
+        summarizePrompt = prefs.getString(PREF_AI_SUMMARIZE_PROMPT, "") ?: ""
     )
     val geminiStored = prefs.getString(PREF_AI_GEMINI_KEY, "").orEmpty()
     val groqStored = prefs.getString(PREF_AI_GROQ_KEY, "").orEmpty()
@@ -388,7 +402,20 @@ fun saveAiByokSettings(context: Context, settings: AiByokSettings) {
         putString(PREF_AI_MODEL_SUMMARIZE, settings.summarizeModel)
         putString(PREF_AI_MODEL_RECAP, settings.recapModel)
         putString(PREF_AI_TTS_MODEL, settings.ttsModel)
+        putString(PREF_AI_SUMMARIZE_PROMPT, settings.summarizePrompt)
     }
+}
+
+fun loadSummarizePrompt(context: Context): String {
+    return context.aiPrefs().getString(PREF_AI_SUMMARIZE_PROMPT, "").orEmpty()
+}
+
+fun saveSummarizePrompt(context: Context, prompt: String) {
+    context.aiPrefs().edit { putString(PREF_AI_SUMMARIZE_PROMPT, prompt) }
+}
+
+fun resetSummarizePrompt(context: Context) {
+    context.aiPrefs().edit { putString(PREF_AI_SUMMARIZE_PROMPT, "") }
 }
 
 fun saveAiByokKey(context: Context, provider: String, key: String) {

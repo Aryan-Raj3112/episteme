@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
@@ -58,6 +60,12 @@ fun AiSettingsScreen(
         "gemini" to stringResource(R.string.provider_gemini),
         "groq" to stringResource(R.string.provider_groq),
     )
+    var promptText by remember {
+        mutableStateOf(
+            loadSummarizePrompt(context).ifBlank { DEFAULT_SUMMARIZE_PROMPT.trimIndent() }
+        )
+    }
+    var showResetPromptConfirm by remember { mutableStateOf(false) }
 
     fun refresh() {
         settings = loadAiByokSettings(context)
@@ -199,6 +207,52 @@ fun AiSettingsScreen(
                 options = listOf(AiModelOption("gemini", GEMINI_CLOUD_TTS_MODEL)),
                 onSelected = { updateModels(settings.copy(ttsModel = it)) }
             )
+
+            HorizontalDivider()
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "AI Page Explanation Prompt",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Customise the system instruction sent to the AI when explaining a book page. Leave as-is to use the built-in default.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = { showResetPromptConfirm = true }) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = "Reset prompt to default"
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = promptText,
+                onValueChange = { promptText = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp),
+                label = { Text("System Prompt") },
+                maxLines = Int.MAX_VALUE
+            )
+
+            Button(
+                onClick = {
+                    saveSummarizePrompt(context, promptText)
+                },
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text("Save Prompt")
+            }
         }
     }
 
@@ -237,6 +291,24 @@ fun AiSettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { providerToDelete = null }) { Text(stringResource(R.string.action_cancel)) }
+            }
+        )
+    }
+
+    if (showResetPromptConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetPromptConfirm = false },
+            title = { Text("Reset Prompt") },
+            text = { Text("Restore the AI page explanation prompt to its built-in default? Your current edits will be lost.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    resetSummarizePrompt(context)
+                    promptText = DEFAULT_SUMMARIZE_PROMPT.trimIndent()
+                    showResetPromptConfirm = false
+                }) { Text("Reset") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetPromptConfirm = false }) { Text(stringResource(R.string.action_cancel)) }
             }
         )
     }

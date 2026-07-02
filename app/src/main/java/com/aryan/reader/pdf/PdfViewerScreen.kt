@@ -233,6 +233,8 @@ import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
 import com.aryan.reader.areReaderAiFeaturesEnabled
 import com.aryan.reader.callByokGeminiInlineAi
+import com.aryan.reader.DEFAULT_SUMMARIZE_PROMPT
+import com.aryan.reader.loadSummarizePrompt
 import com.aryan.reader.cardTitle
 import com.aryan.reader.epubreader.AutoScrollControls
 import com.aryan.reader.epubreader.DictionarySettingsDialog
@@ -482,6 +484,7 @@ fun PdfViewerScreen(
         }
     }
     var documentMetadataTitle by remember { mutableStateOf<String?>(null) }
+    var documentMetadataAuthor by remember { mutableStateOf<String?>(null) }
     val activeLibraryItem by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, uiState.selectedBookId, effectivePdfUri) {
         derivedStateOf {
             uiState.selectedBookId?.let { selectedId ->
@@ -3073,12 +3076,29 @@ fun PdfViewerScreen(
                 @Suppress("KotlinConstantConditions")
                 if (BuildConfig.FLAVOR == "oss") {
                     val fullText = StringBuilder()
+                    val bookName = documentMetadataTitle ?: originalFileName
+                    val authorName = documentMetadataAuthor ?: uiState.recentFiles.find { it.uriString == effectivePdfUri.toString() }?.author ?: "Unknown Author"
+                    val displayPageNumber = currentPage + 1
+
+                    val userPromptBase = loadSummarizePrompt(context)
+                        .ifBlank { DEFAULT_SUMMARIZE_PROMPT.trimIndent() }
+                    val systemInstruction = """
+                        $userPromptBase
+                        Output Structure:
+                        "On page $displayPageNumber, the author explains [Insert the adapted technical explanation here]."
+                        [Data Delimiter]
+                        Below is the book details from which image is took. Please process this text according to the instructions above:
+                        Book name: $bookName
+                        Author: $authorName
+                        page number: $displayPageNumber
+                    """.trimIndent()
+
                     callByokGeminiInlineAi(
                         context = context,
                         feature = AiFeature.SUMMARIZE,
                         mimeType = "image/jpeg",
                         base64Data = base64Image,
-                        systemInstruction = "You are an expert in analyzing visual content. You will be given an image of a page. Describe what is happening, identify key information, and summarize the text. Do not add a preamble.",
+                        systemInstruction = systemInstruction,
                         temperature = 0.2,
                         maxTokens = 8192,
                         onUpdate = {
@@ -3592,6 +3612,7 @@ fun PdfViewerScreen(
         isDocumentReady = false
         errorMessage = null
         documentMetadataTitle = null
+        documentMetadataAuthor = null
         isPrintBlockedForPasswordProtectedPdf = false
         currentBookId = null
         areAnnotationsLoaded = false
@@ -3728,6 +3749,11 @@ fun PdfViewerScreen(
                 documentMetadataTitle = (doc as? PdfDocumentWrapper)?.let { wrapper ->
                     PdfiumEngineProvider.withPdfium {
                         wrapper.pdfDocument.getDocumentMeta().title?.takeIf { it.isNotBlank() }
+                    }
+                }
+                documentMetadataAuthor = (doc as? PdfDocumentWrapper)?.let { wrapper ->
+                    PdfiumEngineProvider.withPdfium {
+                        wrapper.pdfDocument.getDocumentMeta().author?.takeIf { it.isNotBlank() }
                     }
                 }
                 Timber.tag(PDF_RENAME_TRACE_TAG).i(
