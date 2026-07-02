@@ -171,6 +171,15 @@ internal fun shouldStartTtsTransitionPrefetch(
     return currentGeneration != deferredGeneration
 }
 
+internal fun shouldUseSeparateTtsMediaButtonPreferences(): Boolean {
+    // Media3 1.8.0 can crash its legacy bridge when a separate one-button custom media layout is published.
+    return false
+}
+
+internal fun shouldPublishTtsTransportButtonsInCustomLayout(): Boolean {
+    // Keep the legacy bridge away from indexing custom transport actions against Media3 media button preferences.
+    return false
+}
 internal fun shouldStopTtsPrefetchAfterMissingChunk(
     isLoaded: Boolean,
     playlistIndex: Int?
@@ -494,8 +503,8 @@ class TtsPlaybackManager(
         return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
             .setAvailableSessionCommands(availableSessionCommands)
             .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)
+            .setMediaButtonPreferences(createMediaButtonPreferences())
             .setCustomLayout(createCustomLayout(_ttsState.value))
-            .setMediaButtonPreferences(createNotificationButtons())
             .setSessionActivity(createSessionActivity(_ttsState.value))
             .build()
     }
@@ -2324,19 +2333,31 @@ class TtsPlaybackManager(
 
     private fun updateSessionControls(state: TtsState) {
         mediaSession?.let { session ->
+            session.setMediaButtonPreferences(createMediaButtonPreferences())
             session.setCustomLayout(createCustomLayout(state))
-            session.setMediaButtonPreferences(createNotificationButtons())
             session.setSessionActivity(createSessionActivity(state))
         }
     }
 
     private fun createCustomLayout(state: TtsState): List<CommandButton> {
+        val stateButton = createStateButton(state)
+        if (!shouldPublishTtsTransportButtonsInCustomLayout()) {
+            return listOf(stateButton)
+        }
         return listOf(
-            createStateButton(state),
+            stateButton,
             createPreviousChunkCommandButton(state),
             createNextChunkCommandButton(state),
             createStopCommandButton()
         )
+    }
+
+    private fun createMediaButtonPreferences(): List<CommandButton> {
+        return if (shouldUseSeparateTtsMediaButtonPreferences()) {
+            createNotificationButtons()
+        } else {
+            emptyList()
+        }
     }
 
     private fun createNotificationButtons(): List<CommandButton> {

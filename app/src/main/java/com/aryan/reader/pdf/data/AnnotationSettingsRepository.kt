@@ -20,6 +20,7 @@
 package com.aryan.reader.pdf.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.aryan.reader.pdf.InkType
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -111,14 +113,24 @@ data class AnnotationToolSettings(
 }
 
 class AnnotationSettingsRepository(context: Context) {
-    private val prefs = context.getSharedPreferences("annotation_settings_global", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext ?: context
     private val scope = CoroutineScope(Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
+    private val hasLocalChanges = AtomicBoolean(false)
 
     private val keySettings = "tool_settings_v4_defaults"
 
-    private val _settings = MutableStateFlow(loadSettings())
+    private val _settings = MutableStateFlow(AnnotationToolSettings())
     val settings = _settings.asStateFlow()
+
+    init {
+        scope.launch {
+            val storedSettings = loadSettings()
+            if (!hasLocalChanges.get()) {
+                _settings.value = storedSettings
+            }
+        }
+    }
 
     companion object {
         fun getDefaultConfig(type: InkType): ToolConfig {
@@ -134,8 +146,11 @@ class AnnotationSettingsRepository(context: Context) {
         }
     }
 
+    private fun prefs(): SharedPreferences =
+        appContext.getSharedPreferences("annotation_settings_global", Context.MODE_PRIVATE)
+
     private fun loadSettings(): AnnotationToolSettings {
-        val jsonString = prefs.getString(keySettings, null)
+        val jsonString = prefs().getString(keySettings, null)
         return if (jsonString != null) {
             try {
                 json.decodeFromString(jsonString)
@@ -149,10 +164,11 @@ class AnnotationSettingsRepository(context: Context) {
     }
 
     private fun saveSettings(newSettings: AnnotationToolSettings) {
+        hasLocalChanges.set(true)
         _settings.update { newSettings }
         scope.launch {
             val jsonString = json.encodeToString(newSettings)
-            prefs.edit { putString(keySettings, jsonString) }
+            prefs().edit { putString(keySettings, jsonString) }
         }
     }
 

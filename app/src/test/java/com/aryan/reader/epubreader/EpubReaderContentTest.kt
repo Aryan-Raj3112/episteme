@@ -198,6 +198,27 @@ class EpubReaderContentTest {
         assertEquals(emptyList<String>(), result.chunks)
     }
 
+    @Test
+    fun `initialReaderLoadedChunkCount caps deep webview starts`() {
+        assertEquals(8, initialReaderLoadedChunkCount(totalChunks = 100, targetChunkIndex = 80))
+        assertEquals(3, initialReaderLoadedChunkCount(totalChunks = 3, targetChunkIndex = 1))
+        assertEquals(0, initialReaderLoadedChunkCount(totalChunks = 0, targetChunkIndex = 10))
+    }
+
+    @Test
+    fun `shouldInlineInitialReaderChunk only inlines bounded prefix`() {
+        assertTrue(shouldInlineInitialReaderChunk(index = 7, totalChunks = 100, targetChunkIndex = 80))
+        assertFalse(shouldInlineInitialReaderChunk(index = 8, totalChunks = 100, targetChunkIndex = 80))
+        assertTrue(shouldInlineInitialReaderChunk(index = 2, totalChunks = 3, targetChunkIndex = 1))
+    }
+
+    @Test
+    fun `readerChunkPlaceholderHeightPx uses chunk element count estimate`() {
+        assertEquals(720, readerChunkPlaceholderHeightPx(index = 1, chunkElementCounts = listOf(20, 10)))
+        assertEquals(72, readerChunkPlaceholderHeightPx(index = 0, chunkElementCounts = listOf(0)))
+        assertEquals(1440, readerChunkPlaceholderHeightPx(index = 5, chunkElementCounts = emptyList()))
+    }
+
     private fun writeChapter(root: java.io.File, relativePath: String, html: String) {
         val file = java.io.File(root, relativePath)
         file.parentFile?.mkdirs()

@@ -135,54 +135,60 @@ internal object PdfiumAnnotationExporter {
                 }
 
                 val exported = PdfiumEngineProvider.withPdfium {
-                    NativePdfiumBridge.exportAnnotatedPdf(
-                        sourcePath = sourceFile.absolutePath,
-                        destPath = destFile.absolutePath,
-                        inkPageIndices = payload.inkPageIndices,
-                        inkTypes = payload.inkTypes,
-                        inkColors = payload.inkColors,
-                        inkStrokeWidths = payload.inkStrokeWidths,
-                        inkPointOffsets = payload.inkPointOffsets,
-                        inkPointCounts = payload.inkPointCounts,
-                        inkPoints = payload.inkPoints,
-                        inkNames = payload.inkNames,
-                        inkContents = payload.inkContents,
-                        textPageIndices = payload.textPageIndices,
-                        textBounds = payload.textBounds,
-                        textColors = payload.textColors,
-                        textBackgroundColors = payload.textBackgroundColors,
-                        textFontSizes = payload.textFontSizes,
-                        textFlags = payload.textFlags,
-                        textValues = payload.textValues,
-                        textFontPaths = payload.textFontPaths,
-                        textFontNames = payload.textFontNames,
-                        rasterPageIndices = payload.rasterPageIndices,
-                        rasterBounds = payload.rasterBounds,
-                        rasterWidths = payload.rasterWidths,
-                        rasterHeights = payload.rasterHeights,
-                        rasterPixelOffsets = payload.rasterPixelOffsets,
-                        rasterPixels = payload.rasterPixels,
-                        highlightPageIndices = payload.highlightPageIndices,
-                        highlightSubtypes = payload.highlightSubtypes,
-                        highlightColors = payload.highlightColors,
-                        highlightRectOffsets = payload.highlightRectOffsets,
-                        highlightRectCounts = payload.highlightRectCounts,
-                        highlightRects = payload.highlightRects,
-                        highlightNames = payload.highlightNames,
-                        highlightContents = payload.highlightContents,
-                        highlightCommentOffsets = payload.highlightCommentOffsets,
-                        highlightCommentCounts = payload.highlightCommentCounts,
-                        highlightCommentParentIndices = payload.highlightCommentParentIndices,
-                        highlightCommentNames = payload.highlightCommentNames,
-                        highlightCommentAuthors = payload.highlightCommentAuthors,
-                        highlightCommentContents = payload.highlightCommentContents,
-                        highlightCommentCreatedDates = payload.highlightCommentCreatedDates,
-                        highlightCommentModifiedDates = payload.highlightCommentModifiedDates
-                    )
+                    if (!NativePdfiumBridge.ensureLoaded()) {
+                        false
+                    } else {
+                        NativePdfiumBridge.exportAnnotatedPdf(
+                            sourcePath = sourceFile.absolutePath,
+                            destPath = destFile.absolutePath,
+                            inkPageIndices = payload.inkPageIndices,
+                            inkTypes = payload.inkTypes,
+                            inkColors = payload.inkColors,
+                            inkStrokeWidths = payload.inkStrokeWidths,
+                            inkPointOffsets = payload.inkPointOffsets,
+                            inkPointCounts = payload.inkPointCounts,
+                            inkPoints = payload.inkPoints,
+                            inkNames = payload.inkNames,
+                            inkContents = payload.inkContents,
+                            textPageIndices = payload.textPageIndices,
+                            textBounds = payload.textBounds,
+                            textColors = payload.textColors,
+                            textBackgroundColors = payload.textBackgroundColors,
+                            textFontSizes = payload.textFontSizes,
+                            textFlags = payload.textFlags,
+                            textValues = payload.textValues,
+                            textFontPaths = payload.textFontPaths,
+                            textFontNames = payload.textFontNames,
+                            rasterPageIndices = payload.rasterPageIndices,
+                            rasterBounds = payload.rasterBounds,
+                            rasterWidths = payload.rasterWidths,
+                            rasterHeights = payload.rasterHeights,
+                            rasterPixelOffsets = payload.rasterPixelOffsets,
+                            rasterPixels = payload.rasterPixels,
+                            highlightPageIndices = payload.highlightPageIndices,
+                            highlightSubtypes = payload.highlightSubtypes,
+                            highlightColors = payload.highlightColors,
+                            highlightRectOffsets = payload.highlightRectOffsets,
+                            highlightRectCounts = payload.highlightRectCounts,
+                            highlightRects = payload.highlightRects,
+                            highlightNames = payload.highlightNames,
+                            highlightContents = payload.highlightContents,
+                            highlightCommentOffsets = payload.highlightCommentOffsets,
+                            highlightCommentCounts = payload.highlightCommentCounts,
+                            highlightCommentParentIndices = payload.highlightCommentParentIndices,
+                            highlightCommentNames = payload.highlightCommentNames,
+                            highlightCommentAuthors = payload.highlightCommentAuthors,
+                            highlightCommentContents = payload.highlightCommentContents,
+                            highlightCommentCreatedDates = payload.highlightCommentCreatedDates,
+                            highlightCommentModifiedDates = payload.highlightCommentModifiedDates
+                        )
+                    }
                 }
 
                 if (!exported) {
-                    throw IOException("PDFium failed to write annotated PDF.")
+                    Timber.tag("PdfExportDebug").w("Native PDF bridge unavailable; exporting original PDF without annotation flattening.")
+                    FileInputStream(sourceFile).use { input -> input.copyTo(destStream) }
+                    return@withContext
                 }
 
                 FileInputStream(destFile).use { input -> input.copyTo(destStream) }

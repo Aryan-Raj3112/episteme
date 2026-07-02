@@ -218,6 +218,29 @@ class LocatorConverterTest {
         }
     }
 
+    @Test
+    fun `on demand processing rechecks cache before parsing locked chapter`() = runTest {
+        val cachedChapter = ProcessedChapter(
+            bookId = "Book",
+            chapterIndex = 0,
+            contentBlocksProto = proto.encodeToByteArray(semanticBlocks()),
+            estimatedPageCount = 1
+        )
+        val dao = FakeBookCacheDao(
+            chapter = null,
+            queuedChapters = ArrayDeque<ProcessedChapter?>().apply {
+                add(null)
+                add(cachedChapter)
+            }
+        )
+        val converter = LocatorConverter(dao, proto, mockk<Context>(relaxed = true))
+
+        val locator = converter.getLocatorFromCfi(book(), chapterIndex = 0, cfi = "/4/2/6:7")
+
+        assertEquals(Locator(chapterIndex = 0, blockIndex = 2, charOffset = 7), locator)
+        assertTrue(dao.insertedChapters.isEmpty())
+    }
+
     private fun converterFor(blocks: List<SemanticBlock>, estimatedPageCount: Int = 1): LocatorConverter {
         val chapter = ProcessedChapter(
             bookId = "Book",
@@ -281,14 +304,15 @@ class LocatorConverterTest {
     }
 
     private class FakeBookCacheDao(
-        private val chapter: ProcessedChapter?
+        private val chapter: ProcessedChapter?,
+        private val queuedChapters: ArrayDeque<ProcessedChapter?> = ArrayDeque()
     ) : BookCacheDao() {
         val requestedBookIds = mutableListOf<String>()
         val insertedChapters = mutableListOf<ProcessedChapter>()
 
         override suspend fun getProcessedChapter(bookId: String, chapterIndex: Int, styleConfigHash: Int?): ProcessedChapter? {
             requestedBookIds += bookId
-            return chapter
+            return if (queuedChapters.isNotEmpty()) queuedChapters.removeFirst() else chapter
         }
         override suspend fun insertProcessedChapters(chapters: List<ProcessedChapter>) {
             insertedChapters += chapters

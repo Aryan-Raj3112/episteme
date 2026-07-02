@@ -140,9 +140,10 @@ object PdfToHtmlGenerator {
 
                     val pagePtr = getNativePointer(page)
                     val textPagePtr = getNativePointer(textPage)
+                    val nativeAvailable = NativePdfiumBridge.ensureLoaded()
 
                     val imageElements = mutableListOf<ImageElement>()
-                    val objCount = NativePdfiumBridge.getPageObjectCount(pagePtr)
+                    val objCount = if (nativeAvailable) NativePdfiumBridge.getPageObjectCount(pagePtr) else 0
                     for (i in 0 until objCount) {
                         if (NativePdfiumBridge.getPageObjectType(pagePtr, i) == 3) {
                             val bbox = FloatArray(4)
@@ -180,10 +181,10 @@ object PdfToHtmlGenerator {
                     val flags: IntArray?
                     val charBoxes: FloatArray?
 
-                    sizes = NativePdfiumBridge.getPageFontSizes(textPagePtr, actualCount)
-                    weights = NativePdfiumBridge.getPageFontWeights(textPagePtr, actualCount)
-                    flags = NativePdfiumBridge.getPageFontFlags(textPagePtr, actualCount)
-                    charBoxes = NativePdfiumBridge.getPageCharBoxes(textPagePtr, actualCount)
+                    sizes = if (nativeAvailable) NativePdfiumBridge.getPageFontSizes(textPagePtr, actualCount) else null
+                    weights = if (nativeAvailable) NativePdfiumBridge.getPageFontWeights(textPagePtr, actualCount) else null
+                    flags = if (nativeAvailable) NativePdfiumBridge.getPageFontFlags(textPagePtr, actualCount) else null
+                    charBoxes = if (nativeAvailable) NativePdfiumBridge.getPageCharBoxes(textPagePtr, actualCount) else null
 
                     if (sizes == null || weights == null || flags == null) {
                         return@use buildFallbackPageSection(pageNumber, rawText)
@@ -304,7 +305,7 @@ object PdfToHtmlGenerator {
                     }
                 } ?: buildEmptyPageSection(pageNumber)
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Timber.tag(TAG).w(e, "Error extracting page $pageIdx")
             buildEmptyPageSection(pageNumber)
         }

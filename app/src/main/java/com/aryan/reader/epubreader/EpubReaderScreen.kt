@@ -1135,15 +1135,13 @@ fun EpubReaderHost(
     var chapterHead by remember(currentChapterIndex) { mutableStateOf("") }
     val epubFontFaceCss = remember(epubBook.css, epubBook.extractionBasePath) {
         val fontFaces = epubBook.css.flatMap { (path, content) ->
-            CssParser.parse(
+            CssParser.parseFontFaces(
                 cssContent = content,
                 cssPath = path,
-                baseFontSizeSp = 16f,
-                density = 1f,
                 constraints = Constraints(maxWidth = 1, maxHeight = 1),
                 isDarkTheme = false,
                 adaptThemeColors = false
-            ).fontFaces
+            )
         }
         buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
     }
@@ -2508,11 +2506,11 @@ fun EpubReaderHost(
 
         if (initialScrollTargetForChapter == ChapterScrollPosition.END) {
             loadUpToChunkIndex = max(0, result.chunks.size - 1)
-            loadedChunkCount = result.chunks.size
+            loadedChunkCount = initialReaderLoadedChunkCount(result.chunks.size, loadUpToChunkIndex)
             topVisibleChunkIndex = loadUpToChunkIndex
         } else {
             loadUpToChunkIndex = result.startChunkIndex
-            loadedChunkCount = min(result.chunks.size, result.startChunkIndex + 2)
+            loadedChunkCount = initialReaderLoadedChunkCount(result.chunks.size, result.startChunkIndex)
             topVisibleChunkIndex = 0
         }
 
@@ -4833,8 +4831,6 @@ fun EpubReaderHost(
                                             chapterChunkElementCounts
                                         ) {
                                             val targetIdx = loadUpToChunkIndex
-                                            val startIdx = 0
-                                            val endIdx = minOf(chapterChunks.lastIndex, targetIdx + 1)
 
                                             chapterChunks.indices.joinToString(separator = "\n") { index ->
                                                 val attributes = readerChunkContainerAttributes(
@@ -4842,10 +4838,14 @@ fun EpubReaderHost(
                                                     chapterChunkElementStartIndices,
                                                     chapterChunkElementCounts
                                                 )
-                                                if (index in startIdx..endIdx) {
+                                                if (shouldInlineInitialReaderChunk(index, chapterChunks.size, targetIdx)) {
                                                     "<div class='chunk-container' $attributes>${chapterChunks[index]}</div>"
                                                 } else {
-                                                    "<div class='chunk-container' $attributes></div>"
+                                                    val placeholderHeightPx = readerChunkPlaceholderHeightPx(
+                                                        index,
+                                                        chapterChunkElementCounts
+                                                    )
+                                                    "<div class='chunk-container' $attributes style='height: ${placeholderHeightPx}px'></div>"
                                                 }
                                             }
                                         }
@@ -4875,15 +4875,13 @@ fun EpubReaderHost(
                                                 .head()
                                                 .getElementsByTag("style")
                                                 .flatMap { styleElement ->
-                                                    CssParser.parse(
+                                                    CssParser.parseFontFaces(
                                                         cssContent = styleElement.data(),
                                                         cssPath = chapterToRender.absPath,
-                                                        baseFontSizeSp = 16f,
-                                                        density = 1f,
                                                         constraints = Constraints(maxWidth = 1, maxHeight = 1),
                                                         isDarkTheme = false,
                                                         adaptThemeColors = false
-                                                    ).fontFaces
+                                                    )
                                                 }
                                             buildEpubFontFaceCss(fontFaces, epubBook.extractionBasePath)
                                         }

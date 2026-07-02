@@ -86,8 +86,10 @@ fun shouldInterceptAppNavBack(
     hasPreviousBackStackEntry: Boolean,
     isCurrentEntryResumed: Boolean
 ): Boolean {
-    if (!hasPreviousBackStackEntry || !isCurrentEntryResumed) return false
-    return currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE
+    if (!hasPreviousBackStackEntry) return false
+    val isNonMainBackStackRoute = currentRoute != null && currentRoute != AppDestinations.MAIN_ROUTE
+    if (!isCurrentEntryResumed) return isNonMainBackStackRoute
+    return isNonMainBackStackRoute
 }
 
 fun shouldSyncSelectedFileRoute(currentRoute: String?): Boolean {
@@ -107,7 +109,7 @@ private suspend fun NavHostController.awaitReadyForBackStackChange() {
     }
 }
 
-private fun NavHostController.navigateSingleTopTo(route: String) {
+private fun NavHostController.navigateSingleTopTo(route: String, popUpToStart: Boolean = false) {
     if (!isReadyForBackStackChange()) {
         Timber.d("Skipping navigation to $route because the current entry is not resumed yet.")
         return
@@ -116,8 +118,10 @@ private fun NavHostController.navigateSingleTopTo(route: String) {
     try {
         navigate(route) {
             launchSingleTop = true
-            popUpTo(graph.startDestinationId) {
-                saveState = false
+            if (popUpToStart) {
+                popUpTo(graph.startDestinationId) {
+                    saveState = false
+                }
             }
         }
     } catch (e: IllegalStateException) {
@@ -126,12 +130,12 @@ private fun NavHostController.navigateSingleTopTo(route: String) {
 }
 
 private fun NavHostController.navigateToMain() {
-    navigateSingleTopTo(AppDestinations.MAIN_ROUTE)
+    navigateSingleTopTo(AppDestinations.MAIN_ROUTE, popUpToStart = true)
 }
 
-private fun NavHostController.navigateIfReady(route: String) {
+internal fun NavHostController.navigateIfReady(route: String, popUpToStart: Boolean = false) {
     if (currentDestination?.route == route) return
-    navigateSingleTopTo(route)
+    navigateSingleTopTo(route, popUpToStart = popUpToStart)
 }
 
 private fun NavHostController.popBackStackIfReady(): Boolean {
@@ -285,7 +289,7 @@ fun AppNavigation(
                             }
                         },
                         onNavigateToPro = {
-                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE, popUpToStart = true)
                         },
                         viewModel = viewModel
                     )
@@ -360,7 +364,7 @@ fun AppNavigation(
                                 }
                             },
                             onNavigateToPro = {
-                                navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                                navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE, popUpToStart = true)
                             },
                             onRenderModeChange = viewModel::setRenderMode,
                             customFonts = customFonts,

@@ -132,6 +132,41 @@ class HtmlParserLinkTest {
         assertEquals(FontStyle.Italic, italicSpan.style.spanStyle.fontStyle)
     }
 
+    @Test
+    fun `selector matching cache preserves complex cascade and generated content`() {
+        val cssRules = CssParser.parse(
+            cssContent = """
+                p.note { color: red; }
+                .box p.note { color: blue; }
+                p.note::before { content: 'Before '; }
+                p.note::after { content: ' After'; }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false
+        ).rules
+
+        val blocks = parse(
+            html = """
+            <html>
+              <body>
+                <div class="box"><p class="note">Body <span>child</span></p></div>
+              </body>
+            </html>
+            """.trimIndent(),
+            cssRules = cssRules
+        )
+
+        val paragraph = blocks.single() as SemanticParagraph
+
+        assertEquals("Before Body child After", paragraph.text)
+        assertEquals(androidx.compose.ui.graphics.Color.Blue, paragraph.style.spanStyle.color)
+        assertTrue(paragraph.spans.any { it.tag == "::before" && it.start == 0 })
+        assertTrue(paragraph.spans.any { it.tag == "::after" && it.end == paragraph.text.length })
+    }
+
     private fun parse(
         html: String,
         cssRules: OptimizedCssRules = OptimizedCssRules(),

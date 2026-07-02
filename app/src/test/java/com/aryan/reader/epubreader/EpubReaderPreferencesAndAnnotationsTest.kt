@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.aryan.reader.countWords
 import com.aryan.reader.epub.EpubChapter
 import io.mockk.every
 import io.mockk.mockk
@@ -239,6 +240,18 @@ class EpubReaderPreferencesAndAnnotationsTest {
     }
 
     @Test
+    fun `countWords counts whitespace separated words without regex allocation`() {
+        assertEquals(0, countWords(" \t\n "))
+        assertEquals(1, countWords("word"))
+        assertEquals(3, countWords(" one\ttwo\nthree "))
+
+        val source = java.io.File("app/src/main/java/com/aryan/reader/Common.kt")
+            .takeIf { it.isFile }
+            ?: java.io.File("src/main/java/com/aryan/reader/Common.kt")
+        assertFalse(source.readText().contains("split(Regex("))
+    }
+
+    @Test
     fun `highlight preference storage uses sanitized title and can be cleared`() {
         val prefs = TestSharedPreferences()
         val context = contextWithPrefs(SETTINGS_PREFS_NAME to prefs)
@@ -328,7 +341,7 @@ class EpubReaderPreferencesAndAnnotationsTest {
             .put("snippet", "Valid")
             .put("chapterIndex", 0)
             .toString()
-        val malformed = "{\"cfi\":\"/broken\""
+        val malformed = "{"cfi":"/broken""
         val context = contextWithPrefs()
 
         val bookmarks = loadBookmarks(context, "Book", listOf(chapter("Chapter")), JSONArray(listOf(valid, malformed)).toString())
@@ -338,9 +351,9 @@ class EpubReaderPreferencesAndAnnotationsTest {
 
     @Test
     fun `escapeJsString escapes all characters that break JavaScript string literals`() {
-        val raw = "\\ ' \" \n \r \t \u2028 \u2029"
+        val raw = "\\ ' " \n \r \t \u2028 \u2029"
 
-        assertEquals("\\\\ \\' \\\" \\n \\r \\t \\u2028 \\u2029", escapeJsString(raw))
+        assertEquals("\\\\ \\' \" \\n \\r \\t \\u2028 \\u2029", escapeJsString(raw))
     }
 
     @Test

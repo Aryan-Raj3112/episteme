@@ -206,6 +206,16 @@ class TtsChunkNavigationTest {
         )
     }
 
+    @Test
+    fun `tts does not publish separate media button preferences`() {
+        assertEquals(false, shouldUseSeparateTtsMediaButtonPreferences())
+    }
+
+    @Test
+    fun `tts keeps transport buttons out of media3 custom layout`() {
+        assertEquals(false, shouldPublishTtsTransportButtonsInCustomLayout())
+    }
+
     @androidx.annotation.OptIn(UnstableApi::class)
     @Test
     fun `reader tts mini bar is visible only for active reader playback outside reader routes`() {

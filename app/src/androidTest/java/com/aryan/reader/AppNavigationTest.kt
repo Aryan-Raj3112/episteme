@@ -73,7 +73,7 @@ class AppNavigationTest {
     }
 
     @Test
-    fun appNavBackInterceptor_onlyHandlesResumedNonReaderBackStackEntries() {
+    fun appNavBackInterceptor_handlesNonMainBackStackEntriesDuringTransitions() {
         assertThat(
             shouldInterceptAppNavBack(
                 currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
@@ -94,7 +94,7 @@ class AppNavigationTest {
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = true
             )
-        ).isFalse()
+        ).isTrue()
         assertThat(
             shouldInterceptAppNavBack(
                 currentRoute = AppDestinations.PRO_SCREEN_ROUTE,
@@ -108,7 +108,7 @@ class AppNavigationTest {
                 hasPreviousBackStackEntry = true,
                 isCurrentEntryResumed = false
             )
-        ).isFalse()
+        ).isTrue()
     }
 
     private fun FileType.readerSurfaceOnAndroid(): ReaderFeatureSurface? {

@@ -16,13 +16,23 @@ class PdfReleaseRulesTest {
         assertTrue(rules.contains("-keep class com.aryan.reader.pdf.NativePdfiumBridge"))
     }
 
-    private fun readProguardRules(): String {
+    @Test
+    fun `native pdfium bridge loads lazily`() {
+        val source = readSourceFile("src/main/java/com/aryan/reader/pdf/NativePdfiumBridge.kt")
+
+        assertTrue(source.contains("fun ensureLoaded(): Boolean"))
+        assertTrue(!source.contains("init {\n        System.loadLibrary"))
+    }
+
+    private fun readProguardRules(): String = readSourceFile("proguard-rules.pro")
+
+    private fun readSourceFile(path: String): String {
         val candidates = listOf(
-            File("proguard-rules.pro"),
-            File("app/proguard-rules.pro")
+            File(path),
+            File("app", path)
         )
         val file = candidates.firstOrNull { it.isFile }
-        requireNotNull(file) { "Unable to locate app proguard-rules.pro" }
+        requireNotNull(file) { "Unable to locate $path" }
         return file.readText()
     }
 }

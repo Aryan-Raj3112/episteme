@@ -610,7 +610,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         )
     )
 
-    private suspend fun prepareBookForImport(externalUri: Uri): ImportResult? {
+    private suspend fun prepareBookForImport(externalUri: Uri): ImportResult? = withContext(Dispatchers.IO) {
         val displayName = getFileNameFromUri(externalUri, appContext)
         var type = getFileTypeFromUri(externalUri, appContext)
 
@@ -619,7 +619,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
         if (hash == null) {
             Timber.e("Failed to process file hash for $externalUri")
-            return null
+            return@withContext null
         }
 
         val existingItem = recentFilesRepository.getFileByBookId(hash)
@@ -632,7 +632,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             } else {
                 Timber.i("Book with ID: $hash already exists. Skipping import.")
-                return null
+                return@withContext null
             }
         }
 
@@ -643,7 +643,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.d("MainViewModel: Calibre processZip returned: $bundleResult")
 
             if (bundleResult != null) {
-                return ImportResult(
+                return@withContext ImportResult(
                     internalUri = bundleResult.internalBookUri,
                     bookId = hash,
                     type = bundleResult.type,
@@ -653,11 +653,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             if (type == null) type = FileType.CBZ
         }
 
-        if (type == null) return null
+        if (type == null) return@withContext null
 
         Timber.i("Importing new book with ID: $hash")
-        val internalFile = bookImporter.importBook(externalUri) ?: return null
-        return ImportResult(internalFile.toUri(), hash, type, null)
+        val internalFile = bookImporter.importBook(externalUri) ?: return@withContext null
+        return@withContext ImportResult(internalFile.toUri(), hash, type, null)
     }
 
     val libraryFlow = combine(
@@ -5225,7 +5225,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val importResult = prepareBookForImport(externalUri)
 
@@ -5300,7 +5300,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 contextualActionItems = emptySet()
             )
         }
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val type = getFileTypeFromUri(externalUri, appContext)
             if (type == null) {
                 _internalState.update {

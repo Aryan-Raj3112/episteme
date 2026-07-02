@@ -25,7 +25,7 @@ class AppNavigationBackTest {
     }
 
     @Test
-    fun `app back does not intercept main missing previous or non resumed entries`() {
+    fun `app back intercepts non main routes even while transition is settling`() {
         assertFalse(
             shouldInterceptAppNavBack(
                 currentRoute = AppDestinations.MAIN_ROUTE,
@@ -40,7 +40,7 @@ class AppNavigationBackTest {
                 isCurrentEntryResumed = true
             )
         )
-        assertFalse(
+        assertTrue(
             shouldInterceptAppNavBack(
                 currentRoute = AppDestinations.SETTINGS_SCREEN_ROUTE,
                 hasPreviousBackStackEntry = true,

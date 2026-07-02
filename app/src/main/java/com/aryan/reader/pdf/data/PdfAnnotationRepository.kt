@@ -82,9 +82,10 @@ class PdfAnnotationRepository(private val context: Context) {
             try {
                 val file = getFile(bookId)
                 if (file.exists()) {
-                    val json = file.readText()
                     Timber.tag("AnnotationSync").d("Loaded local JSON for $bookId. Size: ${file.length()}")
-                    AnnotationSerializer.fromJson(json)
+                    file.bufferedReader(Charsets.UTF_8).use { reader ->
+                        AnnotationSerializer.fromJson(reader)
+                    }
                 } else {
                     Timber.tag("AnnotationSync").d("No local annotation file found for $bookId")
                     emptyMap()

@@ -18,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.StringReader
 
 @RunWith(RobolectricTestRunner::class)
 class PdfReaderSerializerTest {
@@ -91,6 +92,31 @@ class PdfReaderSerializerTest {
         assertEquals(0L, decoded.points.single().timestamp)
         assertTrue(AnnotationSerializer.fromJson("not json").isEmpty())
         assertTrue(AnnotationSerializer.fromJson("").isEmpty())
+    }
+
+    @Test
+    fun `AnnotationSerializer streams reader input and caps oversized point lists`() {
+        val points = (0..5_000).joinToString(separator = ",") { index ->
+            """{"x":0.1,"y":0.2,"t":$index}"""
+        }
+        val json = """
+            [
+              {
+                "pageIndex": 7,
+                "annotationType": "INK",
+                "inkType": "PEN",
+                "color": -16777216,
+                "strokeWidth": 0.25,
+                "points": [$points]
+              }
+            ]
+        """.trimIndent()
+
+        val decoded = AnnotationSerializer.fromJson(StringReader(json)).getValue(7).single()
+
+        assertEquals(5_000, decoded.points.size)
+        assertEquals(0L, decoded.points.first().timestamp)
+        assertEquals(4_999L, decoded.points.last().timestamp)
     }
 
     @Test

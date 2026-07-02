@@ -18,6 +18,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationSerializer
 import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,6 +66,15 @@ class PdfReaderSettingsAndSharedModelsTest {
 
             assertTrue("Expected positive thickness for $type", config.thickness > 0f)
         }
+    }
+
+    @Test
+    fun `AnnotationSettingsRepository loads stored settings off construction path`() {
+        val source = readSourceFile("src/main/java/com/aryan/reader/pdf/data/AnnotationSettingsRepository.kt")
+
+        assertTrue(source.contains("MutableStateFlow(AnnotationToolSettings())"))
+        assertTrue(source.contains("scope.launch"))
+        assertFalse(source.contains("MutableStateFlow(loadSettings())"))
     }
 
     @Test
@@ -363,5 +373,15 @@ class PdfReaderSettingsAndSharedModelsTest {
         assertEquals(PdfOverflowMenuSection.FILE_INFO, visibleSections.last())
         assertFalse(PdfOverflowMenuSection.FILE_INFO in missingItemSections)
         assertFalse(PdfOverflowMenuSection.FILE_INFO in hiddenSections)
+    }
+
+    private fun readSourceFile(path: String): String {
+        val candidates = listOf(
+            File(path),
+            File("app", path)
+        )
+        val file = candidates.firstOrNull { it.isFile }
+        requireNotNull(file) { "Unable to locate $path" }
+        return file.readText()
     }
 }

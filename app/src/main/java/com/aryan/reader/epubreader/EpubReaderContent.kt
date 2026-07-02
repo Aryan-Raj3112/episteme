@@ -35,6 +35,8 @@ import timber.log.Timber
 import java.io.File
 
 private const val TXT_FORMAT_TRACE_TAG = "TxtFormatTrace"
+private const val MAX_INITIAL_WEBVIEW_CHUNKS = 8
+private const val ESTIMATED_READER_CHUNK_ELEMENT_HEIGHT_PX = 72
 
 private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
     return replace("\\", "\\\\")
@@ -86,6 +88,33 @@ internal fun readerChunkContainerAttributes(
     val startIndex = chunkElementStartIndices.getOrElse(index) { index * 20 }
     val elementCount = chunkElementCounts.getOrElse(index) { 20 }
     return "data-chunk-index='$index' data-element-start-index='$startIndex' data-element-count='$elementCount'"
+}
+
+internal fun initialReaderLoadedChunkCount(
+    totalChunks: Int,
+    targetChunkIndex: Int,
+    maxInitialChunks: Int = MAX_INITIAL_WEBVIEW_CHUNKS
+): Int {
+    if (totalChunks <= 0 || maxInitialChunks <= 0) return 0
+    val boundedTarget = targetChunkIndex.coerceIn(0, totalChunks - 1)
+    return minOf(totalChunks, boundedTarget + 2, maxInitialChunks)
+}
+
+internal fun shouldInlineInitialReaderChunk(
+    index: Int,
+    totalChunks: Int,
+    targetChunkIndex: Int,
+    maxInitialChunks: Int = MAX_INITIAL_WEBVIEW_CHUNKS
+): Boolean {
+    return index in 0 until initialReaderLoadedChunkCount(totalChunks, targetChunkIndex, maxInitialChunks)
+}
+
+internal fun readerChunkPlaceholderHeightPx(
+    index: Int,
+    chunkElementCounts: List<Int>
+): Int {
+    val elementCount = chunkElementCounts.getOrElse(index) { 20 }.coerceAtLeast(1)
+    return elementCount * ESTIMATED_READER_CHUNK_ELEMENT_HEIGHT_PX
 }
 
 /**

@@ -169,6 +169,12 @@ internal fun highlightColorFromToken(token: String): Pair<HighlightColor, Int?> 
     return legacy to null
 }
 
+private fun String.sanitizedAnnotationPrefsKey(): String =
+    buildString(length) {
+        for (char in this@sanitizedAnnotationPrefsKey) {
+            if (char.isLetterOrDigit()) append(char)
+        }
+    }
 // --- Persistence Helpers ---
 
 fun loadBookmarks(context: Context, bookTitle: String, chapters: List<EpubChapter>, bookmarksJson: String?): Set<Bookmark> {
@@ -176,7 +182,7 @@ fun loadBookmarks(context: Context, bookTitle: String, chapters: List<EpubChapte
         return EpubAnnotationSerializer.parseBookmarksJson(bookmarksJson, chapters.map { it.title })
     } else {
         val prefs = context.getSharedPreferences(BOOKMARK_PREFS_NAME, Context.MODE_PRIVATE)
-        val key = "bookmarks_cfi_${bookTitle.replace("[^a-zA-Z0-9]".toRegex(), "")}"
+        val key = "bookmarks_cfi_${bookTitle.sanitizedAnnotationPrefsKey()}"
         prefs.getStringSet(key, emptySet()) ?: emptySet()
     }
 
@@ -185,14 +191,14 @@ fun loadBookmarks(context: Context, bookTitle: String, chapters: List<EpubChapte
 
 fun saveHighlightsToPrefs(context: Context, bookTitle: String, highlights: List<UserHighlight>) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    val sanitizedTitle = bookTitle.replace("[^a-zA-Z0-9]".toRegex(), "")
+    val sanitizedTitle = bookTitle.sanitizedAnnotationPrefsKey()
     val key = "highlights_data_$sanitizedTitle"
     prefs.edit { putString(key, EpubAnnotationSerializer.highlightsToJson(highlights)) }
 }
 
 fun loadHighlightsFromPrefs(context: Context, bookTitle: String): List<UserHighlight> {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    val sanitizedTitle = bookTitle.replace("[^a-zA-Z0-9]".toRegex(), "")
+    val sanitizedTitle = bookTitle.sanitizedAnnotationPrefsKey()
     val key = "highlights_data_$sanitizedTitle"
     val jsonString = prefs.getString(key, "[]") ?: "[]"
     return EpubAnnotationSerializer.parseHighlightsJson(jsonString)
@@ -212,7 +218,7 @@ fun bookmarksToJson(bookmarks: Collection<Bookmark>): String {
 
 fun clearHighlightsFromPrefs(context: Context, bookTitle: String) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
-    val sanitizedTitle = bookTitle.replace("[^a-zA-Z0-9]".toRegex(), "")
+    val sanitizedTitle = bookTitle.sanitizedAnnotationPrefsKey()
     val key = "highlights_data_$sanitizedTitle"
     prefs.edit { remove(key) }
 }

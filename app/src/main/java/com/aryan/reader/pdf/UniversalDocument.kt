@@ -247,7 +247,7 @@ class PdfPageWrapper(
         pageIndex: Int,
         linkAnnotationSubtype: Int
     ): PdfNativePageOverlayExtraction = PdfiumEngineProvider.withPdfium {
-        if (isUnavailable() || bitmapWidthPx <= 0 || bitmapHeightPx <= 0) {
+        if (isUnavailable() || bitmapWidthPx <= 0 || bitmapHeightPx <= 0 || !NativePdfiumBridge.ensureLoaded()) {
             return@withPdfium PdfNativePageOverlayExtraction()
         }
 
@@ -289,7 +289,7 @@ class PdfPageWrapper(
         deviceX: Int,
         deviceY: Int
     ): PdfNativeTapResult = PdfiumEngineProvider.withPdfium {
-        if (isUnavailable() || bitmapWidthPx <= 0 || bitmapHeightPx <= 0) {
+        if (isUnavailable() || bitmapWidthPx <= 0 || bitmapHeightPx <= 0 || !NativePdfiumBridge.ensureLoaded()) {
             return@withPdfium PdfNativeTapResult()
         }
 
@@ -365,7 +365,7 @@ class PdfPageWrapper(
                 }
             }
             rects
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Timber.tag("PdfImageDebug").e(e, "Error extracting image rects")
             emptyList()
         }
@@ -415,7 +415,7 @@ class PdfPageWrapper(
             }
 
             groupEmbeddedAnnotationsForDisplay(annotations)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Timber.tag("PdfCommentDebug").e(e, "Error extracting annotations")
             emptyList()
         }

@@ -1209,7 +1209,17 @@ suspend fun fetchAiDefinition(
 }
 
 fun countWords(text: String): Int {
-    return text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size
+    var count = 0
+    var inWord = false
+    for (char in text) {
+        if (char.isWhitespace()) {
+            inWord = false
+        } else if (!inWord) {
+            count++
+            inWord = true
+        }
+    }
+    return count
 }
 
 private fun streamGeminiAiResponse(

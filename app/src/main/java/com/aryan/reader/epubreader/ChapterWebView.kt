@@ -1130,9 +1130,7 @@ fun ChapterWebView(
                                 view?.evaluateJavascript(js) { result ->
                                     val chunkIdx = result?.toIntOrNull() ?: -1
                                     if (chunkIdx >= 0) {
-                                        for (i in 0..chunkIdx) {
-                                            onChunkRequested(i)
-                                        }
+                                        onChunkRequested(chunkIdx)
                                         val scrollJs = """
                                             (function() {
                                                 var chunkIndex = $chunkIdx;

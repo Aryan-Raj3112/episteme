@@ -45,6 +45,13 @@ private object ReaderCssLog {
     fun e(@Suppress("UNUSED_PARAMETER") throwable: Throwable, @Suppress("UNUSED_PARAMETER") message: String) = Unit
 }
 
+
+private fun Char.isAsciiLetterOrDigit(): Boolean =
+    this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
+
+private fun Char.isCssIdentifierChar(): Boolean =
+    isAsciiLetterOrDigit() || this == '_' || this == '-'
+
 private fun Color.luminance(): Float {
     if (!this.isSpecified) return 0f
     return (0.299f * red + 0.587f * green + 0.114f * blue)
@@ -68,17 +75,125 @@ private fun resolveCssRelativePath(cssPath: String, rawSrc: String): String {
 }
 
 object CssParser {
-    private val FONT_FACE_REGEX = "@font-face\\s*\\{([^}]+)\\}".toRegex(RegexOption.DOT_MATCHES_ALL)
-    private val URL_REGEX = "url\\((['\"]?)(.*?)\\1\\)".toRegex()
-    private val ID_SELECTOR_REGEX = Regex("#[^\\s,]+")
-    private val CLASS_ATTRIBUTE_SELECTOR_REGEX = Regex("\\.[^\\s,]+|\\[[^]]+]|:(?!:)[^\\s,]+")
-    private val TYPE_PSEUDO_ELEMENT_SELECTOR_REGEX = Regex("(?<![.#\\[])\\b[a-zA-Z-]+|::[a-zA-Z-]+")
+    private val URL_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { """url\((['"]?)(.*?)\1\)""".toRegex() }
+    private val ID_SELECTOR_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { Regex("""#[^\s,]+""") }
+    private val CLASS_ATTRIBUTE_SELECTOR_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { Regex("""\.[^\s,]+|\[[^]]+]|:(?!:)[^\s,]+""") }
+    private val TYPE_PSEUDO_ELEMENT_SELECTOR_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) { Regex("""(?<![.#\[])\b[a-zA-Z-]+|::[a-zA-Z-]+""") }
+    private val TRANSIENT_PSEUDO_CLASSES = setOf("link", "visited", "hover", "active", "focus")
+    private val UNSUPPORTED_PSEUDO_ELEMENTS = setOf("first-letter", "first-line", "marker", "selection")
     private data class FontSource(val url: String, val format: String?)
 
-    // Regex to identify simple, single-part selectors for fast categorization
-    private val SIMPLE_TAG_SELECTOR = Regex("^[a-zA-Z0-9]+$")
-    private val SIMPLE_CLASS_SELECTOR = Regex("^\\.[a-zA-Z0-9_-]+$")
-    private val SIMPLE_ID_SELECTOR = Regex("^#[a-zA-Z0-9_-]+$")
+    private fun parseFontSources(srcString: String): List<FontSource> =
+        splitCssList(srcString, ',').mapNotNull { part ->
+            val trimmedPart = part.trim()
+            ReaderCssLog.d("Processing src part: '$trimmedPart'")
+
+            val url = extractCssFunctionValue(trimmedPart, "url") ?: return@mapNotNull null
+            val format = extractCssFunctionValue(trimmedPart, "format")?.lowercase() ?: inferFontFormat(url)
+            ReaderCssLog.d("Parsed font source. URL: '$url', format: '$format'")
+
+            if (format != null) FontSource(url = url, format = format) else null
+        }
+
+    private fun inferFontFormat(url: String): String? {
+        if (url.startsWith("data:", ignoreCase = true)) {
+            val mediaType = url.substringAfter("data:").substringBefore(';')
+            ReaderCssLog.d("Data URI detected. Media type: '$mediaType'")
+            return when {
+                mediaType.contains("opentype", ignoreCase = true) -> "opentype"
+                mediaType.contains("truetype", ignoreCase = true) -> "truetype"
+                mediaType.contains("woff2", ignoreCase = true) -> "woff2"
+                mediaType.contains("woff", ignoreCase = true) -> "woff"
+                else -> {
+                    ReaderCssLog.w("Unknown data URI media type: $mediaType")
+                    null
+                }
+            }
+        }
+
+        return when {
+            url.endsWith(".woff2", ignoreCase = true) -> "woff2"
+            url.endsWith(".woff", ignoreCase = true) -> "woff"
+            url.endsWith(".otf", ignoreCase = true) -> "opentype"
+            url.endsWith(".ttf", ignoreCase = true) -> "truetype"
+            else -> {
+                ReaderCssLog.w("Could not determine format from URL: $url")
+                null
+            }
+        }
+    }
+
+    private fun extractCssFunctionValue(value: String, functionName: String): String? {
+        val functionStart = value.indexOfCssFunction(functionName)
+        if (functionStart < 0) return null
+
+        var openParen = functionStart + functionName.length
+        while (openParen < value.length && value[openParen].isWhitespace()) openParen++
+        if (openParen >= value.length || value[openParen] != '(') return null
+
+        val closeParen = findMatchingParen(value, openParen) ?: return null
+        return value.substring(openParen + 1, closeParen)
+            .trim()
+            .stripCssQuotes()
+            .takeIf { it.isNotBlank() }
+    }
+
+    private fun String.indexOfCssFunction(functionName: String): Int {
+        val maxStart = length - functionName.length
+        if (maxStart < 0) return -1
+
+        for (index in 0..maxStart) {
+            if (!regionMatches(index, functionName, 0, functionName.length, ignoreCase = true)) continue
+
+            var next = index + functionName.length
+            while (next < length && this[next].isWhitespace()) next++
+            if (next < length && this[next] == '(') return index
+        }
+        return -1
+    }
+
+    private fun findMatchingParen(value: String, openParen: Int): Int? {
+        var depth = 0
+        var quote: Char? = null
+        var escaped = false
+
+        for (index in openParen until value.length) {
+            val ch = value[index]
+            when {
+                escaped -> escaped = false
+                ch == '\\' -> escaped = true
+                quote != null -> if (ch == quote) quote = null
+                ch == '\'' || ch == '"' -> quote = ch
+                ch == '(' -> depth++
+                ch == ')' -> {
+                    depth--
+                    if (depth == 0) return index
+                }
+            }
+        }
+        return null
+    }
+
+    private fun String.stripCssQuotes(): String {
+        if (length < 2) return this
+        val first = first()
+        val last = last()
+        return if ((first == '\'' && last == '\'') || (first == '"' && last == '"')) {
+            substring(1, lastIndex)
+        } else {
+            this
+        }
+    }
+
+    // Simple, single-part selector checks for fast categorization without JNI regex matchers.
+    private fun isSimpleTagSelector(selector: String): Boolean =
+        selector.isNotEmpty() && selector.all { it.isAsciiLetterOrDigit() }
+
+    private fun isSimpleClassSelector(selector: String): Boolean =
+        selector.length > 1 && selector[0] == '.' && selector.drop(1).all { it.isCssIdentifierChar() }
+
+    private fun isSimpleIdSelector(selector: String): Boolean =
+        selector.length > 1 && selector[0] == '#' && selector.drop(1).all { it.isCssIdentifierChar() }
 
     private val BORDER_WIDTH_KEYWORDS = mapOf(
         "thin" to 1.dp,
@@ -487,16 +602,50 @@ object CssParser {
 
     private fun parseSelector(selector: String): ParsedSelector {
         var pseudoElement: String? = null
-        var sanitized = selector
-        Regex("::?(before|after)\\b", RegexOption.IGNORE_CASE).find(sanitized)?.let { match ->
-            pseudoElement = match.groupValues[1].lowercase()
-            sanitized = sanitized.removeRange(match.range)
-        }
-        sanitized = sanitized
-            .replace(Regex(":(link|visited|hover|active|focus)\\b", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("::?(first-letter|first-line|marker|selection)\\b", RegexOption.IGNORE_CASE), "")
-            .replace(Regex(":root\\b", RegexOption.IGNORE_CASE), "html")
-            .trim()
+        val sanitized = buildString(selector.length) {
+            var index = 0
+            while (index < selector.length) {
+                val ch = selector[index]
+                if (ch != ':') {
+                    append(ch)
+                    index++
+                    continue
+                }
+
+                val hasDoubleColon = index + 1 < selector.length && selector[index + 1] == ':'
+                val nameStart = index + if (hasDoubleColon) 2 else 1
+                var nameEnd = nameStart
+                while (nameEnd < selector.length) {
+                    val nameChar = selector[nameEnd]
+                    if (!nameChar.isLetter() && nameChar != '-') break
+                    nameEnd++
+                }
+
+                if (nameEnd == nameStart) {
+                    append(ch)
+                    index++
+                    continue
+                }
+
+                val name = selector.substring(nameStart, nameEnd).lowercase()
+                when {
+                    name == "before" || name == "after" -> {
+                        if (pseudoElement == null) pseudoElement = name
+                        index = nameEnd
+                    }
+                    !hasDoubleColon && name in TRANSIENT_PSEUDO_CLASSES -> index = nameEnd
+                    name in UNSUPPORTED_PSEUDO_ELEMENTS -> index = nameEnd
+                    !hasDoubleColon && name == "root" -> {
+                        append("html")
+                        index = nameEnd
+                    }
+                    else -> {
+                        append(ch)
+                        index++
+                    }
+                }
+            }
+        }.trim()
         return ParsedSelector(sanitized, pseudoElement)
     }
 
@@ -596,11 +745,11 @@ object CssParser {
                     )
                     allRules += rule
                     when {
-                        parsedSelector.pseudoElement == null && SIMPLE_ID_SELECTOR.matches(sanitizedSelector) ->
+                        parsedSelector.pseudoElement == null && isSimpleIdSelector(sanitizedSelector) ->
                             byId.getOrPut(sanitizedSelector.substring(1)) { mutableListOf() }.add(rule)
-                        parsedSelector.pseudoElement == null && SIMPLE_CLASS_SELECTOR.matches(sanitizedSelector) ->
+                        parsedSelector.pseudoElement == null && isSimpleClassSelector(sanitizedSelector) ->
                             byClass.getOrPut(sanitizedSelector.substring(1)) { mutableListOf() }.add(rule)
-                        parsedSelector.pseudoElement == null && SIMPLE_TAG_SELECTOR.matches(sanitizedSelector) ->
+                        parsedSelector.pseudoElement == null && isSimpleTagSelector(sanitizedSelector) ->
                             byTag.getOrPut(sanitizedSelector) { mutableListOf() }.add(rule)
                         else -> otherComplex.add(rule)
                     }
@@ -612,6 +761,23 @@ object CssParser {
         }
         val optimizedRules = OptimizedCssRules(byTag, byClass, byId, otherComplex, allRules)
         return OptimizedCssParseResult(optimizedRules, fontFaces)
+    }
+
+    fun parseFontFaces(
+        cssContent: String,
+        cssPath: String?,
+        constraints: Constraints,
+        isDarkTheme: Boolean,
+        adaptThemeColors: Boolean = true
+    ): List<FontFaceInfo> {
+        val cleanedCss = stripCssComments(cssContent)
+        val (_, fontFaceBlocks) = parseCssBlocks(
+            css = cleanedCss,
+            constraints = constraints,
+            isDarkTheme = isDarkTheme,
+            adaptThemeColors = adaptThemeColors
+        )
+        return fontFaceBlocks.mapNotNull { properties -> parseFontFace(properties, cssPath) }
     }
 
     private fun parseFontFace(properties: String, cssPath: String?): FontFaceInfo? {
@@ -629,50 +795,7 @@ object CssParser {
             return null
         }
 
-        val urlWithFormatRegex = "url\\((['\"]?)(.*?)\\1\\)\\s*format\\((['\"]?)(.*?)\\3\\)".toRegex()
-
-        val sources = srcString.split(Regex(",(?=\\s*url\\()")).mapNotNull { part ->
-            val trimmedPart = part.trim()
-            ReaderCssLog.d("Processing src part: '$trimmedPart'")
-
-            urlWithFormatRegex.find(trimmedPart)?.let {
-                ReaderCssLog.d("Matched url with format(). URL: ${it.groupValues[2]}, Format: ${it.groupValues[4]}")
-                FontSource(url = it.groupValues[2], format = it.groupValues[4].lowercase().removeSurrounding("'"))
-            } ?: URL_REGEX.find(trimmedPart)?.let {
-                val url = it.groupValues[2]
-                ReaderCssLog.d("Matched url() only. URL: '$url'")
-                val format = when {
-                    url.startsWith("data:", ignoreCase = true) -> {
-                        val mediaType = url.substringAfter("data:").substringBefore(';')
-                        ReaderCssLog.d("Data URI detected. Media type: '$mediaType'")
-                        when {
-                            mediaType.contains("opentype") -> "opentype"
-                            mediaType.contains("truetype") -> "truetype"
-                            mediaType.contains("woff2") -> "woff2"
-                            mediaType.contains("woff") -> "woff"
-                            else -> {
-                                ReaderCssLog.w("Unknown data URI media type: $mediaType")
-                                null
-                            }
-                        }
-                    }
-                    url.endsWith(".woff2", ignoreCase = true) -> "woff2"
-                    url.endsWith(".woff", ignoreCase = true) -> "woff"
-                    url.endsWith(".otf", ignoreCase = true) -> "opentype"
-                    url.endsWith(".ttf", ignoreCase = true) -> "truetype"
-                    else -> {
-                        ReaderCssLog.w("Could not determine format from URL: $url")
-                        null
-                    }
-                }
-                ReaderCssLog.d("Determined format: '$format'")
-                if (format != null) {
-                    FontSource(url = url, format = format)
-                } else {
-                    null
-                }
-            }
-        }
+        val sources = parseFontSources(srcString)
 
         if (sources.isEmpty()) {
             ReaderCssLog.w("Could not parse any valid source from @font-face src: $srcString")

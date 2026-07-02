@@ -386,7 +386,7 @@ fun HomeScreen(
                         onUpgradeClick = {
                             scope.launch {
                                 drawerState.close()
-                                navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
+                                navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
                             }
                         },
                         onSyncUpsellClick = {
@@ -397,19 +397,19 @@ fun HomeScreen(
                         onFontsClick = {
                             scope.launch {
                                 drawerState.close()
-                                navController.navigate(AppDestinations.FONTS_SCREEN_ROUTE)
+                                navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
                             }
                         },
                         onAiSettingsClick = {
                             scope.launch {
                                 drawerState.close()
-                                navController.navigate(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                                navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
                             }
                         },
                         onSettingsClick = {
                             scope.launch {
                                 drawerState.close()
-                                navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                                navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
                             }
                         },
                         navController = navController,
@@ -450,7 +450,7 @@ fun HomeScreen(
                                 },
                                 onAppThemeClick = { showAppThemePanel = true },
                                 onSettingsClick = {
-                                    navController.navigate(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                                    navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
                                 },
                                 onTestPanelDetectionClick = { viewModel.testPanelDetection(context) },
                                 onTestSpeechBubbleDetectionClick = { viewModel.testSpeechBubbleDetection(context) },
@@ -592,7 +592,7 @@ fun HomeScreen(
                     if (showUpgradeDialog) {
                         UpgradeDialog(onDismiss = { showUpgradeDialog = false }, onConfirm = {
                             showUpgradeDialog = false
-                            navController.navigate(AppDestinations.PRO_SCREEN_ROUTE)
+                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
                         })
                     }
 
@@ -1555,7 +1555,7 @@ private fun AppDrawerContent(
                     icon = { Icon(Icons.Outlined.FavoriteBorder, contentDescription = null) },
                     label = { Text(stringResource(R.string.drawer_support_project)) },
                     selected = false,
-                    onClick = { navController.navigate(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE) },
+                    onClick = { navController.navigateIfReady(AppDestinations.SUPPORT_PROJECT_SCREEN_ROUTE) },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                 )
             }
@@ -1564,7 +1564,7 @@ private fun AppDrawerContent(
                 icon = { Icon(painterResource(id = R.drawable.feedback), contentDescription = null) },
                 label = { Text(stringResource(R.string.drawer_help_feedback)) },
                 selected = false,
-                onClick = { navController.navigate("feedback_screen_route") },
+                onClick = { navController.navigateIfReady(AppDestinations.FEEDBACK_SCREEN_ROUTE) },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
 

@@ -30,6 +30,8 @@ import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.data.BookCacheDao
 import com.aryan.reader.paginatedreader.data.ProcessedChapter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.decodeFromByteArray
@@ -56,96 +58,112 @@ class LocatorConverter(
     private val context: Context,
     private val stableBookId: String? = null
 ) {
+    private val chapterProcessingLocksGuard = Mutex()
+    private val chapterProcessingLocks = mutableMapOf<Pair<String, Int>, Mutex>()
+
     private fun cacheBookId(book: EpubBook, overrideBookId: String? = null): String {
         return overrideBookId ?: stableBookId ?: book.title
+    }
+
+    private suspend fun chapterProcessingLockFor(bookId: String, chapterIndex: Int): Mutex {
+        return chapterProcessingLocksGuard.withLock {
+            chapterProcessingLocks.getOrPut(bookId to chapterIndex) { Mutex() }
+        }
     }
 
     private suspend fun processAndCacheChapter(
         book: EpubBook,
         chapterIndex: Int,
         explicitBookId: String? = null
-    ): List<SemanticBlock>? = withContext(Dispatchers.IO) {
+    ): List<SemanticBlock>? {
         val cacheBookId = cacheBookId(book, explicitBookId)
-        Timber.tag("POS_DIAG").d("processAndCacheChapter: Processing for bookId='$cacheBookId' index=$chapterIndex")
-        try {
-            val chapter = book.chapters.getOrNull(chapterIndex) ?: return@withContext null
-
-            val htmlToParse = readChapterHtmlForLocator(book, chapter, chapterIndex)
-
-            if (htmlToParse.isNullOrBlank()) {
-                return@withContext null
+        val processingLock = chapterProcessingLockFor(cacheBookId, chapterIndex)
+        return processingLock.withLock {
+            decodeCachedBlocks(getProcessedChapterSafely(cacheBookId, chapterIndex), chapterIndex)?.takeIf { it.isNotEmpty() }?.let {
+                return@withLock it
             }
 
-            val mergedByTag = mutableMapOf<String, MutableList<CssRule>>()
-            val mergedByClass = mutableMapOf<String, MutableList<CssRule>>()
-            val mergedById = mutableMapOf<String, MutableList<CssRule>>()
-            val mergedOtherComplex = mutableListOf<CssRule>()
+            withContext(Dispatchers.IO) {
+                Timber.tag("POS_DIAG").d("processAndCacheChapter: Processing for bookId='$cacheBookId' index=$chapterIndex")
+                try {
+                    val chapter = book.chapters.getOrNull(chapterIndex) ?: return@withContext null
+                    val htmlToParse = readChapterHtmlForLocator(book, chapter, chapterIndex)
 
-            val density = Density(context)
-            val displayMetrics = context.resources.displayMetrics
-            val constraints = Constraints(maxWidth = displayMetrics.widthPixels, maxHeight = displayMetrics.heightPixels)
+                    if (htmlToParse.isNullOrBlank()) {
+                        return@withContext null
+                    }
 
-            fun aggregateRules(
-                target: MutableMap<String, MutableList<CssRule>>,
-                source: Map<String, List<CssRule>>
-            ) {
-                source.forEach { (k, v) ->
-                    target.getOrPut(k) { mutableListOf() }.addAll(v)
+                    val mergedByTag = mutableMapOf<String, MutableList<CssRule>>()
+                    val mergedByClass = mutableMapOf<String, MutableList<CssRule>>()
+                    val mergedById = mutableMapOf<String, MutableList<CssRule>>()
+                    val mergedOtherComplex = mutableListOf<CssRule>()
+
+                    val density = Density(context)
+                    val displayMetrics = context.resources.displayMetrics
+                    val constraints = Constraints(maxWidth = displayMetrics.widthPixels, maxHeight = displayMetrics.heightPixels)
+
+                    fun aggregateRules(
+                        target: MutableMap<String, MutableList<CssRule>>,
+                        source: Map<String, List<CssRule>>
+                    ) {
+                        source.forEach { (k, v) ->
+                            target.getOrPut(k) { mutableListOf() }.addAll(v)
+                        }
+                    }
+
+                    book.css.forEach { (path, content) ->
+                        val bookCssResult = CssParser.parse(
+                            cssContent = content,
+                            cssPath = path,
+                            baseFontSizeSp = 16f,
+                            density = density.density,
+                            constraints = constraints,
+                            isDarkTheme = false,
+                            adaptThemeColors = false
+                        )
+
+                        val rules = bookCssResult.rules
+                        aggregateRules(mergedByTag, rules.byTag)
+                        aggregateRules(mergedByClass, rules.byClass)
+                        aggregateRules(mergedById, rules.byId)
+                        mergedOtherComplex.addAll(rules.otherComplex)
+                    }
+
+                    val parsingCssRules = OptimizedCssRules(
+                        byTag = mergedByTag,
+                        byClass = mergedByClass,
+                        byId = mergedById,
+                        otherComplex = mergedOtherComplex
+                    )
+
+                    val semanticBlocks = androidHtmlToSemanticBlocks(
+                        html = htmlToParse,
+                        cssRules = parsingCssRules,
+                        textStyle = TextStyle(),
+                        chapterAbsPath = chapter.absPath,
+                        extractionBasePath = book.extractionBasePath,
+                        density = density,
+                        fontFamilyMap = emptyMap(),
+                        constraints = constraints,
+                        adaptThemeColors = false
+                    )
+
+                    val protoBytes = proto.encodeToByteArray(semanticBlocks)
+                    val newCacheEntry = ProcessedChapter(
+                        bookId = cacheBookId,
+                        chapterIndex = chapterIndex,
+                        contentBlocksProto = protoBytes,
+                        estimatedPageCount = estimateSemanticPageCount(semanticBlocks)
+                    )
+                    bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
+                    semanticBlocks
+                } catch (e: OutOfMemoryError) {
+                    Timber.e(e, "Out of memory while processing locator cache for chapter $chapterIndex")
+                    null
+                } catch (_: Exception) {
+                    null
                 }
             }
-
-            book.css.forEach { (path, content) ->
-                val bookCssResult = CssParser.parse(
-                    cssContent = content,
-                    cssPath = path,
-                    baseFontSizeSp = 16f,
-                    density = density.density,
-                    constraints = constraints,
-                    isDarkTheme = false,
-                    adaptThemeColors = false
-                )
-
-                val rules = bookCssResult.rules
-                aggregateRules(mergedByTag, rules.byTag)
-                aggregateRules(mergedByClass, rules.byClass)
-                aggregateRules(mergedById, rules.byId)
-                mergedOtherComplex.addAll(rules.otherComplex)
-            }
-
-            val parsingCssRules = OptimizedCssRules(
-                byTag = mergedByTag,
-                byClass = mergedByClass,
-                byId = mergedById,
-                otherComplex = mergedOtherComplex
-            )
-
-            val semanticBlocks = androidHtmlToSemanticBlocks(
-                html = htmlToParse,
-                cssRules = parsingCssRules,
-                textStyle = TextStyle(),
-                chapterAbsPath = chapter.absPath,
-                extractionBasePath = book.extractionBasePath,
-                density = density,
-                fontFamilyMap = emptyMap(),
-                constraints = constraints,
-                adaptThemeColors = false
-            )
-
-            val protoBytes = proto.encodeToByteArray(semanticBlocks)
-
-            val newCacheEntry = ProcessedChapter(
-                bookId = cacheBookId,
-                chapterIndex = chapterIndex,
-                contentBlocksProto = protoBytes,
-                estimatedPageCount = estimateSemanticPageCount(semanticBlocks)
-            )
-            bookCacheDao.insertProcessedChapters(listOf(newCacheEntry))
-            semanticBlocks
-        } catch (e: OutOfMemoryError) {
-            Timber.e(e, "Out of memory while processing locator cache for chapter $chapterIndex")
-            null
-        } catch (_: Exception) {
-            null
         }
     }
 

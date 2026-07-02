@@ -1,10 +1,29 @@
 package com.aryan.reader.pdf
 
 import com.aryan.reader.shared.pdf.PdfiumAnnotationSubtype
+import timber.log.Timber
 
 object NativePdfiumBridge {
-    init {
-        System.loadLibrary("native-lib")
+    @Volatile
+    private var loaded: Boolean? = null
+
+    fun isAvailable(): Boolean = ensureLoaded()
+
+    fun ensureLoaded(): Boolean {
+        loaded?.let { return it }
+        return synchronized(this) {
+            loaded ?: run {
+                val isLoaded = try {
+                    System.loadLibrary("native-lib")
+                    true
+                } catch (error: UnsatisfiedLinkError) {
+                    Timber.tag("NativePdfiumBridge").e(error, "Failed to load native PDF bridge")
+                    false
+                }
+                loaded = isLoaded
+                isLoaded
+            }
+        }
     }
 
     @JvmStatic external fun getFontSize(textPagePtr: Long, index: Int): Double

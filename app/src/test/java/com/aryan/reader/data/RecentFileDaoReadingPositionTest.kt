@@ -106,7 +106,7 @@ class RecentFileDaoReadingPositionTest {
     }
 
     @Test
-    fun `recent file summary caps oversized descriptions while full lookup keeps metadata`() = runTest {
+    fun `recent file summary keeps only description previews while full lookup keeps metadata`() = runTest {
         val longDescription = "Summary ".repeat(2_000)
         val longOriginalDescription = "Original ".repeat(2_000)
         dao.insertOrUpdateFile(
@@ -119,10 +119,32 @@ class RecentFileDaoReadingPositionTest {
         val summary = dao.getRecentFiles().first().single()
         val full = dao.getFileByBookId("book-1")!!
 
-        assertEquals(4_096, summary.description?.length)
-        assertEquals(4_096, summary.originalDescription?.length)
+        assertEquals(512, summary.description?.length)
+        assertEquals(512, summary.originalDescription?.length)
         assertEquals(longDescription, full.description)
         assertEquals(longOriginalDescription, full.originalDescription)
+    }
+
+    @Test
+    fun `recent file summary remains cursor-window safe with many long descriptions`() = runTest {
+        val longDescription = "Summary ".repeat(2_000)
+        val rows = (0 until 650).map { index ->
+            recentFileEntity().copy(
+                bookId = "book-$index",
+                uriString = "content://books/$index",
+                displayName = "Book $index.epub",
+                timestamp = index.toLong(),
+                description = longDescription,
+                originalDescription = longDescription
+            )
+        }
+        dao.insertOrUpdateFiles(rows)
+
+        val summaries = dao.getRecentFiles().first()
+
+        assertEquals(650, summaries.size)
+        assertTrue(summaries.all { (it.description?.length ?: 0) <= 512 })
+        assertTrue(summaries.all { (it.originalDescription?.length ?: 0) <= 512 })
     }
 
     private fun recentFileEntity(lastPositionCfi: String? = null): RecentFileEntity {

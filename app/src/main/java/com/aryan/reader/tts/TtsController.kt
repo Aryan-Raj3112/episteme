@@ -22,6 +22,7 @@ package com.aryan.reader.tts
 import android.content.ComponentName
 import android.content.Context
 import android.os.Bundle
+import android.os.Looper
 import timber.log.Timber
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
@@ -29,6 +30,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -40,7 +42,6 @@ import com.aryan.reader.epubreader.loadTtsSpeechRate
 import com.aryan.reader.isByokCloudTtsAvailable
 import com.aryan.reader.tts.TtsPlaybackManager.TtsState
 import com.google.common.util.concurrent.ListenableFuture
-import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -118,6 +119,10 @@ internal fun isCloudTtsAllowedForBuild(
     return (isProBuild && workerUrl.isNotBlank()) || byokCloudAvailable
 }
 
+internal fun ttsControllerApplicationLooper(): Looper {
+    return Looper.getMainLooper()
+}
+
 @UnstableApi
 class TtsController(context: Context) : Player.Listener {
     
@@ -147,7 +152,9 @@ class TtsController(context: Context) : Player.Listener {
 
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("TtsController.connect building MediaController.")
         val sessionToken = SessionToken(context, ComponentName(context, TtsService::class.java))
-        val future = MediaController.Builder(context, sessionToken).buildAsync()
+        val future = MediaController.Builder(context, sessionToken)
+            .setApplicationLooper(ttsControllerApplicationLooper())
+            .buildAsync()
         controllerFuture = future
 
         future.addListener(
@@ -181,7 +188,7 @@ class TtsController(context: Context) : Player.Listener {
                     }
                 }
             },
-            MoreExecutors.directExecutor()
+            ContextCompat.getMainExecutor(context)
         )
     }
 
