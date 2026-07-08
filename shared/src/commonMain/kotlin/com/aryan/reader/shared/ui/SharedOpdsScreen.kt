@@ -19,7 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +41,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -90,6 +92,7 @@ fun SharedOpdsScreen(
     coverContent: @Composable (OpdsEntry, Modifier) -> Unit = { entry, coverModifier ->
         SharedOpdsCoverPlaceholder(entry, coverModifier)
     },
+    mobileLayout: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var selectedEntry by remember { mutableStateOf<OpdsEntry?>(null) }
@@ -110,7 +113,8 @@ fun SharedOpdsScreen(
                 onAddCatalog = {
                     editingCatalog = null
                     showCatalogDialog = true
-                }
+                },
+                mobileLayout = mobileLayout
             )
         } else {
             SharedOpdsFeedView(
@@ -124,7 +128,8 @@ fun SharedOpdsScreen(
                 onReadBook = onReadBook,
                 onStreamBook = { entry -> onStreamBook(entry, state.currentCatalog) },
                 onEntrySelected = { selectedEntry = it },
-                coverContent = coverContent
+                coverContent = coverContent,
+                mobileLayout = mobileLayout
             )
         }
 
@@ -228,8 +233,41 @@ private fun SharedOpdsCatalogList(
     onOpenCatalog: (OpdsCatalog) -> Unit,
     onEditCatalog: (OpdsCatalog) -> Unit,
     onDeleteCatalog: (OpdsCatalog) -> Unit,
-    onAddCatalog: () -> Unit
+    onAddCatalog: () -> Unit,
+    mobileLayout: Boolean
 ) {
+    if (mobileLayout) {
+        Box(Modifier.fillMaxSize()) {
+            if (catalogs.isEmpty()) {
+                SharedOpdsEmptyState(onAddCatalog = onAddCatalog, modifier = Modifier.fillMaxSize())
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(catalogs, key = { it.id }) { catalog ->
+                        SharedOpdsCatalogCard(
+                            catalog = catalog,
+                            onOpenCatalog = { onOpenCatalog(catalog) },
+                            onEditCatalog = { onEditCatalog(catalog) },
+                            onDeleteCatalog = { onDeleteCatalog(catalog) }
+                        )
+                    }
+                }
+            }
+            ExtendedFloatingActionButton(
+                text = { Text(readerString("desktop_opds_catalog", "Catalog")) },
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                onClick = onAddCatalog,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+            )
+        }
+        return
+    }
+
     Column(Modifier.fillMaxSize()) {
         SharedScreenScaffold(
             title = "OPDS",
@@ -252,7 +290,7 @@ private fun SharedOpdsCatalogList(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(catalogs, key = { it.id }) { catalog ->
+                    gridItems(catalogs, key = { it.id }) { catalog ->
                         SharedOpdsCatalogCard(
                             catalog = catalog,
                             onOpenCatalog = { onOpenCatalog(catalog) },
@@ -278,7 +316,8 @@ private fun SharedOpdsFeedView(
     onReadBook: (BookItem) -> Unit,
     onStreamBook: (OpdsEntry) -> Unit,
     onEntrySelected: (OpdsEntry) -> Unit,
-    coverContent: @Composable (OpdsEntry, Modifier) -> Unit
+    coverContent: @Composable (OpdsEntry, Modifier) -> Unit,
+    mobileLayout: Boolean
 ) {
     var showSearch by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }

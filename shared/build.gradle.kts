@@ -52,9 +52,26 @@ kotlin {
     jvmToolchain(21)
 
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        val pdfiumVariant = if (name.contains("Simulator", ignoreCase = true)) {
+            "ios-simulator-arm64"
+        } else {
+            "ios-device-arm64"
+        }
+        val pdfiumRoot = rootProject.layout.projectDirectory.dir("third_party/pdfium/$pdfiumVariant")
+
+        compilations.getByName("main") {
+            cinterops {
+                val pdfium by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/pdfium.def"))
+                    compilerOpts("-I${pdfiumRoot.dir("include").asFile.absolutePath}")
+                }
+            }
+        }
+
         binaries.framework {
             baseName = "ReaderShared"
             binaryOption("bundleId", "com.aryan.reader.shared")
+            linkerOpts("-L${pdfiumRoot.dir("lib").asFile.absolutePath}", "-lpdfium")
             isStatic = true
         }
     }

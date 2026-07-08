@@ -1,0 +1,2 @@
+headers = fpdfview.h
+package = com.aryan.reader.shared.pdfium.c

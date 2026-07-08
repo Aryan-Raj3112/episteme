@@ -18,6 +18,9 @@ if [ ! -f "$SIMULATOR_DIR/lib/libpdfium.dylib" ]; then
     exit 1
 fi
 
+install_name_tool -id "@rpath/libpdfium.dylib" "$DEVICE_DIR/lib/libpdfium.dylib"
+install_name_tool -id "@rpath/libpdfium.dylib" "$SIMULATOR_DIR/lib/libpdfium.dylib"
+
 mkdir -p "$OUTPUT_DIR"
 rm -rf "$OUTPUT"
 
@@ -27,5 +30,8 @@ xcodebuild -create-xcframework \
     -library "$SIMULATOR_DIR/lib/libpdfium.dylib" \
     -headers "$SIMULATOR_DIR/include" \
     -output "$OUTPUT"
+
+install_name_tool -id "@rpath/libpdfium.dylib" "$OUTPUT/ios-arm64/libpdfium.dylib"
+install_name_tool -id "@rpath/libpdfium.dylib" "$OUTPUT/ios-arm64-simulator/libpdfium.dylib"
 
 echo "Created $OUTPUT"
