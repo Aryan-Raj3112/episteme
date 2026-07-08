@@ -258,6 +258,7 @@ internal fun visibleNonReaderLibraryTabs(
     return when (platform) {
         ReaderPlatform.ANDROID -> AndroidLibraryTabs
         ReaderPlatform.DESKTOP -> DesktopLibraryTabs
+        ReaderPlatform.IOS -> AndroidLibraryTabs
     }
 }
 
@@ -280,7 +281,8 @@ internal fun bookOverflowActionsForPlatform(
             NonReaderBookOverflowAction.ADD_TO_SHELF,
             NonReaderBookOverflowAction.SAVE_ORIGINAL
         )
-        ReaderPlatform.ANDROID -> setOf(
+        ReaderPlatform.ANDROID,
+        ReaderPlatform.IOS -> setOf(
             NonReaderBookOverflowAction.SAVE_ORIGINAL,
             NonReaderBookOverflowAction.SHARE_ORIGINAL
         )

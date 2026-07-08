@@ -2,7 +2,8 @@ package com.aryan.reader.shared
 
 enum class ReaderPlatform {
     ANDROID,
-    DESKTOP
+    DESKTOP,
+    IOS
 }
 
 enum class ReaderFeatureSurface {
@@ -17,15 +18,18 @@ data class FileTypeCapability(
     val extensions: Set<String>,
     val androidSurface: ReaderFeatureSurface?,
     val desktopSurface: ReaderFeatureSurface?,
+    val iosSurface: ReaderFeatureSurface? = androidSurface,
     val syncEligible: Boolean = true
 ) {
     val isReadableOnAndroid: Boolean get() = androidSurface != null
     val isReadableOnDesktop: Boolean get() = desktopSurface != null
+    val isReadableOnIos: Boolean get() = iosSurface != null
 
     fun surfaceFor(platform: ReaderPlatform): ReaderFeatureSurface? {
         return when (platform) {
             ReaderPlatform.ANDROID -> androidSurface
             ReaderPlatform.DESKTOP -> desktopSurface
+            ReaderPlatform.IOS -> iosSurface
         }
     }
 }

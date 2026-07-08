@@ -1,6 +1,6 @@
 [versions]
 agp = "9.0.0"
-kotlin = "2.2.10"
+kotlin = "2.3.10"
 coreKtx = "1.16.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"
@@ -68,6 +68,7 @@ compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "composeMu
 
 # Add plugins required by pdfiumandroid
 android-library = { id = "com.android.library", version.ref = "agp" }
+android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detektPlugin" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "koverPlugin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }

@@ -120,7 +120,11 @@ object SharedPdfAnnotationExportMapper {
         val sourceIdToExportId = mutableMapOf<String, String>()
         val uniqueItems = sourceItems.mapIndexed { index, item ->
             val uniqueId = item.export.id.uniqueCommentId(stableIds, index)
-            item.sourceId?.let { sourceIdToExportId.putIfAbsent(it, uniqueId) }
+            item.sourceId?.let { sourceId ->
+                if (sourceId !in sourceIdToExportId) {
+                    sourceIdToExportId[sourceId] = uniqueId
+                }
+            }
             item.copy(export = item.export.copy(id = uniqueId))
         }
         val parentAwareItems = uniqueItems.map { item ->

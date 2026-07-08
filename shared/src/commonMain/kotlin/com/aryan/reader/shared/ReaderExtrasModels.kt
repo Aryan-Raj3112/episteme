@@ -997,7 +997,7 @@ object ReaderContextExtractor {
 }
 
 private fun String.urlEncoded(): String {
-    val bytes = toByteArray(Charsets.UTF_8)
+    val bytes = encodeToByteArray()
     val builder = StringBuilder()
     bytes.forEach { raw ->
         val value = raw.toInt() and 0xFF

@@ -1,12 +1,12 @@
-import com.android.build.api.dsl.LibraryExtension
+import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
+import org.gradle.api.plugins.ExtensionAware
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.kover)
+    alias(libs.plugins.kover) apply false
 }
 
 fun isDesktopOnlyBuild(): Boolean {
@@ -23,15 +23,41 @@ fun isDesktopOnlyBuild(): Boolean {
 val desktopOnlyBuild = isDesktopOnlyBuild()
 
 if (!desktopOnlyBuild) {
-    apply(plugin = "com.android.library")
+    apply(plugin = "com.android.kotlin.multiplatform.library")
+} else {
+    apply(plugin = "org.jetbrains.kotlinx.kover")
 }
 
 kotlin {
     if (!desktopOnlyBuild) {
-        androidTarget()
+        (this as ExtensionAware).extensions.configure<KotlinMultiplatformAndroidLibraryTarget>("android") {
+            namespace = "com.aryan.reader.shared"
+            compileSdk {
+                version = release(36)
+            }
+            minSdk {
+                version = release(26)
+            }
+            androidResources {
+                enable = true
+            }
+            withHostTest {
+                isReturnDefaultValues = true
+            }
+        }
+        iosArm64()
+        iosSimulatorArm64()
     }
     jvm("desktop")
     jvmToolchain(21)
+
+    targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        binaries.framework {
+            baseName = "ReaderShared"
+            binaryOption("bundleId", "com.aryan.reader.shared")
+            isStatic = true
+        }
+    }
 
     sourceSets {
         val commonMain by getting
@@ -45,6 +71,15 @@ kotlin {
         if (!desktopOnlyBuild) {
             val androidMain by getting
             androidMain.dependsOn(readerJvmMain)
+            val iosMain by creating {
+                dependsOn(commonMain)
+            }
+            val iosArm64Main by getting {
+                dependsOn(iosMain)
+            }
+            val iosSimulatorArm64Main by getting {
+                dependsOn(iosMain)
+            }
         }
         desktopMain.dependsOn(readerJvmMain)
 
@@ -59,21 +94,6 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
-        }
-    }
-}
-
-if (!desktopOnlyBuild) {
-    extensions.configure<LibraryExtension>("android") {
-        namespace = "com.aryan.reader.shared"
-        compileSdk = 36
-
-        defaultConfig {
-            minSdk = 26
-        }
-
-        buildFeatures {
-            buildConfig = true
         }
     }
 }

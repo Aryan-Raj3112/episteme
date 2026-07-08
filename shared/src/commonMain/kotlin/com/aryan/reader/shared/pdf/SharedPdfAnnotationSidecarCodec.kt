@@ -127,7 +127,8 @@ object SharedPdfAnnotationSidecarCodec {
         return JsonArray(
             deletions
                 .filterKeys { it.isNotBlank() }
-                .toSortedMap()
+                .toList()
+                .sortedBy { (id, _) -> id }
                 .map { (id, deletedAt) ->
                     JsonObject(
                         mapOf(

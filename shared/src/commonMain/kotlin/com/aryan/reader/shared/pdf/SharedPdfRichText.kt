@@ -267,7 +267,7 @@ object SharedPdfRichTextMapper {
             start = 0,
             end = text.length
         )
-        val changePoints = sortedSetOf(0, text.length)
+        val changePoints = mutableSetOf(0, text.length)
         text.spanStyles.forEach {
             changePoints.add(it.start)
             changePoints.add(it.end)
@@ -277,7 +277,7 @@ object SharedPdfRichTextMapper {
             changePoints.add(it.end)
         }
 
-        val sortedPoints = changePoints.toList()
+        val sortedPoints = changePoints.sorted()
         for (i in 0 until sortedPoints.size - 1) {
             val start = sortedPoints[i]
             val end = sortedPoints[i + 1]

@@ -3,11 +3,11 @@
 import java.util.Properties
 import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.xml.sax.InputSource
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.ksp)
@@ -47,6 +47,9 @@ fun configuredAppLocaleTags(): Set<String> {
 
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
+    }
 }
 
 android {
@@ -59,9 +62,6 @@ android {
         targetSdk = 35
         versionCode = 55
         versionName = "1.0.51"
-
-        resourceConfigurations += configuredAppLocaleTags()
-            .map { it.toAndroidResourceConfiguration() }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
@@ -147,8 +147,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
-    kotlinOptions {
-        jvmTarget = "21"
+    androidResources {
+        localeFilters += configuredAppLocaleTags()
+            .map { it.toAndroidResourceConfiguration() }
     }
     buildFeatures {
         compose = true
