@@ -15,6 +15,9 @@ val Icons.Filled.AccountCircle: ImageVector
 val Icons.Filled.Add: ImageVector
     get() = EpistemeFilledIcons.add
 
+val Icons.Filled.Ai: ImageVector
+    get() = EpistemeFilledIcons.ai
+
 val Icons.Filled.ArrowDownward: ImageVector
     get() = EpistemeFilledIcons.arrowDownward
 
@@ -117,6 +120,9 @@ val Icons.Filled.FolderSpecial: ImageVector
 val Icons.Filled.FormatListNumbered: ImageVector
     get() = EpistemeFilledIcons.formatListNumbered
 
+val Icons.Filled.Fonts: ImageVector
+    get() = EpistemeFilledIcons.fonts
+
 val Icons.Filled.Fullscreen: ImageVector
     get() = EpistemeFilledIcons.fullscreen
 
@@ -128,6 +134,9 @@ val Icons.Filled.Gavel: ImageVector
 
 val Icons.Filled.GraphicEq: ImageVector
     get() = EpistemeFilledIcons.graphicEq
+
+val Icons.Filled.Home: ImageVector
+    get() = EpistemeFilledIcons.home
 
 val Icons.Filled.ImportExport: ImageVector
     get() = EpistemeFilledIcons.importExport
@@ -152,6 +161,9 @@ val Icons.Filled.Lock: ImageVector
 
 val Icons.Filled.LockOpen: ImageVector
     get() = EpistemeFilledIcons.lockOpen
+
+val Icons.Filled.Logout: ImageVector
+    get() = EpistemeFilledIcons.logout
 
 val Icons.Filled.Menu: ImageVector
     get() = EpistemeFilledIcons.menu
@@ -228,6 +240,9 @@ val Icons.Filled.SkipPrevious: ImageVector
 val Icons.Filled.Smartphone: ImageVector
     get() = EpistemeFilledIcons.smartphone
 
+val Icons.Filled.Sort: ImageVector
+    get() = EpistemeFilledIcons.sort
+
 val Icons.Filled.Star: ImageVector
     get() = EpistemeFilledIcons.star
 
@@ -295,6 +310,20 @@ private object EpistemeFilledIcons {
             autoMirror = false,
             paths = listOf(
                 """M440,520L200,520L200,440L440,440L440,200L520,200L520,440L760,440L760,520L520,520L520,760L440,760L440,520Z"""
+            )
+        )
+    }
+
+    val ai: ImageVector by lazy {
+        materialIcon(
+            name = "Ai",
+            defaultWidth = 24f,
+            defaultHeight = 24f,
+            viewportWidth = 960f,
+            viewportHeight = 960f,
+            autoMirror = false,
+            paths = listOf(
+                """M323,800Q312,800 302.5,794.5Q293,789 288,779L210,640L268,640L308,720L400,720L400,680L332,680L292,600L188,600L131,500Q129,495 127.5,490Q126,485 126,480Q126,476 131,460L188,360L292,360L332,280L400,280L400,240L308,240L268,320L210,320L288,181Q293,171 302.5,165.5Q312,160 323,160L420,160Q437,160 448.5,171.5Q460,183 460,200L460,360L400,360L360,400L460,400L460,520L372,520L332,440L240,440L200,480L308,480L348,560L460,560L460,760Q460,777 448.5,788.5Q437,800 420,800L323,800ZM540,800Q523,800 511.5,788.5Q500,777 500,760L500,560L612,560L652,480L760,480L720,440L628,440L588,520L500,520L500,400L600,400L560,360L500,360L500,200Q500,183 511.5,171.5Q523,160 540,160L637,160Q648,160 657.5,165.5Q667,171 672,181L750,320L692,320L652,240L560,240L560,280L628,280L668,360L772,360L829,460Q831,465 832.5,470Q834,475 834,480Q834,484 829,500L772,600L668,600L628,680L560,680L560,720L652,720L692,640L750,640L672,779Q667,789 657.5,794.5Q648,800 637,800L540,800Z"""
             )
         )
     }
@@ -775,6 +804,20 @@ private object EpistemeFilledIcons {
         )
     }
 
+    val fonts: ImageVector by lazy {
+        materialIcon(
+            name = "Fonts",
+            defaultWidth = 24f,
+            defaultHeight = 24f,
+            viewportWidth = 960f,
+            viewportHeight = 960f,
+            autoMirror = false,
+            paths = listOf(
+                """M186,880Q132,880 106,858Q80,836 80,792Q80,734 129,718Q178,702 245,702L266,702L266,646Q266,612 265,590.5Q264,569 259,555Q254,541 247.5,535.5Q241,530 230,530Q221,530 213.5,533Q206,536 201,541Q197,546 196,551.5Q195,557 197,563Q203,574 211,584.5Q219,595 219,609Q219,634 201.5,651.5Q184,669 159,669Q134,669 116.5,651.5Q99,634 99,609Q99,582 111,565Q123,548 143.5,538Q164,528 191,524Q218,520 249,520Q334,520 367,550.5Q400,581 400,658L400,805Q400,824 404.5,833Q409,842 420,842Q432,842 439.5,824Q447,806 449,768L460,768Q457,830 436.5,855Q416,880 368,880Q325,880 300.5,866.5Q276,853 269,826Q259,855 239.5,867.5Q220,880 186,880ZM559,880Q539,880 526.5,863.5Q514,847 522,828L624,559Q631,542 646,531Q661,520 680,520Q699,520 714,531Q729,542 736,559L838,828Q846,847 833.5,863.5Q821,880 801,880Q789,880 779,873Q769,866 764,854L744,796L616,796L596,854Q592,865 582,872.5Q572,880 559,880ZM235,851Q248,851 257,830.5Q266,810 266,781L266,714Q240,714 228,729.5Q216,745 216,780L216,791Q216,827 220,839Q224,851 235,851ZM642,726L719,726L680,612L642,726ZM605,441Q557,441 528.5,407.5Q500,374 500,317Q500,213 566,146.5Q632,80 735,80Q777,80 803,89.5Q829,99 829,114Q829,120 827,126Q825,132 820,137Q815,144 807.5,147Q800,150 792,148Q778,144 760,141Q742,138 727,138Q656,138 613,186Q570,234 570,313Q570,335 578,359Q586,383 614,383Q625,383 635.5,378Q646,373 654,364Q671,346 685.5,304Q700,262 712,202Q714,189 722.5,183.5Q731,178 746,178Q764,178 773.5,187.5Q783,197 779,211Q767,254 761.5,286Q756,318 756,344Q756,364 761.5,373Q767,382 778,382Q789,382 799.5,374Q810,366 829,344Q831,341 844,337Q852,337 856,343Q860,349 860,360Q860,388 828,414Q796,440 761,440Q735,440 716.5,426Q698,412 691,386Q676,412 654,426.5Q632,441 605,441ZM120,440L120,220Q120,162 161,121Q202,80 260,80Q318,80 359,121Q400,162 400,220L400,440L320,440L320,360L200,360L200,440L120,440ZM200,280L320,280L320,220Q320,195 302.5,177.5Q285,160 260,160Q235,160 217.5,177.5Q200,195 200,220L200,280Z"""
+            )
+        )
+    }
+
     val fullscreen: ImageVector by lazy {
         materialIcon(
             name = "Fullscreen",
@@ -827,6 +870,20 @@ private object EpistemeFilledIcons {
             autoMirror = false,
             paths = listOf(
                 """M280,720L280,240L360,240L360,720L280,720ZM440,880L440,80L520,80L520,880L440,880ZM120,560L120,400L200,400L200,560L120,560ZM600,720L600,240L680,240L680,720L600,720ZM760,560L760,400L840,400L840,560L760,560Z"""
+            )
+        )
+    }
+
+    val home: ImageVector by lazy {
+        materialIcon(
+            name = "Home",
+            defaultWidth = 24f,
+            defaultHeight = 24f,
+            viewportWidth = 960f,
+            viewportHeight = 960f,
+            autoMirror = false,
+            paths = listOf(
+                """M240,760L360,760L360,520L600,520L600,760L720,760L720,400L480,220L240,400L240,760ZM160,840L160,360L480,120L800,360L800,840L520,840L520,600L440,600L440,840L160,840ZM480,490L480,490L480,490L480,490L480,490L480,490L480,490L480,490L480,490Z"""
             )
         )
     }
@@ -939,6 +996,20 @@ private object EpistemeFilledIcons {
             autoMirror = false,
             paths = listOf(
                 """M240,320L600,320L600,240Q600,190 565,155Q530,120 480,120Q430,120 395,155Q360,190 360,240L280,240Q280,157 338.5,98.5Q397,40 480,40Q563,40 621.5,98.5Q680,157 680,240L680,320L720,320Q753,320 776.5,343.5Q800,367 800,400L800,800Q800,833 776.5,856.5Q753,880 720,880L240,880Q207,880 183.5,856.5Q160,833 160,800L160,400Q160,367 183.5,343.5Q207,320 240,320ZM240,800L720,800Q720,800 720,800Q720,800 720,800L720,400Q720,400 720,400Q720,400 720,400L240,400Q240,400 240,400Q240,400 240,400L240,800Q240,800 240,800Q240,800 240,800ZM536.5,656.5Q560,633 560,600Q560,567 536.5,543.5Q513,520 480,520Q447,520 423.5,543.5Q400,567 400,600Q400,633 423.5,656.5Q447,680 480,680Q513,680 536.5,656.5ZM240,800Q240,800 240,800Q240,800 240,800L240,400Q240,400 240,400Q240,400 240,400L240,400Q240,400 240,400Q240,400 240,400L240,800Q240,800 240,800Q240,800 240,800Z"""
+            )
+        )
+    }
+
+    val logout: ImageVector by lazy {
+        materialIcon(
+            name = "Logout",
+            defaultWidth = 24f,
+            defaultHeight = 24f,
+            viewportWidth = 960f,
+            viewportHeight = 960f,
+            autoMirror = true,
+            paths = listOf(
+                """M200,840Q167,840 143.5,816.5Q120,793 120,760L120,200Q120,167 143.5,143.5Q167,120 200,120L480,120L480,200L200,200Q200,200 200,200Q200,200 200,200L200,760Q200,760 200,760Q200,760 200,760L480,760L480,840L200,840ZM640,680L585,622L687,520L360,520L360,440L687,440L585,338L640,280L840,480L640,680Z"""
             )
         )
     }
@@ -1293,6 +1364,20 @@ private object EpistemeFilledIcons {
         )
     }
 
+    val sort: ImageVector by lazy {
+        materialIcon(
+            name = "Sort",
+            defaultWidth = 24f,
+            defaultHeight = 24f,
+            viewportWidth = 960f,
+            viewportHeight = 960f,
+            autoMirror = true,
+            paths = listOf(
+                """M120,720L120,640L360,640L360,720L120,720ZM120,520L120,440L600,440L600,520L120,520ZM120,320L120,240L840,240L840,320L120,320Z"""
+            )
+        )
+    }
+
     val star: ImageVector by lazy {
         materialIcon(
             name = "Star",
@@ -1516,4 +1601,3 @@ private fun materialIcon(
         }
     }.build()
 }
-
