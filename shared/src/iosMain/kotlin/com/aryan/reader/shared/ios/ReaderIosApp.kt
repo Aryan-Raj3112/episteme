@@ -36,8 +36,11 @@ import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.reduce
-import com.aryan.reader.shared.opds.SharedOpdsCatalogs
-import com.aryan.reader.shared.opds.SharedOpdsScreenState
+import com.aryan.reader.shared.opds.OpdsEntry
+import com.aryan.reader.shared.opds.OpdsStreamReference
+import com.aryan.reader.shared.opds.SharedOpdsController
+import com.aryan.reader.shared.opds.SharedOpdsDownloadState
+import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderScreen
@@ -189,16 +192,14 @@ private fun ReaderIosApp(
     var selectedPage by remember { mutableStateOf(ReaderIosMainPage.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(SharedMobileLibraryTab.BOOKS) }
     var activeReaderBook by remember { mutableStateOf<BookItem?>(null) }
-    var opdsState by remember {
-        var index = 0
-        mutableStateOf(
-            SharedOpdsScreenState(
-                catalogs = SharedOpdsCatalogs.defaultCatalogs {
-                    "ios_default_catalog_${index++}"
-                }
-            )
+    val opdsRepository = remember { IosOpdsRepository() }
+    val opdsController = remember {
+        SharedOpdsController(
+            repository = opdsRepository,
+            idFactory = { IosOpdsCatalogIds.next() }
         )
     }
+    var opdsState by remember { mutableStateOf(opdsController.state) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -231,20 +232,29 @@ private fun ReaderIosApp(
         )
     }
 
+    fun addBooksToLibrary(books: List<BookItem>, message: String? = null) {
+        if (books.isEmpty()) return
+        val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+        val newBooks = books.filterNot { it.id in existingIds }
+        if (newBooks.isEmpty()) return
+        val nextRawBooks = newBooks + state.rawLibraryBooks
+        state = state.copy(
+            rawLibraryBooks = nextRawBooks,
+            recentBooks = newBooks + state.recentBooks,
+            libraryBooks = nextRawBooks,
+            bannerMessage = BannerMessage(message ?: "Added ${newBooks.size} book(s)")
+        )
+        selectedPage = ReaderIosMainPage.LIBRARY
+        selectedLibraryTab = SharedMobileLibraryTab.BOOKS
+    }
+
     LaunchedEffect(bridge.importedFiles) {
         val importedBooks = bridge.importedFiles.toImportedBooks(existingBooks = state.rawLibraryBooks)
         if (importedBooks.isNotEmpty()) {
             val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
             val newBooks = importedBooks.filterNot { it.id in existingIds }
             if (newBooks.isNotEmpty()) {
-                val nextRawBooks = newBooks + state.rawLibraryBooks
-                state = state.copy(
-                    rawLibraryBooks = nextRawBooks,
-                    recentBooks = newBooks + state.recentBooks,
-                    libraryBooks = nextRawBooks,
-                    bannerMessage = BannerMessage("Added ${newBooks.size} import(s)")
-                )
-                selectedPage = ReaderIosMainPage.LIBRARY
+                addBooksToLibrary(newBooks, "Added ${newBooks.size} import(s)")
             }
         }
     }
@@ -362,43 +372,75 @@ private fun ReaderIosApp(
                                 onOpenShelf = { shelf -> showMessage("${shelf.name} shelf bridge is next") },
                                 onLongPressShelf = { shelf -> state = state.reduce(LibraryAction.ShelfSelectionToggled(shelf.id)) },
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
-                                onOpenCatalog = { catalog -> showMessage("${catalog.title} network bridge is next") },
-                                onOpenFeedUrl = { showMessage("OPDS feed bridge is next") },
-                                onOpdsNavigateBack = { opdsState = opdsState.copy(isViewingCatalog = false, currentCatalog = null, currentFeed = null) },
-                                onOpdsSearch = { query -> showMessage("OPDS search bridge is next: $query") },
-                                onOpdsLoadNextPage = { showMessage("OPDS pagination bridge is next") },
+                                onOpenCatalog = { catalog ->
+                                    scope.launch {
+                                        opdsController.openCatalog(catalog) { opdsState = it }
+                                    }
+                                },
+                                onOpenFeedUrl = { url ->
+                                    scope.launch {
+                                        opdsController.openFeedUrl(url) { opdsState = it }
+                                    }
+                                },
+                                onOpdsNavigateBack = {
+                                    scope.launch {
+                                        opdsController.navigateBack { opdsState = it }
+                                    }
+                                },
+                                onOpdsSearch = { query ->
+                                    scope.launch {
+                                        opdsController.search(query) { opdsState = it }
+                                    }
+                                },
+                                onOpdsLoadNextPage = {
+                                    scope.launch {
+                                        opdsController.loadNextPage { opdsState = it }
+                                    }
+                                },
                                 onAddCatalog = { title, url, username, password ->
-                                    opdsState = opdsState.copy(
-                                        catalogs = SharedOpdsCatalogs.addCatalog(
-                                            catalogs = opdsState.catalogs,
-                                            title = title,
-                                            url = url,
-                                            username = username,
-                                            password = password,
-                                            idFactory = { "ios_catalog_${currentTimestamp()}" }
-                                        )
-                                    )
+                                    opdsState = opdsController.addCatalog(title, url, username, password)
                                 },
                                 onUpdateCatalog = { id, title, url, username, password ->
-                                    opdsState = opdsState.copy(
-                                        catalogs = SharedOpdsCatalogs.updateCatalog(
-                                            catalogs = opdsState.catalogs,
-                                            id = id,
-                                            title = title,
-                                            url = url,
-                                            username = username,
-                                            password = password
-                                        )
-                                    )
+                                    opdsState = opdsController.updateCatalog(id, title, url, username, password)
                                 },
                                 onRemoveCatalog = { catalog ->
-                                    opdsState = opdsState.copy(
-                                        catalogs = SharedOpdsCatalogs.removeCatalog(opdsState.catalogs, catalog.id)
-                                    )
+                                    opdsState = opdsController.removeCatalog(catalog.id)
                                 },
-                                onDownloadOpdsBook = { entry, _ -> showMessage("${entry.title} download bridge is next") },
-                                onStreamOpdsBook = { entry, _ -> showMessage("${entry.title} stream bridge is next") },
-                                onClearOpdsError = { opdsState = opdsState.copy(errorMessage = null) },
+                                onDownloadOpdsBook = { entry, acquisition ->
+                                    scope.launch {
+                                        opdsState = opdsController.updateDownloadState(
+                                            entry.id,
+                                            SharedOpdsDownloadState(isDownloading = true, progress = null)
+                                        )
+                                        val catalog = opdsState.currentCatalog
+                                        opdsRepository.downloadBook(entry, acquisition, catalog?.username, catalog?.password)
+                                            .onSuccess { downloaded ->
+                                                bridge.recordImportedFiles(
+                                                    fileNames = listOf(downloaded.name),
+                                                    filePaths = listOf(downloaded.path)
+                                                )
+                                                showMessage("Downloaded ${downloaded.name}")
+                                            }
+                                            .onFailure { error ->
+                                                opdsState = opdsController.setErrorMessage(
+                                                    "Download failed: ${error.message ?: "unknown error"}"
+                                                )
+                                            }
+                                        opdsState = opdsController.updateDownloadState(entry.id, null)
+                                    }
+                                },
+                                onStreamOpdsBook = { entry, catalog ->
+                                    val count = entry.pseCount
+                                    val template = entry.pseUrlTemplate
+                                    if (count == null || template.isNullOrBlank()) {
+                                        opdsState = opdsController.setErrorMessage("This OPDS entry cannot be streamed.")
+                                    } else {
+                                        val streamBook = entry.toIosStreamBook(catalog?.id)
+                                        addBooksToLibrary(listOf(streamBook), "Added ${entry.title} stream")
+                                        openBook(streamBook)
+                                    }
+                                },
+                                onClearOpdsError = { opdsState = opdsController.clearError() },
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -504,6 +546,29 @@ private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>)
                 progressPercentage = 0f
             )
         }
+}
+
+private fun OpdsEntry.toIosStreamBook(catalogId: String?): BookItem {
+    val streamUri = SharedOpdsStreamUri.build(
+        OpdsStreamReference(
+            id = id,
+            count = pseCount ?: 0,
+            urlTemplate = pseUrlTemplate.orEmpty(),
+            catalogId = catalogId
+        )
+    )
+    return BookItem(
+        id = "ios_opds_stream_${streamUri.normalizedId()}",
+        path = streamUri,
+        type = FileType.CBZ,
+        displayName = title,
+        timestamp = currentTimestamp(),
+        title = title,
+        author = author,
+        description = summary,
+        sourceFolder = "OPDS Stream",
+        progressPercentage = 0f
+    )
 }
 
 private fun String.fileTypeFromExtension(): FileType {
