@@ -9,6 +9,12 @@ plugins {
     alias(libs.plugins.kover) apply false
 }
 
+compose.resources {
+    publicResClass = false
+    packageOfResClass = "com.aryan.reader.shared.generated.resources"
+    generateResClass = always
+}
+
 fun isDesktopOnlyBuild(): Boolean {
     providers.gradleProperty("desktopOnly").orNull
         ?.let { return it.equals("true", ignoreCase = true) }
@@ -83,6 +89,9 @@ kotlin {
         // remains the reference app until feature parity is established.
         val mobileMain by creating {
             dependsOn(commonMain)
+            dependencies {
+                implementation(compose.components.resources)
+            }
         }
         val readerJvmMain by creating {
             dependsOn(commonMain)

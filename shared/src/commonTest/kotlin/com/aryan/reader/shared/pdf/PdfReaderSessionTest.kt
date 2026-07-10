@@ -52,6 +52,18 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `pdf theme selection persists through shared reader state`() {
+        val themed = SharedPdfReaderState.initial(pageCount = 4)
+            .reduce(SharedPdfReaderAction.ThemeChanged("sepia"))
+        val restored = SharedPdfReaderStateSerializer.decode(
+            SharedPdfReaderStateSerializer.encode(themed)
+        )
+
+        assertEquals("sepia", themed.themeId)
+        assertEquals("sepia", restored?.themeId)
+    }
+
+    @Test
     fun `zoom changes use provided zoom spec`() {
         val zoomSpec = PdfZoomSpec(min = 0.5f, max = 4f, default = 1f)
         val state = SharedPdfReaderState.initial(pageCount = 1, zoomSpec = zoomSpec)
