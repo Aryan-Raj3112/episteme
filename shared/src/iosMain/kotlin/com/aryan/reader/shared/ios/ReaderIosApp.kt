@@ -27,6 +27,8 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.LibraryFilters
+import com.aryan.reader.shared.SharedLibrarySnapshot
+import com.aryan.reader.shared.SharedLibrarySnapshotJson
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
@@ -43,6 +45,7 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
+import com.aryan.reader.shared.ui.SharedMobileEpubReaderScreen
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
@@ -52,6 +55,7 @@ import com.aryan.reader.shared.ui.SharedMobileMainDestination
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 import kotlinx.coroutines.launch
 import platform.Foundation.NSApplicationSupportDirectory
+import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserDomainMask
@@ -106,7 +110,9 @@ data class IosImportedFile(
 
 private const val IosImportedFilesDefaultsKey = "reader_ios_imported_files_v1"
 private const val IosImportsRelativePrefix = "Imports/"
+private const val IosDocumentsRelativePrefix = "Documents/"
 private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
+private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
 
 private fun loadPersistedImportedFiles(): List<IosImportedFile> {
     val encoded = NSUserDefaults.standardUserDefaults.stringForKey(IosImportedFilesDefaultsKey) ?: return emptyList()
@@ -136,9 +142,17 @@ private fun String.resolvedIosImportedFilePath(): String {
             "$importsPath/${substringAfter(IosImportsRelativePrefix)}"
         } ?: this
     }
+    if (startsWith(IosDocumentsRelativePrefix)) {
+        return iosDocumentsDirectoryPath()?.let { documentsPath ->
+            "$documentsPath/${substringAfter(IosDocumentsRelativePrefix)}"
+        } ?: this
+    }
     if (NSFileManager.defaultManager.fileExistsAtPath(this)) return this
     val importedFileName = substringAfterLast('/').takeIf { it.isNotBlank() } ?: return this
-    return iosImportsDirectoryPath()?.let { importsPath -> "$importsPath/$importedFileName" } ?: this
+    return listOfNotNull(
+        iosImportsDirectoryPath()?.let { "$it/$importedFileName" },
+        iosDocumentsDirectoryPath()?.let { "$it/$importedFileName" }
+    ).firstOrNull(NSFileManager.defaultManager::fileExistsAtPath) ?: this
 }
 
 private fun String.stableIosImportedFilePath(): String {
@@ -147,8 +161,20 @@ private fun String.stableIosImportedFilePath(): String {
     return if (startsWith("$importsPath/")) {
         IosImportsRelativePrefix + importedFileName
     } else {
-        this
+        val documentsPath = iosDocumentsDirectoryPath()
+        if (documentsPath != null && startsWith("$documentsPath/")) {
+            IosDocumentsRelativePrefix + importedFileName
+        } else {
+            this
+        }
     }
+}
+
+private fun iosDocumentsDirectoryPath(): String? {
+    return (NSFileManager.defaultManager.URLsForDirectory(
+        directory = NSDocumentDirectory,
+        inDomains = NSUserDomainMask
+    ).firstOrNull() as? NSURL)?.path
 }
 
 private fun iosImportsDirectoryPath(): String? {
@@ -184,6 +210,31 @@ private fun persistIosPdfReaderState(book: BookItem, state: SharedPdfReaderState
 
 private fun BookItem.iosPdfReaderStateKey(): String {
     return IosPdfReaderStateDefaultsPrefix + (path ?: id).normalizedId()
+}
+
+private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
+    val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey()) ?: return book
+    val stored = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
+    return book.copy(
+        title = stored.title ?: book.title,
+        author = stored.author ?: book.author,
+        progressPercentage = stored.progressPercentage ?: book.progressPercentage,
+        lastPageIndex = stored.lastPageIndex ?: book.lastPageIndex,
+        readerPosition = stored.readerPosition ?: book.readerPosition,
+        readerSettings = stored.readerSettings ?: book.readerSettings,
+        readerBookmarks = stored.readerBookmarks,
+        readerHighlights = stored.readerHighlights,
+        readingPositionModifiedTimestamp = stored.readingPositionModifiedTimestamp
+    )
+}
+
+private fun persistIosEpubBookState(book: BookItem) {
+    val encoded = SharedLibrarySnapshotJson.encode(SharedLibrarySnapshot(books = listOf(book)))
+    NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = book.iosEpubReaderStateKey())
+}
+
+private fun BookItem.iosEpubReaderStateKey(): String {
+    return IosEpubReaderStateDefaultsPrefix + id.normalizedId()
 }
 
 private fun String.escapePersistedValue(): String {
@@ -287,7 +338,7 @@ private fun ReaderIosApp(
 
     fun openLibraryBook(book: BookItem) {
         state = state.withMobileBookOpened(book)
-        if (book.type == FileType.PDF) {
+        if (book.type == FileType.PDF || book.type == FileType.EPUB) {
             activeReaderBook = book
             return
         }
@@ -325,25 +376,61 @@ private fun ReaderIosApp(
     ) {
         Surface(modifier = Modifier.fillMaxSize()) {
             activeReaderBook?.let { book ->
-                val initialPdfReaderState = remember(book.id) { loadPersistedIosPdfReaderState(book) }
-                SharedMobilePdfReaderScreen(
-                    book = book,
-                    onBack = { activeReaderBook = null },
-                    onNativePdfBridgeNeeded = { pdfBook ->
-                        showMessage("${pdfBook.displayName}: page ${book.lastPageIndex?.plus(1) ?: 1}")
-                    },
-                    initialReaderState = initialPdfReaderState,
-                    onReaderStateChange = { pdfState ->
-                        persistIosPdfReaderState(book, pdfState)
-                        val updatedBook = book.withIosPdfReaderProgress(pdfState)
-                        if (updatedBook != book) {
-                            activeReaderBook = updatedBook
-                            state = state.withUpdatedIosBook(updatedBook)
-                        }
-                    },
-                    onKeepScreenOnChange = bridge::setKeepScreenOn,
-                    modifier = Modifier.fillMaxSize()
-                )
+                when (book.type) {
+                    FileType.PDF -> {
+                        val initialPdfReaderState = remember(book.id) { loadPersistedIosPdfReaderState(book) }
+                        SharedMobilePdfReaderScreen(
+                            book = book,
+                            onBack = { activeReaderBook = null },
+                            onNativePdfBridgeNeeded = { pdfBook ->
+                                showMessage("${pdfBook.displayName}: page ${book.lastPageIndex?.plus(1) ?: 1}")
+                            },
+                            initialReaderState = initialPdfReaderState,
+                            onReaderStateChange = { pdfState ->
+                                persistIosPdfReaderState(book, pdfState)
+                                val updatedBook = book.withIosPdfReaderProgress(pdfState)
+                                if (updatedBook != book) {
+                                    activeReaderBook = updatedBook
+                                    state = state.withUpdatedIosBook(updatedBook)
+                                }
+                            },
+                            onKeepScreenOnChange = bridge::setKeepScreenOn,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    FileType.EPUB -> {
+                        val readerBook = remember(book.id) { loadPersistedIosEpubBookState(book) }
+                        SharedMobileEpubReaderScreen(
+                            book = readerBook,
+                            onBack = { activeReaderBook = null },
+                            onReaderStateChange = { snapshot ->
+                                val updatedBook = book.copy(
+                                    progressPercentage = snapshot.progressPercent,
+                                    lastPageIndex = snapshot.pageIndex,
+                                    readerPosition = snapshot.locator,
+                                    readerSettings = snapshot.settings,
+                                    readerBookmarks = snapshot.bookmarks,
+                                    readingPositionModifiedTimestamp = currentTimestamp()
+                                )
+                                persistIosEpubBookState(updatedBook)
+                                activeReaderBook = updatedBook
+                                state = state.withUpdatedIosBook(updatedBook)
+                            },
+                            onMetadataLoaded = { title, author ->
+                                val updatedBook = readerBook.copy(
+                                    title = title.ifBlank { readerBook.title },
+                                    author = author ?: readerBook.author
+                                )
+                                persistIosEpubBookState(updatedBook)
+                                activeReaderBook = updatedBook
+                                state = state.withUpdatedIosBook(updatedBook)
+                            },
+                            onKeepScreenOnChange = bridge::setKeepScreenOn,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    else -> Unit
+                }
                 return@Surface
             }
 
@@ -683,7 +770,7 @@ private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>)
     val now = currentTimestamp()
     return distinctBy { it.path }
         .mapIndexed { index, file ->
-            val baseId = "ios_import_${file.path.normalizedId()}"
+            val baseId = "ios_import_${file.path.stableIosImportedFilePath().normalizedId()}"
             var id = baseId
             var suffix = 1
             while (id in existingIds) {

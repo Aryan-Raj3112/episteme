@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -122,12 +123,12 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -194,6 +195,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.jetbrains.compose.resources.imageResource
 
 @Composable
@@ -425,8 +427,15 @@ fun SharedMobilePdfReaderScreen(
     var isSearchInProgress by remember(book.id) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val pageRender = rememberSharedMobilePdfPageRender(book, readerState.pageIndex)
-    val pageCount = pageRender.pageCount.coerceAtLeast(1)
+    // Document metadata must not follow the visible page. A newly requested page starts with
+    // SharedMobilePdfPageRender's loading value (pageCount = 1); using that transient value here
+    // used to collapse the list/pager to page zero every time the user changed pages.
+    val documentRender = rememberSharedMobilePdfPageRender(book, 0)
+    val pageCount = if (documentRender.bitmap != null || documentRender.errorMessage != null) {
+        documentRender.pageCount.coerceAtLeast(1)
+    } else {
+        readerState.pageCount.coerceAtLeast(1)
+    }
     val activeTheme = remember(readerState.themeId) {
         BuiltInPdfReaderThemes.firstOrNull { it.id == readerState.themeId }
             ?: BuiltInPdfReaderThemes.first()
@@ -443,6 +452,12 @@ fun SharedMobilePdfReaderScreen(
         dispatch(SharedPdfReaderAction.GoToPage(target))
         navigationRequestPage = target
         navigationRequestToken++
+    }
+
+    fun toggleDisplayMode() {
+        navigationRequestPage = readerState.pageIndex
+        navigationRequestToken++
+        dispatch(SharedPdfReaderAction.DisplayModeToggled)
     }
 
     fun navigateToSearchResult(resultIndex: Int) {
@@ -596,7 +611,7 @@ fun SharedMobilePdfReaderScreen(
                         onToggleBookmark = {
                             dispatch(SharedPdfReaderAction.BookmarkToggled(readerState.pageIndex, createdAt = currentTimestamp()))
                         },
-                        onToggleDisplayMode = { dispatch(SharedPdfReaderAction.DisplayModeToggled) },
+                        onToggleDisplayMode = ::toggleDisplayMode,
                         onTheme = { showThemePanel = true },
                         onVisualOptions = { showReaderOptions = !showReaderOptions },
                         tapToTurnPages = tapToTurnPages,
@@ -1794,8 +1809,12 @@ private fun SharedMobilePdfVerticalPages(
             listState.animateScrollToItem(target)
         }
     }
-    LaunchedEffect(listState.firstVisibleItemIndex) {
-        onVisiblePageChanged(listState.firstVisibleItemIndex.coerceIn(0, pageCount - 1))
+    LaunchedEffect(listState, pageCount) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collect { visiblePage ->
+                onVisiblePageChanged(visiblePage.coerceIn(0, pageCount - 1))
+            }
     }
     LazyColumn(
         state = listState,
@@ -1868,8 +1887,12 @@ private fun SharedMobilePdfPaginatedPages(
         val target = pagerIndexForPage(requestedPage)
         if (pagerState.currentPage != target) pagerState.animateScrollToPage(target)
     }
-    LaunchedEffect(pagerState.currentPage, spreadStarts) {
-        onPageChanged(spreadStarts.getOrElse(pagerState.currentPage) { 0 })
+    LaunchedEffect(pagerState, spreadStarts) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { settledPage ->
+                onPageChanged(spreadStarts.getOrElse(settledPage) { 0 })
+            }
     }
     HorizontalPager(
         state = pagerState,
@@ -1901,38 +1924,47 @@ private fun SharedMobilePdfPaginatedPages(
                 },
             contentAlignment = Alignment.Center
         ) {
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(if (spreadPages.size > 1) 8.dp else 0.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                spreadPages.forEach { pageIndex ->
-                    val render = rememberSharedMobilePdfPageRender(book, pageIndex)
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        SharedMobilePdfPageSurface(
-                            book = book,
-                            pageIndex = pageIndex,
-                            pageCount = pageCount,
-                            pageRender = render,
-                            activeTheme = activeTheme,
-                            textureAlpha = textureAlpha,
-                            showPageNumberOverlay = showPageNumberOverlay,
-                            searchHighlights = searchResults.filter { it.pageIndex == pageIndex }.flatMap { it.boundsList },
-                            annotations = state.annotations.filter { it.pageIndex == pageIndex },
-                            activeStroke = if (pageIndex == state.pageIndex) activeStroke else emptyList(),
-                            selectedTool = state.selectedTool,
-                            selectedColorArgb = state.selectedColorArgb,
-                            strokeWidth = state.strokeWidth,
-                            onCanvasSizeChanged = onCanvasSizeChanged,
-                            onFinishInkStroke = onFinishInkStroke,
-                            modifier = Modifier.graphicsLayer {
-                                    scaleX = state.zoom
-                                    scaleY = state.zoom
-                                }
-                        )
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val pageGap = if (spreadPages.size > 1) 8.dp else 0.dp
+                val viewportHeight = maxHeight
+                val slotWidth = (maxWidth - pageGap * (spreadPages.size - 1)) / spreadPages.size
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(pageGap),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    spreadPages.forEach { pageIndex ->
+                        val render = rememberSharedMobilePdfPageRender(book, pageIndex)
+                        val aspectRatio = render.aspectRatio.coerceIn(0.1f, 10f)
+                        val widthLimited = slotWidth.value / viewportHeight.value <= aspectRatio
+                        val fittedWidth = if (widthLimited) slotWidth else viewportHeight * aspectRatio
+                        val fittedHeight = fittedWidth / aspectRatio
+                        Box(
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            SharedMobilePdfPageSurface(
+                                book = book,
+                                pageIndex = pageIndex,
+                                pageCount = pageCount,
+                                pageRender = render,
+                                activeTheme = activeTheme,
+                                textureAlpha = textureAlpha,
+                                showPageNumberOverlay = showPageNumberOverlay,
+                                searchHighlights = searchResults.filter { it.pageIndex == pageIndex }.flatMap { it.boundsList },
+                                annotations = state.annotations.filter { it.pageIndex == pageIndex },
+                                activeStroke = if (pageIndex == state.pageIndex) activeStroke else emptyList(),
+                                selectedTool = state.selectedTool,
+                                selectedColorArgb = state.selectedColorArgb,
+                                strokeWidth = state.strokeWidth,
+                                onCanvasSizeChanged = onCanvasSizeChanged,
+                                onFinishInkStroke = onFinishInkStroke,
+                                // PdfZoomSpec.default controls render resolution, not the
+                                // on-screen page scale. Applying it as a graphics transform
+                                // enlarged the fitted page by 1.35x and exposed adjacent pages.
+                                modifier = Modifier.size(fittedWidth, fittedHeight)
+                            )
+                        }
                     }
                 }
             }

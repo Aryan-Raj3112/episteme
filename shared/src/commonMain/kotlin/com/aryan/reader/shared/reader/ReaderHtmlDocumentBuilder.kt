@@ -34,13 +34,15 @@ object ReaderHtmlDocumentBuilder {
         searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+        highlightActionsEnabled: Boolean = true,
         navigationLocator: ReaderLocator? = null,
         pages: List<ReaderPage> = emptyList(),
         readerAiFeaturesEnabled: Boolean = true,
         cloudTtsEnabled: Boolean = true,
         externalLookupEnabled: Boolean = true,
         textureDataUri: String? = null,
-        renderedChapterRange: IntRange? = null
+        renderedChapterRange: IntRange? = null,
+        showChapterTitles: Boolean = true
     ): String {
         val renderedChapterIndices = renderedChapterRange
             ?.asSequence()
@@ -58,9 +60,14 @@ object ReaderHtmlDocumentBuilder {
                     contentStartOffset = 0,
                     contentEndOffset = chapterText.length
                 )
+            val chapterTitleHtml = if (showChapterTitles) {
+                "<h1 class=\"chapter-title\">${chapter.title.escapeHtml()}</h1>"
+            } else {
+                ""
+            }
             """
             <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-chapter-href="${chapter.baseHref.orEmpty().escapeHtml()}">
-              <h1 class="chapter-title">${chapter.title.escapeHtml()}</h1>
+              $chapterTitleHtml
               <div class="reader-content" data-reader-content-start="0" data-reader-content-end="${chapterText.length}">
                 $chapterHtml
               </div>
@@ -75,6 +82,7 @@ object ReaderHtmlDocumentBuilder {
             searchQuery = searchQuery,
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
+            highlightActionsEnabled = highlightActionsEnabled,
             navigationLocator = navigationLocator,
             pageAnchors = pages,
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
@@ -93,6 +101,7 @@ object ReaderHtmlDocumentBuilder {
         searchOptions: ReaderSearchOptions = ReaderSearchOptions(),
         highlights: List<UserHighlight> = emptyList(),
         highlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
+        highlightActionsEnabled: Boolean = true,
         navigationLocator: ReaderLocator? = null,
         readerAiFeaturesEnabled: Boolean = true,
         cloudTtsEnabled: Boolean = true,
@@ -129,6 +138,7 @@ object ReaderHtmlDocumentBuilder {
             searchQuery = searchQuery,
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
+            highlightActionsEnabled = highlightActionsEnabled,
             navigationLocator = navigationLocator,
             pageAnchors = pagesToRender,
             readerAiFeaturesEnabled = readerAiFeaturesEnabled,
@@ -259,6 +269,7 @@ object ReaderHtmlDocumentBuilder {
         searchQuery: String,
         searchOptions: ReaderSearchOptions,
         highlightPalette: ReaderHighlightPalette,
+        highlightActionsEnabled: Boolean,
         navigationLocator: ReaderLocator?,
         pageAnchors: List<ReaderPage>,
         readerAiFeaturesEnabled: Boolean,
@@ -270,7 +281,7 @@ object ReaderHtmlDocumentBuilder {
         val align = settings.readerTextAlignCss()
         val customFontCss = settings.readerCustomFontFaceCss()
         val family = settings.readerFontFamilyCss()
-        val highlightButtons = highlightPalette.toSelectionPaletteButtons()
+        val highlightButtons = if (highlightActionsEnabled) highlightPalette.toSelectionPaletteButtons() else ""
         val defineButton = if (readerAiFeaturesEnabled) {
             readerSelectionActionButton("define", "Define", ReaderSelectionIconDefinePath)
         } else {
@@ -1880,6 +1891,7 @@ object ReaderHtmlDocumentBuilder {
                       try {
                         window.kmpJsBridge.callNative('readerLinkClicked', JSON.stringify(payload));
                         readerConsoleLog('READER_LINK bridge_sent href=' + payload.href + ' attempt=' + attempt);
+                        if (window.readerDisableLinkFallback === true) return true;
                         window.setTimeout(function () {
                           fallbackReaderLinkNavigation(payload, 'post_bridge');
                         }, 260);
