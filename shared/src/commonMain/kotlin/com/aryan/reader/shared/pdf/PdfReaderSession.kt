@@ -27,6 +27,24 @@ data class SharedPdfBookmarkStore(
     val bookmarks: List<SharedPdfBookmark> = emptyList()
 )
 
+@Serializable
+data class SharedPdfReaderStore(
+    val version: Int = 1,
+    val pageIndex: Int = 0,
+    val pageCount: Int = 0,
+    val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
+    val zoom: Float = PdfZoomSpec().default,
+    val selectedTool: PdfInkTool = PdfInkTool.NONE,
+    val selectedColorArgb: Int = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE).colorArgb,
+    val strokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE).strokeWidth,
+    val isTextSelectionMode: Boolean = false,
+    val bookmarks: List<SharedPdfBookmark> = emptyList(),
+    val annotations: List<SharedPdfAnnotation> = emptyList(),
+    val penPalette: List<Int> = SharedPdfAnnotationDefaults.penPalette,
+    val lastActivePenTool: PdfInkTool = PdfInkTool.PEN,
+    val lastActiveHighlighterTool: PdfInkTool = PdfInkTool.HIGHLIGHTER
+)
+
 object SharedPdfBookmarkSerializer {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -44,6 +62,57 @@ object SharedPdfBookmarkSerializer {
             json.decodeFromString<SharedPdfBookmarkStore>(raw).bookmarks
         }.getOrElse {
             runCatching { json.decodeFromString<List<SharedPdfBookmark>>(raw) }.getOrDefault(emptyList())
+        }
+    }
+}
+
+object SharedPdfReaderStateSerializer {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        prettyPrint = true
+        encodeDefaults = true
+    }
+
+    fun encode(state: SharedPdfReaderState): String {
+        return json.encodeToString(
+            SharedPdfReaderStore(
+                pageIndex = state.pageIndex,
+                pageCount = state.pageCount,
+                displayMode = state.displayMode,
+                zoom = state.zoom,
+                selectedTool = state.selectedTool,
+                selectedColorArgb = state.selectedColorArgb,
+                strokeWidth = state.strokeWidth,
+                isTextSelectionMode = state.isTextSelectionMode,
+                bookmarks = state.bookmarks,
+                annotations = state.annotations,
+                penPalette = state.penPalette,
+                lastActivePenTool = state.lastActivePenTool,
+                lastActiveHighlighterTool = state.lastActiveHighlighterTool
+            )
+        )
+    }
+
+    fun decode(raw: String?, fallbackPageCount: Int = 1, fallbackPageIndex: Int = 0): SharedPdfReaderState? {
+        if (raw.isNullOrBlank()) return null
+        val store = runCatching { json.decodeFromString<SharedPdfReaderStore>(raw) }.getOrNull()
+            ?: return null
+        return SharedPdfReaderState(
+            pageIndex = store.pageIndex,
+            pageCount = store.pageCount.takeIf { it > 0 } ?: fallbackPageCount,
+            displayMode = store.displayMode,
+            zoom = store.zoom,
+            selectedTool = store.selectedTool,
+            selectedColorArgb = store.selectedColorArgb,
+            strokeWidth = store.strokeWidth,
+            isTextSelectionMode = store.isTextSelectionMode,
+            bookmarks = store.bookmarks,
+            annotations = store.annotations,
+            penPalette = store.penPalette,
+            lastActivePenTool = store.lastActivePenTool,
+            lastActiveHighlighterTool = store.lastActiveHighlighterTool
+        ).coerced().let { state ->
+            if (state.pageCount > 0) state else state.copy(pageIndex = fallbackPageIndex)
         }
     }
 }

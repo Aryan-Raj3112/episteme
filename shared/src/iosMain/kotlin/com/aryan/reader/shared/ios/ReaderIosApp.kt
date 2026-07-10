@@ -1,19 +1,13 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package com.aryan.reader.shared.ios
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
@@ -34,22 +28,36 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.Shelf
+import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.reduce
+import com.aryan.reader.shared.withMobileBookOpened
+import com.aryan.reader.shared.withMobileImportedBooks
 import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.aryan.reader.shared.opds.SharedOpdsController
 import com.aryan.reader.shared.opds.SharedOpdsDownloadState
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
+import com.aryan.reader.shared.pdf.SharedPdfReaderState
+import com.aryan.reader.shared.pdf.SharedPdfReaderStateSerializer
 import com.aryan.reader.shared.ui.SharedAppTheme
 import com.aryan.reader.shared.ui.SharedMobileAppDrawerContent
 import com.aryan.reader.shared.ui.SharedMobilePdfReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
+import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileLibraryTab
+import com.aryan.reader.shared.ui.SharedMobileMainDestination
+import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 import kotlinx.coroutines.launch
+import platform.Foundation.NSApplicationSupportDirectory
+import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDefaults
+import platform.Foundation.NSUserDomainMask
+import platform.Foundation.NSURL
 import platform.UIKit.UIViewController
+import platform.UIKit.UIApplication
 
 class ReaderIosBridge {
     internal var importedFiles by mutableStateOf<List<IosImportedFile>>(loadPersistedImportedFiles())
@@ -78,6 +86,17 @@ class ReaderIosBridge {
     fun recordNativeEvent(message: String) {
         latestNativeEvent = message
     }
+
+    fun removeImportedFiles(filePaths: List<String>) {
+        if (filePaths.isEmpty()) return
+        importedFiles = importedFiles.filterNot { it.path in filePaths }
+        persistImportedFiles(importedFiles)
+        latestNativeEvent = "Removed ${filePaths.size} file(s) from iOS library"
+    }
+
+    fun setKeepScreenOn(enabled: Boolean) {
+        UIApplication.sharedApplication.idleTimerDisabled = enabled
+    }
 }
 
 data class IosImportedFile(
@@ -86,6 +105,8 @@ data class IosImportedFile(
 )
 
 private const val IosImportedFilesDefaultsKey = "reader_ios_imported_files_v1"
+private const val IosImportsRelativePrefix = "Imports/"
+private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
 
 private fun loadPersistedImportedFiles(): List<IosImportedFile> {
     val encoded = NSUserDefaults.standardUserDefaults.stringForKey(IosImportedFilesDefaultsKey) ?: return emptyList()
@@ -94,7 +115,9 @@ private fun loadPersistedImportedFiles(): List<IosImportedFile> {
         .mapNotNull { line ->
             val parts = line.splitEscapedTab()
             if (parts.size != 2) return@mapNotNull null
-            IosImportedFile(name = parts[0].unescapePersistedValue(), path = parts[1].unescapePersistedValue())
+            val name = parts[0].unescapePersistedValue()
+            val resolvedPath = parts[1].unescapePersistedValue().resolvedIosImportedFilePath()
+            IosImportedFile(name = name, path = resolvedPath)
         }
         .distinctBy { it.path }
         .toList()
@@ -102,9 +125,65 @@ private fun loadPersistedImportedFiles(): List<IosImportedFile> {
 
 private fun persistImportedFiles(files: List<IosImportedFile>) {
     val encoded = files.joinToString("\n") { file ->
-        "${file.name.escapePersistedValue()}\t${file.path.escapePersistedValue()}"
+        "${file.name.escapePersistedValue()}\t${file.path.stableIosImportedFilePath().escapePersistedValue()}"
     }
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = IosImportedFilesDefaultsKey)
+}
+
+private fun String.resolvedIosImportedFilePath(): String {
+    if (startsWith(IosImportsRelativePrefix)) {
+        return iosImportsDirectoryPath()?.let { importsPath ->
+            "$importsPath/${substringAfter(IosImportsRelativePrefix)}"
+        } ?: this
+    }
+    if (NSFileManager.defaultManager.fileExistsAtPath(this)) return this
+    val importedFileName = substringAfterLast('/').takeIf { it.isNotBlank() } ?: return this
+    return iosImportsDirectoryPath()?.let { importsPath -> "$importsPath/$importedFileName" } ?: this
+}
+
+private fun String.stableIosImportedFilePath(): String {
+    val importedFileName = substringAfterLast('/').takeIf { it.isNotBlank() } ?: return this
+    val importsPath = iosImportsDirectoryPath() ?: return this
+    return if (startsWith("$importsPath/")) {
+        IosImportsRelativePrefix + importedFileName
+    } else {
+        this
+    }
+}
+
+private fun iosImportsDirectoryPath(): String? {
+    val appSupport = NSFileManager.defaultManager.URLsForDirectory(
+        directory = NSApplicationSupportDirectory,
+        inDomains = NSUserDomainMask
+    ).firstOrNull() as? NSURL
+    val importsDirectory = appSupport?.URLByAppendingPathComponent("Imports", isDirectory = true)
+    importsDirectory?.path?.let { path ->
+        NSFileManager.defaultManager.createDirectoryAtPath(
+            path = path,
+            withIntermediateDirectories = true,
+            attributes = null,
+            error = null
+        )
+    }
+    return importsDirectory?.path
+}
+
+private fun loadPersistedIosPdfReaderState(book: BookItem): SharedPdfReaderState? {
+    val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosPdfReaderStateKey()) ?: return null
+    return SharedPdfReaderStateSerializer.decode(
+        raw = encoded,
+        fallbackPageCount = 1,
+        fallbackPageIndex = book.lastPageIndex ?: 0
+    )
+}
+
+private fun persistIosPdfReaderState(book: BookItem, state: SharedPdfReaderState) {
+    val encoded = SharedPdfReaderStateSerializer.encode(state)
+    NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = book.iosPdfReaderStateKey())
+}
+
+private fun BookItem.iosPdfReaderStateKey(): String {
+    return IosPdfReaderStateDefaultsPrefix + (path ?: id).normalizedId()
 }
 
 private fun String.escapePersistedValue(): String {
@@ -174,13 +253,6 @@ fun readerComposeViewController(
     )
 }
 
-private enum class ReaderIosMainPage(
-    val label: String
-) {
-    HOME("Home"),
-    LIBRARY("Library")
-}
-
 @Composable
 private fun ReaderIosApp(
     bridge: ReaderIosBridge,
@@ -189,7 +261,7 @@ private fun ReaderIosApp(
     var state by remember {
         mutableStateOf(SharedReaderScreenState())
     }
-    var selectedPage by remember { mutableStateOf(ReaderIosMainPage.HOME) }
+    var selectedPage by remember { mutableStateOf(SharedMobileMainDestination.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(SharedMobileLibraryTab.BOOKS) }
     var activeReaderBook by remember { mutableStateOf<BookItem?>(null) }
     val opdsRepository = remember { IosOpdsRepository() }
@@ -213,48 +285,33 @@ private fun ReaderIosApp(
         scope.launch { drawerState.close() }
     }
 
-    fun openBook(book: BookItem) {
+    fun openLibraryBook(book: BookItem) {
+        state = state.withMobileBookOpened(book)
         if (book.type == FileType.PDF) {
             activeReaderBook = book
-            state = state.copy(
-                selectedBookId = book.id,
-                openTabIds = if (book.id in state.openTabIds) state.openTabIds else state.openTabIds + book.id,
-                activeTabBookId = book.id,
-                bannerMessage = null
-            )
             return
         }
         state = state.copy(
-            selectedBookId = book.id,
-            openTabIds = if (book.id in state.openTabIds) state.openTabIds else state.openTabIds + book.id,
-            activeTabBookId = book.id,
             bannerMessage = BannerMessage("Opening ${book.cardTitle()} comes next")
         )
     }
 
     fun addBooksToLibrary(books: List<BookItem>, message: String? = null) {
-        if (books.isEmpty()) return
-        val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
-        val newBooks = books.filterNot { it.id in existingIds }
-        if (newBooks.isEmpty()) return
-        val nextRawBooks = newBooks + state.rawLibraryBooks
-        state = state.copy(
-            rawLibraryBooks = nextRawBooks,
-            recentBooks = newBooks + state.recentBooks,
-            libraryBooks = nextRawBooks,
-            bannerMessage = BannerMessage(message ?: "Added ${newBooks.size} book(s)")
-        )
-        selectedPage = ReaderIosMainPage.LIBRARY
+        val result = state.withMobileImportedBooks(books, message)
+        if (result.addedBooks.isEmpty()) return
+        state = result.state.withIosImportsFolder(result.addedBooks)
+        selectedPage = SharedMobileMainDestination.LIBRARY
         selectedLibraryTab = SharedMobileLibraryTab.BOOKS
     }
 
     LaunchedEffect(bridge.importedFiles) {
         val importedBooks = bridge.importedFiles.toImportedBooks(existingBooks = state.rawLibraryBooks)
         if (importedBooks.isNotEmpty()) {
-            val existingIds = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
-            val newBooks = importedBooks.filterNot { it.id in existingIds }
-            if (newBooks.isNotEmpty()) {
-                addBooksToLibrary(newBooks, "Added ${newBooks.size} import(s)")
+            val importedCount = importedBooks
+                .distinctBy { it.id }
+                .count { book -> state.rawLibraryBooks.none { it.id == book.id } }
+            if (importedCount > 0) {
+                addBooksToLibrary(importedBooks, "Added $importedCount import(s)")
             }
         }
     }
@@ -268,12 +325,23 @@ private fun ReaderIosApp(
     ) {
         Surface(modifier = Modifier.fillMaxSize()) {
             activeReaderBook?.let { book ->
+                val initialPdfReaderState = remember(book.id) { loadPersistedIosPdfReaderState(book) }
                 SharedMobilePdfReaderScreen(
                     book = book,
                     onBack = { activeReaderBook = null },
                     onNativePdfBridgeNeeded = { pdfBook ->
-                        showMessage("iOS PDF rendering bridge is next: ${pdfBook.displayName}")
+                        showMessage("${pdfBook.displayName}: page ${book.lastPageIndex?.plus(1) ?: 1}")
                     },
+                    initialReaderState = initialPdfReaderState,
+                    onReaderStateChange = { pdfState ->
+                        persistIosPdfReaderState(book, pdfState)
+                        val updatedBook = book.withIosPdfReaderProgress(pdfState)
+                        if (updatedBook != book) {
+                            activeReaderBook = updatedBook
+                            state = state.withUpdatedIosBook(updatedBook)
+                        }
+                    },
+                    onKeepScreenOnChange = bridge::setKeepScreenOn,
                     modifier = Modifier.fillMaxSize()
                 )
                 return@Surface
@@ -302,9 +370,9 @@ private fun ReaderIosApp(
                     )
                 }
             ) {
-                ReaderIosMobileScaffold(
-                    selectedPage = selectedPage,
-                    onPageSelected = { page ->
+                SharedMobileMainScaffold(
+                    selectedDestination = selectedPage,
+                    onDestinationSelected = { page ->
                         if (selectedPage != page) {
                             state = state.copy(selectedBookIds = emptySet())
                         }
@@ -317,38 +385,65 @@ private fun ReaderIosApp(
                             .padding(innerPadding)
                     ) {
                         when (selectedPage) {
-                            ReaderIosMainPage.HOME -> SharedMobileHomeScreen(
+                            SharedMobileMainDestination.HOME -> SharedMobileHomeScreen(
                                 state = state,
-                                onImportBooks = onImportBooks,
-                                onOpenBook = ::openBook,
-                                onLongPressBook = { book -> state = state.toggleBookSelection(book.id) },
-                                onDrawerClick = { scope.launch { drawerState.open() } },
-                                onSearchClick = {
-                                    selectedPage = ReaderIosMainPage.LIBRARY
-                                    state = state.copy(isSearchActive = true)
+                                actions = object : SharedMobileHomeActions {
+                                    override fun importBooks() = onImportBooks()
+                                    override fun openBook(book: BookItem) = openLibraryBook(book)
+                                    override fun longPressBook(book: BookItem) {
+                                        state = state.toggleBookSelection(book.id)
+                                    }
+                                    override fun openDrawer() {
+                                        scope.launch { drawerState.open() }
+                                    }
+                                    override fun openSearch() {
+                                        selectedPage = SharedMobileMainDestination.LIBRARY
+                                        state = state.copy(isSearchActive = true)
+                                    }
+                                    override fun navigateToFolderSync() {
+                                        selectedPage = SharedMobileMainDestination.LIBRARY
+                                    }
+                                    override fun refresh() = showMessage("Refresh bridge is next for iOS")
+                                    override fun clearSelection() {
+                                        state = state.copy(selectedBookIds = emptySet())
+                                    }
+                                    override fun selectAll() {
+                                        state = state.copy(selectedBookIds = state.recentBooks.mapTo(mutableSetOf()) { it.id })
+                                    }
+                                    override fun closeTab(book: BookItem) {
+                                        state = state.closeTab(book.id)
+                                    }
+                                    override fun closeAllTabs() {
+                                        state = state.copy(openTabIds = emptyList(), activeTabBookId = null)
+                                    }
+                                    override fun togglePinned(book: BookItem) {
+                                        state = state.toggleHomePinned(book.id)
+                                    }
+                                    override fun deleteSelectedBooks() {
+                                        val removed = state.selectedBookIds
+                                        bridge.removeImportedFiles(
+                                            state.rawLibraryBooks.filter { it.id in removed }.mapNotNull { it.path }
+                                        )
+                                        state = state.removeIosBooks(removed)
+                                    }
+                                    override fun createShelfFromSelectedBooks(name: String) {
+                                        state = state.createIosShelf(name, state.selectedBookIds)
+                                        selectedPage = SharedMobileMainDestination.LIBRARY
+                                        selectedLibraryTab = SharedMobileLibraryTab.SHELVES
+                                    }
+                                    override fun openSettings() = showMessage("Settings bridge is next for iOS")
+                                    override fun openMoreActions() = showMessage("More actions bridge is next for iOS")
                                 },
-                                onNavigateToFolderSync = { selectedPage = ReaderIosMainPage.LIBRARY },
-                                onRefresh = { showMessage("Refresh bridge is next for iOS") },
-                                onSettingsClick = { showMessage("Settings bridge is next for iOS") },
-                                onMoreClick = { showMessage("More actions bridge is next for iOS") },
-                                onClearSelection = { state = state.copy(selectedBookIds = emptySet()) },
-                                onSelectAll = {
-                                    state = state.copy(selectedBookIds = state.recentBooks.mapTo(mutableSetOf()) { it.id })
-                                },
-                                onOpenTab = ::openBook,
-                                onCloseTab = { book -> state = state.closeTab(book.id) },
-                                onCloseAllTabs = { state = state.copy(openTabIds = emptyList(), activeTabBookId = null) },
-                                onTogglePinned = { book -> state = state.toggleHomePinned(book.id) },
                                 modifier = Modifier.fillMaxSize()
                             )
 
-                            ReaderIosMainPage.LIBRARY -> SharedMobileLibraryScreen(
+                            SharedMobileMainDestination.LIBRARY -> SharedMobileLibraryScreen(
                                 state = state,
                                 selectedTab = selectedLibraryTab,
                                 onTabChange = { selectedLibraryTab = it },
                                 opdsState = opdsState,
                                 onImportBooks = onImportBooks,
-                                onOpenBook = ::openBook,
+                                onOpenBook = ::openLibraryBook,
                                 onLongPressBook = { book -> state = state.toggleBookSelection(book.id) },
                                 onSearchQueryChange = { query -> state = state.reduce(LibraryAction.SearchChanged(query)) },
                                 onSearchActiveChange = { active ->
@@ -364,14 +459,31 @@ private fun ReaderIosApp(
                                 onSelectAll = {
                                     state = state.copy(selectedBookIds = state.libraryBooks.mapTo(mutableSetOf()) { it.id })
                                 },
-                                onFilterClick = { showMessage("Library filters bridge is next for iOS") },
+                                onFilterClick = {},
                                 onClearFilters = { state = state.reduce(LibraryAction.FiltersChanged(LibraryFilters())) },
                                 onRemoveFilters = { filters -> state = state.reduce(LibraryAction.FiltersChanged(filters)) },
                                 onSettingsClick = { showMessage("Settings bridge is next for iOS") },
-                                onNewShelfClick = { showMessage("New shelf bridge is next for iOS") },
-                                onOpenShelf = { shelf -> showMessage("${shelf.name} shelf bridge is next") },
+                                onNewShelfClick = {},
+                                onOpenShelf = { shelf -> state = state.copy(viewingShelfId = shelf.id) },
                                 onLongPressShelf = { shelf -> state = state.reduce(LibraryAction.ShelfSelectionToggled(shelf.id)) },
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
+                                onCreateShelf = { name, bookIds ->
+                                    state = state.createIosShelf(name, bookIds)
+                                },
+                                onDeleteBooks = { bookIds ->
+                                    bridge.removeImportedFiles(
+                                        state.rawLibraryBooks.filter { it.id in bookIds }.mapNotNull { it.path }
+                                    )
+                                    state = state.removeIosBooks(bookIds)
+                                },
+                                onDeleteShelves = { shelfIds ->
+                                    state = state.copy(
+                                        shelves = state.shelves.filterNot { it.id in shelfIds },
+                                        selectedShelfIds = emptySet(),
+                                        viewingShelfId = state.viewingShelfId?.takeUnless { it in shelfIds }
+                                    )
+                                },
+                                onNavigateShelfBack = { state = state.copy(viewingShelfId = null) },
                                 onOpenCatalog = { catalog ->
                                     scope.launch {
                                         opdsController.openCatalog(catalog) { opdsState = it }
@@ -437,7 +549,7 @@ private fun ReaderIosApp(
                                     } else {
                                         val streamBook = entry.toIosStreamBook(catalog?.id)
                                         addBooksToLibrary(listOf(streamBook), "Added ${entry.title} stream")
-                                        openBook(streamBook)
+                                        openLibraryBook(streamBook)
                                     }
                                 },
                                 onClearOpdsError = { opdsState = opdsController.clearError() },
@@ -449,38 +561,6 @@ private fun ReaderIosApp(
             }
         }
     }
-}
-
-@Composable
-private fun ReaderIosMobileScaffold(
-    selectedPage: ReaderIosMainPage,
-    onPageSelected: (ReaderIosMainPage) -> Unit,
-    content: @Composable (PaddingValues) -> Unit
-) {
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        bottomBar = {
-            NavigationBar {
-                ReaderIosMainPage.entries.forEach { page ->
-                    NavigationBarItem(
-                        selected = selectedPage == page,
-                        onClick = { onPageSelected(page) },
-                        icon = {
-                            Icon(
-                                imageVector = when (page) {
-                                    ReaderIosMainPage.HOME -> Icons.Default.Home
-                                    ReaderIosMainPage.LIBRARY -> Icons.AutoMirrored.Filled.LibraryBooks
-                                },
-                                contentDescription = page.label
-                            )
-                        },
-                        label = { Text(page.label) }
-                    )
-                }
-            }
-        },
-        content = content
-    )
 }
 
 private fun SharedReaderScreenState.toggleBookSelection(bookId: String): SharedReaderScreenState {
@@ -518,8 +598,83 @@ private fun SharedReaderScreenState.closeTab(bookId: String): SharedReaderScreen
     )
 }
 
+private fun SharedReaderScreenState.withIosImportsFolder(importedBooks: List<BookItem>): SharedReaderScreenState {
+    val folderId = "ios_imports"
+    val allImportBooks = rawLibraryBooks.filter { it.sourceFolder == "iOS import" }
+    val folder = Shelf(
+        id = folderId,
+        name = "iOS Imports",
+        type = ShelfType.FOLDER,
+        books = allImportBooks,
+        directBooks = allImportBooks
+    )
+    return copy(shelves = shelves.filterNot { it.id == folderId } + folder)
+}
+
+private fun SharedReaderScreenState.createIosShelf(
+    name: String,
+    bookIds: Set<String>
+): SharedReaderScreenState {
+    val trimmedName = name.trim()
+    if (trimmedName.isBlank()) return this
+    val id = "ios_shelf_${currentTimestamp()}"
+    val books = rawLibraryBooks.filter { it.id in bookIds }
+    return copy(
+        shelves = shelves + Shelf(
+            id = id,
+            name = trimmedName,
+            type = ShelfType.MANUAL,
+            books = books,
+            directBooks = books
+        ),
+        selectedBookIds = emptySet(),
+        bannerMessage = BannerMessage("Created shelf \"$trimmedName\"")
+    )
+}
+
+private fun SharedReaderScreenState.removeIosBooks(bookIds: Set<String>): SharedReaderScreenState {
+    if (bookIds.isEmpty()) return this
+    fun List<BookItem>.withoutRemoved() = filterNot { it.id in bookIds }
+    return copy(
+        rawLibraryBooks = rawLibraryBooks.withoutRemoved(),
+        libraryBooks = libraryBooks.withoutRemoved(),
+        recentBooks = recentBooks.withoutRemoved(),
+        openTabs = openTabs.withoutRemoved(),
+        openTabIds = openTabIds.filterNot { it in bookIds },
+        activeTabBookId = activeTabBookId?.takeUnless { it in bookIds },
+        pinnedHomeBookIds = pinnedHomeBookIds - bookIds,
+        pinnedLibraryBookIds = pinnedLibraryBookIds - bookIds,
+        selectedBookIds = emptySet(),
+        shelves = shelves.map { shelf ->
+            shelf.copy(
+                books = shelf.books.withoutRemoved(),
+                directBooks = shelf.directBooks.withoutRemoved()
+            )
+        },
+        bannerMessage = BannerMessage("Removed ${bookIds.size} book(s) from library")
+    )
+}
+
 private fun SharedReaderScreenState.withMessage(message: String): SharedReaderScreenState {
     return reduce(AppAction.BannerShown(BannerMessage(message)))
+}
+
+private fun BookItem.withIosPdfReaderProgress(state: SharedPdfReaderState): BookItem {
+    return copy(
+        lastPageIndex = state.pageIndex,
+        progressPercentage = state.progressPercent.coerceIn(0f, 100f)
+    )
+}
+
+private fun SharedReaderScreenState.withUpdatedIosBook(book: BookItem): SharedReaderScreenState {
+    fun List<BookItem>.updated(): List<BookItem> {
+        return map { item -> if (item.id == book.id) book else item }
+    }
+    return copy(
+        rawLibraryBooks = rawLibraryBooks.updated(),
+        recentBooks = recentBooks.updated(),
+        libraryBooks = libraryBooks.updated()
+    )
 }
 
 private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>): List<BookItem> {

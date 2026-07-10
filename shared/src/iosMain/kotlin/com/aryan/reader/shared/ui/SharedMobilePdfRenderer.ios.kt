@@ -31,6 +31,8 @@ import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSURL
 import platform.posix.memcpy
 import kotlin.math.roundToInt
 
@@ -52,14 +54,18 @@ private object IosPdfiumRenderer {
     private var initialized = false
 
     fun render(path: String?, pageIndex: Int): SharedMobilePdfPageRender {
-        if (path.isNullOrBlank()) {
+        val resolvedPath = path.resolvedIosPdfPath()
+        if (resolvedPath.isNullOrBlank()) {
             return SharedMobilePdfPageRender(errorMessage = "PDF path is unavailable")
+        }
+        if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
+            return SharedMobilePdfPageRender(errorMessage = "PDF file is missing: $resolvedPath")
         }
 
         ensureInitialized()
 
-        val document = FPDF_LoadDocument(path, null)
-            ?: return SharedMobilePdfPageRender(errorMessage = "Pdfium could not open this PDF")
+        val document = FPDF_LoadDocument(resolvedPath, null)
+            ?: return SharedMobilePdfPageRender(errorMessage = "Pdfium could not open this PDF: $resolvedPath")
         return try {
                 val pageCount = FPDF_GetPageCount(document).coerceAtLeast(1)
                 val safePageIndex = pageIndex.coerceIn(0, pageCount - 1)
@@ -71,6 +77,7 @@ private object IosPdfiumRenderer {
                 try {
                     val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
                     val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f)
+                    val aspectRatio = (pageWidth / pageHeight).coerceIn(0.1f, 10f)
                     val scale = MaxRenderedPageSidePx / maxOf(pageWidth, pageHeight)
                     val bitmapWidth = (pageWidth * scale).roundToInt().coerceAtLeast(1)
                     val bitmapHeight = (pageHeight * scale).roundToInt().coerceAtLeast(1)
@@ -115,6 +122,7 @@ private object IosPdfiumRenderer {
                         ).toComposeImageBitmap()
                         SharedMobilePdfPageRender(
                             pageCount = pageCount,
+                            aspectRatio = aspectRatio,
                             bitmap = image
                         )
                     } finally {
@@ -134,6 +142,12 @@ private object IosPdfiumRenderer {
             initialized = true
         }
     }
+}
+
+private fun String?.resolvedIosPdfPath(): String? {
+    val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    if (!value.startsWith("file://")) return value
+    return NSURL.URLWithString(value)?.path ?: value.removePrefix("file://")
 }
 
 private const val MaxRenderedPageSidePx = 1600f

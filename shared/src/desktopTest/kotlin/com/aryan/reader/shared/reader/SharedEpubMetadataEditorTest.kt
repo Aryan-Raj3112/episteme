@@ -6,6 +6,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -203,7 +204,7 @@ class SharedEpubMetadataEditorTest {
     }
 
     private inline fun withTempDir(block: (File) -> Unit) {
-        val dir = createTempDir(prefix = "epub-metadata-test")
+        val dir = createTempDirectory("epub-metadata-test").toFile()
         try {
             block(dir)
         } finally {

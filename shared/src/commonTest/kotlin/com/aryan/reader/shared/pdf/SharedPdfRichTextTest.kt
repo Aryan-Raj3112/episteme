@@ -282,8 +282,8 @@ class SharedPdfRichTextTest {
 
     @Test
     fun `blank page insertion uses one page break at explicit rich text boundaries`() {
-        val text = "Page 1$SHARED_PDF_PAGE_BREAK_CHARPage 2"
-        val insertionIndex = "Page 1$SHARED_PDF_PAGE_BREAK_CHAR".length
+        val text = "Page 1${SHARED_PDF_PAGE_BREAK_CHAR}Page 2"
+        val insertionIndex = "Page 1${SHARED_PDF_PAGE_BREAK_CHAR}".length
 
         assertEquals(1, sharedPdfRichTextBlankInsertBreakCount(text, insertionIndex))
         assertEquals(1, sharedPdfRichTextBlankInsertBreakCount("Page 1", "Page 1".length))

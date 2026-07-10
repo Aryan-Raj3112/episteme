@@ -294,7 +294,7 @@ private class SemanticHtmlParser(
         val expanded = IdentityHashMap<Element, Boolean>()
 
         while (stack.isNotEmpty()) {
-            val current = stack.peekLast()
+            val current = stack.peekLast() ?: continue
             if (semanticBlockDescendantCache.containsKey(current)) {
                 stack.removeLast()
                 continue

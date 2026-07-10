@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Ai
@@ -44,12 +45,17 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Fonts
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
@@ -58,11 +64,14 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DrawerValue
@@ -71,6 +80,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -92,6 +102,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -129,6 +140,7 @@ import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.cardAuthor
 import com.aryan.reader.shared.cardTitle
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.applyLibraryFilters
 import com.aryan.reader.shared.opds.OpdsAcquisition
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
@@ -143,6 +155,7 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderAction
 import com.aryan.reader.shared.pdf.SharedPdfReaderState
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.sortBooks
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -341,13 +354,23 @@ fun SharedMobilePdfReaderScreen(
     book: BookItem,
     onBack: () -> Unit,
     onNativePdfBridgeNeeded: (BookItem) -> Unit,
+    initialReaderState: SharedPdfReaderState? = null,
+    onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
+    onKeepScreenOnChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
-    var readerState by remember(book.id) {
-        mutableStateOf(SharedPdfReaderState.initial(pageCount = 1, initialPageIndex = initialPage))
+    var readerState by remember(book.id, initialReaderState) {
+        mutableStateOf(
+            initialReaderState?.coerced()
+                ?: SharedPdfReaderState.initial(pageCount = 1, initialPageIndex = initialPage)
+                    .copy(displayMode = PdfDisplayMode.VERTICAL_SCROLL)
+        )
     }
     var showChrome by remember(book.id) { mutableStateOf(true) }
+    var showReaderOptions by remember(book.id) { mutableStateOf(false) }
+    var keepScreenOn by remember(book.id) { mutableStateOf(false) }
+    var autoScrollEnabled by remember(book.id) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val pageRender = rememberSharedMobilePdfPageRender(book, readerState.pageIndex)
@@ -371,7 +394,7 @@ fun SharedMobilePdfReaderScreen(
         }
     }
 
-    fun finishInkStroke() {
+    fun finishInkStroke(pageIndex: Int) {
         if (activeStroke.size < 2 || readerState.selectedTool == PdfInkTool.NONE || readerState.selectedTool == PdfInkTool.TEXT) {
             activeStroke.clear()
             return
@@ -386,7 +409,7 @@ fun SharedMobilePdfReaderScreen(
             val ys = activeStroke.map { it.y }
             SharedPdfAnnotation(
                 id = "ios_pdf_annotation_${currentTimestamp()}_${readerState.annotations.size}",
-                pageIndex = readerState.pageIndex,
+                pageIndex = pageIndex,
                 kind = PdfAnnotationKind.HIGHLIGHT,
                 tool = readerState.selectedTool,
                 boundsList = listOf(
@@ -405,7 +428,7 @@ fun SharedMobilePdfReaderScreen(
         } else {
             SharedPdfAnnotation(
                 id = "ios_pdf_annotation_${currentTimestamp()}_${readerState.annotations.size}",
-                pageIndex = readerState.pageIndex,
+                pageIndex = pageIndex,
                 kind = PdfAnnotationKind.INK,
                 tool = readerState.selectedTool,
                 points = activeStroke.toList(),
@@ -422,6 +445,25 @@ fun SharedMobilePdfReaderScreen(
         if (readerState.pageCount != pageCount) {
             readerState = readerState.copy(pageCount = pageCount).coerced()
         }
+    }
+
+    LaunchedEffect(readerState) {
+        onReaderStateChange(readerState)
+    }
+
+    LaunchedEffect(autoScrollEnabled, readerState.pageIndex, pageCount) {
+        if (autoScrollEnabled && readerState.canGoNext) {
+            delay(3500)
+            dispatch(SharedPdfReaderAction.NextPage)
+        }
+    }
+
+    LaunchedEffect(keepScreenOn) {
+        onKeepScreenOnChange(keepScreenOn)
+    }
+
+    DisposableEffect(onKeepScreenOnChange) {
+        onDispose { onKeepScreenOnChange(false) }
     }
 
     ModalNavigationDrawer(
@@ -447,14 +489,40 @@ fun SharedMobilePdfReaderScreen(
                         pageIndex = readerState.pageIndex,
                         pageCount = pageCount,
                         displayMode = readerState.displayMode,
+                        isSearchActive = readerState.isSearchActive,
+                        searchQuery = readerState.searchQuery,
                         isBookmarked = readerState.bookmarks.any { it.pageIndex == readerState.pageIndex },
                         onBack = onBack,
                         onOpenDrawer = { scope.launch { drawerState.open() } },
                         onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
+                        onSearchQueryChange = { query ->
+                            dispatch(SharedPdfReaderAction.SearchChanged(query))
+                            query.trim().toIntOrNull()?.let { pageNumber ->
+                                if (pageNumber in 1..pageCount.coerceAtLeast(1)) {
+                                    dispatch(SharedPdfReaderAction.GoToPage(pageNumber - 1))
+                                }
+                            }
+                        },
+                        onCloseSearch = { dispatch(SharedPdfReaderAction.SearchClosed) },
                         onToggleBookmark = {
                             dispatch(SharedPdfReaderAction.BookmarkToggled(readerState.pageIndex, createdAt = currentTimestamp()))
                         },
                         onToggleDisplayMode = { dispatch(SharedPdfReaderAction.DisplayModeToggled) },
+                        onFirstPage = { dispatch(SharedPdfReaderAction.FirstPage) },
+                        onLastPage = { dispatch(SharedPdfReaderAction.LastPage) },
+                        onZoomIn = { dispatch(SharedPdfReaderAction.ZoomBy(0.1f)) },
+                        onZoomOut = { dispatch(SharedPdfReaderAction.ZoomBy(-0.1f)) },
+                        onVisualOptions = { showReaderOptions = !showReaderOptions },
+                        keepScreenOn = keepScreenOn,
+                        onToggleKeepScreenOn = { keepScreenOn = !keepScreenOn },
+                        autoScrollEnabled = autoScrollEnabled,
+                        onToggleAutoScroll = { autoScrollEnabled = !autoScrollEnabled },
+                        onTextSelection = { dispatch(SharedPdfReaderAction.TextSelectionModeChanged(!readerState.isTextSelectionMode)) },
+                        onPenTool = { setTool(readerState.lastActivePenTool) },
+                        onHighlighterTool = { setTool(readerState.lastActiveHighlighterTool) },
+                        onUndo = { dispatch(SharedPdfReaderAction.UndoAnnotationEdit) },
+                        onRedo = { dispatch(SharedPdfReaderAction.RedoAnnotationEdit) },
+                        onClearPage = { dispatch(SharedPdfReaderAction.ClearPageAnnotations(readerState.pageIndex)) },
                         onBridgeInfo = { onNativePdfBridgeNeeded(book) }
                     )
                 }
@@ -466,7 +534,8 @@ fun SharedMobilePdfReaderScreen(
                         pageCount = pageCount,
                         onPreviousPage = { dispatch(SharedPdfReaderAction.PreviousPage) },
                         onNextPage = { dispatch(SharedPdfReaderAction.NextPage) },
-                        onPageSliderChange = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
+                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                        onSearch = { dispatch(SharedPdfReaderAction.SearchOpened) },
                         onToolSelected = ::setTool,
                         onColorSelected = { dispatch(SharedPdfReaderAction.ColorSelected(it)) },
                         onStrokeWidthChange = { dispatch(SharedPdfReaderAction.StrokeWidthChanged(it)) },
@@ -481,7 +550,7 @@ fun SharedMobilePdfReaderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF202124))
+                    .background(Color(0xFFE8E8F2))
                     .padding(padding)
                     .clickable { showChrome = !showChrome },
                 contentAlignment = Alignment.Center
@@ -512,7 +581,37 @@ fun SharedMobilePdfReaderScreen(
                         onFinishInkStroke = ::finishInkStroke,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 0.dp, vertical = 0.dp)
+                    )
+                }
+                if (showChrome && showReaderOptions) {
+                    SharedMobilePdfReaderQuickOptions(
+                        state = readerState,
+                        pageCount = pageCount,
+                        keepScreenOn = keepScreenOn,
+                        autoScrollEnabled = autoScrollEnabled,
+                        onDismiss = { showReaderOptions = false },
+                        onPreviousPage = { dispatch(SharedPdfReaderAction.PreviousPage) },
+                        onNextPage = { dispatch(SharedPdfReaderAction.NextPage) },
+                        onFirstPage = { dispatch(SharedPdfReaderAction.FirstPage) },
+                        onLastPage = { dispatch(SharedPdfReaderAction.LastPage) },
+                        onToggleDisplayMode = { dispatch(SharedPdfReaderAction.DisplayModeToggled) },
+                        onZoomIn = { dispatch(SharedPdfReaderAction.ZoomBy(0.1f)) },
+                        onZoomOut = { dispatch(SharedPdfReaderAction.ZoomBy(-0.1f)) },
+                        onToggleBookmark = {
+                            dispatch(SharedPdfReaderAction.BookmarkToggled(readerState.pageIndex, createdAt = currentTimestamp()))
+                        },
+                        onToggleKeepScreenOn = { keepScreenOn = !keepScreenOn },
+                        onToggleAutoScroll = { autoScrollEnabled = !autoScrollEnabled },
+                        onPenTool = { setTool(readerState.lastActivePenTool) },
+                        onHighlighterTool = { setTool(readerState.lastActiveHighlighterTool) },
+                        onTextSelection = { dispatch(SharedPdfReaderAction.TextSelectionModeChanged(!readerState.isTextSelectionMode)) },
+                        onUndo = { dispatch(SharedPdfReaderAction.UndoAnnotationEdit) },
+                        onRedo = { dispatch(SharedPdfReaderAction.RedoAnnotationEdit) },
+                        onClearPage = { dispatch(SharedPdfReaderAction.ClearPageAnnotations(readerState.pageIndex)) },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
                     )
                 }
             }
@@ -527,63 +626,436 @@ private fun SharedMobilePdfReaderTopBar(
     pageIndex: Int,
     pageCount: Int,
     displayMode: PdfDisplayMode,
+    isSearchActive: Boolean,
+    searchQuery: String,
     isBookmarked: Boolean,
     onBack: () -> Unit,
     onOpenDrawer: () -> Unit,
     onSearch: () -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onCloseSearch: () -> Unit,
     onToggleBookmark: () -> Unit,
     onToggleDisplayMode: () -> Unit,
+    onFirstPage: () -> Unit,
+    onLastPage: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onVisualOptions: () -> Unit,
+    keepScreenOn: Boolean,
+    onToggleKeepScreenOn: () -> Unit,
+    autoScrollEnabled: Boolean,
+    onToggleAutoScroll: () -> Unit,
+    onTextSelection: () -> Unit,
+    onPenTool: () -> Unit,
+    onHighlighterTool: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onClearPage: () -> Unit,
     onBridgeInfo: () -> Unit
 ) {
-    CenterAlignedTopAppBar(
-        title = {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium
-                )
-                Text(
-                    text = "Page ${pageIndex + 1} of ${pageCount.coerceAtLeast(1)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        navigationIcon = {
+    var showMoreMenu by remember { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
-        },
-        actions = {
-            IconButton(onClick = onOpenDrawer) {
-                Icon(Icons.Default.Menu, contentDescription = "Contents")
-            }
-            IconButton(onClick = onSearch) {
-                Icon(Icons.Default.Search, contentDescription = "Search")
-            }
-            IconButton(onClick = onToggleBookmark) {
-                Icon(
-                    if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                    contentDescription = if (isBookmarked) "Remove bookmark" else "Bookmark page"
+            if (isSearchActive) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    singleLine = true,
+                    placeholder = { Text("Search PDF") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        IconButton(onClick = onCloseSearch) {
+                            Icon(Icons.Default.Close, contentDescription = "Close search")
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
                 )
-            }
-            IconButton(onClick = onToggleDisplayMode) {
-                Icon(
-                    Icons.Default.SwapHoriz,
-                    contentDescription = if (displayMode == PdfDisplayMode.PAGINATION) "Switch to vertical scroll" else "Switch to paginated reading"
+            } else {
+                Text(
+                    text = "Page ${pageIndex + 1} of ${pageCount.coerceAtLeast(1)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .padding(start = 12.dp)
+                        .weight(1f)
                 )
+                SharedMobilePdfTopToolButton(label = "Chapters", onClick = onOpenDrawer) {
+                    Icon(Icons.Default.Book, contentDescription = null)
+                }
+                SharedMobilePdfTopToolButton(label = "Theme") {
+                    Icon(Icons.Default.Palette, contentDescription = null)
+                }
+                SharedMobilePdfTopToolButton(label = "Lock") {
+                    Icon(Icons.Default.Lock, contentDescription = null)
+                }
             }
-            IconButton(onClick = onBridgeInfo) {
+            IconButton(onClick = { showMoreMenu = true }) {
                 Icon(Icons.Default.MoreVert, contentDescription = "PDF options")
             }
-        },
-        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    )
+            DropdownMenu(
+                expanded = showMoreMenu,
+                onDismissRequest = { showMoreMenu = false }
+            ) {
+                SharedMobilePdfOverflowItem("Customize Toolbar", leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) })
+                SharedMobilePdfOverflowItem(
+                    "Hidden tools",
+                    trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onPenTool()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Visual Options",
+                    leadingIcon = { Icon(Icons.Default.Visibility, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onVisualOptions()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Change Reading Mode",
+                    trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onToggleDisplayMode()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Tap to Turn Pages",
+                    onClick = {
+                        showMoreMenu = false
+                        onVisualOptions()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    if (keepScreenOn) "Keep Screen On: On" else "Keep Screen On",
+                    onClick = {
+                        showMoreMenu = false
+                        onToggleKeepScreenOn()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    if (autoScrollEnabled) "Auto Scroll: On" else "Auto Scroll",
+                    onClick = {
+                        showMoreMenu = false
+                        onToggleAutoScroll()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "TTS Settings",
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+                    trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onTextSelection()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    if (isBookmarked) "Remove bookmark" else "Bookmark this page",
+                    onClick = {
+                        showMoreMenu = false
+                        onToggleBookmark()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "First page",
+                    onClick = {
+                        showMoreMenu = false
+                        onFirstPage()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Last page",
+                    onClick = {
+                        showMoreMenu = false
+                        onLastPage()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Zoom in",
+                    onClick = {
+                        showMoreMenu = false
+                        onZoomIn()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Zoom out",
+                    onClick = {
+                        showMoreMenu = false
+                        onZoomOut()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Generate Text View",
+                    leadingIcon = { Icon(Icons.Default.Fonts, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onTextSelection()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Undo annotation",
+                    onClick = {
+                        showMoreMenu = false
+                        onUndo()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Redo annotation",
+                    onClick = {
+                        showMoreMenu = false
+                        onRedo()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Clear page annotations",
+                    onClick = {
+                        showMoreMenu = false
+                        onClearPage()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "Share, Save or Print",
+                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                    trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onBridgeInfo()
+                    }
+                )
+                SharedMobilePdfOverflowItem(
+                    "File Information",
+                    leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) },
+                    onClick = {
+                        showMoreMenu = false
+                        onBridgeInfo()
+                    }
+                )
+            }
+        }
+    }
 }
+
+@Composable
+private fun SharedMobilePdfTopToolButton(
+    label: String,
+    onClick: () -> Unit = {},
+    icon: @Composable () -> Unit
+) {
+    IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+        icon()
+    }
+}
+
+@Composable
+private fun SharedMobilePdfOverflowItem(
+    text: String,
+    enabled: Boolean = true,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit = {}
+) {
+    Row(
+        modifier = Modifier
+            .width(300.dp)
+            .height(56.dp)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            leadingIcon?.invoke()
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            modifier = Modifier.weight(1f)
+        )
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            trailingIcon?.invoke()
+        }
+    }
+    HorizontalDivider()
+}
+
+@Composable
+private fun SharedMobilePdfReaderQuickOptions(
+    state: SharedPdfReaderState,
+    pageCount: Int,
+    keepScreenOn: Boolean,
+    autoScrollEnabled: Boolean,
+    onDismiss: () -> Unit,
+    onPreviousPage: () -> Unit,
+    onNextPage: () -> Unit,
+    onFirstPage: () -> Unit,
+    onLastPage: () -> Unit,
+    onToggleDisplayMode: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onToggleKeepScreenOn: () -> Unit,
+    onToggleAutoScroll: () -> Unit,
+    onPenTool: () -> Unit,
+    onHighlighterTool: () -> Unit,
+    onTextSelection: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onClearPage: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    ElevatedCard(
+        modifier = modifier.width(320.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Visual Options",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close visual options")
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InputChip(
+                    selected = state.displayMode == PdfDisplayMode.VERTICAL_SCROLL,
+                    onClick = onToggleDisplayMode,
+                    label = { Text(if (state.displayMode == PdfDisplayMode.VERTICAL_SCROLL) "Vertical" else "Paged") }
+                )
+                InputChip(
+                    selected = state.bookmarks.any { it.pageIndex == state.pageIndex },
+                    onClick = onToggleBookmark,
+                    label = { Text("Bookmark") },
+                    leadingIcon = {
+                        Icon(
+                            if (state.bookmarks.any { it.pageIndex == state.pageIndex }) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                )
+            }
+            SharedMobilePdfQuickOptionsRow(
+                label = "Page ${state.pageIndex + 1} of ${pageCount.coerceAtLeast(1)}",
+                value = "${state.progressPercent.toInt().coerceIn(0, 100)}%"
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onFirstPage, enabled = state.canGoPrevious) { Text("First") }
+                TextButton(onClick = onPreviousPage, enabled = state.canGoPrevious) { Text("Prev") }
+                TextButton(onClick = onNextPage, enabled = state.canGoNext) { Text("Next") }
+                TextButton(onClick = onLastPage, enabled = state.canGoNext) { Text("Last") }
+            }
+            SharedMobilePdfQuickOptionsRow(label = "Zoom", value = "${(state.zoom * 100).toInt()}%")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onZoomOut) { Text("Zoom out") }
+                TextButton(onClick = onZoomIn) { Text("Zoom in") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                InputChip(
+                    selected = state.selectedTool.isSharedMobilePdfPenTool,
+                    onClick = onPenTool,
+                    label = { Text("Pen") },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+                InputChip(
+                    selected = state.selectedTool.isSharedMobilePdfHighlighterTool,
+                    onClick = onHighlighterTool,
+                    label = { Text("Highlight") },
+                    leadingIcon = { Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+                InputChip(
+                    selected = state.isTextSelectionMode,
+                    onClick = onTextSelection,
+                    label = { Text("Text") },
+                    leadingIcon = { Icon(Icons.Default.Fonts, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onUndo, enabled = state.canUndoAnnotationEdit) { Text("Undo") }
+                TextButton(onClick = onRedo, enabled = state.canRedoAnnotationEdit) { Text("Redo") }
+                TextButton(
+                    onClick = onClearPage,
+                    enabled = state.annotations.any { it.pageIndex == state.pageIndex }
+                ) {
+                    Text("Clear page")
+                }
+            }
+            SharedMobilePdfSwitchRow(
+                label = "Keep screen on",
+                checked = keepScreenOn,
+                onCheckedChange = { onToggleKeepScreenOn() }
+            )
+            SharedMobilePdfSwitchRow(
+                label = "Auto scroll",
+                checked = autoScrollEnabled,
+                onCheckedChange = { onToggleAutoScroll() }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedMobilePdfQuickOptionsRow(
+    label: String,
+    value: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SharedMobilePdfSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+private val PdfInkTool.isSharedMobilePdfPenTool: Boolean
+    get() = this == PdfInkTool.FOUNTAIN_PEN || this == PdfInkTool.PEN || this == PdfInkTool.PENCIL
+
+private val PdfInkTool.isSharedMobilePdfHighlighterTool: Boolean
+    get() = this == PdfInkTool.HIGHLIGHTER || this == PdfInkTool.HIGHLIGHTER_ROUND
 
 @Composable
 private fun SharedMobilePdfReaderBottomBar(
@@ -591,7 +1063,8 @@ private fun SharedMobilePdfReaderBottomBar(
     pageCount: Int,
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
-    onPageSliderChange: (Int) -> Unit,
+    onOpenDrawer: () -> Unit,
+    onSearch: () -> Unit,
     onToolSelected: (PdfInkTool) -> Unit,
     onColorSelected: (Int) -> Unit,
     onStrokeWidthChange: (Float) -> Unit,
@@ -606,49 +1079,91 @@ private fun SharedMobilePdfReaderBottomBar(
         tonalElevation = 4.dp
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                IconButton(onClick = onPreviousPage, enabled = state.canGoPrevious) {
-                    Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous page")
+                Row(horizontalArrangement = Arrangement.spacedBy((-12).dp)) {
+                    SharedMobilePdfBottomToolButton(enabled = state.canGoPrevious, onClick = onPreviousPage) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateBefore, contentDescription = "Previous page")
+                    }
+                    SharedMobilePdfBottomToolButton(enabled = state.canGoNext, onClick = onNextPage) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next page")
+                    }
                 }
-                Slider(
-                    value = state.pageIndex.toFloat(),
-                    onValueChange = { onPageSliderChange(it.toInt().coerceIn(0, (pageCount - 1).coerceAtLeast(0))) },
-                    valueRange = 0f..(pageCount - 1).coerceAtLeast(0).toFloat(),
-                    steps = (pageCount - 2).coerceAtLeast(0),
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = onNextPage, enabled = state.canGoNext) {
-                    Icon(Icons.AutoMirrored.Filled.NavigateNext, contentDescription = "Next page")
+                SharedMobilePdfBottomToolButton(onClick = onOpenDrawer) {
+                    Icon(Icons.Default.Menu, contentDescription = "Contents")
+                }
+                SharedMobilePdfBottomToolButton(onClick = onSearch) {
+                    Icon(Icons.Default.Search, contentDescription = "Search")
+                }
+                SharedMobilePdfBottomToolButton(
+                    selected = state.selectedTool != PdfInkTool.NONE,
+                    onClick = {
+                        onToolSelected(if (state.selectedTool == PdfInkTool.NONE) PdfInkTool.PEN else PdfInkTool.NONE)
+                    }
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Annotate")
+                }
+                SharedMobilePdfBottomToolButton {
+                    Icon(Icons.Default.Description, contentDescription = "Text to speech")
                 }
             }
-            SharedPdfInteractionDock(
-                isTextSelectionMode = state.isTextSelectionMode,
-                selectedTool = state.selectedTool,
-                selectedColor = state.selectedColorArgb,
-                strokeWidth = state.strokeWidth,
-                toolConfigs = state.toolConfigs,
-                penPalette = state.penPalette,
-                lastActivePenTool = state.lastActivePenTool,
-                lastActiveHighlighterTool = state.lastActiveHighlighterTool,
-                onPanSelected = { onToolSelected(PdfInkTool.NONE) },
-                onTextSelectionSelected = { onToolSelected(PdfInkTool.NONE) },
-                onToolSelected = onToolSelected,
-                onColorSelected = onColorSelected,
-                onStrokeWidthChange = onStrokeWidthChange,
-                onUndo = onUndo,
-                onRedo = onRedo,
-                onClearPage = onClearPage,
-                canUndo = state.annotations.any { it.pageIndex == state.pageIndex },
-                canRedo = state.canRedoAnnotationEdit,
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (state.selectedTool != PdfInkTool.NONE || state.isTextSelectionMode) {
+                SharedPdfInteractionDock(
+                    isTextSelectionMode = state.isTextSelectionMode,
+                    selectedTool = state.selectedTool,
+                    selectedColor = state.selectedColorArgb,
+                    strokeWidth = state.strokeWidth,
+                    toolConfigs = state.toolConfigs,
+                    penPalette = state.penPalette,
+                    lastActivePenTool = state.lastActivePenTool,
+                    lastActiveHighlighterTool = state.lastActiveHighlighterTool,
+                    onPanSelected = { onToolSelected(PdfInkTool.NONE) },
+                    onTextSelectionSelected = { onToolSelected(PdfInkTool.NONE) },
+                    onToolSelected = onToolSelected,
+                    onColorSelected = onColorSelected,
+                    onStrokeWidthChange = onStrokeWidthChange,
+                    onUndo = onUndo,
+                    onRedo = onRedo,
+                    onClearPage = onClearPage,
+                    canUndo = state.annotations.any { it.pageIndex == state.pageIndex },
+                    canRedo = state.canRedoAnnotationEdit,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedMobilePdfBottomToolButton(
+    enabled: Boolean = true,
+    selected: Boolean = false,
+    onClick: () -> Unit = {},
+    icon: @Composable () -> Unit
+) {
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        Color.Transparent
+    }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(containerColor)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp)
+            .widthIn(min = 44.dp)
+    ) {
+        Box(modifier = Modifier.size(30.dp), contentAlignment = Alignment.Center) {
+            icon()
         }
     }
 }
@@ -660,55 +1175,164 @@ private fun SharedMobilePdfReaderDrawer(
     onGoToPage: (Int) -> Unit,
     onToggleBookmark: () -> Unit
 ) {
-    ModalDrawerSheet {
+    var selectedSection by remember { mutableStateOf(SharedMobilePdfDrawerSection.CHAPTERS) }
+    ModalDrawerSheet(modifier = Modifier.width(348.dp)) {
         Column(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(book.cardTitle(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "Page ${state.pageIndex + 1} of ${state.pageCount.coerceAtLeast(1)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            HorizontalDivider()
-            NavigationDrawerItem(
-                icon = { Icon(if (state.bookmarks.any { it.pageIndex == state.pageIndex }) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, contentDescription = null) },
-                label = { Text(if (state.bookmarks.any { it.pageIndex == state.pageIndex }) "Remove bookmark" else "Bookmark this page") },
-                selected = false,
-                onClick = onToggleBookmark,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-            Text(
-                "Pages",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(state.pageCount.coerceAtLeast(1)) { page ->
-                    NavigationDrawerItem(
-                        icon = { Icon(Icons.Default.Description, contentDescription = null) },
-                        label = { Text("Page ${page + 1}") },
-                        selected = page == state.pageIndex,
-                        onClick = { onGoToPage(page) },
-                        badge = {
-                            if (state.bookmarks.any { it.pageIndex == page }) {
-                                Icon(Icons.Default.Bookmark, contentDescription = "Bookmarked", modifier = Modifier.size(18.dp))
-                            }
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+            TabRow(selectedTabIndex = selectedSection.ordinal) {
+                SharedMobilePdfDrawerSection.entries.forEach { section ->
+                    Tab(
+                        selected = selectedSection == section,
+                        onClick = { selectedSection = section },
+                        text = { Text(section.label) }
                     )
                 }
             }
-            HorizontalDivider()
-            Text(
-                "${state.annotations.size} annotations",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(16.dp)
+            when (selectedSection) {
+                SharedMobilePdfDrawerSection.TABS -> SharedMobilePdfPagesDrawerPage(
+                    state = state,
+                    onGoToPage = onGoToPage,
+                    modifier = Modifier.weight(1f)
+                )
+                SharedMobilePdfDrawerSection.CHAPTERS -> SharedMobilePdfEmptyDrawerPage(
+                    text = "Chapters are not available for this book.",
+                    modifier = Modifier.weight(1f)
+                )
+                SharedMobilePdfDrawerSection.BOOKMARKS -> SharedMobilePdfBookmarksDrawerPage(
+                    state = state,
+                    onGoToPage = onGoToPage,
+                    modifier = Modifier.weight(1f)
+                )
+                SharedMobilePdfDrawerSection.HIGHLIGHTS -> SharedMobilePdfAnnotationsDrawerPage(
+                    state = state,
+                    onGoToPage = onGoToPage,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+private enum class SharedMobilePdfDrawerSection(val label: String) {
+    TABS("Tabs"),
+    CHAPTERS("Chapters"),
+    BOOKMARKS("Bookmarks"),
+    HIGHLIGHTS("Highlights")
+}
+
+@Composable
+private fun SharedMobilePdfEmptyDrawerPage(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+private fun SharedMobilePdfPagesDrawerPage(
+    state: SharedPdfReaderState,
+    onGoToPage: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 16.dp)
+    ) {
+        items(state.pageCount.coerceAtLeast(1)) { page ->
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.Description, contentDescription = null) },
+                label = { Text("Page ${page + 1}") },
+                selected = page == state.pageIndex,
+                onClick = { onGoToPage(page) },
+                badge = {
+                    if (state.bookmarks.any { it.pageIndex == page }) {
+                        Icon(Icons.Default.Bookmark, contentDescription = "Bookmarked", modifier = Modifier.size(18.dp))
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedMobilePdfBookmarksDrawerPage(
+    state: SharedPdfReaderState,
+    onGoToPage: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (state.bookmarks.isEmpty()) {
+        Box(modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Text("No bookmarks yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
+    }
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 16.dp)
+    ) {
+        items(state.bookmarks.sortedBy { it.pageIndex }, key = { "bookmark_${it.pageIndex}_${it.createdAt}" }) { bookmark ->
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.Bookmark, contentDescription = null) },
+                label = { Text(bookmark.label.ifBlank { "Page ${bookmark.pageIndex + 1}" }) },
+                selected = bookmark.pageIndex == state.pageIndex,
+                onClick = { onGoToPage(bookmark.pageIndex) },
+                badge = { Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedMobilePdfAnnotationsDrawerPage(
+    state: SharedPdfReaderState,
+    onGoToPage: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (state.annotations.isEmpty()) {
+        Box(modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Text("No annotations yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        return
+    }
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 16.dp)
+    ) {
+        items(state.annotations.sortedWith(compareBy({ it.pageIndex }, { it.createdAt }, { it.id })), key = { it.id }) { annotation ->
+            NavigationDrawerItem(
+                icon = { Icon(Icons.Default.Palette, contentDescription = null) },
+                label = {
+                    Column {
+                        Text("Page ${annotation.pageIndex + 1}")
+                        val detail = when {
+                            annotation.text.isNotBlank() -> annotation.text
+                            annotation.kind == PdfAnnotationKind.HIGHLIGHT -> "Highlight"
+                            else -> annotation.tool.name.lowercase().replaceFirstChar { it.titlecase() }
+                        }
+                        Text(
+                            detail,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                },
+                selected = annotation.pageIndex == state.pageIndex,
+                onClick = { onGoToPage(annotation.pageIndex) },
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
             )
         }
     }
@@ -722,7 +1346,7 @@ private fun SharedMobilePdfVerticalPages(
     activeStroke: List<PdfPagePoint>,
     onVisiblePageChanged: (Int) -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
-    onFinishInkStroke: () -> Unit,
+    onFinishInkStroke: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.pageIndex.coerceIn(0, pageCount - 1))
@@ -767,7 +1391,7 @@ private fun SharedMobilePdfPageSurface(
     selectedColorArgb: Int,
     strokeWidth: Float,
     onCanvasSizeChanged: (IntSize) -> Unit,
-    onFinishInkStroke: () -> Unit,
+    onFinishInkStroke: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var localCanvasSize by remember(pageIndex) { mutableStateOf(IntSize.Zero) }
@@ -777,7 +1401,7 @@ private fun SharedMobilePdfPageSurface(
         shape = RoundedCornerShape(2.dp),
         shadowElevation = 4.dp,
         modifier = modifier
-            .aspectRatio(0.72f)
+            .aspectRatio(pageRender.aspectRatio)
             .clipToBounds()
             .onSizeChanged {
                 localCanvasSize = it
@@ -796,7 +1420,7 @@ private fun SharedMobilePdfPageSurface(
                             (activeStroke as? MutableList<PdfPagePoint>)?.add(change.position.toSharedMobilePdfPoint(localCanvasSize))
                         }
                     },
-                    onDragEnd = onFinishInkStroke,
+                    onDragEnd = { onFinishInkStroke(pageIndex) },
                     onDragCancel = { (activeStroke as? MutableList<PdfPagePoint>)?.clear() }
                 )
             }
@@ -904,25 +1528,13 @@ private fun Offset.toSharedMobilePdfPoint(size: IntSize): PdfPagePoint {
 @Composable
 fun SharedMobileHomeScreen(
     state: SharedReaderScreenState,
-    onImportBooks: () -> Unit,
-    onOpenBook: (BookItem) -> Unit,
-    onLongPressBook: (BookItem) -> Unit,
-    onDrawerClick: () -> Unit = {},
-    onSearchClick: () -> Unit = {},
-    onNavigateToFolderSync: () -> Unit = {},
-    onRefresh: () -> Unit = {},
-    onClearSelection: () -> Unit = {},
-    onSelectAll: () -> Unit = {},
-    onOpenTab: (BookItem) -> Unit = onOpenBook,
-    onCloseTab: (BookItem) -> Unit = {},
-    onCloseAllTabs: () -> Unit = {},
-    onTogglePinned: (BookItem) -> Unit = {},
-    onSettingsClick: () -> Unit = {},
-    onMoreClick: () -> Unit = {},
+    actions: SharedMobileHomeActions,
+    showTopBar: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val selectedIds = state.selectedBookIds
     val isContextualMode = selectedIds.isNotEmpty()
+    var showCreateShelf by remember { mutableStateOf(false) }
     val model = remember(
         state.recentBooks,
         state.openTabs,
@@ -939,24 +1551,28 @@ fun SharedMobileHomeScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            if (isContextualMode) {
-                SharedMobileContextualTopBar(
-                    selectedCount = selectedIds.size,
-                    onClose = onClearSelection,
-                    onSelectAll = onSelectAll,
-                    onPin = {
-                        state.recentBooks.filter { it.id in selectedIds }.forEach(onTogglePinned)
-                    }
-                )
-            } else {
-                SharedMobileHomeTopBar(
-                    onDrawerClick = onDrawerClick,
-                    onSearchClick = onSearchClick,
-                    isSyncEnabled = state.isSyncEnabled || state.syncedFolders.any { it.localSyncEnabled },
-                    onRefresh = onRefresh,
-                    onSettingsClick = onSettingsClick,
-                    onMoreClick = onMoreClick
-                )
+            if (showTopBar) {
+                if (isContextualMode) {
+                    SharedMobileContextualTopBar(
+                        selectedCount = selectedIds.size,
+                        onClose = actions::clearSelection,
+                        onSelectAll = actions::selectAll,
+                        onPin = {
+                            state.recentBooks.filter { it.id in selectedIds }.forEach(actions::togglePinned)
+                        },
+                        onAddToShelf = { showCreateShelf = true },
+                        onDelete = actions::deleteSelectedBooks
+                    )
+                } else {
+                    SharedMobileHomeTopBar(
+                        onDrawerClick = actions::openDrawer,
+                        onSearchClick = actions::openSearch,
+                        isSyncEnabled = state.isSyncEnabled || state.syncedFolders.any { it.localSyncEnabled },
+                        onRefresh = actions::refresh,
+                        onSettingsClick = actions::openSettings,
+                        onMoreClick = actions::openMoreActions
+                    )
+                }
             }
         }
     ) { padding ->
@@ -974,9 +1590,9 @@ fun SharedMobileHomeScreen(
                         "Open books from the library and they will appear here."
                     },
                     actionLabel = "Select file",
-                    onAction = onImportBooks,
+                    onAction = actions::importBooks,
                     secondaryActionLabel = if (model.isLibraryEmpty) "Sync folder" else null,
-                    onSecondaryAction = onNavigateToFolderSync,
+                    onSecondaryAction = actions::navigateToFolderSync,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -990,9 +1606,9 @@ fun SharedMobileHomeScreen(
                             SharedMobileActiveTabs(
                                 openTabs = model.activeTabs,
                                 activeBookId = state.activeTabBookId,
-                                onOpenTab = onOpenTab,
-                                onCloseTab = onCloseTab,
-                                onCloseAllTabs = onCloseAllTabs
+                                onOpenTab = actions::openBook,
+                                onCloseTab = actions::closeTab,
+                                onCloseAllTabs = actions::closeAllTabs
                             )
                         }
                     }
@@ -1004,9 +1620,9 @@ fun SharedMobileHomeScreen(
                                 books = model.pinnedBooks,
                                 selectedBookIds = selectedIds,
                                 pinnedBookIds = state.pinnedHomeBookIds,
-                                onOpenBook = onOpenBook,
-                                onLongPressBook = onLongPressBook,
-                                onTogglePinned = onTogglePinned
+                                onOpenBook = actions::openBook,
+                                onLongPressBook = actions::longPressBook,
+                                onTogglePinned = actions::togglePinned
                             )
                         }
                     }
@@ -1017,9 +1633,9 @@ fun SharedMobileHomeScreen(
                             books = model.recentBooks,
                             selectedBookIds = selectedIds,
                             pinnedBookIds = state.pinnedHomeBookIds,
-                            onOpenBook = onOpenBook,
-                            onLongPressBook = onLongPressBook,
-                            onTogglePinned = onTogglePinned
+                            onOpenBook = actions::openBook,
+                            onLongPressBook = actions::longPressBook,
+                            onTogglePinned = actions::togglePinned
                         )
                     }
                 }
@@ -1033,11 +1649,21 @@ fun SharedMobileHomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(onClick = onImportBooks) { Text("Select file") }
-                    Button(onClick = onNavigateToFolderSync) { Text("Sync folder") }
+                    Button(onClick = actions::importBooks) { Text("Select file") }
+                    Button(onClick = actions::navigateToFolderSync) { Text("Sync folder") }
                 }
             }
         }
+    }
+    if (showCreateShelf) {
+        SharedMobileCreateShelfDialog(
+            title = "Add selected books to shelf",
+            onDismiss = { showCreateShelf = false },
+            onCreate = { name ->
+                actions.createShelfFromSelectedBooks(name)
+                showCreateShelf = false
+            }
+        )
     }
 }
 
@@ -1063,6 +1689,10 @@ fun SharedMobileLibraryScreen(
     onOpenShelf: (Shelf) -> Unit = {},
     onLongPressShelf: (Shelf) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
+    onCreateShelf: (String, Set<String>) -> Unit = { _, _ -> },
+    onDeleteBooks: (Set<String>) -> Unit = {},
+    onDeleteShelves: (Set<String>) -> Unit = {},
+    onNavigateShelfBack: () -> Unit = {},
     onOpenCatalog: (OpdsCatalog) -> Unit = {},
     onOpenFeedUrl: (String) -> Unit = {},
     onOpdsNavigateBack: () -> Unit = {},
@@ -1080,10 +1710,32 @@ fun SharedMobileLibraryScreen(
     val selectedShelves = state.selectedShelfIds
     val isBookContextualMode = selectedIds.isNotEmpty()
     val isShelfContextualMode = selectedShelves.isNotEmpty() && selectedTab == SharedMobileLibraryTab.SHELVES
-    val searchedBooks = remember(state.libraryBooks, state.searchQuery) {
-        state.libraryBooks.filteredSharedMobileBooks(state.searchQuery)
+    var showFilters by remember { mutableStateOf(false) }
+    var showCreateShelf by remember { mutableStateOf(false) }
+    var showDeleteBooks by remember { mutableStateOf(false) }
+    var showDeleteShelves by remember { mutableStateOf(false) }
+    val viewedShelf = state.viewingShelfId?.let { id -> state.shelves.firstOrNull { it.id == id } }
+    val searchedBooks = remember(state.libraryBooks, state.searchQuery, state.libraryFilters) {
+        applyLibraryFilters(
+            state.libraryBooks.filteredSharedMobileBooks(state.searchQuery),
+            state.libraryFilters
+        )
     }
     val sortedSearchedBooks = remember(searchedBooks, state.sortOrder) { sortBooks(searchedBooks, state.sortOrder) }
+
+    if (viewedShelf != null) {
+        SharedMobileShelfDetail(
+            shelf = viewedShelf,
+            selectedBookIds = selectedIds,
+            pinnedBookIds = state.pinnedLibraryBookIds,
+            onBack = onNavigateShelfBack,
+            onOpenBook = onOpenBook,
+            onLongPressBook = onLongPressBook,
+            onTogglePinned = onTogglePinned,
+            modifier = modifier
+        )
+        return
+    }
 
     Scaffold(
         modifier = modifier,
@@ -1096,14 +1748,17 @@ fun SharedMobileLibraryScreen(
                         onSelectAll = onSelectAll,
                         onPin = {
                             state.libraryBooks.filter { it.id in selectedIds }.forEach(onTogglePinned)
-                        }
+                        },
+                        onAddToShelf = { showCreateShelf = true },
+                        onDelete = { showDeleteBooks = true }
                     )
 
                     isShelfContextualMode -> SharedMobileContextualTopBar(
                         selectedCount = selectedShelves.size,
                         onClose = onClearSelection,
                         onSelectAll = {},
-                        onPin = {}
+                        onPin = {},
+                        onDelete = { showDeleteShelves = true }
                     )
 
                     state.isSearchActive -> SharedMobileSearchTopBar(
@@ -1116,7 +1771,7 @@ fun SharedMobileLibraryScreen(
                         selectedTab = selectedTab,
                         sortOrder = state.sortOrder,
                         isFilterActive = state.libraryFilters.isActive,
-                        onFilterClick = onFilterClick,
+                        onFilterClick = { showFilters = true; onFilterClick() },
                         onSortOrderChange = onSortOrderChange,
                         onSearchClick = { onSearchActiveChange(true) },
                         onSettingsClick = onSettingsClick
@@ -1156,7 +1811,7 @@ fun SharedMobileLibraryScreen(
                     SharedMobileLibraryTab.SHELVES -> ExtendedFloatingActionButton(
                         text = { Text("New shelf") },
                         icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        onClick = onNewShelfClick
+                        onClick = { showCreateShelf = true; onNewShelfClick() }
                     )
 
                     else -> Unit
@@ -1230,6 +1885,203 @@ fun SharedMobileLibraryScreen(
             )
         }
     }
+
+    if (showFilters) {
+        SharedMobileLibraryFilterDialog(
+            state = state,
+            onDismiss = { showFilters = false },
+            onFiltersChange = onRemoveFilters
+        )
+    }
+    if (showCreateShelf) {
+        SharedMobileCreateShelfDialog(
+            title = if (selectedIds.isEmpty()) "New shelf" else "Add selected books to shelf",
+            onDismiss = { showCreateShelf = false },
+            onCreate = { name ->
+                onCreateShelf(name, selectedIds)
+                showCreateShelf = false
+            }
+        )
+    }
+    if (showDeleteBooks) {
+        SharedMobileDeleteConfirmationDialog(
+            title = "Remove books?",
+            body = "Remove ${selectedIds.size} selected book(s) from this iOS library?",
+            onDismiss = { showDeleteBooks = false },
+            onConfirm = {
+                onDeleteBooks(selectedIds)
+                showDeleteBooks = false
+            }
+        )
+    }
+    if (showDeleteShelves) {
+        SharedMobileDeleteConfirmationDialog(
+            title = "Delete shelves?",
+            body = "Delete ${selectedShelves.size} selected shelf/shelves? Books will remain in the library.",
+            onDismiss = { showDeleteShelves = false },
+            onConfirm = {
+                onDeleteShelves(selectedShelves)
+                showDeleteShelves = false
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedMobileShelfDetail(
+    shelf: Shelf,
+    selectedBookIds: Set<String>,
+    pinnedBookIds: Set<String>,
+    onBack: () -> Unit,
+    onOpenBook: (BookItem) -> Unit,
+    onLongPressBook: (BookItem) -> Unit,
+    onTogglePinned: (BookItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text(shelf.name) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        SharedMobileBookList(
+            books = sortBooks(shelf.books, SortOrder.RECENT),
+            selectedBookIds = selectedBookIds,
+            pinnedBookIds = pinnedBookIds,
+            onOpenBook = onOpenBook,
+            onLongPressBook = onLongPressBook,
+            onTogglePinned = onTogglePinned,
+            empty = {
+                SharedMobileEmptyLibrary(
+                    title = "No books in ${shelf.name}",
+                    message = "Add books from the Library selection menu.",
+                    actionLabel = null,
+                    onAction = {},
+                    modifier = Modifier.fillMaxSize()
+                )
+            },
+            modifier = Modifier.fillMaxSize().padding(padding)
+        )
+    }
+}
+
+@Composable
+private fun SharedMobileLibraryFilterDialog(
+    state: SharedReaderScreenState,
+    onDismiss: () -> Unit,
+    onFiltersChange: (LibraryFilters) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Filter library") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    Text("File type", style = MaterialTheme.typography.labelLarge)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(FileType.entries) { type ->
+                            FilterChip(
+                                selected = type in state.libraryFilters.fileTypes,
+                                onClick = {
+                                    val next = state.libraryFilters.fileTypes.let { selected ->
+                                        if (type in selected) selected - type else selected + type
+                                    }
+                                    onFiltersChange(state.libraryFilters.copy(fileTypes = next))
+                                },
+                                label = { Text(type.name) }
+                            )
+                        }
+                    }
+                }
+                item {
+                    Text("Reading status", style = MaterialTheme.typography.labelLarge)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(ReadStatusFilter.entries) { status ->
+                            FilterChip(
+                                selected = state.libraryFilters.readStatus == status,
+                                onClick = { onFiltersChange(state.libraryFilters.copy(readStatus = status)) },
+                                label = { Text(status.sharedMobileLabel()) }
+                            )
+                        }
+                    }
+                }
+                if (state.allTags.isNotEmpty()) {
+                    item {
+                        Text("Tags", style = MaterialTheme.typography.labelLarge)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(state.allTags, key = { it.id }) { tag ->
+                                FilterChip(
+                                    selected = tag.id in state.libraryFilters.tagIds,
+                                    onClick = {
+                                        val next = state.libraryFilters.tagIds.let { selected ->
+                                            if (tag.id in selected) selected - tag.id else selected + tag.id
+                                        }
+                                        onFiltersChange(state.libraryFilters.copy(tagIds = next))
+                                    },
+                                    label = { Text(tag.name) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        },
+        dismissButton = {
+            TextButton(onClick = { onFiltersChange(LibraryFilters()); onDismiss() }) { Text("Clear") }
+        }
+    )
+}
+
+@Composable
+private fun SharedMobileCreateShelfDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Shelf name") },
+                singleLine = true
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) { Text("Create") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun SharedMobileDeleteConfirmationDialog(
+    title: String,
+    body: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(body) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Remove") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 enum class SharedMobileLibraryTab(val label: String) {
@@ -1373,7 +2225,9 @@ private fun SharedMobileContextualTopBar(
     selectedCount: Int,
     onClose: () -> Unit,
     onSelectAll: () -> Unit,
-    onPin: () -> Unit
+    onPin: () -> Unit,
+    onAddToShelf: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null
 ) {
     CenterAlignedTopAppBar(
         title = { Text("$selectedCount selected") },
@@ -1389,8 +2243,15 @@ private fun SharedMobileContextualTopBar(
             IconButton(onClick = onSelectAll) {
                 Icon(Icons.Default.SelectAll, contentDescription = "Select all")
             }
-            IconButton(onClick = {}) {
-                Icon(Icons.Default.MoreVert, contentDescription = "More actions")
+            if (onAddToShelf != null) {
+                IconButton(onClick = onAddToShelf) {
+                    Icon(Icons.Default.Add, contentDescription = "Add to shelf")
+                }
+            }
+            if (onDelete != null) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Remove selected")
+                }
             }
         }
     )

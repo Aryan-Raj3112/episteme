@@ -79,6 +79,11 @@ kotlin {
     sourceSets {
         val commonMain by getting
         val desktopMain by getting
+        // The phone-first Compose layer is introduced to iOS first. Android
+        // remains the reference app until feature parity is established.
+        val mobileMain by creating {
+            dependsOn(commonMain)
+        }
         val readerJvmMain by creating {
             dependsOn(commonMain)
             dependencies {
@@ -89,7 +94,7 @@ kotlin {
             val androidMain by getting
             androidMain.dependsOn(readerJvmMain)
             val iosMain by creating {
-                dependsOn(commonMain)
+                dependsOn(mobileMain)
             }
             val iosArm64Main by getting {
                 dependsOn(iosMain)
