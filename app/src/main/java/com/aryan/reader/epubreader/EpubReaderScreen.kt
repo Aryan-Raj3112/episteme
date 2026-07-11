@@ -1092,6 +1092,11 @@ fun EpubReaderHost(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     var showBars by remember { mutableStateOf(false) }
     val chapters = remember(epubBook.chapters) { epubBook.chapters }
+
+    LaunchedEffect(epubBook, uiState.selectedBookId) {
+        showBars = false
+    }
+
     var readerImages by remember(epubBook) { mutableStateOf<List<EpubReaderImageReference>>(emptyList()) }
 
     LaunchedEffect(epubBook) {

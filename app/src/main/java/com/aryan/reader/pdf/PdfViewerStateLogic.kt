@@ -55,6 +55,14 @@ internal fun shouldApplyPdfTextDockImePadding(
     return layoutHeightPx + imeHeightPx > windowHeightPx
 }
 
+internal fun pdfTouchpadScrollTargetPanY(
+    currentPanY: Float,
+    scrollDeltaY: Float,
+    scrollStepPx: Float,
+    minPanY: Float,
+    maxPanY: Float
+): Float = (currentPanY - (scrollDeltaY * scrollStepPx)).coerceIn(minPanY, maxPanY)
+
 internal fun currentPageScaleAfterPdfPageChange(
     displayMode: DisplayMode,
     isScrollLocked: Boolean,

@@ -73,6 +73,32 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `touchpad scrolling pans the PDF vertically within document bounds`() {
+        assertEquals(
+            -148f,
+            pdfTouchpadScrollTargetPanY(
+                currentPanY = -100f,
+                scrollDeltaY = 1f,
+                scrollStepPx = 48f,
+                minPanY = -1_000f,
+                maxPanY = 0f
+            ),
+            0.001f
+        )
+        assertEquals(
+            -1_000f,
+            pdfTouchpadScrollTargetPanY(
+                currentPanY = -980f,
+                scrollDeltaY = 1f,
+                scrollStepPx = 48f,
+                minPanY = -1_000f,
+                maxPanY = 0f
+            ),
+            0.001f
+        )
+    }
+
+    @Test
     fun `generateShortId creates a four digit sync suffix`() {
         repeat(100) {
             val id = generateShortId()

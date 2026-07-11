@@ -38,6 +38,18 @@ import org.json.JSONObject
 
 enum class DragOperation { NONE, PULLING_DOWN_FROM_TOP, PULLING_UP_FROM_BOTTOM }
 
+internal enum class WebViewTouchpadBoundary { TOP, BOTTOM }
+
+internal fun webViewTouchpadBoundary(
+    verticalScroll: Float,
+    canScrollUp: Boolean,
+    canScrollDown: Boolean
+): WebViewTouchpadBoundary? = when {
+    verticalScroll > 0f && !canScrollUp -> WebViewTouchpadBoundary.TOP
+    verticalScroll < 0f && !canScrollDown -> WebViewTouchpadBoundary.BOTTOM
+    else -> null
+}
+
 internal fun readWebViewHitTestTypeOrNull(hitTestTypeProvider: () -> Int?): Int? {
     return try {
         hitTestTypeProvider()
@@ -488,6 +500,34 @@ class InteractiveWebView(
             return true
         }
         return super.onTouchEvent(event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_SCROLL) {
+            val boundary = webViewTouchpadBoundary(
+                verticalScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL),
+                canScrollUp = canScrollVertically(-1),
+                canScrollDown = canScrollVertically(1)
+            )
+            if (boundary != null) {
+                // Wheel/trackpad input has no drag release. Supply an intentional
+                // overscroll and release pair so both seamless and pull-to-turn
+                // modes can hand off to the adjacent chapter.
+                onPotentialScroll()
+                when (boundary) {
+                    WebViewTouchpadBoundary.TOP -> {
+                        onOverScrollTop(DRAG_SENSITIVITY_PX + 1f)
+                        onReleaseOverScrollTop()
+                    }
+                    WebViewTouchpadBoundary.BOTTOM -> {
+                        onOverScrollBottom(DRAG_SENSITIVITY_PX + 1f)
+                        onReleaseOverScrollBottom()
+                    }
+                }
+                return true
+            }
+        }
+        return super.onGenericMotionEvent(event)
     }
 
     // MIUI can crash inside FloatingToolbar when WindowInsets are null, so WebView

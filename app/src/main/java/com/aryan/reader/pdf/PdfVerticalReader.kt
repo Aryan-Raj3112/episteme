@@ -89,6 +89,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
@@ -1360,6 +1361,44 @@ internal fun PdfVerticalReader(
             modifier = Modifier
                 .fillMaxSize()
                 .background(if (showPageGap) Color.Transparent else verticalPageBackgroundColor)
+                // Touchpads send scroll events rather than press-and-drag changes.
+                // The custom PDF camera handles the latter itself, so explicitly
+                // translate wheel/trackpad deltas into bounded vertical panning.
+                .pointerInput(totalDocHeight, screenHeight, headerHeightPx, footerHeightPx) {
+                    val scrollStepPx = with(density) { 48.dp.toPx() }
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.type != PointerEventType.Scroll) continue
+
+                            val scrollDeltaY = event.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                            if (scrollDeltaY == 0f) continue
+
+                            val zoomedDocumentHeight = totalDocHeight * zoomAnimatable.value
+                            val minPanY = (
+                                screenHeight - footerHeightPx - zoomedDocumentHeight
+                            ).coerceAtMost(headerHeightPx)
+                            val targetPanY = pdfTouchpadScrollTargetPanY(
+                                currentPanY = panYAnimatable.value,
+                                scrollDeltaY = scrollDeltaY,
+                                scrollStepPx = scrollStepPx,
+                                minPanY = minPanY,
+                                maxPanY = headerHeightPx
+                            )
+
+                            if (targetPanY != panYAnimatable.value) {
+                                dragCameraUpdates.trySend(
+                                    Triple(
+                                        zoomAnimatable.value,
+                                        panXAnimatable.value,
+                                        targetPanY
+                                    )
+                                )
+                            }
+                            event.changes.forEach { it.consume() }
+                        }
+                    }
+                }
                 .then(globalDrawingModifier)
                 // Vertical zoom gestures live here so page tap handlers do not steal
                 // alternating double-tap-hold attempts.

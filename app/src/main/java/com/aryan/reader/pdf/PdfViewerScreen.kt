@@ -369,7 +369,10 @@ fun PdfViewerScreen(
     }
     val isPdfDarkMode = activeTheme.isDark || activeTheme.id == "reverse"
     var pageAspectRatios by remember { mutableStateOf<List<Float>>(emptyList()) }
-    var showBars by rememberSaveable { mutableStateOf(true) }
+    // Reader chrome starts hidden for every document; a reader tap reveals it.
+    // This is intentionally not saveable so reopening a document uses the same
+    // distraction-free default.
+    var showBars by remember { mutableStateOf(false) }
     var systemUiMode by remember { mutableStateOf(loadPdfSystemUiMode(context)) }
     var showVerticalPageGap by remember { mutableStateOf(loadPdfVerticalPageGapVisible(context)) }
     var showPageNumberOverlay by remember { mutableStateOf(loadPdfPageNumberOverlayVisible(context)) }
@@ -542,6 +545,7 @@ fun PdfViewerScreen(
     }
 
     LaunchedEffect(bookId) {
+        showBars = false
         val savedIsScrollLocked = loadPdfScrollLocked(context, bookId)
         val savedLockedState = loadPdfLockedState(context, bookId)
         val activeCamera = activePdfCameraAfterLockPreferenceLoad(
