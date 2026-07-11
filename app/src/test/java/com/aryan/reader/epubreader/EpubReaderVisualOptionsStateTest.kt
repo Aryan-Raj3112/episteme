@@ -46,7 +46,7 @@ class EpubReaderVisualOptionsStateTest {
     }
 
     @Test
-    fun `native vertical page info does not reserve reader space when synced with chrome`() {
+    fun `synced page info overlays reader content without changing its viewport`() {
         assertFalse(
             shouldReserveEpubPageInfoBarSpace(
                 pageInfoMode = PageInfoMode.SYNC,
@@ -61,7 +61,7 @@ class EpubReaderVisualOptionsStateTest {
                 isNativeVerticalMode = true
             )
         )
-        assertTrue(
+        assertFalse(
             shouldReserveEpubPageInfoBarSpace(
                 pageInfoMode = PageInfoMode.SYNC,
                 showReaderChrome = true,

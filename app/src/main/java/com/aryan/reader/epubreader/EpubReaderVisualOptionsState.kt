@@ -19,6 +19,7 @@ internal fun shouldReserveEpubPageInfoBarSpace(
     isNativeVerticalMode: Boolean
 ): Boolean {
     if (isNativeVerticalMode) return false
+    if (pageInfoMode == PageInfoMode.SYNC) return false
     return shouldShowEpubPageInfoBar(
         pageInfoMode = pageInfoMode,
         showReaderChrome = showReaderChrome

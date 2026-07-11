@@ -7,6 +7,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import org.junit.Assert.assertEquals
@@ -20,6 +21,33 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class ContentStylerTest {
+
+    @Test
+    fun `reader paragraph direction follows content instead of app locale by default`() {
+        val block = styler().style(listOf(paragraph("English text", blockIndex = 1)))
+            .single() as ParagraphBlock
+
+        assertEquals(TextDirection.ContentOrLtr, block.content.paragraphStyles.single().item.textDirection)
+    }
+
+    @Test
+    fun `explicit rtl paragraph direction is preserved`() {
+        val block = styler().style(
+            listOf(
+                paragraph(
+                    text = "نص عربي",
+                    blockIndex = 2,
+                    style = CssStyle(
+                        paragraphStyle = androidx.compose.ui.text.ParagraphStyle(
+                            textDirection = TextDirection.Rtl
+                        )
+                    )
+                )
+            )
+        ).single() as ParagraphBlock
+
+        assertEquals(TextDirection.Rtl, block.content.paragraphStyles.single().item.textDirection)
+    }
 
     @Test
     fun `paragraph styling applies user text alignment and preserves cfi metadata`() {

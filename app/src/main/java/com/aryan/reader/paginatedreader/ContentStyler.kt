@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -384,7 +385,9 @@ class ContentStyler(
 
             val finalParagraphStyle = ParagraphStyle(
                 textAlign = finalTextAlign,
-                textDirection = mergedParagraphStyle.textDirection,
+                textDirection = mergedParagraphStyle.textDirection.takeUnless {
+                    it == TextDirection.Unspecified
+                } ?: TextDirection.ContentOrLtr,
                 lineHeight = finalLineHeight,
                 textIndent = mergedParagraphStyle.textIndent,
                 platformStyle = mergedParagraphStyle.platformStyle,

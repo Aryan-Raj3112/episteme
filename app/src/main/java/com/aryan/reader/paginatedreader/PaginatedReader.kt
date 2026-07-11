@@ -502,6 +502,14 @@ private const val AndroidEpubWrapShortLineFraction = 0.28f
 private const val TAG_STABLE_PAGE_NAV = "StablePageNav"
 private const val TAG_PAGINATED_HIGHLIGHT_DIAG = "PaginatedHighlightDiag"
 private const val TAG_ANDROID_HIGHLIGHT_RENDER_DIAG = "AndroidHighlightRenderDiag"
+private const val TAG_READER_INTERACTION_DIAG = "ReaderInteractionDiag"
+internal object ReaderSelectionHandleOverlayAlignment : Alignment {
+    override fun align(
+        size: IntSize,
+        space: IntSize,
+        layoutDirection: LayoutDirection
+    ): IntOffset = IntOffset.Zero
+}
 private const val EXPLICIT_NAVIGATION_SHIFT_ANCHOR_WINDOW_MS = 10_000L
 private const val DEBUG_PAGE_TURN_DIAG = false
 private const val NATIVE_VERTICAL_LOAD_LOG_TAG = "NativeVerticalLoad"
@@ -4094,7 +4102,7 @@ fun NativeVerticalReaderScreen(
                                         }
                                     }
                                     .pointerInput(chapterIndex, item.blockOrdinal) {
-                                        detectTapGestures(onTap = { offset -> onTap(offset) })
+                                        detectTapGestures(onTap = onGeneralTapCallback)
                                     }
                             ) {
                                 NativeVerticalContentBlock(
@@ -4138,6 +4146,22 @@ fun NativeVerticalReaderScreen(
                 val sel = activeSelection!!
                 @Suppress("UNUSED_VARIABLE") val selectionLayoutTick = blockLayoutMap.tick
                 val selectedBlocks = visibleSelectedBlocks(blockLayoutMap, sel)
+
+                LaunchedEffect(sel) {
+                    listOf(true, false).forEach { isStart ->
+                        val page = if (isStart) sel.startPageIndex else sel.endPageIndex
+                        val cfi = if (isStart) sel.startBaseCfi else sel.endBaseCfi
+                        val blockAbs = if (isStart) sel.startBlockCharOffset else sel.endBlockCharOffset
+                        val layout = findSelectionLayout(blockLayoutMap, cfi, page, blockAbs)
+                        Timber.tag(TAG_READER_INTERACTION_DIAG).d(
+                            "selection_handle surface=native_vertical edge=${if (isStart) "start" else "end"} " +
+                                "page=$page currentVisiblePages=${selectedBlocks.size} cfiHash=${cfi.hashCode()} " +
+                                "blockAbs=$blockAbs layoutFound=${layout != null} attached=${layout?.second?.isAttached} " +
+                                "rootAttached=${rootCoords?.isAttached} locale=${context.resources.configuration.locales[0]} " +
+                                "layoutDirection=${context.resources.configuration.layoutDirection}"
+                        )
+                    }
+                }
 
                 if (!isDraggingHandle && selectedBlocks.isNotEmpty()) {
                     val handleSizePx = with(density) { 36.dp.toPx() }
@@ -4306,7 +4330,11 @@ fun NativeVerticalReaderScreen(
                     selectionEdgeDragHandle = null
                 }
 
-                listOf(SelectionHandle.START, SelectionHandle.END).forEach { handleType ->
+                Box(
+                    modifier = Modifier.matchParentSize(),
+                    contentAlignment = ReaderSelectionHandleOverlayAlignment
+                ) {
+                    listOf(SelectionHandle.START, SelectionHandle.END).forEach { handleType ->
                     val isStart = handleType == SelectionHandle.START
                     var handleCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
@@ -4452,6 +4480,7 @@ fun NativeVerticalReaderScreen(
                                 },
                             tint = Color(0xFF1976D2)
                         )
+                    }
                     }
                 }
             }
@@ -8314,6 +8343,25 @@ internal fun PaginatedReaderContent(
                     val visibleSelectedBlocks =
                         currentPageBlocks.filter { isBlockSelectedOnPage(it.third, pagerState.currentPage, sel) }
 
+                    LaunchedEffect(sel, pagerState.currentPage) {
+                        listOf(true, false).forEach { isStart ->
+                            val page = if (isStart) sel.startPageIndex else sel.endPageIndex
+                            val cfi = if (isStart) sel.startBaseCfi else sel.endBaseCfi
+                            val blockAbs = if (isStart) sel.startBlockCharOffset else sel.endBlockCharOffset
+                            val legacyLayout = blockLayoutMap[legacyTextBlockLayoutKey(cfi, page)]
+                            val exactLayout = findSelectionLayout(blockLayoutMap, cfi, page, blockAbs)
+                            Timber.tag(TAG_READER_INTERACTION_DIAG).d(
+                                "selection_handle surface=paginated edge=${if (isStart) "start" else "end"} " +
+                                    "page=$page currentPage=${pagerState.currentPage} cfiHash=${cfi.hashCode()} blockAbs=$blockAbs " +
+                                    "legacyFound=${legacyLayout != null} legacyBlockAbs=${legacyLayout?.third?.let(::getTextBlockCharOffset)} " +
+                                    "exactFound=${exactLayout != null} attached=${exactLayout?.second?.isAttached} " +
+                                    "rootAttached=${rootCoords?.isAttached} visibleSelectedBlocks=${visibleSelectedBlocks.size} " +
+                                    "locale=${context.resources.configuration.locales[0]} " +
+                                    "layoutDirection=${context.resources.configuration.layoutDirection}"
+                            )
+                        }
+                    }
+
                     if (!isDraggingHandle && visibleSelectedBlocks.isNotEmpty()) {
                         val menuAnchorRect = run {
                             var minLeft = Float.MAX_VALUE
@@ -8723,7 +8771,11 @@ internal fun PaginatedReaderContent(
 
                     val latestUpdateSelection by rememberUpdatedState(updateSelection)
 
-                    listOf(SelectionHandle.START, SelectionHandle.END).forEach { handleType ->
+                    Box(
+                        modifier = Modifier.matchParentSize(),
+                        contentAlignment = ReaderSelectionHandleOverlayAlignment
+                    ) {
+                        listOf(SelectionHandle.START, SelectionHandle.END).forEach { handleType ->
                         val isStart = handleType == SelectionHandle.START
                         var handleCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
@@ -8826,6 +8878,7 @@ internal fun PaginatedReaderContent(
                                 },
                                 tint = Color(0xFF1976D2)
                             )
+                        }
                         }
                     }
                 }

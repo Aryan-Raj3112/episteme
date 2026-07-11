@@ -2725,6 +2725,15 @@ fun EpubReaderHost(
         showReaderChrome = showBars
     )
 
+    LaunchedEffect(showBars, pageInfoMode, currentRenderMode, isNativeVerticalMode) {
+        Timber.tag("ReaderInteractionDiag").d(
+            "chrome_state mode=$currentRenderMode nativeVertical=$isNativeVerticalMode showBars=$showBars " +
+                "pageInfoMode=$pageInfoMode pageInfoVisible=$isPageInfoVisible " +
+                "reservePageInfoSpace=${shouldReserveEpubPageInfoBarSpace(pageInfoMode, showBars, isNativeVerticalMode)} " +
+                "pagerInitialized=$isPagerInitialized reconfigurationRestoring=$isPaginatedReconfigurationRestoring"
+        )
+    }
+
     fun androidLocatorCfiToLocator(cfi: String): Locator? {
         val parts = cfi.takeIf { it.startsWith("android-locator:") }?.split(':') ?: return null
         return Locator(
@@ -5805,7 +5814,9 @@ fun EpubReaderHost(
                     }
 
                     RenderMode.PAGINATED -> {
-                        val pageInfoReserve = if (isPageInfoVisible) pageInfoBarHeight else 0.dp
+                        val pageInfoReserve = if (
+                            shouldReserveEpubPageInfoBarSpace(pageInfoMode, showBars, isNativeVerticalMode)
+                        ) pageInfoBarHeight else 0.dp
                         val contentTopPadding = if (pageInfoPosition == PageInfoPosition.TOP) pageInfoReserve else 0.dp
                         val contentBottomPadding = if (pageInfoPosition == PageInfoPosition.BOTTOM) pageInfoReserve else 0.dp
 
