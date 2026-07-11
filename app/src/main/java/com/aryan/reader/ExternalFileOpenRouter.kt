@@ -27,7 +27,11 @@ object ExternalFileOpenRouteDecider {
     }
 
     fun flagsForInternalForward(sourceFlags: Int): Int {
-        return sourceFlags and URI_GRANT_FLAGS.inv()
+        // A VIEW intent belongs to the sender's task. Forward only its URI grants,
+        // then explicitly launch/reuse Episteme's normal task. This prevents the
+        // router's excluded task or a sender's EXCLUDE_FROM_RECENTS flag from
+        // becoming the reader task's Recents policy.
+        return (sourceFlags and URI_GRANT_FLAGS) or Intent.FLAG_ACTIVITY_NEW_TASK
     }
 }
 

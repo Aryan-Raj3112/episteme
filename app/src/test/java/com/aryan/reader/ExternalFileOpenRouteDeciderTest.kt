@@ -27,15 +27,23 @@ class ExternalFileOpenRouteDeciderTest {
         }
     }
     @Test
-    fun `internal forward strips uri grant flags`() {
+    fun `internal forward keeps uri grants but drops source task flags`() {
         val sourceFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
             Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
             Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
             Intent.FLAG_GRANT_PREFIX_URI_PERMISSION or
-            Intent.FLAG_ACTIVITY_NEW_TASK
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
 
         val forwardedFlags = ExternalFileOpenRouteDecider.flagsForInternalForward(sourceFlags)
 
-        assertEquals(Intent.FLAG_ACTIVITY_NEW_TASK, forwardedFlags)
+        assertEquals(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION or
+                Intent.FLAG_ACTIVITY_NEW_TASK,
+            forwardedFlags
+        )
     }
 }

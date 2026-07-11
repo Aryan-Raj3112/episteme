@@ -742,17 +742,11 @@ fun LibraryScreenContent(
     val searchFocusRequester = remember { FocusRequester() }
     val selectedBookIds = remember(selectedItems) { selectedItems.mapTo(mutableSetOf()) { it.bookId } }
 
+    // Keep cursor/composition state local while Gboard is editing. Replacing the
+    // field value from the filtered library state can move the cursor behind a
+    // newly entered character or interrupt a held Backspace gesture.
     var textFieldValue by remember(isSearchActive) {
         mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length)))
-    }
-
-    LaunchedEffect(searchQuery) {
-        if (textFieldValue.text != searchQuery) {
-            textFieldValue = textFieldValue.copy(
-                text = searchQuery,
-                selection = TextRange(searchQuery.length)
-            )
-        }
     }
 
     LaunchedEffect(isSearchActive) {
@@ -824,7 +818,12 @@ fun LibraryScreenContent(
                                 ),
                                 trailingIcon = {
                                     if (searchQuery.isNotEmpty()) {
-                                        IconButton(onClick = { onSearchQueryChange("") }) {
+                                        IconButton(
+                                            onClick = {
+                                                textFieldValue = TextFieldValue("", TextRange.Zero)
+                                                onSearchQueryChange("")
+                                            }
+                                        ) {
                                             Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_desc_clear_query))
                                         }
                                     }
