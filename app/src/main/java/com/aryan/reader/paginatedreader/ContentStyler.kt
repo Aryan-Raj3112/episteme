@@ -392,7 +392,9 @@ class ContentStyler(
                 textIndent = mergedParagraphStyle.textIndent,
                 platformStyle = mergedParagraphStyle.platformStyle,
                 lineHeightStyle = mergedParagraphStyle.lineHeightStyle,
-                lineBreak = LineBreak.Paragraph,
+                // Keep text within the measured page on device/font combinations where the
+                // high-quality breaker can leave a long token wider than its constraints.
+                lineBreak = LineBreak.Simple,
                 hyphens = hyphensValue,
                 textMotion = mergedParagraphStyle.textMotion
             )

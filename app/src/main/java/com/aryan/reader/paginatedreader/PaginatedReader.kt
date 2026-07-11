@@ -493,6 +493,7 @@ private fun headerFontScale(level: Int): Float = when (level) {
 private const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
 private const val AndroidEpubCutoffLogTag = "EpistemeEpubCutoff"
 private const val AndroidEpubPageGapDiagLogTag = "EpistemePageGapDiag"
+private const val AndroidEpubEdgeDiagLogTag = "ReaderEdgeDiag"
 private const val AndroidEpubCutoffTolerancePx = 1
 private const val AndroidEpubCutoffEdgeProbePx = 2
 private const val AndroidEpubLargeBottomGapMinPx = 72
@@ -2611,7 +2612,7 @@ fun PaginatedReaderScreen(
                 fontSize = adjustedFontSize,
                 lineHeight = adjustedLineHeight,
                 fontFamily = debouncedFontFamily,
-                lineBreak = LineBreak.Paragraph,
+                lineBreak = LineBreak.Simple,
                 letterSpacing = TextUnit.Unspecified,
                 platformStyle = PlatformTextStyle(includeFontPadding = false),
                 lineHeightStyle = LineHeightStyle(
@@ -3339,7 +3340,7 @@ fun NativeVerticalReaderScreen(
                 fontSize = adjustedFontSize,
                 lineHeight = adjustedLineHeight,
                 fontFamily = fontFamily,
-                lineBreak = LineBreak.Paragraph,
+                lineBreak = LineBreak.Simple,
                 letterSpacing = TextUnit.Unspecified,
                 platformStyle = PlatformTextStyle(includeFontPadding = false),
                 lineHeightStyle = LineHeightStyle(
@@ -5400,6 +5401,22 @@ private fun logAndroidEpubPageGapDiag(message: String) {
     Log.d(AndroidEpubPageGapDiagLogTag, message)
 }
 
+private fun logAndroidEpubEdgeDiag(message: String) {
+    if (!BuildConfig.DEBUG) return
+    Log.d(AndroidEpubEdgeDiagLogTag, message)
+}
+
+internal fun readerHorizontalOverflowPx(
+    minLineLeftPx: Int,
+    maxLineRightPx: Int,
+    maxLineVisualWidthPx: Int,
+    boxWidthPx: Int
+): Int = maxOf(
+    (-minLineLeftPx).coerceAtLeast(0),
+    (maxLineRightPx - boxWidthPx).coerceAtLeast(0),
+    (maxLineVisualWidthPx - boxWidthPx).coerceAtLeast(0)
+)
+
 private fun Modifier.androidEpubNaturalHeight(): Modifier = this.then(
     Modifier.layout { measurable, constraints ->
         val placeable = measurable.measure(
@@ -5701,6 +5718,7 @@ private fun logAndroidEpubTextWrapIfNeeded(
 
     var maxLineVisualWidthPx = 0
     var maxLineRightPx = 0
+    var minLineLeftPx = Int.MAX_VALUE
     var shortNonBlankLineCount = 0
     var nonBlankLineCount = 0
     val lineSamples = mutableListOf<String>()
@@ -5715,6 +5733,7 @@ private fun logAndroidEpubTextWrapIfNeeded(
         val lineVisualWidth = abs(lineRight - lineLeft).roundToInt()
         maxLineVisualWidthPx = maxOf(maxLineVisualWidthPx, lineVisualWidth)
         maxLineRightPx = maxOf(maxLineRightPx, maxOf(lineLeft, lineRight).roundToInt())
+        minLineLeftPx = minOf(minLineLeftPx, minOf(lineLeft, lineRight).roundToInt())
         if (lineText.isNotBlank()) {
             nonBlankLineCount++
             if (lineVisualWidth < boxWidthPx * AndroidEpubWrapShortLineFraction && lineText.length >= 2) {
@@ -5726,7 +5745,14 @@ private fun logAndroidEpubTextWrapIfNeeded(
         }
     }
 
-    val lineOverflowPx = maxOf(maxLineRightPx - boxWidthPx, maxLineVisualWidthPx - boxWidthPx)
+    val leftOverflowPx = (-minLineLeftPx).coerceAtLeast(0)
+    val rightOverflowPx = (maxLineRightPx - boxWidthPx).coerceAtLeast(0)
+    val lineOverflowPx = readerHorizontalOverflowPx(
+        minLineLeftPx = minLineLeftPx,
+        maxLineRightPx = maxLineRightPx,
+        maxLineVisualWidthPx = maxLineVisualWidthPx,
+        boxWidthPx = boxWidthPx
+    )
     val narrowBox = boxWidthPx < (bounds.widthPx * AndroidEpubWrapNarrowWidthFraction).roundToInt()
     val manyShortLines = nonBlankLineCount >= 3 && shortNonBlankLineCount >= maxOf(2, nonBlankLineCount / 3)
     val textChars = block.content.text.length
@@ -5742,11 +5768,21 @@ private fun logAndroidEpubTextWrapIfNeeded(
         "cutoff_probe layer=android_text_wrap page=${pageIndex + 1} block=${block.blockIndex} " +
             "kind=${block.androidEpubKindName()} boxWidthPx=$boxWidthPx layoutWidthPx=${layout.size.width} " +
             "pageContentWidthPx=${bounds.widthPx} lineCount=${layout.lineCount} textChars=$textChars " +
-            "maxLineVisualWidthPx=$maxLineVisualWidthPx maxLineRightPx=$maxLineRightPx lineOverflowPx=$lineOverflowPx " +
+            "maxLineVisualWidthPx=$maxLineVisualWidthPx minLineLeftPx=$minLineLeftPx maxLineRightPx=$maxLineRightPx " +
+            "leftOverflowPx=$leftOverflowPx rightOverflowPx=$rightOverflowPx lineOverflowPx=$lineOverflowPx " +
             "narrowBox=$narrowBox shortLines=$shortNonBlankLineCount/$nonBlankLineCount " +
             "boxLeftApproxPx=$boxLeftRelativePx textAlign=${layout.layoutInput.style.textAlign} " +
             "fontSize=${layout.layoutInput.style.fontSize} lineHeight=${layout.layoutInput.style.lineHeight} " +
             "sourceRange=${block.androidEpubSourceRangeLabel()} lines=${lineSamples.joinToString("|")} $diagnosticsContext"
+    )
+    logAndroidEpubEdgeDiag(
+        "edge_probe page=${pageIndex + 1} block=${block.blockIndex} kind=${block.androidEpubKindName()} " +
+            "boxWidthPx=$boxWidthPx layoutWidthPx=${layout.size.width} contentWidthPx=${bounds.widthPx} " +
+            "minLineLeftPx=$minLineLeftPx maxLineRightPx=$maxLineRightPx maxLineVisualWidthPx=$maxLineVisualWidthPx " +
+            "leftOverflowPx=$leftOverflowPx rightOverflowPx=$rightOverflowPx lineOverflowPx=$lineOverflowPx " +
+            "lineBreak=${layout.layoutInput.style.lineBreak} textAlign=${layout.layoutInput.style.textAlign} " +
+            "fontSize=${layout.layoutInput.style.fontSize} lineHeight=${layout.layoutInput.style.lineHeight} " +
+            "sourceRange=${block.androidEpubSourceRangeLabel()} textChars=$textChars $diagnosticsContext"
     )
     return signature
 }
@@ -6881,7 +6917,10 @@ internal fun PaginatedReaderContent(
                         }
                         val cutoffDiagnosticsEnabled = !uiState.isLoading
                         val cutoffDiagnosticsContext =
-                            "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount}"
+                            "generation=${uiState.generation} loading=${uiState.isLoading} pageCount=${uiState.totalPageCount} " +
+                                "density=${density.density} fontScale=${density.fontScale} " +
+                                "locale=${context.resources.configuration.locales[0]} " +
+                                "layoutDirection=${context.resources.configuration.layoutDirection}"
 
                         Box(
                             modifier = Modifier

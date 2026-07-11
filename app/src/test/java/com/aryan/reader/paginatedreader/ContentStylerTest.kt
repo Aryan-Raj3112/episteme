@@ -8,6 +8,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import org.junit.Assert.assertEquals
@@ -28,6 +29,7 @@ class ContentStylerTest {
             .single() as ParagraphBlock
 
         assertEquals(TextDirection.ContentOrLtr, block.content.paragraphStyles.single().item.textDirection)
+        assertEquals(LineBreak.Simple, block.content.paragraphStyles.single().item.lineBreak)
     }
 
     @Test
