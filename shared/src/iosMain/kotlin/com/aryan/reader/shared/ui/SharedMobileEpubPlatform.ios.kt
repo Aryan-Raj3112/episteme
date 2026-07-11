@@ -20,6 +20,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ios.loadIosEpubBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonPrimitive
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSURL
 import platform.UIKit.UIApplication
@@ -58,6 +59,7 @@ internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMob
 @Composable
 internal actual fun SharedMobileEpubWebView(
     html: String,
+    contentChunks: List<String>,
     appearanceScript: String,
     navigationScript: String?,
     navigationRequestId: Long,
@@ -76,6 +78,7 @@ internal actual fun SharedMobileEpubWebView(
             coordinator.update(
                 webView = webView,
                 html = html,
+                contentChunks = contentChunks,
                 appearanceScript = appearanceScript,
                 navigationScript = navigationScript,
                 navigationRequestId = navigationRequestId
@@ -98,8 +101,10 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
 private class IosEpubWebViewCoordinator(
     var onBridgeMessage: (String, String) -> Unit
 ) {
-    private val messageHandler = IosEpubScriptMessageHandler { method, payload -> onBridgeMessage(method, payload) }
+    private val messageHandler = IosEpubScriptMessageHandler(::handleBridgeMessage)
     private val navigationDelegate = IosEpubNavigationDelegate(::documentDidFinishLoading)
+    private var activeWebView: WKWebView? = null
+    private var contentChunks: List<String> = emptyList()
     private var loadedHtmlHash: Int? = null
     private var loadedHtmlLength: Int = -1
     private var appliedAppearanceHash: Int? = null
@@ -123,6 +128,7 @@ private class IosEpubWebViewCoordinator(
             defaultWebpagePreferences.allowsContentJavaScript = true
         }
         return WKWebView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0), configuration = configuration).apply {
+            activeWebView = this
             navigationDelegate = this@IosEpubWebViewCoordinator.navigationDelegate
             opaque = false
             backgroundColor = UIColor.clearColor
@@ -137,10 +143,13 @@ private class IosEpubWebViewCoordinator(
     fun update(
         webView: WKWebView,
         html: String,
+        contentChunks: List<String>,
         appearanceScript: String,
         navigationScript: String?,
         navigationRequestId: Long
     ) {
+        activeWebView = webView
+        this.contentChunks = contentChunks
         latestAppearanceScript = appearanceScript
         latestNavigationScript = navigationScript
         latestNavigationRequestId = navigationRequestId
@@ -179,10 +188,25 @@ private class IosEpubWebViewCoordinator(
         }
     }
 
+    private fun handleBridgeMessage(method: String, payload: String) {
+        if (method == "readerChunkRequested") {
+            val index = IosEpubChunkIndexRegex.find(payload)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return
+            val chunk = contentChunks.getOrNull(index) ?: return
+            activeWebView?.evaluateJavaScript(
+                "window.readerVirtualization && window.readerVirtualization.provideChunk($index, ${JsonPrimitive(chunk)});",
+                completionHandler = null
+            )
+            return
+        }
+        onBridgeMessage(method, payload)
+    }
+
     fun release(webView: WKWebView) {
         webView.stopLoading()
         webView.navigationDelegate = null
         webView.configuration.userContentController.removeScriptMessageHandlerForName(IosEpubBridgeName)
+        activeWebView = null
+        contentChunks = emptyList()
         loadedHtmlHash = null
         loadedHtmlLength = -1
     }
@@ -211,6 +235,7 @@ private class IosEpubScriptMessageHandler(
 }
 
 private const val IosEpubBridgeName = "reader"
+private val IosEpubChunkIndexRegex = Regex("\\\"index\\\"\\s*:\\s*(\\d+)")
 
 private val IosEpubBridgeBootstrapScript = """
     (function () {
@@ -229,7 +254,30 @@ private val IosEpubBridgeBootstrapScript = """
         document.addEventListener('touchstart', function (event) {
           if (!event.touches || event.touches.length !== 1) { start = null; return; }
           var touch = event.touches[0];
-          start = { x: touch.clientX, y: touch.clientY, at: Date.now() };
+          var root = document.scrollingElement || document.documentElement;
+          var maxScroll = Math.max(0, root.scrollHeight - window.innerHeight);
+          start = {
+            x: touch.clientX,
+            y: touch.clientY,
+            at: Date.now(),
+            atTop: window.scrollY <= 2,
+            atBottom: window.scrollY >= maxScroll - 2
+          };
+        }, { passive: true, capture: true });
+        document.addEventListener('touchmove', function (event) {
+          if (!start || !event.touches || event.touches.length !== 1) return;
+          if (window.readerIosPullEnabled === false) return;
+          var touch = event.touches[0];
+          var dx = touch.clientX - start.x;
+          var dy = touch.clientY - start.y;
+          if (Math.abs(dy) <= Math.abs(dx) * 1.25) return;
+          var multiplier = Math.max(0.5, Math.min(2.0, Number(window.readerIosPullMultiplier || 1)));
+          var threshold = 100 * multiplier;
+          if (start.atTop && dy > 0) {
+            post('readerChapterPull', JSON.stringify({ direction: 'previous', progress: Math.min(1.25, dy / threshold) }));
+          } else if (start.atBottom && dy < 0) {
+            post('readerChapterPull', JSON.stringify({ direction: 'next', progress: Math.min(1.25, -dy / threshold) }));
+          }
         }, { passive: true, capture: true });
         document.addEventListener('touchend', function (event) {
           if (!start || !event.changedTouches || event.changedTouches.length !== 1) { start = null; return; }
@@ -237,13 +285,32 @@ private val IosEpubBridgeBootstrapScript = """
           var dx = touch.clientX - start.x;
           var dy = touch.clientY - start.y;
           var elapsed = Date.now() - start.at;
+          var startedAtTop = start.atTop;
+          var startedAtBottom = start.atBottom;
           start = null;
-          if ((dx * dx + dy * dy) > 100 || elapsed > 650) return;
           var selection = window.getSelection && window.getSelection();
           if (selection && selection.toString().trim()) return;
           var target = event.target;
           if (target && target.closest && target.closest('a,button,input,textarea,select,#reader-selection-menu,.reader-selection-handle')) return;
+          var multiplier = Math.max(0.5, Math.min(2.0, Number(window.readerIosPullMultiplier || 1)));
+          var threshold = 100 * multiplier;
+          post('readerChapterPull', JSON.stringify({ direction: dy >= 0 ? 'previous' : 'next', progress: 0 }));
+          if (window.readerIosPullEnabled !== false && elapsed <= 1400 && Math.abs(dy) >= threshold && Math.abs(dy) > Math.abs(dx) * 1.25) {
+            if (startedAtTop && dy > 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
+              return;
+            }
+            if (startedAtBottom && dy < 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
+              return;
+            }
+          }
+          if ((dx * dx + dy * dy) > 100 || elapsed > 650) return;
           post('readerPointerActivity', '{}');
+        }, { passive: true, capture: true });
+        document.addEventListener('touchcancel', function () {
+          start = null;
+          post('readerChapterPull', JSON.stringify({ direction: 'next', progress: 0 }));
         }, { passive: true, capture: true });
       }
     })();

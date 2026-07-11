@@ -1278,6 +1278,53 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""<a href="notes.xhtml"><span>Read more</span></a>"""))
     }
 
+    @Test
+    fun `vertical chapter chunks preserve top level nodes in android sized groups`() {
+        val body = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "virtual-book",
+            fileName = "virtual.epub",
+            title = "Virtual",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = body))
+        )
+
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        assertEquals(3, chunks.size)
+        assertTrue(chunks[0].contains("id=\"p0\""))
+        assertTrue(chunks[0].contains("id=\"p19\""))
+        assertFalse(chunks[0].contains("id=\"p20\""))
+        assertTrue(chunks[2].contains("id=\"p44\""))
+    }
+
+    @Test
+    fun `virtualized vertical document keeps distant chunks out of initial dom`() {
+        val body = (0 until 181).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
+        val book = SharedEpubBook(
+            id = "virtual-book",
+            fileName = "virtual.epub",
+            title = "Virtual",
+            chapters = listOf(SharedEpubChapter("chapter", "Chapter", "Paragraph", htmlContent = body))
+        )
+        val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(book, chapterIndex = 0)
+
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            renderedChapterRange = 0..0,
+            virtualizedChapterChunks = mapOf(0 to chunks),
+            virtualizedInitialChunkIndex = 7
+        )
+
+        assertEquals(10, chunks.size)
+        assertTrue(html.contains("data-reader-chunk-index=\"7\">"))
+        assertTrue(html.contains("id=\"p159\""))
+        assertTrue(html.contains("data-reader-chunk-index=\"8\" style=\"height: 1440px\"></div>"))
+        assertFalse(html.contains("id=\"p160\""))
+        assertTrue(html.contains("readerChunkRequested"))
+        assertTrue(html.contains("rootMargin: '2500px 0px'"))
+    }
+
     private fun repeatedWordBook(text: String): SharedEpubBook {
         return SharedEpubBook(
             id = "book",

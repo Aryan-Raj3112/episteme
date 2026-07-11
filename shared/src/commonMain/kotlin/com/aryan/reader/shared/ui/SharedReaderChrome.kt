@@ -2448,7 +2448,7 @@ private fun SharedReaderCustomThemeSection(
 }
 
 @Composable
-private fun SharedReaderCustomThemeDialog(
+internal fun SharedReaderCustomThemeDialog(
     initialTheme: ReaderTheme?,
     isTexturedMode: Boolean,
     customThemes: List<ReaderTheme>,

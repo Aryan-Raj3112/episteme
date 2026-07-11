@@ -42,6 +42,8 @@ object ReaderHtmlDocumentBuilder {
         externalLookupEnabled: Boolean = true,
         textureDataUri: String? = null,
         renderedChapterRange: IntRange? = null,
+        virtualizedChapterChunks: Map<Int, List<String>> = emptyMap(),
+        virtualizedInitialChunkIndex: Int = 0,
         showChapterTitles: Boolean = true
     ): String {
         val renderedChapterIndices = renderedChapterRange
@@ -54,31 +56,57 @@ object ReaderHtmlDocumentBuilder {
         val body = renderedChapterIndices.joinToString("\n") { index ->
             val chapter = book.chapters[index]
             val chapterText = chapter.normalizedReaderText()
-            val chapterHtml = chapter.toHtml(searchQuery, searchOptions)
-                .applyUserHighlights(
-                    highlights = highlights.filter { it.locatedChapterIndex == index },
-                    contentStartOffset = 0,
-                    contentEndOffset = chapterText.length
-                )
+            val virtualChunks = virtualizedChapterChunks[index].orEmpty()
+            val chapterHtml = if (virtualChunks.isEmpty()) {
+                chapter.toHtml(searchQuery, searchOptions)
+                    .applyUserHighlights(
+                        highlights = highlights.filter { it.locatedChapterIndex == index },
+                        contentStartOffset = 0,
+                        contentEndOffset = chapterText.length
+                    )
+            } else {
+                ""
+            }
             val chapterTitleHtml = if (showChapterTitles) {
                 "<h1 class=\"chapter-title\">${chapter.title.escapeHtml()}</h1>"
             } else {
                 ""
             }
+            val renderedContent = if (virtualChunks.isEmpty()) {
+                chapterHtml
+            } else {
+                val initialChunkCount = minOf(
+                    virtualChunks.size,
+                    virtualizedInitialChunkIndex.coerceIn(0, virtualChunks.lastIndex) + 2,
+                    MaxInitialVirtualReaderChunks
+                )
+                virtualChunks.mapIndexed { chunkIndex, chunk ->
+                    if (chunkIndex < initialChunkCount) {
+                        "<div class=\"reader-virtual-chunk\" data-reader-chunk-index=\"$chunkIndex\">$chunk</div>"
+                    } else {
+                        val placeholderHeight = estimateVirtualReaderChunkHeightPx(chunk)
+                        "<div class=\"reader-virtual-chunk\" data-reader-chunk-index=\"$chunkIndex\" style=\"height: ${placeholderHeight}px\"></div>"
+                    }
+                }.joinToString("\n")
+            }
             """
             <section class="chapter" id="chapter-$index" data-reader-chapter-index="$index" data-reader-chapter-id="${chapter.id.escapeHtml()}" data-reader-chapter-href="${chapter.baseHref.orEmpty().escapeHtml()}">
               $chapterTitleHtml
               <div class="reader-content" data-reader-content-start="0" data-reader-content-end="${chapterText.length}">
-                $chapterHtml
+                $renderedContent
               </div>
             </section>
             """.trimIndent()
         }
+        val virtualizationScript = virtualizedChapterChunks.values.firstOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { virtualReaderBootstrapScript(it.size) }
+            .orEmpty()
         return document(
             title = book.title,
             settings = settings,
             bookCss = book.css.values.joinToString("\n"),
-            body = body,
+            body = body + virtualizationScript,
             searchQuery = searchQuery,
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
@@ -91,6 +119,152 @@ object ReaderHtmlDocumentBuilder {
             textureDataUri = textureDataUri
         )
     }
+
+    fun verticalChapterChunks(
+        book: SharedEpubBook,
+        chapterIndex: Int,
+        chunkNodeCount: Int = 20
+    ): List<String> {
+        val chapter = book.chapters.getOrNull(chapterIndex) ?: return emptyList()
+        return splitReaderHtmlAtTopLevel(chapter.toHtml("", ReaderSearchOptions()), chunkNodeCount)
+    }
+
+    private fun virtualReaderBootstrapScript(totalChunks: Int): String = """
+        <script>
+          (function () {
+            var observer = null;
+            var requested = Object.create(null);
+            function chunk(index) {
+              return document.querySelector('.reader-virtual-chunk[data-reader-chunk-index="' + index + '"]');
+            }
+            function request(index) {
+              if (requested[index]) return;
+              requested[index] = true;
+              if (window.kmpJsBridge && window.kmpJsBridge.callNative) {
+                window.kmpJsBridge.callNative('readerChunkRequested', JSON.stringify({ index: index }));
+              }
+            }
+            window.readerVirtualization = {
+              totalChunks: $totalChunks,
+              provideChunk: function (index, html) {
+                var host = chunk(index);
+                if (!host) return;
+                var oldHeight = host.getBoundingClientRect().height;
+                host.innerHTML = html || '';
+                host.style.height = '';
+                requested[index] = false;
+                var newHeight = host.getBoundingClientRect().height;
+                if (host.getBoundingClientRect().bottom < 0 && Math.abs(newHeight - oldHeight) > 0.5) {
+                  window.scrollBy(0, newHeight - oldHeight);
+                }
+              }
+            };
+            function install() {
+              if (observer) observer.disconnect();
+              observer = new IntersectionObserver(function (entries) {
+                entries.forEach(function (entry) {
+                  var host = entry.target;
+                  var index = parseInt(host.getAttribute('data-reader-chunk-index') || '-1', 10);
+                  if (index < 0) return;
+                  if (entry.isIntersecting) {
+                    if (!host.innerHTML.trim()) request(index);
+                  } else if (host.innerHTML.trim()) {
+                    var height = host.getBoundingClientRect().height;
+                    host.style.height = Math.max(1, height) + 'px';
+                    host.innerHTML = '';
+                    requested[index] = false;
+                  }
+                });
+              }, { rootMargin: '2500px 0px' });
+              document.querySelectorAll('.reader-virtual-chunk').forEach(function (host) { observer.observe(host); });
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
+            else install();
+          })();
+        </script>
+    """.trimIndent()
+
+    private fun splitReaderHtmlAtTopLevel(html: String, chunkNodeCount: Int): List<String> {
+        if (html.isBlank()) return emptyList()
+        val size = chunkNodeCount.coerceAtLeast(1)
+        val nodeRanges = topLevelReaderHtmlNodeRanges(html)
+        if (nodeRanges.isEmpty()) return listOf(html)
+        return nodeRanges.chunked(size).map { ranges ->
+            html.substring(ranges.first().first, ranges.last().last + 1)
+        }
+    }
+
+    private fun topLevelReaderHtmlNodeRanges(html: String): List<IntRange> {
+        val ranges = mutableListOf<IntRange>()
+        var depth = 0
+        var cursor = 0
+        var nodeStart = -1
+        while (cursor < html.length) {
+            val tagStart = html.indexOf('<', cursor)
+            if (tagStart < 0) break
+            if (depth == 0 && nodeStart < 0 && html.substring(cursor, tagStart).isNotBlank()) nodeStart = cursor
+            val tagEnd = readerHtmlTagEnd(html, tagStart)
+            if (tagEnd < 0) break
+            val token = html.substring(tagStart, tagEnd + 1)
+            val isComment = token.startsWith("<!--") || token.startsWith("<!") || token.startsWith("<?")
+            val isClosing = token.startsWith("</")
+            val isSelfClosing = token.trimEnd().endsWith("/>") || token.readerHtmlTagName() in ReaderHtmlVoidTags
+            if (!isComment) {
+                if (isClosing) {
+                    if (depth > 0) depth--
+                    if (depth == 0 && nodeStart >= 0) {
+                        ranges += nodeStart..tagEnd
+                        nodeStart = -1
+                    }
+                } else {
+                    if (depth == 0 && nodeStart < 0) nodeStart = tagStart
+                    if (isSelfClosing) {
+                        if (depth == 0 && nodeStart >= 0) {
+                            ranges += nodeStart..tagEnd
+                            nodeStart = -1
+                        }
+                    } else {
+                        depth++
+                    }
+                }
+            }
+            cursor = tagEnd + 1
+        }
+        if (nodeStart >= 0) ranges += nodeStart..html.lastIndex
+        else if (cursor < html.length && html.substring(cursor).isNotBlank()) ranges += cursor..html.lastIndex
+        return ranges
+    }
+
+    private fun estimateVirtualReaderChunkHeightPx(html: String): Int {
+        return topLevelReaderHtmlNodeRanges(html).size.coerceAtLeast(1) * EstimatedVirtualReaderNodeHeightPx
+    }
+
+    private fun readerHtmlTagEnd(html: String, start: Int): Int {
+        if (html.startsWith("<!--", start)) return html.indexOf("-->", start + 4).takeIf { it >= 0 }?.plus(2) ?: -1
+        var quote: Char? = null
+        for (index in start + 1 until html.length) {
+            val char = html[index]
+            if (quote != null) {
+                if (char == quote) quote = null
+            } else if (char == '\'' || char == '"') {
+                quote = char
+            } else if (char == '>') {
+                return index
+            }
+        }
+        return -1
+    }
+
+    private fun String.readerHtmlTagName(): String = removePrefix("<")
+        .removePrefix("/")
+        .trimStart()
+        .takeWhile { it.isLetterOrDigit() || it == ':' || it == '-' }
+        .substringAfter(':')
+        .lowercase()
+
+    private const val MaxInitialVirtualReaderChunks = 8
+    private const val EstimatedVirtualReaderNodeHeightPx = 72
+    private val ReaderHtmlVoidTags = setOf("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr")
 
     fun pageDocument(
         book: SharedEpubBook,

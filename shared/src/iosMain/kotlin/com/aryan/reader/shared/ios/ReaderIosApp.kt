@@ -64,6 +64,8 @@ import platform.UIKit.UIViewController
 import platform.UIKit.UIApplication
 
 class ReaderIosBridge {
+    private var systemUiHandler: ((hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit)? = null
+    private var latestSystemUiState: Triple<Boolean, Boolean, Long>? = null
     internal var importedFiles by mutableStateOf<List<IosImportedFile>>(loadPersistedImportedFiles())
         private set
 
@@ -100,6 +102,18 @@ class ReaderIosBridge {
 
     fun setKeepScreenOn(enabled: Boolean) {
         UIApplication.sharedApplication.idleTimerDisabled = enabled
+    }
+
+    fun setSystemUiHandler(handler: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit) {
+        systemUiHandler = handler
+        latestSystemUiState?.let { (hidden, lightContent, backgroundArgb) ->
+            handler(hidden, lightContent, backgroundArgb)
+        }
+    }
+
+    fun updateSystemUi(hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) {
+        latestSystemUiState = Triple(hidden, lightContent, backgroundArgb)
+        systemUiHandler?.invoke(hidden, lightContent, backgroundArgb)
     }
 }
 
@@ -426,6 +440,15 @@ private fun ReaderIosApp(
                                 state = state.withUpdatedIosBook(updatedBook)
                             },
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
+                            onSystemUiAppearanceChange = bridge::updateSystemUi,
+                            customReaderThemes = state.customReaderThemes,
+                            onCustomReaderThemesChange = { themes ->
+                                state = state.reduce(AppAction.CustomReaderThemesChanged(themes))
+                            },
+                            readerDefaultSettings = state.readerDefaultSettings,
+                            onReaderDefaultSettingsChange = { defaults ->
+                                state = state.reduce(AppAction.ReaderDefaultSettingsChanged(defaults))
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }

@@ -17,6 +17,7 @@ internal expect fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMob
 @Composable
 internal expect fun SharedMobileEpubWebView(
     html: String,
+    contentChunks: List<String>,
     appearanceScript: String,
     navigationScript: String?,
     navigationRequestId: Long,
