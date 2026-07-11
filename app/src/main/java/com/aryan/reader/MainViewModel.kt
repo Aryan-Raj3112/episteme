@@ -6169,36 +6169,31 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun savePdfReadingPosition(page: Int, totalPages: Int) {
-        val currentPdfUri = _internalState.value.selectedPdfUri
-        if (currentPdfUri != null) {
-            val progress = if (totalPages > 0) {
-                ((page + 1).toFloat() / totalPages.toFloat()) * 100f
-            } else {
-                0f
-            }
-            Timber.tag("PdfPositionDebug").i("ViewModel: Save request triggered | Page: $page | Total: $totalPages | Progress: $progress | URI: ${currentPdfUri.lastPathSegment}")
-            viewModelScope.launch {
-                recentFilesRepository.getFileByUri(currentPdfUri.toString())?.let { existing ->
-                    logCloudSyncTrace {
-                        "android.reader.pdf_position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
-                            "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress"
-                    }
-                    recentFilesRepository.updatePdfReadingPosition(
-                        uriString = currentPdfUri.toString(), page = page, progress = progress
-                    )
-                    val updated = recentFilesRepository.getFileByBookId(existing.bookId)
-                    logCloudSyncTrace {
-                        "android.reader.pdf_position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
-                            (updated?.cloudSyncTraceSummary("after") ?: "after=null")
-                    }
-                    queueCloudMetadataUpload(existing.bookId, reason = "pdf_position")
-                } ?: run {
-                    Timber.tag("PdfPositionDebug").e("ViewModel: Save aborted. Could not resolve file item from URI in DB.")
-                }
-            }
+    suspend fun savePdfReadingPosition(uri: Uri, page: Int, totalPages: Int) {
+        val progress = if (totalPages > 0) {
+            ((page + 1).toFloat() / totalPages.toFloat()) * 100f
         } else {
-            Timber.tag("PdfPositionDebug").w("ViewModel: Save aborted. No selectedPdfUri found in state.")
+            0f
+        }
+        Timber.tag("PdfPositionDebug").i(
+            "ViewModel: Save request triggered | Page: $page | Total: $totalPages | Progress: $progress | URI: ${uri.lastPathSegment}"
+        )
+        recentFilesRepository.getFileByUri(uri.toString())?.let { existing ->
+            logCloudSyncTrace {
+                "android.reader.pdf_position_save_start book=${existing.bookId} beforeTs=${existing.lastModifiedTimestamp} " +
+                    "beforeReadTs=${existing.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress"
+            }
+            recentFilesRepository.updatePdfReadingPosition(
+                uriString = uri.toString(), page = page, progress = progress
+            )
+            val updated = recentFilesRepository.getFileByBookId(existing.bookId)
+            logCloudSyncTrace {
+                "android.reader.pdf_position_save_done beforeTs=${existing.lastModifiedTimestamp} " +
+                    (updated?.cloudSyncTraceSummary("after") ?: "after=null")
+            }
+            queueCloudMetadataUpload(existing.bookId, reason = "pdf_position")
+        } ?: run {
+            Timber.tag("PdfPositionDebug").e("ViewModel: Save aborted. Could not resolve file item from URI in DB.")
         }
     }
 

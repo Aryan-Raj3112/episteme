@@ -28,6 +28,51 @@ import java.io.File
 class PdfReaderCoreLogicTest {
 
     @Test
+    fun `position persistence uses the live page once restoration is complete`() {
+        assertEquals(
+            42,
+            pdfPageToPersist(
+                initialRestorationComplete = true,
+                currentPage = 42,
+                pendingRestorePage = 39
+            )
+        )
+        assertEquals(
+            39,
+            pdfPageToPersist(
+                initialRestorationComplete = false,
+                currentPage = 0,
+                pendingRestorePage = 39
+            )
+        )
+    }
+
+    @Test
+    fun `text dock applies IME padding only when the host has not already resized`() {
+        assertTrue(
+            shouldApplyPdfTextDockImePadding(
+                layoutHeightPx = 2_400,
+                windowHeightPx = 2_400,
+                imeHeightPx = 900
+            )
+        )
+        assertFalse(
+            shouldApplyPdfTextDockImePadding(
+                layoutHeightPx = 1_500,
+                windowHeightPx = 2_400,
+                imeHeightPx = 900
+            )
+        )
+        assertFalse(
+            shouldApplyPdfTextDockImePadding(
+                layoutHeightPx = 2_400,
+                windowHeightPx = 2_400,
+                imeHeightPx = 0
+            )
+        )
+    }
+
+    @Test
     fun `generateShortId creates a four digit sync suffix`() {
         repeat(100) {
             val id = generateShortId()

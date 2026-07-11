@@ -435,6 +435,7 @@ internal fun PdfTopBar(
                                                         showAllTextHighlights = showAllTextHighlights,
                                                         isHighlightingLoading = isHighlightingLoading,
                                                         isEditMode = isEditMode,
+                                                        isScrollLocked = isScrollLocked,
                                                         isTtsSessionActive = isTtsSessionActive,
                                                         isSliderActive = isSliderActive,
                                                         closeMenu = {
@@ -715,6 +716,7 @@ private fun HiddenPdfToolMenuItem(
     showAllTextHighlights: Boolean,
     isHighlightingLoading: Boolean,
     isEditMode: Boolean,
+    isScrollLocked: Boolean,
     isTtsSessionActive: Boolean,
     isSliderActive: Boolean,
     closeMenu: () -> Unit,
@@ -763,7 +765,11 @@ private fun HiddenPdfToolMenuItem(
                 PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = null, modifier = Modifier.size(20.dp))
-                PdfReaderTool.LOCK_PANNING -> Icon(Icons.Default.LockOpen, contentDescription = null, modifier = Modifier.size(20.dp))
+                PdfReaderTool.LOCK_PANNING -> Icon(
+                    imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
                 PdfReaderTool.SLIDER -> Icon(
                     painterResource(id = R.drawable.slider),
                     contentDescription = null,
@@ -933,6 +939,7 @@ fun PdfBottomBar(
     showAllTextHighlights: Boolean,
     isHighlightingLoading: Boolean,
     isEditMode: Boolean,
+    isScrollLocked: Boolean,
     isTtsSessionActive: Boolean,
     isSliderActive: Boolean,
     ttsErrorMessage: String?,
@@ -988,11 +995,15 @@ fun PdfBottomBar(
                                 Icon(painterResource(id = R.drawable.contrast), contentDescription = stringResource(R.string.reader_brightness_title), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             PdfReaderTool.LOCK_PANNING -> TooltipIconButton(
-                                text = stringResource(R.string.tooltip_lock_pan),
-                                description = stringResource(R.string.tooltip_lock_pan_desc),
+                                text = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan) else stringResource(R.string.tooltip_lock_pan),
+                                description = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan_desc) else stringResource(R.string.tooltip_lock_pan_desc),
                                 onClick = onToggleScrollLock
                             ) {
-                                Icon(Icons.Default.LockOpen, contentDescription = stringResource(R.string.tooltip_lock_pan), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(
+                                    imageVector = if (isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                    contentDescription = if (isScrollLocked) stringResource(R.string.tooltip_unlock_pan) else stringResource(R.string.tooltip_lock_pan),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             PdfReaderTool.DICTIONARY -> TooltipIconButton(
                                 text = stringResource(R.string.tooltip_dictionary),

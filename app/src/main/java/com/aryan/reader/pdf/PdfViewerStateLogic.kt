@@ -29,6 +29,32 @@ internal fun canManagePdfVirtualPages(
         virtualPageCount > 0
 }
 
+/**
+ * Until initial restoration finishes, the pager can still report page zero. In that
+ * narrow window preserve the requested restore page; afterwards always use the
+ * reader's current page.
+ */
+internal fun pdfPageToPersist(
+    initialRestorationComplete: Boolean,
+    currentPage: Int,
+    pendingRestorePage: Int?
+): Int = if (initialRestorationComplete) currentPage else pendingRestorePage ?: 0
+
+/**
+ * Some devices resize the Compose host for the IME while others leave it at the
+ * full window height. Apply IME padding only in the latter case; otherwise the
+ * text dock is displaced by the keyboard height twice.
+ */
+internal fun shouldApplyPdfTextDockImePadding(
+    layoutHeightPx: Int,
+    windowHeightPx: Int,
+    imeHeightPx: Int
+): Boolean {
+    if (imeHeightPx <= 0) return false
+    if (layoutHeightPx <= 0 || windowHeightPx <= 0) return true
+    return layoutHeightPx + imeHeightPx > windowHeightPx
+}
+
 internal fun currentPageScaleAfterPdfPageChange(
     displayMode: DisplayMode,
     isScrollLocked: Boolean,
