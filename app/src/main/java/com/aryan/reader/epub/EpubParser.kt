@@ -113,7 +113,9 @@ class EpubParser(private val context: Context) {
         const val TAG = "EpubParser"
         private const val BOOK_METADATA_FILE = "book_metadata.json"
         private const val CACHE_MANIFEST_FILE = "epub_cache_manifest.json"
-        private const val EPUB_EXTRACTION_CACHE_VERSION = 1
+        // v3 also materializes fragment-based navigation sections as reader
+        // chapters, rather than treating a large shared spine file as one page.
+        private const val EPUB_EXTRACTION_CACHE_VERSION = 3
         private const val MAX_METADATA_ENTRY_BYTES = 4 * 1024 * 1024
         private const val MAX_CACHED_BOOK_METADATA_BYTES = 4L * 1024L * 1024L
         private const val EPUB_COVER_MAX_DIMENSION = 1024
@@ -635,22 +637,121 @@ class EpubParser(private val context: Context) {
             emptyMap()
         }
 
-        Timber.d("EpubBook created with ${chaptersFromSpine.size} spine chapters.")
+        val logicalBookContent = materializeTocSections(
+            spineChapters = chaptersFromSpine,
+            tableOfContents = tableOfContents,
+            extractionRoot = extractionRoot
+        )
+
+        Timber.d(
+            "EpubBook created with ${logicalBookContent.chapters.size} reader chapters " +
+                "from ${chaptersFromSpine.size} spine documents."
+        )
         return@withContext EpubBook(
             fileName = metadataTitle.asFileName(),
             title = metadataTitle,
             author = metadataAuthor,
             language = metadataLanguage,
             coverImage = coverImage,
-            chapters = chaptersFromSpine, chaptersForPagination = chaptersFromSpine,
+            chapters = logicalBookContent.chapters, chaptersForPagination = logicalBookContent.chapters,
             images = images,
             pageList = pageTargets,
-            tableOfContents = tableOfContents,
+            tableOfContents = logicalBookContent.tableOfContents,
             extractionBasePath = extractionBasePath,
             css = cssContent,
             seriesName = metadataSeriesName,
             seriesIndex = metadataSeriesIndex,
             description = metadataDescription
+        )
+    }
+
+    private data class LogicalBookContent(
+        val chapters: List<EpubChapter>,
+        val tableOfContents: List<EpubTocEntry>
+    )
+
+    /** Materialize fragment TOC entries so reader chapters follow the EPUB's navigation structure. */
+    private fun materializeTocSections(
+        spineChapters: List<EpubChapter>,
+        tableOfContents: List<EpubTocEntry>,
+        extractionRoot: File
+    ): LogicalBookContent {
+        if (spineChapters.isEmpty() || tableOfContents.isEmpty()) {
+            return LogicalBookContent(spineChapters, tableOfContents)
+        }
+
+        val tocByPath = tableOfContents
+            .filter { !it.fragmentId.isNullOrBlank() }
+            .groupBy { it.absolutePath }
+        val remappedEntries = mutableMapOf<EpubTocEntry, EpubTocEntry>()
+        val logicalChapters = mutableListOf<EpubChapter>()
+
+        spineChapters.forEach { spineChapter ->
+            val entries = tocByPath[spineChapter.absPath].orEmpty().distinctBy { it.fragmentId }
+            val sourceFile = File(extractionRoot, spineChapter.contentFilePath())
+            if (entries.size < 2 || !sourceFile.isFile) {
+                logicalChapters += spineChapter
+                return@forEach
+            }
+
+            val sourceDocument = runCatching { Jsoup.parse(sourceFile, "UTF-8") }.getOrNull()
+            val body = sourceDocument?.body()
+            if (sourceDocument == null || body == null) {
+                logicalChapters += spineChapter
+                return@forEach
+            }
+
+            val bodyChildren = body.children().toList()
+            val sectionStarts = entries.mapNotNull { entry ->
+                val fragmentId = entry.fragmentId ?: return@mapNotNull null
+                val target = body.getElementById(fragmentId)
+                    ?: body.selectFirst("[name='$fragmentId']")
+                val directChild = target?.let { targetElement ->
+                    generateSequence(targetElement) { it.parent() }
+                        .firstOrNull { it.parent() == body }
+                }
+                directChild?.let(bodyChildren::indexOf)?.takeIf { it >= 0 }?.let { entry to it }
+            }.sortedBy { it.second }
+
+            if (sectionStarts.size < 2 || sectionStarts.map { it.second }.distinct().size < 2) {
+                logicalChapters += spineChapter
+                return@forEach
+            }
+
+            sectionStarts.forEachIndexed { index, (entry, startIndex) ->
+                val endIndex = sectionStarts.getOrNull(index + 1)?.second ?: bodyChildren.size
+                if (startIndex >= endIndex) return@forEachIndexed
+
+                val sectionDocument = sourceDocument.clone()
+                val sectionBody = sectionDocument.body()
+                sectionBody.empty()
+                bodyChildren.subList(startIndex, endIndex).forEach { sectionBody.appendChild(it.clone()) }
+
+                val sourcePath = spineChapter.contentFilePath()
+                val extension = sourcePath.substringAfterLast('.', "xhtml")
+                val baseName = sourcePath.substringBeforeLast('.', sourcePath)
+                val sectionPath = "${baseName}.episteme-section-${index + 1}.$extension"
+                val sectionFile = File(extractionRoot, sectionPath)
+                sectionFile.parentFile?.mkdirs()
+                sectionFile.writeText(sectionDocument.outerHtml())
+
+                logicalChapters += spineChapter.copy(
+                    chapterId = generateId(),
+                    absPath = sectionPath,
+                    htmlFilePath = sectionPath,
+                    title = entry.label,
+                    plainTextContent = sectionBody.text(),
+                    plainTextLength = sectionBody.text().length,
+                    depth = entry.depth,
+                    isInToc = true
+                )
+                remappedEntries[entry] = entry.copy(absolutePath = sectionPath)
+            }
+        }
+
+        return LogicalBookContent(
+            chapters = logicalChapters.ifEmpty { spineChapters },
+            tableOfContents = tableOfContents.map { remappedEntries[it] ?: it }
         )
     }
 
@@ -765,29 +866,38 @@ class EpubParser(private val context: Context) {
         ncxFileParentDir: File,
         depth: Int = 0
     ): Map<String, NcxMetadata> {
-        val result = mutableMapOf<String, NcxMetadata>()
+        val result = linkedMapOf<String, NcxMetadata>()
 
-        val navPoints = element.childElements.filter { it.tagName == "navPoint" }
+        fun visit(parent: Element, currentDepth: Int) {
+            val navPoints = parent.childElements.filter { it.tagName == "navPoint" }
+            for (navPoint in navPoints) {
+                val navLabelText = navPoint.selectFirstChildTag("navLabel")
+                    ?.selectFirstChildTag("text")?.textContent?.trim()
+                val contentSrcRaw = navPoint.selectFirstChildTag("content")
+                    ?.getAttributeValue("src")?.decodedURL
 
-        for (navPoint in navPoints) {
-            val navLabelText = navPoint.selectFirstChildTag("navLabel")
-                ?.selectFirstChildTag("text")?.textContent?.trim()
-            val contentSrcRaw = navPoint.selectFirstChildTag("content")
-                ?.getAttributeValue("src")?.decodedURL
+                if (!navLabelText.isNullOrBlank() && contentSrcRaw != null) {
+                    // Several valid NCX entries may refer to different fragments
+                    // in one spine document. A chapter resource has no fragment,
+                    // so retain its first (outermost) entry rather than letting a
+                    // nested anchor overwrite it (e.g. Moby-Dick -> Extracts).
+                    val contentPathRelativeToEpubRoot = Paths.get(ncxFileParentDir.path, contentSrcRaw)
+                        .normalize().toString().replace(File.separatorChar, '/')
+                        .substringBefore('#')
 
-            if (navLabelText != null && contentSrcRaw != null && navLabelText.isNotEmpty()) {
-                val contentPathRelativeToEpubRoot = Paths.get(ncxFileParentDir.path, contentSrcRaw)
-                    .normalize().toString().replace(File.separatorChar, '/')
-                    .substringBefore('#')
-
-                if (!result.containsKey(contentPathRelativeToEpubRoot)) {
-                    result[contentPathRelativeToEpubRoot] = NcxMetadata(navLabelText, depth)
-                    Timber.d("NCX Map: '$contentPathRelativeToEpubRoot' -> '$navLabelText' (Depth $depth)")
+                    if (result.putIfAbsent(
+                            contentPathRelativeToEpubRoot,
+                            NcxMetadata(navLabelText, currentDepth)
+                        ) == null
+                    ) {
+                        Timber.d("NCX Map: '$contentPathRelativeToEpubRoot' -> '$navLabelText' (Depth $currentDepth)")
+                    }
                 }
+                visit(navPoint, currentDepth + 1)
             }
-            result.putAll(parseNavMapRecursive(navPoint, ncxFileParentDir, depth + 1))
         }
 
+        visit(element, depth)
         return result
     }
 

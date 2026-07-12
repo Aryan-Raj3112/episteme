@@ -130,6 +130,25 @@ class EpubParserUnitTest {
     }
 
     @Test
+    fun `nested fragment toc entries do not overwrite their spine document title`() = runTest {
+        val parser = EpubParser(contextWithCache(temp.newFolder("cache-fragment-toc")))
+        val book = parser.createEpubBook(
+            inputStream = ByteArrayInputStream(sameFileNestedTocEpubBytes()),
+            bookId = "fragment-toc",
+            shouldUseToc = true,
+            originalBookNameHint = "fragment-toc.epub",
+            extractionDirOverride = temp.newFolder("extract-fragment-toc")
+        )
+
+        assertEquals(listOf("Book title", "Nested section", "Later section"), book.chapters.map { it.title })
+        assertEquals(listOf(0, 1, 0), book.chapters.map { it.depth })
+        assertTrue(book.chapters.all { File(book.extractionBasePath, it.htmlFilePath).isFile })
+        assertEquals(listOf("Book title", "Nested section", "Later section"), book.tableOfContents.map { it.label })
+        assertEquals(listOf(0, 1, 0), book.tableOfContents.map { it.depth })
+        assertEquals(book.chapters.map { it.absPath }, book.tableOfContents.map { it.absolutePath })
+    }
+
+    @Test
     fun `metadata only extraction streams images to disk without retaining image bytes`() {
         val cacheDir = temp.newFolder("cache-metadata-stream")
         val extractionDir = temp.newFolder("extract-metadata-stream")
@@ -594,6 +613,31 @@ class EpubParserUnitTest {
         "OEBPS/1/chapter1.xhtml" to "<html><body><h1>HTML Chapter 1</h1><p>Chapter one.</p></body></html>",
         "OEBPS/2/title.xhtml" to "<html><body><h1>HTML Volume 2</h1><p>Volume two.</p></body></html>",
         "OEBPS/2/chapter1.xhtml" to "<html><body><h1>HTML Chapter 2</h1><p>Chapter two.</p></body></html>"
+    )
+
+    private fun sameFileNestedTocEpubBytes(): ByteArray = zipBytes(
+        "META-INF/container.xml" to """
+            <container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>
+        """.trimIndent(),
+        "OEBPS/content.opf" to """
+            <package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <metadata><dc:title>Fragment TOC</dc:title></metadata>
+                <manifest>
+                    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                </manifest>
+                <spine toc="toc"><itemref idref="chapter"/></spine>
+            </package>
+        """.trimIndent(),
+        "OEBPS/toc.ncx" to """
+            <ncx><navMap>
+                <navPoint><navLabel><text>Book title</text></navLabel><content src="chapter.xhtml#book"/>
+                    <navPoint><navLabel><text>Nested section</text></navLabel><content src="chapter.xhtml#nested"/></navPoint>
+                </navPoint>
+                <navPoint><navLabel><text>Later section</text></navLabel><content src="chapter.xhtml#later"/></navPoint>
+            </navMap></ncx>
+        """.trimIndent(),
+        "OEBPS/chapter.xhtml" to "<html><body><h1 id=\"book\">Book</h1><h2 id=\"nested\">Nested</h2><h1 id=\"later\">Later</h1></body></html>"
     )
 
     private fun minimalEpubBytesWithoutOptionalMetadata(): ByteArray = zipBytes(

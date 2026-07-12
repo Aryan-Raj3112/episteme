@@ -1411,8 +1411,18 @@
 
     window.scrollToChapterEnd = function () {
         requestAnimationFrame(function () {
-            var targetScrollY =
-                (document.body.scrollHeight || document.documentElement.scrollHeight) - (window.innerHeight || document.documentElement.clientHeight);
+            // body.scrollHeight can be shorter than documentElement.scrollHeight
+            // in valid XHTML. Use the same maximum reported to Android, or a
+            // chapter handoff lands visibly above its actual final edge.
+            var documentHeight = Math.max(
+                document.body ? document.body.scrollHeight : 0,
+                document.documentElement ? document.documentElement.scrollHeight : 0
+            );
+            var viewportHeight = Math.max(
+                window.innerHeight || 0,
+                document.documentElement ? document.documentElement.clientHeight : 0
+            );
+            var targetScrollY = documentHeight - viewportHeight;
             if (targetScrollY < 0) targetScrollY = 0;
             window.scrollTo(0, targetScrollY);
 
