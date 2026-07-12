@@ -3454,6 +3454,8 @@ private fun List<BookItem>.filteredSharedMobileBooks(query: String): List<BookIt
 private fun SortOrder.sharedMobileLabel(): String {
     return when (this) {
         SortOrder.RECENT -> "Recent"
+        SortOrder.DATE_ADDED_NEWEST -> "Newest"
+        SortOrder.DATE_ADDED_OLDEST -> "Oldest"
         SortOrder.TITLE_ASC -> "Title A-Z"
         SortOrder.AUTHOR_ASC -> "Author A-Z"
         SortOrder.PERCENT_ASC -> "Progress low"

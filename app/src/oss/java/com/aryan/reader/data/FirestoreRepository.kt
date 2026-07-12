@@ -118,6 +118,7 @@ class FirestoreRepository {
     suspend fun syncShelf(userId: String, shelf: ShelfMetadata, originDeviceId: String) {}
     suspend fun getAllShelves(userId: String): List<ShelfMetadata> = emptyList()
     suspend fun getShelf(userId: String, shelfName: String): ShelfMetadata? = null
+    suspend fun deleteShelfDocument(userId: String, documentId: String) {}
 
     suspend fun deleteAllUserFirestoreData(userId: String) {}
     suspend fun updateFcmToken(userId: String, deviceId: String, token: String) {}

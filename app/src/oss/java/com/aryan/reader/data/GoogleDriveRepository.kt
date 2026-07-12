@@ -17,10 +17,12 @@ data class DriveFile(
 )
 
 data class ShelfMetadata(
+    val shelfId: String = "",
     val name: String = "",
     val bookIds: List<String> = emptyList(),
     val lastModifiedTimestamp: Long = 0L,
-    var isDeleted: Boolean = false
+    var isDeleted: Boolean = false,
+    val legacyDocumentId: String = ""
 )
 
 class GoogleDriveRepository {

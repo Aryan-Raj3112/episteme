@@ -1250,8 +1250,6 @@ fun EpubReaderPageSlider(
                     activeColor = effectiveActiveColor,
                     inactiveColor = effectiveInactiveColor,
                     thumbColor = effectiveActiveColor,
-                    markerValue = sliderStartPage.toFloat(),
-                    markerColor = effectiveActiveColor,
                     modifier = Modifier
                         .weight(1f)
                         .height(32.dp)

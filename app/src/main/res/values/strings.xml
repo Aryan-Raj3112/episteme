@@ -1298,6 +1298,8 @@
     <string name="app_contrast_medium">Medium</string>
     <string name="app_contrast_high">High</string>
     <string name="sort_recent">Recent</string>
+    <string name="sort_date_added_newest">Newest</string>
+    <string name="sort_date_added_oldest">Oldest</string>
     <string name="sort_title_az">Title A-Z</string>
     <string name="sort_author_az">Author A-Z</string>
     <string name="sort_percent_asc">Percent complete 0–100</string>

@@ -7447,7 +7447,15 @@ fun EpubReaderHost(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding + 45.dp + if (isEpubJumpHistoryVisible) 40.dp else 0.dp),
+                        .padding(
+                            bottom = bottomPadding + 45.dp +
+                                if (isEpubJumpHistoryVisible) 40.dp else 0.dp +
+                                if (isPageInfoVisible && pageInfoPosition == PageInfoPosition.BOTTOM) {
+                                    pageInfoBarHeight
+                                } else {
+                                    0.dp
+                                }
+                        ),
                     activeColor = epubReaderSliderColors.activeTrackColor,
                     inactiveColor = epubReaderSliderColors.inactiveTrackColor,
                     contentColor = epubReaderSliderColors.contentColor

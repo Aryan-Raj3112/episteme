@@ -32,6 +32,8 @@ enum class RenderMode {
 
 enum class SortOrder {
     RECENT,
+    DATE_ADDED_NEWEST,
+    DATE_ADDED_OLDEST,
     TITLE_ASC,
     AUTHOR_ASC,
     PERCENT_ASC,

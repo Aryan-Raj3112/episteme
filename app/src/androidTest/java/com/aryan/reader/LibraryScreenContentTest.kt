@@ -292,7 +292,7 @@ class LibraryScreenContentTest {
         val searchQuery = mutableStateOf("")
         val isSearchActive = mutableStateOf(false)
         val filters = mutableStateOf(initialFilters)
-        val sortOrder = mutableStateOf(SortOrder.RECENT)
+        val sortOrder = mutableStateOf(SortOrder.DATE_ADDED_NEWEST)
         val selectedItems = mutableStateOf(emptySet<RecentFileItem>())
 
         composeTestRule.setContent {

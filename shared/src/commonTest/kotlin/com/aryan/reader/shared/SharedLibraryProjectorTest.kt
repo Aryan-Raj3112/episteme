@@ -362,6 +362,16 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
+    fun `shared sort supports newest and oldest date added`() {
+        val oldest = book("oldest", timestamp = 10L)
+        val newest = book("newest", timestamp = 30L)
+        val middle = book("middle", timestamp = 20L)
+
+        assertEquals(listOf("newest", "middle", "oldest"), sortBooks(listOf(oldest, newest, middle), SortOrder.DATE_ADDED_NEWEST).ids())
+        assertEquals(listOf("oldest", "middle", "newest"), sortBooks(listOf(oldest, newest, middle), SortOrder.DATE_ADDED_OLDEST).ids())
+    }
+
+    @Test
     fun `shared screen models expose home and library derived state`() {
         val folderBook = book("folder", sourceFolder = "/books")
         val recent = book("recent")

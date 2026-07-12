@@ -57,6 +57,7 @@ import androidx.work.WorkManager
 import com.aryan.reader.data.BookMetadata
 import com.aryan.reader.data.BookMetadataEdit
 import com.aryan.reader.data.CloudflareRepository
+import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.data.FeedbackRepository
 import com.aryan.reader.data.FirestoreRepository
@@ -540,9 +541,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 val savedSortOrderName = prefs.getString(
                     KEY_SORT_ORDER, SortOrder.RECENT.name
                 )
-                SortOrder.valueOf(
-                    savedSortOrderName ?: SortOrder.RECENT.name
-                )
+                when (savedSortOrderName) {
+                    null -> SortOrder.RECENT
+                    else -> SortOrder.valueOf(savedSortOrderName)
+                }
             } catch (_: IllegalArgumentException) {
                 SortOrder.RECENT
             },
@@ -3975,30 +3977,52 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     .filterNot { it.isManualOnlyReaderFile() }
             }
 
-            val localShelfNames = prefs.getStringSet(KEY_SHELVES, emptySet()).orEmpty()
             val remoteBooks = remoteBooksDeferred.await()
                 .filterNot { it.isManualOnlyReaderFile() }
-            val remoteShelves = remoteShelvesDeferred.await()
+            val rawRemoteShelves = remoteShelvesDeferred.await()
             val initialDriveFiles = withContext(Dispatchers.IO) {
                 googleDriveRepository.getFiles(accessToken)?.files.orEmpty().associateBy { it.name }
             }
             logCloudSyncTrace {
                 "android.full_sync.loaded user=${currentUser.uid} device=$deviceId " +
                     "localBooks=${localBooks.size} remoteBooks=${remoteBooks.size} " +
-                    "remoteShelves=${remoteShelves.size} driveFiles=${initialDriveFiles.size}"
+                    "remoteShelves=${rawRemoteShelves.size} driveFiles=${initialDriveFiles.size}"
             }
             val syncableBookIds = (localBooks.map { it.bookId } + remoteBooks.map { it.bookId }).toSet()
-            val allKnownShelfNames =
-                (localShelfNames + remoteShelves.map { it.name }).toSet()
-            val localShelves = allKnownShelfNames.mapNotNull { name ->
-                val timestamp = prefs.getLong("$KEY_SHELF_TIMESTAMP_PREFIX$name", 0L)
-                if (timestamp == 0L && name !in localShelfNames) return@mapNotNull null
-                val bookIds = prefs.getStringSet(
-                    "$KEY_SHELF_CONTENT_PREFIX$name", emptySet()
-                ).orEmpty().filter { it in syncableBookIds }
-                val isDeleted = prefs.getBoolean("$KEY_SHELF_DELETED_PREFIX$name", false)
-                ShelfMetadata(name, bookIds, timestamp, isDeleted)
+            val shelfDao = AppDatabase.getDatabase(appContext).shelfDao()
+            val localShelfEntities = shelfDao.getAllUserShelvesForSync()
+            val localShelfIdByName = localShelfEntities.associate { it.name to it.id }
+            val localShelves = localShelfEntities.map { shelf ->
+                val bookIds = shelfDao.getCrossRefsForShelf(shelf.id)
+                    .map { it.bookId }.filter { it in syncableBookIds }
+                ShelfMetadata(
+                    shelfId = shelf.id,
+                    name = shelf.name,
+                    bookIds = bookIds,
+                    lastModifiedTimestamp = shelf.updatedAt,
+                    isDeleted = shelf.isDeleted
+                )
             }
+            val remoteShelfNamesWithStableIds = rawRemoteShelves
+                .filter { it.shelfId.isNotBlank() }
+                .mapTo(mutableSetOf()) { it.name }
+            rawRemoteShelves
+                .filter { it.shelfId.isBlank() && it.name in remoteShelfNamesWithStableIds }
+                .forEach { legacy ->
+                    runCatching {
+                        firestoreRepository.deleteShelfDocument(currentUser.uid, legacy.legacyDocumentId)
+                    }.onFailure { error ->
+                        Timber.w(error, "Unable to remove superseded legacy shelf ${legacy.name}")
+                    }
+                }
+            val remoteShelves = rawRemoteShelves
+                .filter { it.shelfId.isNotBlank() || it.name !in remoteShelfNamesWithStableIds }
+                .map { remote ->
+                    if (remote.shelfId.isNotBlank()) remote else remote.copy(
+                        shelfId = localShelfIdByName[remote.name]
+                            ?: "legacy_${remote.legacyDocumentId.hashCode().toUInt().toString(16)}"
+                    )
+                }
 
             // 3. Merge Books
             val localBooksMap = localBooks.associateBy { it.bookId }
@@ -4288,13 +4312,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
 
-            val localShelvesMap = localShelves.associateBy { it.name }
-            val remoteShelvesMap = remoteShelves.associateBy { it.name }
-            val allShelfNames = (localShelvesMap.keys + remoteShelvesMap.keys).distinct()
+            val localShelvesMap = localShelves.associateBy { it.shelfId }
+            val remoteShelvesMap = remoteShelves.associateBy { it.shelfId }
+            val allShelfIds = (localShelvesMap.keys + remoteShelvesMap.keys).distinct()
 
-            allShelfNames.forEach { shelfName ->
-                val local = localShelvesMap[shelfName]
-                val remote = remoteShelvesMap[shelfName]
+            allShelfIds.forEach { shelfId ->
+                val local = localShelvesMap[shelfId]
+                val remote = remoteShelvesMap[shelfId]
 
                 when {
                     local != null && remote == null -> firestoreRepository.syncShelf(
@@ -4302,57 +4326,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     )
 
                     local == null && remote != null -> {
-                        prefs.edit {
-                            val currentShelves =
-                                prefs.getStringSet(KEY_SHELVES, emptySet())?.toMutableSet()
-                                    ?: mutableSetOf()
-                            if (remote.isDeleted) {
-                                currentShelves.remove(remote.name)
-                                remove("$KEY_SHELF_CONTENT_PREFIX${remote.name}")
-                            } else {
-                                currentShelves.add(remote.name)
-                                putStringSet(
-                                    "$KEY_SHELF_CONTENT_PREFIX${remote.name}",
-                                    remote.bookIds.filter { it in syncableBookIds }.toSet()
-                                )
-                            }
-                            putStringSet(KEY_SHELVES, currentShelves)
-                            putLong(
-                                "$KEY_SHELF_TIMESTAMP_PREFIX${remote.name}",
-                                remote.lastModifiedTimestamp
-                            )
-                            putBoolean(
-                                "$KEY_SHELF_DELETED_PREFIX${remote.name}", remote.isDeleted
-                            )
+                        val applied = recentFilesRepository.applyRemoteShelf(
+                            remote.shelfId, remote.name, remote.bookIds.filter { it in syncableBookIds },
+                            remote.lastModifiedTimestamp, remote.isDeleted
+                        )
+                        if (applied && remote.legacyDocumentId != remote.shelfId) {
+                            firestoreRepository.syncShelf(currentUser.uid, remote, deviceId)
                         }
                     }
 
                     local != null && remote != null -> {
                         if (local.lastModifiedTimestamp > remote.lastModifiedTimestamp) {
-                            firestoreRepository.syncShelf(currentUser.uid, local, deviceId)
+                            firestoreRepository.syncShelf(
+                                currentUser.uid,
+                                local.copy(legacyDocumentId = remote.legacyDocumentId),
+                                deviceId
+                            )
                         } else if (remote.lastModifiedTimestamp > local.lastModifiedTimestamp) {
-                            prefs.edit {
-                                val currentShelves =
-                                    prefs.getStringSet(KEY_SHELVES, emptySet())?.toMutableSet()
-                                        ?: mutableSetOf()
-                                if (remote.isDeleted) {
-                                    currentShelves.remove(remote.name)
-                                    remove("$KEY_SHELF_CONTENT_PREFIX${remote.name}")
-                                } else {
-                                    currentShelves.add(remote.name)
-                                    putStringSet(
-                                        "$KEY_SHELF_CONTENT_PREFIX${remote.name}",
-                                        remote.bookIds.filter { it in syncableBookIds }.toSet()
-                                    )
-                                }
-                                putStringSet(KEY_SHELVES, currentShelves)
-                                putLong(
-                                    "$KEY_SHELF_TIMESTAMP_PREFIX${remote.name}",
-                                    remote.lastModifiedTimestamp
-                                )
-                                putBoolean(
-                                    "$KEY_SHELF_DELETED_PREFIX${remote.name}", remote.isDeleted
-                                )
+                            val applied = recentFilesRepository.applyRemoteShelf(
+                                remote.shelfId, remote.name, remote.bookIds.filter { it in syncableBookIds },
+                                remote.lastModifiedTimestamp, remote.isDeleted
+                            )
+                            if (applied && remote.legacyDocumentId != remote.shelfId) {
+                                firestoreRepository.syncShelf(currentUser.uid, remote, deviceId)
                             }
                         }
                     }
@@ -6690,6 +6686,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             val db = com.aryan.reader.data.AppDatabase.getDatabase(appContext)
             val shelf = db.shelfDao().getShelfById(shelfId) ?: return@launch
+            if (shelf.isSmart) return@launch
             val crossRefs = db.shelfDao().getCrossRefsForShelf(shelfId)
             val manualOnlyBookIds = recentFilesRepository.getAllFilesForSync()
                 .filter { it.isManualOnlyReaderFile() }
@@ -6698,6 +6695,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 .filterNot { it in manualOnlyBookIds }
 
             val shelfMetadata = ShelfMetadata(
+                shelfId = shelf.id,
                 name = shelf.name,
                 bookIds = bookIds,
                 isDeleted = shelf.isDeleted,

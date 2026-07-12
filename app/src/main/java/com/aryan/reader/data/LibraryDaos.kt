@@ -17,11 +17,17 @@ interface ShelfDao {
     @Query("SELECT * FROM shelves WHERE isDeleted = 0 ORDER BY name ASC")
     fun getAllActiveShelves(): Flow<List<ShelfEntity>>
 
+    @Query("SELECT * FROM shelves WHERE isSmart = 0")
+    suspend fun getAllUserShelvesForSync(): List<ShelfEntity>
+
     @Query("SELECT * FROM book_shelf_cross_ref")
     fun getAllBookShelfCrossRefs(): Flow<List<BookShelfCrossRef>>
 
     @Query("DELETE FROM book_shelf_cross_ref WHERE shelfId = :shelfId AND bookId IN (:bookIds)")
     suspend fun removeBooksFromShelf(shelfId: String, bookIds: List<String>)
+
+    @Query("UPDATE shelves SET updatedAt = :timestamp WHERE id = :shelfId")
+    suspend fun touchShelf(shelfId: String, timestamp: Long)
 
     @Query("UPDATE shelves SET isDeleted = 1, updatedAt = :timestamp WHERE id = :shelfId")
     suspend fun markShelfAsDeleted(shelfId: String, timestamp: Long)
@@ -31,6 +37,9 @@ interface ShelfDao {
 
     @Query("SELECT * FROM shelves WHERE id = :shelfId")
     suspend fun getShelfById(shelfId: String): ShelfEntity?
+
+    @Query("DELETE FROM book_shelf_cross_ref WHERE shelfId = :shelfId")
+    suspend fun clearBooksFromShelf(shelfId: String)
 
     @Query("SELECT * FROM book_shelf_cross_ref WHERE shelfId = :shelfId")
     suspend fun getCrossRefsForShelf(shelfId: String): List<BookShelfCrossRef>

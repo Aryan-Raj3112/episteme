@@ -2868,6 +2868,8 @@ private fun NonReaderLibraryTab.readStatusFilter(): ReadStatusFilter? {
 private fun SortOrder.label(): String {
     return when (this) {
         SortOrder.RECENT -> readerString("sort_recent", "Recent")
+        SortOrder.DATE_ADDED_NEWEST -> readerString("sort_date_added_newest", "Newest")
+        SortOrder.DATE_ADDED_OLDEST -> readerString("sort_date_added_oldest", "Oldest")
         SortOrder.TITLE_ASC -> readerString("sort_title_az", "Title A-Z")
         SortOrder.AUTHOR_ASC -> readerString("sort_author_az", "Author A-Z")
         SortOrder.PERCENT_ASC -> readerString("sort_percent_asc", "Progress low")

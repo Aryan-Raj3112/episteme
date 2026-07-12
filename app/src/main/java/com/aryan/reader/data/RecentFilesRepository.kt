@@ -56,6 +56,7 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.util.UUID
 import androidx.core.content.edit
+import androidx.room.withTransaction
 
 private const val COVER_CACHE_DIR = "cover_cache"
 private const val DIRECT_EMBEDDED_COVER_MAX_BYTES = 8L * 1024L * 1024L
@@ -108,8 +109,9 @@ class RecentFilesRepository(private val context: Context) {
 
     suspend fun addBooksToShelf(shelfId: String, bookIds: List<String>) = withContext(Dispatchers.IO) {
         val timestamp = System.currentTimeMillis()
-        val crossRefs = bookIds.map { BookShelfCrossRef(it, shelfId, timestamp) }
-        AppDatabase.getDatabase(context).shelfDao().insertBookShelfCrossRefs(crossRefs)
+        val dao = AppDatabase.getDatabase(context).shelfDao()
+        dao.insertBookShelfCrossRefs(bookIds.map { BookShelfCrossRef(it, shelfId, timestamp) })
+        dao.touchShelf(shelfId, timestamp)
     }
 
     suspend fun renameShelf(shelfId: String, newName: String) = withContext(Dispatchers.IO) {
@@ -121,7 +123,33 @@ class RecentFilesRepository(private val context: Context) {
     }
 
     suspend fun removeBooksFromShelf(shelfId: String, bookIds: List<String>) = withContext(Dispatchers.IO) {
-        AppDatabase.getDatabase(context).shelfDao().removeBooksFromShelf(shelfId, bookIds)
+        val dao = AppDatabase.getDatabase(context).shelfDao()
+        dao.removeBooksFromShelf(shelfId, bookIds)
+        dao.touchShelf(shelfId, System.currentTimeMillis())
+    }
+
+    suspend fun applyRemoteShelf(shelfId: String, name: String, bookIds: List<String>, timestamp: Long, isDeleted: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val database = AppDatabase.getDatabase(context)
+        database.withTransaction {
+            val dao = database.shelfDao()
+            val existing = dao.getShelfById(shelfId)
+            if (existing?.isSmart == true) return@withTransaction false
+
+            dao.insertShelf(
+                ShelfEntity(
+                    id = shelfId,
+                    name = name,
+                    createdAt = existing?.createdAt ?: timestamp,
+                    updatedAt = timestamp,
+                    isDeleted = isDeleted
+                )
+            )
+            dao.clearBooksFromShelf(shelfId)
+            if (!isDeleted && bookIds.isNotEmpty()) {
+                dao.insertBookShelfCrossRefs(bookIds.map { BookShelfCrossRef(it, shelfId, timestamp) })
+            }
+            true
+        }
     }
 
     suspend fun getFilesBySourceFolder(sourceFolderUri: String): List<RecentFileItem> = withContext(Dispatchers.IO) {

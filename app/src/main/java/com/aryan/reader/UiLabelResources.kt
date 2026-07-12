@@ -123,6 +123,8 @@ val AppContrastOption.labelRes: Int
 val SortOrder.labelRes: Int
     @StringRes get() = when (this) {
         SortOrder.RECENT -> R.string.sort_recent
+        SortOrder.DATE_ADDED_NEWEST -> R.string.sort_date_added_newest
+        SortOrder.DATE_ADDED_OLDEST -> R.string.sort_date_added_oldest
         SortOrder.TITLE_ASC -> R.string.sort_title_az
         SortOrder.AUTHOR_ASC -> R.string.sort_author_az
         SortOrder.PERCENT_ASC -> R.string.sort_percent_asc

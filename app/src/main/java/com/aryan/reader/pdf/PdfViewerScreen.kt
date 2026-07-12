@@ -6238,8 +6238,6 @@ fun PdfViewerScreen(
                                 activeColor = pdfReaderSliderColors.activeTrackColor,
                                 inactiveColor = pdfReaderSliderColors.inactiveTrackColor,
                                 thumbColor = pdfReaderSliderColors.thumbColor,
-                                markerValue = sliderStartPage.toFloat(),
-                                markerColor = pdfReaderSliderColors.bookmarkColor,
                                 modifier = Modifier
                                     .testTag("PdfPageSlider")
                                     .weight(1f)

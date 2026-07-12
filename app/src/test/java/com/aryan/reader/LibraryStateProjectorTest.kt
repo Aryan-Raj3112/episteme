@@ -142,7 +142,7 @@ class LibraryStateProjectorTest {
             recentFile("bravo", title = "Bravo", author = "Asimov", timestamp = 2L, progressPercentage = 90f, fileSize = 200L)
         )
 
-        assertEquals(listOf("charlie", "bravo", "alpha"), sortFiles(files, SortOrder.RECENT).ids())
+        assertEquals(listOf("charlie", "bravo", "alpha"), sortFiles(files, SortOrder.DATE_ADDED_NEWEST).ids())
         assertEquals(listOf("alpha", "bravo", "charlie"), sortFiles(files, SortOrder.TITLE_ASC).ids())
         assertEquals(listOf("bravo", "alpha", "charlie"), sortFiles(files, SortOrder.AUTHOR_ASC).ids())
         assertEquals(listOf("alpha", "charlie", "bravo"), sortFiles(files, SortOrder.PERCENT_ASC).ids())
