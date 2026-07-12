@@ -114,6 +114,7 @@ import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderFont
+import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.PageInfoMode
@@ -122,6 +123,7 @@ import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
+import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -132,6 +134,7 @@ import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubTocEntry
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.layoutSignature
+import com.aryan.reader.shared.reader.readerImageReferences
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.generated.resources.Res
 import com.aryan.reader.shared.generated.resources.classy_fabric
@@ -508,12 +511,22 @@ fun SharedMobileEpubReaderScreen(
                             navigate(highlight.locator)
                             scope.launch { drawerState.close() }
                         },
+                        onHighlightDelete = { highlight ->
+                            highlights = highlights.filterNot { it.id == highlight.id }
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No extracted images yet")
-                    }
+                    SharedMobileEpubImages(
+                        images = loadedBook?.readerImageReferences(pages).orEmpty(),
+                        onImageClick = { image ->
+                            loadedBook?.chapters?.getOrNull(image.chapterIndex)?.let {
+                                navigate(image.locator)
+                                scope.launch { drawerState.close() }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         },
@@ -576,18 +589,36 @@ fun SharedMobileEpubReaderScreen(
                         }
                         val navigationChunkIndex = explicitNavigationChunkIndex ?: initialVirtualChunkIndex
                         val navigationChunkHtml = explicitNavigationChunkHtml ?: chapterChunks.getOrNull(navigationChunkIndex)
-                        val initialHtml = remember(loadedBook.id, currentChapterIndex, chapterChunks) {
+                        // A persisted WebView highlight needs the complete chapter DOM so its
+                        // offsets remain stable after reopening the reader. Keep virtualization
+                        // for ordinary chapters, where it protects large EPUBs from WebView
+                        // memory spikes.
+                        val currentChapterHasHighlights = highlights.any { highlight ->
+                            (highlight.locator.chapterIndex ?: highlight.chapterIndex) == currentChapterIndex
+                        }
+                        val initialHtml = remember(
+                            loadedBook.id,
+                            currentChapterIndex,
+                            chapterChunks,
+                            highlights,
+                            currentChapterHasHighlights
+                        ) {
                             ReaderHtmlDocumentBuilder.verticalDocument(
                                 book = loadedBook,
                                 settings = settings,
+                                highlights = highlights,
                                 navigationLocator = currentLocator,
                                 pages = pages,
-                                highlightActionsEnabled = false,
+                                highlightActionsEnabled = true,
                                 readerAiFeaturesEnabled = false,
                                 cloudTtsEnabled = false,
                                 externalLookupEnabled = false,
                                 renderedChapterRange = currentChapterIndex..currentChapterIndex,
-                                virtualizedChapterChunks = mapOf(currentChapterIndex to chapterChunks),
+                                virtualizedChapterChunks = if (currentChapterHasHighlights) {
+                                    emptyMap()
+                                } else {
+                                    mapOf(currentChapterIndex to chapterChunks)
+                                },
                                 virtualizedInitialChunkIndex = initialVirtualChunkIndex,
                                 showChapterTitles = false
                             )
@@ -650,6 +681,11 @@ fun SharedMobileEpubReaderScreen(
                                                 navigate(locator, fragment)
                                             }
                                         }
+                                    }
+                                    "readerHighlightCreated" -> payload.sharedMobileEpubHighlightOrNull()?.let { highlight ->
+                                        highlights = highlights
+                                            .filterNot { existing -> existing.cfi == highlight.cfi }
+                                            .plus(highlight)
                                     }
                                 }
                             },
@@ -1152,6 +1188,7 @@ private fun SharedMobileEpubBookmarks(
 private fun SharedMobileEpubHighlights(
     highlights: List<UserHighlight>,
     onHighlightClick: (UserHighlight) -> Unit,
+    onHighlightDelete: (UserHighlight) -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (highlights.isEmpty()) {
@@ -1165,17 +1202,57 @@ private fun SharedMobileEpubHighlights(
                 shape = RoundedCornerShape(12.dp),
                 color = highlight.effectiveColor.copy(alpha = 0.16f)
             ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        text = highlight.text.ifBlank { "Highlight" },
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
-                        Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                Row(
+                    modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = highlight.text.ifBlank { "Highlight" },
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
+                            Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                        }
+                    }
+                    IconButton(onClick = { onHighlightDelete(highlight) }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete highlight")
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileEpubImages(
+    images: List<ReaderImageReference>,
+    onImageClick: (ReaderImageReference) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (images.isEmpty()) {
+        Box(modifier, contentAlignment = Alignment.Center) { Text("No images in this book") }
+        return
+    }
+    LazyColumn(modifier) {
+        items(images, key = { it.id }) { image ->
+            NavigationDrawerItem(
+                label = {
+                    Column {
+                        Text(image.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            image.chapterTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                },
+                selected = false,
+                onClick = { onImageClick(image) },
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            )
         }
     }
 }
@@ -1644,6 +1721,35 @@ private val SharedMobileEpubJson = Json { ignoreUnknownKeys = true }
 private fun String.sharedMobileEpubLocatorOrNull(): ReaderLocator? {
     val objectValue = runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }.getOrNull() ?: return null
     return objectValue.toMobileEpubLocator()
+}
+
+private fun String.sharedMobileEpubHighlightOrNull(): UserHighlight? {
+    val objectValue = runCatching { SharedMobileEpubJson.parseToJsonElement(this).jsonObject }.getOrNull() ?: return null
+    val text = objectValue["text"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+    val cfi = objectValue["cfi"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank) ?: return null
+    val locator = (objectValue["locator"] as? JsonObject)?.toMobileEpubLocator()
+        ?: ReaderLocator(cfi = cfi, textQuote = text)
+    val chapterIndex = locator.chapterIndex
+        ?: objectValue["chapterIndex"]?.jsonPrimitive?.intOrNull
+        ?: return null
+    if (text.isBlank()) return null
+    val color = HighlightColor.entries.firstOrNull {
+        it.id == objectValue["colorId"]?.jsonPrimitive?.contentOrNull
+    } ?: HighlightColor.YELLOW
+    val normalizedLocator = locator.withFallbacks(
+        chapterIndex = chapterIndex,
+        cfi = cfi,
+        textQuote = text
+    )
+    val stableId = "mobile-web-$chapterIndex-${cfi.hashCode()}-${normalizedLocator.startOffset ?: -1}-${normalizedLocator.endOffset ?: -1}"
+    return UserHighlight(
+        id = stableId,
+        cfi = cfi,
+        text = text,
+        color = color,
+        chapterIndex = chapterIndex,
+        locator = normalizedLocator
+    )
 }
 
 private fun String.sharedMobileEpubPullOrNull(): Pair<String, Float>? {

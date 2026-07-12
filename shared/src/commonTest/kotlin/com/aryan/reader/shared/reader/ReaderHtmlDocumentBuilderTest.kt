@@ -1279,6 +1279,35 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `vertical document restores persisted highlights and selection bridge`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("Alpha target omega"),
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+            highlights = listOf(
+                UserHighlight(
+                    id = "vertical-highlight",
+                    cfi = "desktop:0:6:12",
+                    text = "target",
+                    color = HighlightColor.YELLOW,
+                    chapterIndex = 0,
+                    locator = ReaderLocator(
+                        chapterIndex = 0,
+                        startOffset = 6,
+                        endOffset = 12,
+                        textQuote = "target",
+                        cfi = "desktop:0:6:12"
+                    )
+                )
+            ),
+            highlightActionsEnabled = true
+        )
+
+        assertTrue(html.contains("data-reader-highlight-id=\"vertical-highlight\""))
+        assertTrue(html.contains("readerHighlightCreated"))
+        assertTrue(html.contains("reader-selection-menu"))
+    }
+
+    @Test
     fun `vertical chapter chunks preserve top level nodes in android sized groups`() {
         val body = (0 until 45).joinToString("") { index -> "<p id=\"p$index\">Paragraph $index</p>" }
         val book = SharedEpubBook(

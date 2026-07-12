@@ -660,6 +660,15 @@ private fun String.rewriteEpubHtmlResources(ownerPath: String, dataUri: (String)
         val uri = (dataUri(path) ?: return@replace match.value) + fragment?.let { "#$it" }.orEmpty()
         "$attribute=\"$uri\""
     }
+    output = output.replace(Regex("""(?is)\b(src|poster|href|xlink:href)\s*=\s*([^\s\"'=<>`]+)""")) { match ->
+        val attribute = match.groupValues[1]
+        val raw = match.groupValues[2].trim().decodeEpubEntities()
+        val path = epubResourcePath(raw, ownerPath) ?: return@replace match.value
+        if (attribute.equals("href", true) && !path.isEpubEmbeddableResource()) return@replace match.value
+        val fragment = raw.substringAfter('#', missingDelimiterValue = "").takeIf(String::isNotBlank)
+        val uri = (dataUri(path) ?: return@replace match.value) + fragment?.let { "#$it" }.orEmpty()
+        "$attribute=\"$uri\""
+    }
     output = output.replace(Regex("""(?is)\bsrcset\s*=\s*([\"'])(.*?)\1""")) { match ->
         val rawSrcSet = match.groupValues[2]
         if (rawSrcSet.contains("data:", ignoreCase = true)) return@replace match.value

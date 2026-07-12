@@ -186,6 +186,33 @@ class SharedEpubPackageLoaderTest {
         assertTrue(book.chapters[1].htmlContent.contains("data:image/jpeg;base64,"))
     }
 
+    @Test
+    fun `embeds unquoted epub html resources like the android parser`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path='OPS/book.opf'/></rootfiles></container>".encodeToByteArray(),
+                "OPS/book.opf" to """
+                    <package><metadata><title>Unquoted resources</title></metadata><manifest>
+                      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                      <item id="image" href="images/picture.png" media-type="image/png"/>
+                      <item id="style" href="book.css" media-type="text/css"/>
+                    </manifest><spine><itemref idref="chapter"/></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/chapter.xhtml" to """
+                    <html><head><link rel=stylesheet href=book.css></head>
+                    <body><img src=images/picture.png alt=Cover></body></html>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/book.css" to ".cover { background-image: url(images/picture.png); }".encodeToByteArray(),
+                "OPS/images/picture.png" to byteArrayOf(1, 2, 3)
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "unquoted", "unquoted.epub")
+
+        assertTrue(book.chapters.single().htmlContent.contains("src=\"data:image/png;base64,"))
+        assertTrue(book.chapters.single().htmlContent.contains("href=\"data:text/css;base64,"))
+    }
+
     @OptIn(ExperimentalEncodingApi::class)
     @Test
     fun `deobfuscates idpf fonts from container root paths and uses manifest mime type`() {
