@@ -158,10 +158,10 @@ internal object EmbeddedEbookMetadataExtractor {
     }
 
     private fun parseEpubRootfilePath(containerXml: String): String? {
-        return Regex("""<rootfile\b[^>]*\bfull-path=["']([^"']+)["'][^>]*>""", RegexOption.IGNORE_CASE)
+        return Regex("""<rootfile\b[^>]*\bfull-path=(['"])(.*?)\1[^>]*>""", RegexOption.IGNORE_CASE)
             .find(containerXml)
             ?.groupValues
-            ?.get(1)
+            ?.get(2)
             ?.decodeEntities()
             ?.takeIf { it.isNotBlank() }
     }
@@ -547,10 +547,13 @@ internal object EmbeddedEbookMetadataExtractor {
     }
 
     private fun String.attr(name: String): String {
-        return Regex("""\b$name=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        return Regex(
+            """\b${Regex.escape(name)}\s*=\s*(['"])(.*?)\1""",
+            RegexOption.IGNORE_CASE
+        )
             .find(this)
             ?.groupValues
-            ?.get(1)
+            ?.get(2)
             .orEmpty()
     }
 

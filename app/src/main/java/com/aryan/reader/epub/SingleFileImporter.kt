@@ -59,6 +59,7 @@ class SingleFileImporter(private val context: Context) {
         private const val MAX_SINGLE_FILE_PLAIN_TEXT_CHARS = 256_000
         private const val MAX_SINGLE_FILE_METADATA_BYTES = 2L * 1024L * 1024L
         private const val BOOK_METADATA_FILE = "book_metadata.json"
+        private const val MARKDOWN_METADATA_FILE = "book_metadata_markdown_v2.json"
         private const val TXT_PREFORMATTED_METADATA_FILE = "book_metadata_txt_preformatted_v3.json"
         private const val PAGE_BREAK_MARKER = "<page-break></page-break>"
         private const val HTML_IMPORT_DEBUG_TAG = "HtmlImportDebug"
@@ -327,7 +328,9 @@ class SingleFileImporter(private val context: Context) {
         }
 
         val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
-        val metadataFile = metadataFile(extractionDir)
+        // Version the Markdown cache because headings are now materialized as
+        // chapters rather than leaving every document as a single "Page 1".
+        val metadataFile = File(extractionDir, MARKDOWN_METADATA_FILE)
 
         readCachedSingleFileBook(metadataFile, extractionDir, "MD")?.let { cachedBook ->
             Timber.tag("FileOpenPerf").d("[MD] Loaded from cache instantly | bookId=$bookId")
@@ -342,6 +345,7 @@ class SingleFileImporter(private val context: Context) {
 
         // Read the full Markdown content
         val markdownContent = inputStream.bufferedReader().use { it.readText() }
+            .replace("\r\n", "\n")
 
         Timber.tag("FileOpenPerf").d("[MD] parseMarkdown: Read ${markdownContent.length} chars | elapsed=${System.currentTimeMillis() - parseStart}ms")
 
@@ -378,24 +382,29 @@ class SingleFileImporter(private val context: Context) {
 
         Timber.tag("FileOpenPerf").d("[MD] parseMarkdown: Split into ${rawChapters.size} raw chapters | elapsed=${System.currentTimeMillis() - parseStart}ms")
 
-        val chapters = rawChapters.mapIndexed { index, rawText ->
+        val chapterSections = rawChapters.flatMap { rawText ->
+            if (rawText.isBlank()) {
+                emptyList()
+            } else {
+                markdownSections(
+                    html = sanitizeHtmlFragment(renderer.render(parser.parse(rawText)))
+                )
+            }
+        }
+
+        val chapters = chapterSections.mapIndexed { index, section ->
             async(Dispatchers.Default) {
-                if (rawText.isBlank()) return@async null
-
                 val pageNum = index + 1
-                val chapterTitle = "Page $pageNum"
-
-                val document = parser.parse(rawText)
-                val htmlBody = sanitizeHtmlFragment(renderer.render(document))
+                val chapterTitle = section.title ?: "Page $pageNum"
 
                 val fileName = "page_$pageNum.html"
                 val file = File(extractionDir, fileName)
 
-                val fullHtml = "<!DOCTYPE html>\n<html>\n<head>\n<title>$chapterTitle</title>\n<style>$style</style>\n</head>\n<body>\n$htmlBody\n</body>\n</html>"
+                val fullHtml = "<!DOCTYPE html>\n<html>\n<head>\n<title>$chapterTitle</title>\n<style>$style</style>\n</head>\n<body>\n${section.html}\n</body>\n</html>"
 
                 file.writeText(fullHtml)
 
-                val plainText = htmlBody.toPlainTextSummary()
+                val plainText = section.html.toPlainTextSummary()
 
                 EpubChapter(
                     chapterId = "${bookId}_$pageNum",
@@ -405,11 +414,11 @@ class SingleFileImporter(private val context: Context) {
                     plainTextContent = plainText.text,
                     plainTextLength = plainText.length,
                     htmlContent = "",
-                    depth = 0,
+                    depth = section.depth,
                     isInToc = true
                 )
             }
-        }.awaitAll().filterNotNull()
+        }.awaitAll()
 
         Timber.d("Markdown import complete. Created ${chapters.size} chapters (one per page).")
         Timber.tag("FileOpenPerf").d("[MD] parseMarkdown COMPLETE | chapters=${chapters.size} | totalElapsed=${System.currentTimeMillis() - parseStart}ms")
@@ -432,6 +441,49 @@ class SingleFileImporter(private val context: Context) {
 
         return@withContext book
     }
+
+    /**
+     * Flexmark performs CommonMark's ATX-heading recognition. Splitting its
+     * generated HTML therefore keeps the chapter bar in sync with the actual
+     * document structure (and avoids mistaking fenced-code hashes for titles).
+     */
+    private fun markdownSections(html: String): List<MarkdownChapterSection> {
+        val elements = Jsoup.parseBodyFragment(html).body().children()
+        if (elements.isEmpty()) return emptyList()
+
+        val sections = mutableListOf<MarkdownChapterSection>()
+        var currentTitle: String? = null
+        var currentDepth = 0
+        val currentHtml = StringBuilder()
+
+        fun flush() {
+            if (currentHtml.isNotBlank()) {
+                sections += MarkdownChapterSection(currentTitle, currentDepth, currentHtml.toString())
+            }
+            currentHtml.clear()
+        }
+
+        elements.forEach { element ->
+            val level = element.tagName()
+                .takeIf { it.length == 2 && it[0].lowercaseChar() == 'h' && it[1] in '1'..'6' }
+                ?.get(1)
+                ?.digitToInt()
+            if (level != null) {
+                flush()
+                currentTitle = element.text().takeIf { it.isNotBlank() }
+                currentDepth = level - 1
+            }
+            currentHtml.append(element.outerHtml()).append('\n')
+        }
+        flush()
+        return sections
+    }
+
+    private data class MarkdownChapterSection(
+        val title: String?,
+        val depth: Int,
+        val html: String
+    )
 
     private suspend fun parsePlainText(
         inputStream: InputStream,

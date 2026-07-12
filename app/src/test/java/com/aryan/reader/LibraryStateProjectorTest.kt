@@ -152,6 +152,17 @@ class LibraryStateProjectorTest {
     }
 
     @Test
+    fun `title sort uses a user renamed book name instead of stale embedded metadata`() {
+        val files = listOf(
+            recentFile("one", title = "C", customName = "01"),
+            recentFile("two", title = "A", customName = "02"),
+            recentFile("three", title = "B", customName = "03")
+        )
+
+        assertEquals(listOf("one", "two", "three"), sortFiles(files, SortOrder.TITLE_ASC).ids())
+    }
+
+    @Test
     fun `sortFiles falls back to display names and keeps unknown authors last`() {
         val files = listOf(
             recentFile("unknown", displayName = "Zulu.epub", title = null, author = null),

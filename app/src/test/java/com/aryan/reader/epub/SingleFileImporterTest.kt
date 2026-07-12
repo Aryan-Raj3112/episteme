@@ -150,6 +150,33 @@ class SingleFileImporterTest {
     }
 
     @Test
+    fun `markdown import creates chapters from standard ATX headings`() = runTest {
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("markdown-cache")))
+        val markdown = """
+            # Chapter 1
+            Intro text.
+
+            ## Section 1
+            Section text.
+
+            ```text
+            # This is code, not a chapter
+            ```
+        """.trimIndent()
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(markdown.toByteArray()),
+            type = FileType.MD,
+            originalBookNameHint = "Headings.md",
+            bookId = "markdown-headings"
+        )
+
+        assertEquals(listOf("Chapter 1", "Section 1"), book.chapters.map { it.title })
+        assertEquals(listOf(0, 1), book.chapters.map { it.depth })
+        assertTrue(book.chapters[1].plainTextContent.contains("This is code, not a chapter"))
+    }
+
+    @Test
     fun `html import extracts title author style skips scripts and splits page breaks`() = runTest {
         val importer = SingleFileImporter(contextWithCache(temp.newFolder("html-cache")))
         val html = """

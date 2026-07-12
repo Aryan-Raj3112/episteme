@@ -68,6 +68,9 @@ private fun RecentFileItem.toSharedBookItem(
         lastPageIndex = lastPage,
         readerPosition = toSharedReaderLocatorOrNull(),
         tags = tags.map { it.toSharedTag() },
+        // The card can use a custom name while the embedded title remains intact.
+        // Keep that user-facing name as the title-sort key too.
+        titleSortKey = customName?.takeIf { it.isNotBlank() },
         readerHighlights = if (includeReaderAnnotations) {
             EpubAnnotationSerializer.parseHighlightsJson(highlightsJson)
         } else {
