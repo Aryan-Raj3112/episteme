@@ -46,7 +46,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
@@ -214,9 +213,6 @@ fun UnifiedLibraryScreen(
     // Do not cache this: reader position writes replace the matching library item.
     // Use the unfiltered collection so an active library filter never hides resume.
     val continueReading = findContinueReadingBook(uiState.rawLibraryFiles)
-    val recentlyFinished = uiState.rawLibraryFiles
-        .filter { (it.progressPercentage ?: 0f) >= 100f }
-        .maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }
     val advancedFilterCount = uiState.libraryFilters.selectedFilterCount()
     val selectedItems = uiState.contextualActionItems
 
@@ -395,7 +391,6 @@ fun UnifiedLibraryScreen(
                     isSearchVisible = isSearchVisible,
                     sortOrder = uiState.sortOrder,
                     advancedFilterCount = advancedFilterCount,
-                    recentlyFinished = recentlyFinished,
                     selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
                     downloadingBookIds = uiState.downloadingBookIds,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
@@ -711,7 +706,6 @@ private fun UnifiedLibraryHome(
     isSearchVisible: Boolean,
     sortOrder: SortOrder,
     advancedFilterCount: Int,
-    recentlyFinished: RecentFileItem?,
     selectedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
@@ -739,12 +733,6 @@ private fun UnifiedLibraryHome(
     }
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         continueReading?.let { UnifiedContinueReadingCard(it, { onBookClick(it) }, Modifier.padding(top = 16.dp)) }
-        recentlyFinished?.let { finished ->
-            UnifiedReadingInsightCard(
-                recentlyFinished = finished,
-                modifier = Modifier.padding(top = 10.dp)
-            )
-        }
         Row(modifier = Modifier.fillMaxWidth().padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(stringResource(R.string.unified_library_your_books), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -866,42 +854,6 @@ private fun UnifiedLibrarySearchResults(
                         usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun UnifiedReadingInsightCard(
-    recentlyFinished: RecentFileItem,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-            ) {
-                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(8.dp).size(18.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(R.string.unified_library_recently_finished) + " · " + recentlyFinished.cardTitle(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
         }
     }
