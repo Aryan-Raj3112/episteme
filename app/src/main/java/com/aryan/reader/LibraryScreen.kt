@@ -2117,7 +2117,7 @@ private fun DeleteShelvesConfirmationDialog(
 }
 
 @Composable
-private fun FolderSyncScreen(
+internal fun FolderSyncScreen(
     syncedFolders: List<SyncedFolder>,
     allRecentFiles: List<RecentFileItem>,
     onAddFolderClick: () -> Unit,

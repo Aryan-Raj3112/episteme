@@ -85,7 +85,7 @@
     <string name="unified_library_unread">Unread</string>
     <string name="unified_library_no_books">No books in this view</string>
     <string name="unified_library_browse_all">Browse all books</string>
-    <string name="unified_library_drawer_title">Library Beta</string>
+    <string name="unified_library_drawer_title">Your library</string>
     <string name="unified_library_home">Home</string>
     <string name="unified_library_import">Import files</string>
     <string name="unified_library_library_tools">Library tools</string>
@@ -101,6 +101,11 @@
     <string name="unified_library_open_settings">Open settings</string>
     <string name="unified_library_add_folder">Add folder</string>
     <string name="unified_library_back_to_shelves">All shelves</string>
+    <string name="unified_library_recent_searches">Recent searches</string>
+    <string name="unified_library_clear_recent_searches">Clear recent searches</string>
+    <string name="unified_library_reading_now">%1$d books in progress</string>
+    <string name="unified_library_recently_finished">Recently finished</string>
+    <string name="unified_library_filters_selected">%1$d filters</string>
     <string name="recent_files">Recent Files</string>
     <string name="your_library_empty">Your Library is Empty</string>
     <string name="your_library_empty_desc">Select a file to read, or sync a local folder to automatically import books.</string>

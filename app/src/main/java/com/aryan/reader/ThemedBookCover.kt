@@ -72,24 +72,14 @@ private fun GeneratedBookCover(
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val seed = remember(item.bookId, item.displayName) {
-        val hash = (item.bookId.ifBlank { item.displayName }).hashCode()
-        if (hash == Int.MIN_VALUE) 0 else hash.absoluteValue
-    }
-    val baseOptions = listOf(
-        colorScheme.primaryContainer,
-        colorScheme.secondaryContainer,
-        colorScheme.tertiaryContainer,
-        lerp(colorScheme.primary, colorScheme.surface, 0.30f),
-        lerp(colorScheme.secondary, colorScheme.surface, 0.26f)
-    )
+    val seed = item.coverColorSeed()
+    val base = generatedBookCoverColor(item)
     val accentOptions = listOf(
         colorScheme.primary,
         colorScheme.secondary,
         colorScheme.tertiary,
         colorScheme.inversePrimary
     )
-    val base = baseOptions[seed % baseOptions.size]
     val accent = accentOptions[(seed / 7) % accentOptions.size]
     val title = item.coverTitle()
     val author = item.coverAuthor()
@@ -175,6 +165,25 @@ private fun GeneratedBookCover(
             }
         }
     }
+}
+
+/** The stable tonal colour used by the generated cover when no artwork is available. */
+@Composable
+internal fun generatedBookCoverColor(item: RecentFileItem) = run {
+    val colorScheme = MaterialTheme.colorScheme
+    val baseOptions = listOf(
+        colorScheme.primaryContainer,
+        colorScheme.secondaryContainer,
+        colorScheme.tertiaryContainer,
+        lerp(colorScheme.primary, colorScheme.surface, 0.30f),
+        lerp(colorScheme.secondary, colorScheme.surface, 0.26f)
+    )
+    baseOptions[item.coverColorSeed() % baseOptions.size]
+}
+
+private fun RecentFileItem.coverColorSeed(): Int {
+    val hash = (bookId.ifBlank { displayName }).hashCode()
+    return if (hash == Int.MIN_VALUE) 0 else hash.absoluteValue
 }
 
 private fun RecentFileItem.coverTitle(): String {

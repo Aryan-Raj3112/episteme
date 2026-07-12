@@ -1,8 +1,16 @@
 package com.aryan.reader
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,6 +25,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -34,14 +43,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
@@ -50,6 +66,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -67,6 +84,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,7 +95,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -84,12 +108,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.AnnotationExportFormat
 import kotlinx.coroutines.launch
 
 /** Android-only successor experiment for the separate Home and Library destinations. */
@@ -105,8 +132,8 @@ fun UnifiedLibraryScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val accountDrawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var section by rememberSaveable { mutableStateOf(UnifiedLibrarySection.HOME) }
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -114,11 +141,64 @@ fun UnifiedLibraryScreen(
     var showLibraryControls by rememberSaveable { mutableStateOf(false) }
     var showAdvancedFilters by rememberSaveable { mutableStateOf(false) }
     var showThemeSheet by rememberSaveable { mutableStateOf(false) }
-    var showProfileMenu by rememberSaveable { mutableStateOf(false) }
+    var showSignOutConfirmation by rememberSaveable { mutableStateOf(false) }
+    var showAboutDialog by rememberSaveable { mutableStateOf(false) }
+    var showPermanentDeleteConfirmation by rememberSaveable { mutableStateOf(false) }
+    var showSelectedBookInfo by rememberSaveable { mutableStateOf(false) }
+    var selectedBookForInfo by remember { mutableStateOf<RecentFileItem?>(null) }
+    var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
+    var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
+    var showAnnotationExportFormatDialogFor by remember { mutableStateOf<RecentFileItem?>(null) }
 
     val filePicker = rememberFilePickerLauncher(viewModel::onFilesSelected)
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::addSyncedFolder)
+    }
+    val saveOriginalLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { destination ->
+        val item = pendingSaveOriginalItem
+        pendingSaveOriginalItem = null
+        if (destination != null && item?.uriString != null) {
+            viewModel.saveOriginalFile(item.uriString.toUri(), destination)
+        }
+    }
+    val saveMarkdownAnnotationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(AnnotationExportFormat.MARKDOWN.mimeType)
+    ) { destination ->
+        val contents = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
+    }
+    val saveTextAnnotationsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(AnnotationExportFormat.TEXT.mimeType)
+    ) { destination ->
+        val contents = pendingAnnotationExportText
+        pendingAnnotationExportText = null
+        if (destination != null && contents != null) viewModel.saveAnnotationExport(contents, destination)
+    }
+
+    fun exportAnnotations(item: RecentFileItem, format: AnnotationExportFormat) {
+        viewModel.prepareAnnotationExport(item, format) { prepared ->
+            pendingAnnotationExportText = prepared.contents
+            when (format) {
+                AnnotationExportFormat.MARKDOWN -> saveMarkdownAnnotationsLauncher.launch(prepared.fileName)
+                AnnotationExportFormat.TEXT -> saveTextAnnotationsLauncher.launch(prepared.fileName)
+            }
+        }
+    }
+
+    fun shareOriginal(item: RecentFileItem) {
+        val sourceUri = item.uriString?.toUri() ?: return
+        if (!item.canExportOriginalFile()) return
+        scope.launch {
+            viewModel.shareOriginalFile(
+                activityContext = context,
+                sourceUri = sourceUri,
+                fileType = item.type,
+                filename = item.suggestedOriginalFileName()
+            )
+        }
     }
     val visibleBooks = remember(uiState.rawLibraryFiles, uiState.libraryFilters, filter, query, uiState.sortOrder) {
         sortFiles(
@@ -130,10 +210,75 @@ fun UnifiedLibraryScreen(
             uiState.sortOrder
         )
     }
-    val continueReading = remember(uiState.rawLibraryFiles) {
-        findContinueReadingBook(uiState.rawLibraryFiles)
+    val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
+    // Do not cache this: reader position writes replace the matching library item.
+    // Use the unfiltered collection so an active library filter never hides resume.
+    val continueReading = findContinueReadingBook(uiState.rawLibraryFiles)
+    val recentlyFinished = uiState.rawLibraryFiles
+        .filter { (it.progressPercentage ?: 0f) >= 100f }
+        .maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }
+    val advancedFilterCount = uiState.libraryFilters.selectedFilterCount()
+    val selectedItems = uiState.contextualActionItems
+
+    BackHandler(enabled = selectedItems.isNotEmpty() || selectedShelfId != null) {
+        if (selectedItems.isNotEmpty()) {
+            viewModel.clearContextualAction()
+        } else {
+            selectedShelfId = null
+        }
     }
 
+    // Material drawers are leading by default. Mirroring only the outer drawer
+    // makes this account surface open from the right while the app content stays LTR.
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+        ModalNavigationDrawer(
+            drawerState = accountDrawerState,
+            drawerContent = {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    val accountContext = LocalContext.current
+                    AppDrawerContent(
+                        uiState = uiState,
+                        onSignInClick = {
+                            accountContext.findActivity()?.let(viewModel::signIn)
+                                ?: viewModel.showBanner("Unable to start sign in on this screen.", isError = true)
+                            scope.launch { accountDrawerState.close() }
+                        },
+                        onSignOutClick = { showSignOutConfirmation = true },
+                        onSyncToggle = viewModel::setSyncEnabled,
+                        onUpgradeClick = {
+                            scope.launch { accountDrawerState.close() }
+                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                        },
+                        onSyncUpsellClick = {
+                            scope.launch { accountDrawerState.close() }
+                            navController.navigateIfReady(AppDestinations.PRO_SCREEN_ROUTE)
+                        },
+                        onFontsClick = {
+                            scope.launch { accountDrawerState.close() }
+                            navController.navigateIfReady(AppDestinations.FONTS_SCREEN_ROUTE)
+                        },
+                        onAiSettingsClick = {
+                            scope.launch { accountDrawerState.close() }
+                            navController.navigateIfReady(AppDestinations.AI_SETTINGS_SCREEN_ROUTE)
+                        },
+                        onSettingsClick = {
+                            scope.launch { accountDrawerState.close() }
+                            navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
+                        },
+                        navController = navController,
+                        onFolderSyncToggle = viewModel::setFolderSyncEnabled,
+                        onAboutClick = {
+                            scope.launch { accountDrawerState.close() }
+                            showAboutDialog = true
+                        },
+                        showFonts = false,
+                        showAiSettings = false,
+                        showSupportProject = true
+                    )
+                }
+            }
+        ) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -141,8 +286,10 @@ fun UnifiedLibraryScreen(
                 currentSection = section,
                 onSectionSelected = { destination ->
                     selectedShelfId = null
-                    section = destination
-                    scope.launch { drawerState.close() }
+                    scope.launch {
+                        drawerState.close()
+                        viewModel.setUnifiedLibrarySection(destination.persistedValue)
+                    }
                 },
                 onThemeClick = {
                     scope.launch { drawerState.close() }
@@ -166,35 +313,57 @@ fun UnifiedLibraryScreen(
         Scaffold(
             contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
             topBar = {
-                UnifiedLibraryTopBar(
-                    section = section,
-                    selectedShelf = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } },
-                    onMenuClick = { scope.launch { drawerState.open() } },
-                    onBackFromShelf = { selectedShelfId = null },
-                    profileMenuExpanded = showProfileMenu,
-                    onProfileMenuExpandedChange = { showProfileMenu = it },
-                    uiState = uiState,
-                    onSignIn = {
-                        context.findActivity()?.let(viewModel::signIn)
-                        showProfileMenu = false
-                    },
-                    onSettingsClick = {
-                        showProfileMenu = false
-                        navController.navigateIfReady(AppDestinations.SETTINGS_SCREEN_ROUTE)
-                    },
-                    onSignOut = {
-                        showProfileMenu = false
-                        viewModel.signOut()
-                    }
-                )
+                if (selectedItems.isNotEmpty()) {
+                    ContextualTopAppBar(
+                        selectedItemCount = selectedItems.size,
+                        onNavIconClick = viewModel::clearContextualAction,
+                        onInfoClick = selectedItems.singleOrNull()?.let { item ->
+                            {
+                                selectedBookForInfo = item
+                                showSelectedBookInfo = true
+                            }
+                        },
+                        onTagClick = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
+                        onAddToShelfClick = { viewModel.openAddSelectedToShelf(selectedItems.map { it.bookId }.toSet()) },
+                        onPinClick = { viewModel.togglePinForContextualItems(isHome = false) },
+                        onSelectAllClick = viewModel::selectAllLibraryFiles,
+                        onSaveClick = selectedItems.singleOrNull()
+                            ?.takeIf { it.canExportOriginalFile() }
+                            ?.let { item ->
+                                {
+                                    pendingSaveOriginalItem = item
+                                    saveOriginalLauncher.launch(item.suggestedOriginalFileName())
+                                }
+                            },
+                        onShareClick = selectedItems.singleOrNull()
+                            ?.takeIf { it.canExportOriginalFile() }
+                            ?.let { item -> { shareOriginal(item) } },
+                        onExportAnnotationsClick = selectedItems.singleOrNull()
+                            ?.let { item -> { showAnnotationExportFormatDialogFor = item } },
+                        onDeleteClick = { showPermanentDeleteConfirmation = true },
+                        compactSelectionActions = true,
+                        overflowDeleteLabelRes = R.string.action_delete,
+                        onClearSelectionClick = viewModel::clearContextualAction
+                    )
+                } else {
+                    UnifiedLibraryTopBar(
+                        section = section,
+                        selectedShelf = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } },
+                        onMenuClick = { scope.launch { drawerState.open() } },
+                        onBackFromShelf = { selectedShelfId = null },
+                        uiState = uiState,
+                        onAccountClick = { scope.launch { accountDrawerState.open() } }
+                    )
+                }
             },
             floatingActionButton = {
                 when (section) {
-                    UnifiedLibrarySection.HOME -> ExtendedFloatingActionButton(
+                    UnifiedLibrarySection.HOME -> FloatingActionButton(
                         onClick = { filePicker.launch(if (uiState.useStrictFileFilter) MainViewModel.SUPPORTED_MIME_TYPES else arrayOf("*/*")) },
-                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        text = { Text(stringResource(R.string.unified_library_import)) }
-                    )
+                        modifier = Modifier.testTag("UnifiedLibraryImport")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.unified_library_import))
+                    }
                     UnifiedLibrarySection.SHELVES -> if (selectedShelfId == null) {
                         ExtendedFloatingActionButton(
                             onClick = viewModel::showCreateShelfDialog,
@@ -202,16 +371,21 @@ fun UnifiedLibraryScreen(
                             text = { Text(stringResource(R.string.fab_new_shelf)) }
                         )
                     }
-                    UnifiedLibrarySection.FOLDERS -> ExtendedFloatingActionButton(
-                        onClick = { folderPicker.launch(null) },
-                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        text = { Text(stringResource(R.string.unified_library_add_folder)) }
-                    )
+                    UnifiedLibrarySection.FOLDERS -> Unit
                     UnifiedLibrarySection.CATALOGS -> Unit
                 }
             }
         ) { padding ->
-            when (section) {
+            AnimatedContent(
+                targetState = section,
+                transitionSpec = {
+                    val direction = if (targetState.persistedValue > initialState.persistedValue) 1 else -1
+                    (fadeIn() + slideInHorizontally { direction * it / 5 }) togetherWith
+                        (fadeOut() + slideOutHorizontally { -direction * it / 5 })
+                },
+                label = "UnifiedLibrarySharedAxis"
+            ) { displayedSection ->
+            when (displayedSection) {
                 UnifiedLibrarySection.HOME -> UnifiedLibraryHome(
                     modifier = Modifier.padding(padding),
                     books = visibleBooks,
@@ -220,6 +394,8 @@ fun UnifiedLibraryScreen(
                     query = query,
                     isSearchVisible = isSearchVisible,
                     sortOrder = uiState.sortOrder,
+                    advancedFilterCount = advancedFilterCount,
+                    recentlyFinished = recentlyFinished,
                     selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
                     downloadingBookIds = uiState.downloadingBookIds,
                     usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
@@ -247,10 +423,13 @@ fun UnifiedLibraryScreen(
                 UnifiedLibrarySection.FOLDERS -> UnifiedFoldersSection(
                     modifier = Modifier.padding(padding),
                     folders = uiState.syncedFolders,
+                    allRecentFiles = uiState.rawLibraryFiles,
                     isLoading = uiState.isLoading,
+                    onAddFolder = { folderPicker.launch(null) },
                     onScan = viewModel::scanSyncedFolder,
                     onSyncMetadata = viewModel::syncFolderMetadata,
-                    onToggleLocalSync = { folder, enabled -> viewModel.setFolderLocalSyncEnabled(folder, enabled) },
+                    onToggleLocalSync = viewModel::setFolderLocalSyncEnabled,
+                    onEditFolderFilters = viewModel::updateFolderFilters,
                     onRemove = viewModel::removeSyncedFolder
                 )
                 UnifiedLibrarySection.CATALOGS -> if (!BuildConfig.IS_OFFLINE) {
@@ -269,6 +448,10 @@ fun UnifiedLibraryScreen(
                         )
                     }
                 }
+            }
+            }
+        }
+    }
             }
         }
     }
@@ -311,13 +494,78 @@ fun UnifiedLibraryScreen(
             onDismiss = { showThemeSheet = false }
         )
     }
+    if (showSignOutConfirmation) {
+        SignOutConfirmationDialog(
+            onConfirm = {
+                showSignOutConfirmation = false
+                viewModel.signOut()
+            },
+            onDismiss = { showSignOutConfirmation = false }
+        )
+    }
+    if (showAboutDialog) {
+        AboutDialog(onDismiss = { showAboutDialog = false })
+    }
+    if (showPermanentDeleteConfirmation) {
+        DeleteConfirmationDialog(
+            count = selectedItems.size,
+            onConfirm = {
+                viewModel.deleteContextualItemsPermanently()
+                showPermanentDeleteConfirmation = false
+            },
+            onDismiss = { showPermanentDeleteConfirmation = false },
+            isPermanentDelete = true,
+            containsFolderItems = selectedItems.any { it.sourceFolderUri != null }
+        )
+    }
+    showAnnotationExportFormatDialogFor?.let { item ->
+        AlertDialog(
+            onDismissRequest = { showAnnotationExportFormatDialogFor = null },
+            title = { Text(stringResource(R.string.dialog_export_annotations_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        showAnnotationExportFormatDialogFor = null
+                        exportAnnotations(item, AnnotationExportFormat.MARKDOWN)
+                    }) { Text(stringResource(R.string.export_annotations_markdown)) }
+                    TextButton(onClick = {
+                        showAnnotationExportFormatDialogFor = null
+                        exportAnnotations(item, AnnotationExportFormat.TEXT)
+                    }) { Text(stringResource(R.string.export_annotations_text)) }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showAnnotationExportFormatDialogFor = null }) { Text(stringResource(R.string.action_cancel)) } }
+        )
+    }
+    HydratedFileInfoDialog(
+        item = selectedBookForInfo,
+        isVisible = showSelectedBookInfo,
+        uiState = uiState,
+        viewModel = viewModel,
+        onDismiss = {
+            showSelectedBookInfo = false
+            selectedBookForInfo = null
+        },
+        onOpenTags = { bookId -> viewModel.openTagSelection(setOf(bookId)) }
+    )
     if (uiState.showCreateShelfDialog) {
         UnifiedCreateShelfDialog(viewModel::createShelf, viewModel::dismissCreateShelfDialog)
     }
     CustomTopBanner(bannerMessage = uiState.bannerMessage)
 }
 
-private enum class UnifiedLibrarySection { HOME, SHELVES, FOLDERS, CATALOGS }
+private enum class UnifiedLibrarySection(val persistedValue: Int) {
+    HOME(0),
+    SHELVES(1),
+    FOLDERS(2),
+    CATALOGS(3);
+
+    companion object {
+        fun fromPersisted(value: Int): UnifiedLibrarySection =
+            entries.firstOrNull { it.persistedValue == value } ?: HOME
+    }
+}
 
 @Composable
 private fun UnifiedLibraryDrawer(
@@ -329,28 +577,73 @@ private fun UnifiedLibraryDrawer(
     onAiSettingsClick: () -> Unit,
 ) {
     ModalDrawerSheet(modifier = Modifier.navigationBarsPadding()) {
-        Text(stringResource(R.string.unified_library_drawer_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(24.dp))
-        HorizontalDivider()
-        UnifiedLibraryDestination(stringResource(R.string.unified_library_home), currentSection == UnifiedLibrarySection.HOME) { onSectionSelected(UnifiedLibrarySection.HOME) }
-        UnifiedLibraryDestination(stringResource(R.string.tab_shelves), currentSection == UnifiedLibrarySection.SHELVES) { onSectionSelected(UnifiedLibrarySection.SHELVES) }
-        UnifiedLibraryDestination(stringResource(R.string.tab_folders), currentSection == UnifiedLibrarySection.FOLDERS) { onSectionSelected(UnifiedLibrarySection.FOLDERS) }
-        if (!BuildConfig.IS_OFFLINE) {
-            UnifiedLibraryDestination(stringResource(R.string.tab_catalogs), currentSection == UnifiedLibrarySection.CATALOGS) { onSectionSelected(UnifiedLibrarySection.CATALOGS) }
-        }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-        Text(stringResource(R.string.unified_library_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp))
-        NavigationDrawerItem(icon = { Icon(Icons.Default.Palette, null) }, label = { Text(stringResource(R.string.app_theme_title)) }, selected = false, onClick = onThemeClick, modifier = Modifier.padding(horizontal = 12.dp))
-        NavigationDrawerItem(icon = { Icon(Icons.Default.Settings, null) }, label = { Text(stringResource(R.string.settings)) }, selected = false, onClick = onSettingsClick, modifier = Modifier.padding(horizontal = 12.dp))
-        NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.fonts), null) }, label = { Text(stringResource(R.string.drawer_custom_fonts)) }, selected = false, onClick = onFontsClick, modifier = Modifier.padding(horizontal = 12.dp))
-        if (BuildConfig.FLAVOR == "oss" && !BuildConfig.IS_OFFLINE) {
-            NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.ai), null) }, label = { Text(stringResource(R.string.ai_settings_title)) }, selected = false, onClick = onAiSettingsClick, modifier = Modifier.padding(horizontal = 12.dp))
+        Column(modifier = Modifier.fillMaxHeight()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = RoundedCornerShape(bottomEnd = 28.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 24.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
+                        AsyncImage(
+                            model = R.mipmap.ic_launcher,
+                            contentDescription = stringResource(R.string.content_desc_app_icon),
+                            modifier = Modifier.size(44.dp).padding(4.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.unified_library_drawer_title), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+
+            Text(
+                stringResource(R.string.library_title),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
+            )
+            UnifiedLibraryDestination(stringResource(R.string.unified_library_home), currentSection == UnifiedLibrarySection.HOME, { Icon(Icons.Default.Home, null) }) { onSectionSelected(UnifiedLibrarySection.HOME) }
+            UnifiedLibraryDestination(stringResource(R.string.tab_shelves), currentSection == UnifiedLibrarySection.SHELVES, { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) }) { onSectionSelected(UnifiedLibrarySection.SHELVES) }
+            UnifiedLibraryDestination(stringResource(R.string.tab_folders), currentSection == UnifiedLibrarySection.FOLDERS, { Icon(Icons.Default.Folder, null) }) { onSectionSelected(UnifiedLibrarySection.FOLDERS) }
+            if (!BuildConfig.IS_OFFLINE) {
+                UnifiedLibraryDestination(stringResource(R.string.tab_catalogs), currentSection == UnifiedLibrarySection.CATALOGS, { Icon(painterResource(R.drawable.cloud), null) }) { onSectionSelected(UnifiedLibrarySection.CATALOGS) }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+            Text(stringResource(R.string.unified_library_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
+            NavigationDrawerItem(icon = { Icon(Icons.Default.Palette, null) }, label = { Text(stringResource(R.string.app_theme_title)) }, selected = false, onClick = onThemeClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+            NavigationDrawerItem(icon = { Icon(Icons.Default.Settings, null) }, label = { Text(stringResource(R.string.settings)) }, selected = false, onClick = onSettingsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+            NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.fonts), null) }, label = { Text(stringResource(R.string.drawer_custom_fonts)) }, selected = false, onClick = onFontsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+            if (BuildConfig.FLAVOR == "oss" && !BuildConfig.IS_OFFLINE) {
+                NavigationDrawerItem(icon = { Icon(painterResource(R.drawable.ai), null) }, label = { Text(stringResource(R.string.ai_settings_title)) }, selected = false, onClick = onAiSettingsClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun UnifiedLibraryDestination(label: String, selected: Boolean, onClick: () -> Unit) {
-    NavigationDrawerItem(label = { Text(label) }, selected = selected, onClick = onClick, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+private fun UnifiedLibraryDestination(
+    label: String,
+    selected: Boolean,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit,
+) {
+    NavigationDrawerItem(
+        icon = icon,
+        label = { Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
+        selected = selected,
+        onClick = onClick,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
+    )
 }
 
 @Composable
@@ -359,12 +652,8 @@ private fun UnifiedLibraryTopBar(
     selectedShelf: Shelf?,
     onMenuClick: () -> Unit,
     onBackFromShelf: () -> Unit,
-    profileMenuExpanded: Boolean,
-    onProfileMenuExpandedChange: (Boolean) -> Unit,
     uiState: ReaderScreenState,
-    onSignIn: () -> Unit,
-    onSettingsClick: () -> Unit,
-    onSignOut: () -> Unit,
+    onAccountClick: () -> Unit,
 ) {
     Surface(shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -373,32 +662,26 @@ private fun UnifiedLibraryTopBar(
             } else {
                 IconButton(onClick = onMenuClick) { Icon(Icons.Default.Menu, stringResource(R.string.unified_library_drawer_title)) }
             }
-            Text(
-                text = selectedShelf?.name ?: when (section) {
-                    UnifiedLibrarySection.HOME -> stringResource(R.string.unified_library_home)
+            val title = selectedShelf?.name ?: when (section) {
+                    UnifiedLibrarySection.HOME -> null
                     UnifiedLibrarySection.SHELVES -> stringResource(R.string.tab_shelves)
                     UnifiedLibrarySection.FOLDERS -> stringResource(R.string.tab_folders)
                     UnifiedLibrarySection.CATALOGS -> stringResource(R.string.tab_catalogs)
-                },
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Box {
-                IconButton(onClick = { onProfileMenuExpandedChange(true) }, modifier = Modifier.testTag("UnifiedLibraryProfile")) {
-                    UnifiedProfileAvatar(uiState)
                 }
-                DropdownMenu(expanded = profileMenuExpanded, onDismissRequest = { onProfileMenuExpandedChange(false) }) {
-                    if (BuildConfig.FLAVOR == "pro" && uiState.currentUser == null) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.drawer_sign_in)) }, onClick = onSignIn)
-                    } else {
-                        uiState.currentUser?.displayName?.let { name -> DropdownMenuItem(text = { Text(name) }, onClick = {}) }
-                        DropdownMenuItem(text = { Text(stringResource(R.string.unified_library_manage_account)) }, onClick = onSettingsClick)
-                        if (uiState.currentUser != null) DropdownMenuItem(text = { Text(stringResource(R.string.drawer_sign_out)) }, onClick = onSignOut)
-                    }
-                }
+            if (title != null) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+            IconButton(onClick = onAccountClick, modifier = Modifier.testTag("UnifiedLibraryProfile")) {
+                UnifiedProfileAvatar(uiState)
             }
         }
     }
@@ -408,8 +691,13 @@ private fun UnifiedLibraryTopBar(
 private fun UnifiedProfileAvatar(uiState: ReaderScreenState) {
     when {
         BuildConfig.FLAVOR != "pro" -> AsyncImage(model = R.mipmap.ic_launcher, contentDescription = stringResource(R.string.content_desc_app_icon), modifier = Modifier.size(32.dp).clip(CircleShape))
-        !uiState.currentUser?.photoUrl.isNullOrBlank() -> AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(uiState.currentUser?.photoUrl).crossfade(true).build(), contentDescription = stringResource(R.string.content_desc_profile_picture), contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp).clip(CircleShape))
-        else -> Surface(modifier = Modifier.size(32.dp), shape = CircleShape, color = MaterialTheme.colorScheme.surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {}
+        !uiState.currentUser?.photoUrl.isNullOrBlank() -> AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(uiState.currentUser.photoUrl).crossfade(true).build(), contentDescription = stringResource(R.string.content_desc_profile_picture), contentScale = ContentScale.Crop, modifier = Modifier.size(32.dp).clip(CircleShape))
+        else -> Icon(
+            Icons.Outlined.AccountCircle,
+            contentDescription = stringResource(R.string.content_desc_profile),
+            modifier = Modifier.size(32.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -422,6 +710,8 @@ private fun UnifiedLibraryHome(
     query: String,
     isSearchVisible: Boolean,
     sortOrder: SortOrder,
+    advancedFilterCount: Int,
+    recentlyFinished: RecentFileItem?,
     selectedBookIds: Set<String>,
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
@@ -432,30 +722,186 @@ private fun UnifiedLibraryHome(
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
 ) {
+    if (isSearchVisible) {
+        UnifiedLibrarySearchResults(
+            modifier = modifier,
+            books = books,
+            query = query,
+            selectedBookIds = selectedBookIds,
+            downloadingBookIds = downloadingBookIds,
+            usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            onQueryChange = onQueryChange,
+            onClose = onSearchToggle,
+            onBookClick = onBookClick,
+            onBookLongClick = onBookLongClick
+        )
+        return
+    }
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         continueReading?.let { UnifiedContinueReadingCard(it, { onBookClick(it) }, Modifier.padding(top = 16.dp)) }
+        recentlyFinished?.let { finished ->
+            UnifiedReadingInsightCard(
+                recentlyFinished = finished,
+                modifier = Modifier.padding(top = 10.dp)
+            )
+        }
         Row(modifier = Modifier.fillMaxWidth().padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(stringResource(R.string.unified_library_your_books), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text("${books.size} ${if (books.size == 1) "book" else "books"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = onSearchToggle) { Icon(Icons.Default.Search, stringResource(R.string.unified_library_search_books)) }
-            AssistChip(onClick = onControlsClick, label = { Text(stringResource(sortOrder.labelRes)) })
+            BadgedBox(
+                badge = {
+                    if (advancedFilterCount > 0) {
+                        Badge { Text(advancedFilterCount.toString()) }
+                    }
+                }
+            ) {
+                AssistChip(onClick = onControlsClick, label = { Text(stringResource(sortOrder.labelRes)) })
+            }
         }
-        if (isSearchVisible) {
-            OutlinedTextField(value = query, onValueChange = onQueryChange, modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("UnifiedLibrarySearch"), placeholder = { Text(stringResource(R.string.unified_library_search_books)) }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true)
-        }
-        FlowRow(modifier = Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            UnifiedLibraryFilter.entries.forEach { option -> FilterChip(selected = filter == option, onClick = { onFilterChange(option) }, label = { Text(stringResource(option.labelRes)) }) }
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = 1.dp
+        ) {
+            FlowRow(
+                modifier = Modifier.padding(8.dp).animateContentSize(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                UnifiedLibraryFilter.entries.forEach { option ->
+                    FilterChip(
+                        selected = filter == option,
+                        onClick = { onFilterChange(option) },
+                        label = { Text(stringResource(option.labelRes)) }
+                    )
+                }
+            }
         }
         if (books.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.unified_library_no_books), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             // The header remains visible; only a large collection scrolls.
-            LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.weight(1f).padding(top = 16.dp), contentPadding = PaddingValues(bottom = 96.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                items(books, key = { it.bookId }) { item ->
-                    RecentFileCard(item = item, isSelected = item.bookId in selectedBookIds, modifier = Modifier.fillMaxWidth(), onClick = { onBookClick(item) }, onLongClick = { onBookLongClick(item) }, isDownloading = item.bookId in downloadingBookIds, usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName)
+            Surface(
+                modifier = Modifier.weight(1f).padding(top = 16.dp),
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 1.dp
+            ) {
+                LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp, 16.dp, 12.dp, 96.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    items(books, key = { it.bookId }) { item ->
+                        RecentFileCard(item = item, isSelected = item.bookId in selectedBookIds, modifier = Modifier.fillMaxWidth(), onClick = { onBookClick(item) }, onLongClick = { onBookLongClick(item) }, isDownloading = item.bookId in downloadingBookIds, usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName)
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnifiedLibrarySearchResults(
+    modifier: Modifier,
+    books: List<RecentFileItem>,
+    query: String,
+    selectedBookIds: Set<String>,
+    downloadingBookIds: Set<String>,
+    usePdfFileNameAsDisplayName: Boolean,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    onBookClick: (RecentFileItem) -> Unit,
+    onBookLongClick: (RecentFileItem) -> Unit,
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    Column(modifier = modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("UnifiedLibrarySearch"),
+                placeholder = { Text(stringResource(R.string.unified_library_search_books)) },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { onQueryChange("") }) {
+                            Icon(Icons.Default.Close, stringResource(R.string.action_clear))
+                        }
+                    }
+                },
+                singleLine = true
+            )
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Close, stringResource(R.string.action_close))
+            }
+        }
+        Text(
+            text = if (query.isBlank()) stringResource(R.string.unified_library_your_books) else "${books.size} ${if (books.size == 1) "result" else "results"}",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
+        )
+        if (books.isEmpty() && query.isNotBlank()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(stringResource(R.string.no_results_found, query), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(books, key = { it.bookId }) { item ->
+                    RecentFileCard(
+                        item = item,
+                        isSelected = item.bookId in selectedBookIds,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { onBookClick(item) },
+                        onLongClick = { onBookLongClick(item) },
+                        isDownloading = item.bookId in downloadingBookIds,
+                        usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnifiedReadingInsightCard(
+    recentlyFinished: RecentFileItem,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.padding(8.dp).size(18.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.unified_library_recently_finished) + " · " + recentlyFinished.cardTitle(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -498,28 +944,30 @@ private fun UnifiedShelvesSection(
 }
 
 @Composable
-private fun UnifiedFoldersSection(modifier: Modifier, folders: List<SyncedFolder>, isLoading: Boolean, onScan: () -> Unit, onSyncMetadata: () -> Unit, onToggleLocalSync: (SyncedFolder, Boolean) -> Unit, onRemove: (SyncedFolder) -> Unit) {
-    if (folders.isEmpty()) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.unified_library_no_folders), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    } else LazyColumn(modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onScan, enabled = !isLoading, modifier = Modifier.weight(1f)) { Text(if (isLoading) stringResource(R.string.scanning) else stringResource(R.string.scan_all)) }
-                OutlinedButton(onClick = onSyncMetadata, enabled = !isLoading, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.sync_meta)) }
-            }
-        }
-        items(folders, key = { it.uriString }) { folder ->
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text(folder.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
-                    Text(if (folder.localSyncEnabled) stringResource(R.string.menu_disable_folder_local_sync) else stringResource(R.string.folder_local_sync_disabled), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { onToggleLocalSync(folder, !folder.localSyncEnabled) }) { Text(if (folder.localSyncEnabled) stringResource(R.string.action_disable) else stringResource(R.string.action_enable)) }
-                        TextButton(onClick = { onRemove(folder) }) { Text(stringResource(R.string.menu_remove_folder)) }
-                    }
-                }
-            }
-        }
+private fun UnifiedFoldersSection(
+    modifier: Modifier,
+    folders: List<SyncedFolder>,
+    allRecentFiles: List<RecentFileItem>,
+    isLoading: Boolean,
+    onAddFolder: () -> Unit,
+    onScan: () -> Unit,
+    onSyncMetadata: () -> Unit,
+    onToggleLocalSync: (SyncedFolder, Boolean, Boolean) -> Unit,
+    onEditFolderFilters: (SyncedFolder, Set<FileType>) -> Unit,
+    onRemove: (SyncedFolder) -> Unit,
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        FolderSyncScreen(
+            syncedFolders = folders,
+            allRecentFiles = allRecentFiles,
+            onAddFolderClick = onAddFolder,
+            onRemoveFolderClick = onRemove,
+            onFolderLocalSyncChange = onToggleLocalSync,
+            onEditFolderFiltersClick = onEditFolderFilters,
+            onScanNowClick = onScan,
+            onSyncMetadataClick = onSyncMetadata,
+            isLoading = isLoading
+        )
     }
 }
 
@@ -547,23 +995,78 @@ private fun UnifiedCreateShelfDialog(onConfirm: (String) -> Unit, onDismiss: () 
 @Composable
 private fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val progress = (item.progressPercentage ?: 0f).coerceIn(0f, 100f)
-    Surface(modifier = modifier.fillMaxWidth().height(172.dp).clip(RoundedCornerShape(30.dp)).testTag("UnifiedLibraryContinueReading").combinedClickable(onClick = onClick, onLongClick = {}), color = MaterialTheme.colorScheme.inverseSurface, contentColor = MaterialTheme.colorScheme.inverseOnSurface, shadowElevation = 6.dp) {
-        Row(modifier = Modifier.padding(20.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(96.dp, 128.dp).clip(RoundedCornerShape(18.dp))) { ThemedBookCover(item = item, modifier = Modifier.fillMaxSize(), contentDescription = item.displayName, contentScale = ContentScale.Crop) }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(stringResource(R.string.unified_library_continue_reading).uppercase(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                Text(item.cardTitle(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(10.dp))
-                Text(stringResource(R.string.progress_complete, progress.toInt()), color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.72f))
-                Spacer(Modifier.height(10.dp))
-                androidx.compose.material3.LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.inverseOnSurface, trackColor = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.25f))
+    val coverTone = generatedBookCoverColor(item)
+    val shape = RoundedCornerShape(28.dp)
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(178.dp)
+            .clip(shape)
+            .testTag("UnifiedLibraryContinueReading")
+            .combinedClickable(onClick = onClick, onLongClick = {}),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        shadowElevation = 5.dp
+    ) {
+        Box(
+            modifier = Modifier.background(
+                Brush.horizontalGradient(
+                    0f to coverTone.copy(alpha = 0.74f),
+                    0.48f to coverTone.copy(alpha = 0.28f),
+                    1f to MaterialTheme.colorScheme.inverseSurface
+                )
+            )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(start = 16.dp, end = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.width(94.dp).fillMaxHeight()) {
+                    ThemedBookCover(
+                        item = item,
+                        modifier = Modifier
+                            .size(94.dp, 146.dp)
+                            .align(Alignment.CenterStart)
+                            .shadow(10.dp, RoundedCornerShape(18.dp), clip = true),
+                        contentDescription = item.displayName,
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.unified_library_continue_reading).uppercase(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Text(item.cardTitle(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(item.cardAuthor(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.72f))
+                    Row(
+                        modifier = Modifier.padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FileTypeBadge(type = item.type, overlay = true, compact = true)
+                        if (item.sourceFolderUri != null) {
+                            Text(
+                                text = "· Local folder",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.66f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(stringResource(R.string.progress_complete, progress.toInt()), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.82f))
+                    Spacer(Modifier.height(6.dp))
+                    androidx.compose.material3.LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().height(6.dp), color = MaterialTheme.colorScheme.inverseOnSurface, trackColor = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.25f))
+                }
             }
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = stringResource(R.string.action_read))
         }
     }
 }
 
 internal enum class UnifiedLibraryFilter(val labelRes: Int) { ALL(R.string.unified_library_all), READING(R.string.unified_library_reading), FINISHED(R.string.unified_library_finished), UNREAD(R.string.unified_library_unread) }
+
+private fun LibraryFilters.selectedFilterCount(): Int =
+    fileTypes.size + sourceFolders.size + tagIds.size + if (readStatus == ReadStatusFilter.ALL) 0 else 1
 
 internal fun ReadStatusFilter.toUnifiedLibraryFilter(): UnifiedLibraryFilter = when (this) {
     ReadStatusFilter.ALL -> UnifiedLibraryFilter.ALL

@@ -62,6 +62,8 @@ data class ReaderScreenState(
     val createShelfSelectedBookIds: Set<String> = emptySet(),
     val mainScreenStartPage: Int = 0,
     val libraryScreenStartPage: Int = 0,
+    /** Android-only section selected inside the experimental unified library. */
+    val unifiedLibrarySection: Int = 0,
     val showRenameShelfDialogFor: String? = null,
     val showDeleteShelfDialogFor: String? = null,
     val addBooksSource: AddBooksSource = AddBooksSource.UNSHELVED,
