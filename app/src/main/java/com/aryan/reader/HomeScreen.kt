@@ -1058,15 +1058,16 @@ fun RecentFileCard(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                if (!item.isAvailable) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(28.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
+                // Reserve this status slot for every card. Without it, offline and
+                // downloading cards are taller than the rest of the same grid row.
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(28.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (!item.isAvailable) {
                         Surface(
                             shape = RoundedCornerShape(50),
                             color = if (isDownloading) {

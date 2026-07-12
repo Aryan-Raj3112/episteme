@@ -6506,7 +6506,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setMainScreenPage(page: Int) {
-        val sanitizedPage = page.coerceIn(0, 1)
+        val sanitizedPage = page.coerceIn(0, 2)
         if (_internalState.value.mainScreenStartPage == sanitizedPage) return
         _internalState.update {
             it.copy(

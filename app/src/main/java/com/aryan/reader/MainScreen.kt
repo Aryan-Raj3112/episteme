@@ -48,11 +48,13 @@ import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 sealed class BottomBarScreen(val route: String, val stringResId: Int, val iconResId: Int) {
     object Home : BottomBarScreen("home", R.string.nav_home, R.drawable.home)
     object Library : BottomBarScreen("library", R.string.nav_library, R.drawable.library_books)
+    object UnifiedLibrary : BottomBarScreen("unified_library", R.string.nav_unified_library, R.drawable.library_books)
 }
 
 private val bottomBarItems = listOf(
     BottomBarScreen.Home,
     BottomBarScreen.Library,
+    BottomBarScreen.UnifiedLibrary,
 )
 
 @OptIn(UnstableApi::class)
@@ -114,6 +116,10 @@ fun MainScreen(
                             navController = navController
                         )
                         1 -> LibraryScreen(
+                            viewModel = viewModel,
+                            navController = navController
+                        )
+                        2 -> UnifiedLibraryScreen(
                             viewModel = viewModel,
                             navController = navController
                         )

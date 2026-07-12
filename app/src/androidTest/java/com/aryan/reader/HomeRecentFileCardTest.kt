@@ -2,6 +2,9 @@ package com.aryan.reader
 
 import android.content.Context
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -9,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aryan.reader.data.RecentFileItem
@@ -75,6 +79,38 @@ class HomeRecentFileCardTest {
 
         assertThat(clicked).isTrue()
         assertThat(longClicked).isTrue()
+    }
+
+    @Test
+    fun availableAndUnavailableCardsHaveTheSameHeight() {
+        val available = recentBook("same_height_available", "Available", "A", 20f)
+        val unavailable = recentBook("same_height_unavailable", "Unavailable", "B", 20f, isAvailable = false)
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Row(modifier = androidx.compose.ui.Modifier.width(280.dp)) {
+                    RecentFileCard(
+                        item = available,
+                        isSelected = false,
+                        modifier = androidx.compose.ui.Modifier.weight(1f),
+                        onClick = {}, onLongClick = {}, isDownloading = false
+                    )
+                    RecentFileCard(
+                        item = unavailable,
+                        isSelected = false,
+                        modifier = androidx.compose.ui.Modifier.weight(1f),
+                        onClick = {}, onLongClick = {}, isDownloading = false
+                    )
+                }
+            }
+        }
+
+        val availableHeight = composeTestRule.onNodeWithTag("HomeRecentFileCard_same_height_available")
+            .fetchSemanticsNode().boundsInRoot.height
+        val unavailableHeight = composeTestRule.onNodeWithTag("HomeRecentFileCard_same_height_unavailable")
+            .fetchSemanticsNode().boundsInRoot.height
+
+        assertThat(availableHeight).isEqualTo(unavailableHeight)
     }
 
     private fun setRecentFileCard(
