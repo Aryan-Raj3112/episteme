@@ -3,7 +3,9 @@
 import java.util.Properties
 import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
+import com.android.build.api.artifact.SingleArtifact
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.tasks.Copy
 import org.xml.sax.InputSource
 
 plugins {
@@ -167,6 +169,31 @@ android {
     configurations {
         named("testImplementation") {
             exclude(group = "org.slf4j", module = "slf4j-android")
+        }
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val flavor = variant.productFlavors.firstOrNull()?.second.orEmpty()
+        val buildType = variant.buildType.orEmpty()
+        val versionName = variant.outputs.single().versionName
+        val taskName = "copy${variant.name.replaceFirstChar { it.uppercase() }}Apk"
+
+        val copyApk = tasks.register<Copy>(taskName) {
+            from(variant.artifacts.get(SingleArtifact.APK))
+            include("*.apk")
+            into(layout.buildDirectory.dir("outputs/renamed-apk/${variant.name}"))
+            rename {
+                "Episteme-$flavor-v${versionName.get()}-$buildType.apk"
+            }
+        }
+
+        val assembleTaskName = "assemble${variant.name.replaceFirstChar { it.uppercase() }}"
+        tasks.configureEach {
+            if (name == assembleTaskName) {
+                finalizedBy(copyApk)
+            }
         }
     }
 }
