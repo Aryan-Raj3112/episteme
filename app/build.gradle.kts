@@ -60,8 +60,8 @@ android {
         applicationId = "com.aryan.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 55
-        versionName = "1.0.51"
+        versionCode = 56
+        versionName = "1.0.52"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
@@ -128,18 +128,6 @@ android {
             matchingFallbacks += listOf("release")
             buildConfigField("boolean", "IS_OFFLINE", "true")
             buildConfigField("String", "TTS_WORKER_URL", "\"\"")
-        }
-    }
-
-    applicationVariants.all {
-        val variant = this
-        outputs.all {
-            val output = this as com.android.build.gradle.internal.api.ApkVariantOutputImpl
-            val flavor = variant.productFlavors.getOrNull(0)?.name ?: ""
-            val buildType = variant.buildType.name
-            val version = variant.versionName
-
-            output.outputFileName = "Episteme-$flavor-v$version-$buildType.apk"
         }
     }
 

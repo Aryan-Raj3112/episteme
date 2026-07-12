@@ -21,8 +21,8 @@ androidxAnnotationJvm = "1.9.1"
 androidxTestRunner = "1.6.2"
 material3WindowSizeClassAndroid = "1.3.2"
 credentials = "1.5.0"
-composeMultiplatform = "1.8.2"
-ksp = "2.2.10-2.0.2"
+composeMultiplatform = "1.9.3"
+ksp = "2.3.9"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
