@@ -456,7 +456,7 @@ class BaseTtsSynthesizer(private val context: Context) {
                         }
                     }
 
-                    val completedResult = finalResult ?: throw IllegalStateException("TTS Engine did not complete")
+                    val completedResult = finalResult
                     if (completedResult.first != null) {
                         Timber.tag(TTS_LOCAL_DIAG_TAG).i(
                             "synthesize-success attempt=$attempt id=$utteranceId " +

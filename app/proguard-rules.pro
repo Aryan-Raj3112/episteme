@@ -87,6 +87,10 @@
 
 -dontwarn com.gemalto.jp2.**
 
+# Apache HttpClient's optional Kerberos implementation references JGSS APIs that
+# are not available on Android. The app does not use Kerberos authentication.
+-dontwarn org.ietf.jgss.**
+
 # Flexmark Markdown parser rules
 -keep class com.vladsch.flexmark.** { *; }
 -keepnames class com.vladsch.flexmark.** { *; }

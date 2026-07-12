@@ -66,7 +66,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -204,7 +204,7 @@ fun TextAnnotationDock(
                         ) {
                             var selectedTabIndex by remember { mutableIntStateOf(0) }
                             Column {
-                                TabRow(
+                                PrimaryTabRow(
                                     selectedTabIndex = selectedTabIndex,
                                     containerColor = Color.Transparent,
                                     contentColor = MaterialTheme.colorScheme.primary,

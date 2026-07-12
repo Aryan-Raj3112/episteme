@@ -1174,15 +1174,13 @@ fun PdfViewerScreen(
         allowHighQualityFallback: Boolean = true
     ): List<SpeechBubble> {
         val document = pdfDocument
-        val shouldUsePrefetchBitmap =
+        val prefetchDocument = document?.takeIf {
             allowHighQualityFallback &&
-                document != null &&
                 !viewModel.hasCachedSpeechBubbles(bookId, sourcePageIndex)
-        val detectionBitmap = if (shouldUsePrefetchBitmap) {
-            renderSpeechBubblePrefetchBitmap(document!!, sourcePageIndex) ?: fallbackBitmap
-        } else {
-            fallbackBitmap
         }
+        val detectionBitmap = prefetchDocument
+            ?.let { renderSpeechBubblePrefetchBitmap(it, sourcePageIndex) }
+            ?: fallbackBitmap
         val ownsBitmap = detectionBitmap !== fallbackBitmap
 
         return try {
@@ -2695,8 +2693,9 @@ fun PdfViewerScreen(
     val saveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
     ) { uri ->
-        if (uri != null && pendingSaveMode != null) {
-            when (pendingSaveMode) {
+        val saveMode = pendingSaveMode
+        if (uri != null && saveMode != null) {
+            when (saveMode) {
                 SaveMode.ANNOTATED -> {
                     if (currentBookId != null) {
                         coroutineScope.launch {
@@ -2724,8 +2723,6 @@ fun PdfViewerScreen(
                 SaveMode.ORIGINAL -> {
                     viewModel.saveOriginalPdf(effectivePdfUri, uri)
                 }
-
-                null -> Unit
             }
         }
         pendingSaveMode = null
