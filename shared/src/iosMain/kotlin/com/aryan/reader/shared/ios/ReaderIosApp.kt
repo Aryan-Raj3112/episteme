@@ -424,6 +424,7 @@ private fun ReaderIosApp(
                                     readerPosition = snapshot.locator,
                                     readerSettings = snapshot.settings,
                                     readerBookmarks = snapshot.bookmarks,
+                                    readerHighlights = snapshot.highlights,
                                     readingPositionModifiedTimestamp = currentTimestamp()
                                 )
                                 persistIosEpubBookState(updatedBook)

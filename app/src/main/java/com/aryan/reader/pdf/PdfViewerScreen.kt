@@ -7561,6 +7561,10 @@ fun PdfViewerScreen(
         }
     }
 
+    // Keep the long-lived reader state above separate from transient overlays.
+    // Besides isolating recomposition concerns, this prevents this screen's JVM
+    // method from exceeding the platform's 64 KB bytecode limit.
+    PdfViewerTransientOverlays {
     if (showAiHubSheet) {
         val currentPageForDisplay = if (displayMode == DisplayMode.PAGINATION) {
             currentPaginationDisplayPage()
@@ -8379,4 +8383,10 @@ fun PdfViewerScreen(
             onDismiss = { showCustomizeToolsSheet = false }
         )
     }
+    }
+}
+
+@Composable
+private fun PdfViewerTransientOverlays(content: @Composable () -> Unit) {
+    content()
 }

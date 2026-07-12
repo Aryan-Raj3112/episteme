@@ -26,3 +26,17 @@ internal expect fun SharedMobileEpubWebView(
 )
 
 internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
+
+/** iOS currently exposes device speech only; cloud TTS stays out of the shared mobile reader. */
+internal enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
+
+internal interface SharedMobileEpubLocalTts {
+    val state: SharedMobileEpubLocalTtsState
+    fun speak(text: String)
+    fun pause()
+    fun resume()
+    fun stop()
+}
+
+@Composable
+internal expect fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts

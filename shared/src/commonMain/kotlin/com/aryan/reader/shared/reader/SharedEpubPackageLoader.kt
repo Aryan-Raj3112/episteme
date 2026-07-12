@@ -159,24 +159,33 @@ object SharedEpubPackageLoader {
             return content.toEpubDataUri(resourceMimeType(safe))
         }
 
-        val parsedChapters = chapterItems.mapIndexedNotNull { index, item ->
+        val parsedToc = parseEpubTableOfContents(
+            archiveText = ::text,
+            packageRoot = packageRoot,
+            manifest = manifest
+        )
+        val tocByPath = parsedToc
+            .filter { !it.fragmentId.isNullOrBlank() }
+            .groupBy { it.href.lowercase() }
+
+        val parsedChapters = chapterItems.flatMapIndexed { index, item ->
             if (!item.isHtml) {
-                if (!item.isImage) return@mapIndexedNotNull null
-                val uri = dataUri(item.path) ?: return@mapIndexedNotNull null
+                if (!item.isImage) return@flatMapIndexed emptyList()
+                val uri = dataUri(item.path) ?: return@flatMapIndexed emptyList()
                 val label = item.id
                     .replace(Regex("[_-]+"), " ")
                     .trim()
                     .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
                     .ifBlank { "Image ${index + 1}" }
-                return@mapIndexedNotNull SharedEpubChapter(
+                return@flatMapIndexed listOf(SharedEpubChapter(
                     id = item.id.ifBlank { "chapter_$index" },
                     title = label,
                     plainText = "[Image]",
                     htmlContent = "<figure class=\"reader-epub-image-page\"><img src=\"${uri.escapeEpubAttribute()}\" alt=\"${label.escapeEpubAttribute()}\"></figure>",
                     baseHref = item.path
-                )
+                ))
             }
-            val raw = text(item.path) ?: return@mapIndexedNotNull null
+            val raw = text(item.path) ?: return@flatMapIndexed emptyList()
             raw.extractEpubStyleBlocks().takeIf(String::isNotBlank)?.let { embeddedCss ->
                 processedCss["${item.path}#embedded-style"] = embeddedCss.sanitizeEpubCss().rewriteEpubCssUrls(item.path) { resourcePath ->
                     resourceBytes(resourcePath)?.toEpubDataUri(resourceMimeType(resourcePath))
@@ -187,16 +196,36 @@ object SharedEpubPackageLoader {
                 .extractEpubBodyOrSelf()
                 .rewriteEpubHtmlResources(item.path, ::dataUri)
             val plainText = body.epubHtmlToText()
-            if (plainText.isBlank() && !body.hasEpubVisualContent()) return@mapIndexedNotNull null
-            SharedEpubChapter(
-                id = item.id.ifBlank { "chapter_$index" },
-                title = raw.firstEpubHeading()
-                    ?: raw.epubTagText("title")
-                    ?: "Chapter ${index + 1}",
-                plainText = plainText.ifBlank { "Chapter ${index + 1}" },
-                htmlContent = body,
-                baseHref = item.path
+            if (plainText.isBlank() && !body.hasEpubVisualContent()) return@flatMapIndexed emptyList()
+            val fallbackTitle = raw.firstEpubHeading()
+                ?: raw.epubTagText("title")
+                ?: "Chapter ${index + 1}"
+            val sections = materializeEpubTocSections(
+                body = body,
+                entries = tocByPath[item.path.lowercase()].orEmpty()
             )
+            if (sections.isEmpty()) {
+                listOf(
+                    SharedEpubChapter(
+                        id = item.id.ifBlank { "chapter_$index" },
+                        title = fallbackTitle,
+                        plainText = plainText.ifBlank { "Chapter ${index + 1}" },
+                        htmlContent = body,
+                        baseHref = item.path
+                    )
+                )
+            } else {
+                sections.mapIndexed { sectionIndex, section ->
+                    SharedEpubChapter(
+                        id = "${item.id.ifBlank { "chapter_$index" }}#${section.fragmentId}",
+                        title = section.entry.label.ifBlank { fallbackTitle },
+                        plainText = section.html.epubHtmlToText().ifBlank { fallbackTitle },
+                        htmlContent = section.html,
+                        baseHref = item.path,
+                        fragmentId = section.fragmentId
+                    )
+                }
+            }
         }
         if (parsedChapters.isEmpty()) {
             error(
@@ -205,11 +234,7 @@ object SharedEpubPackageLoader {
             )
         }
 
-        val parsedToc = parseEpubTableOfContents(
-            archiveText = ::text,
-            packageRoot = packageRoot,
-            manifest = manifest
-        ).ifEmpty {
+        val resolvedToc = parsedToc.ifEmpty {
             parsedChapters.mapIndexed { index, chapter ->
                 SharedEpubTocEntry(
                     label = chapter.title,
@@ -219,8 +244,10 @@ object SharedEpubPackageLoader {
             }
         }
         val chapters = parsedChapters.map { chapter ->
-            val tocTitle = parsedToc.firstOrNull {
-                it.href.equals(chapter.baseHref, ignoreCase = true) && it.label.isNotBlank()
+            val tocTitle = resolvedToc.firstOrNull {
+                it.href.equals(chapter.baseHref, ignoreCase = true) &&
+                    (chapter.fragmentId == null || it.fragmentId == chapter.fragmentId) &&
+                    it.label.isNotBlank()
             }?.label
             if (tocTitle == null) chapter else chapter.copy(title = tocTitle)
         }
@@ -232,7 +259,7 @@ object SharedEpubPackageLoader {
             author = author,
             chapters = chapters,
             css = processedCss.toMap(),
-            tableOfContents = parsedToc
+            tableOfContents = resolvedToc
         )
     }
 }
@@ -254,6 +281,98 @@ private data class SharedEpubManifestItem(
         get() = mediaType.startsWith("image/") ||
             path.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "svg", "webp", "avif")
 }
+
+/**
+ * Mirrors Android's logical-section behavior for EPUBs whose navigation points
+ * at multiple fragments in a single spine document. Splitting only at direct
+ * body children keeps markup valid and deliberately ignores anchors nested in
+ * the same block.
+ */
+private fun materializeEpubTocSections(
+    body: String,
+    entries: List<SharedEpubTocEntry>
+): List<SharedEpubLogicalSection> {
+    if (entries.size < 2) return emptyList()
+    val requestedFragments = entries.mapNotNull { it.fragmentId }.toSet()
+    if (requestedFragments.size < 2) return emptyList()
+    val tokens = sharedEpubXmlTokens(body).toList()
+    val rootStart = tokens.firstOrNull { token ->
+        token.value.startsWith('<') && !token.value.startsWith("</") &&
+            token.value.drop(1).trimStart().startsWith("div", ignoreCase = true)
+    } ?: return emptyList()
+    val childRanges = mutableListOf<IntRange>()
+    val fragmentChildIndex = mutableMapOf<String, Int>()
+    var depth = 0
+    var currentChildStart = -1
+    var currentChildIndex = -1
+    var started = false
+
+    tokens.forEach { token ->
+        if (token.start < rootStart.start) return@forEach
+        val value = token.value
+        val isClosing = value.startsWith("</")
+        val isOpening = value.startsWith('<') && !isClosing && !value.startsWith("<!--") &&
+            !value.startsWith("<?") && !value.startsWith("<!")
+        val selfClosing = isOpening && value.trimEnd().endsWith("/>")
+        if (!started && isOpening) {
+            started = true
+            depth = 1
+            return@forEach
+        }
+        if (!started) return@forEach
+        if (isOpening) {
+            if (depth == 1) {
+                currentChildStart = token.start
+                currentChildIndex = childRanges.size
+            }
+            val attrs = EpubXmlAttributeRegex.findAll(value).associate { match ->
+                match.groupValues[1].substringAfter(':').lowercase() to match.groupValues[3].decodeEpubEntities()
+            }
+            val fragment = (attrs["id"] ?: attrs["name"])?.takeIf { it in requestedFragments }
+            if (fragment != null && currentChildIndex >= 0) {
+                if (fragment !in fragmentChildIndex) {
+                    fragmentChildIndex[fragment] = currentChildIndex
+                }
+            }
+            if (!selfClosing) depth++
+            if (selfClosing && depth == 1 && currentChildStart >= 0) {
+                childRanges += currentChildStart until token.endExclusive
+                currentChildStart = -1
+                currentChildIndex = -1
+            }
+        } else if (isClosing) {
+            if (depth == 2 && currentChildStart >= 0) {
+                childRanges += currentChildStart until token.endExclusive
+                currentChildStart = -1
+                currentChildIndex = -1
+            }
+            depth = (depth - 1).coerceAtLeast(0)
+        }
+    }
+
+    val starts = entries.mapNotNull { entry ->
+        val fragment = entry.fragmentId ?: return@mapNotNull null
+        fragmentChildIndex[fragment]?.let { entry to it }
+    }.distinctBy { it.second }.sortedBy { it.second }
+    if (starts.size < 2 || childRanges.size < 2) return emptyList()
+    return starts.mapIndexedNotNull { index, (entry, childIndex) ->
+        val endChildIndex = starts.getOrNull(index + 1)?.second ?: childRanges.lastIndex + 1
+        if (childIndex >= endChildIndex || childIndex !in childRanges.indices) return@mapIndexedNotNull null
+        val startOffset = childRanges[childIndex].first
+        val endOffset = childRanges[(endChildIndex - 1).coerceIn(childIndex, childRanges.lastIndex)].last + 1
+        SharedEpubLogicalSection(
+            entry = entry,
+            fragmentId = entry.fragmentId ?: return@mapIndexedNotNull null,
+            html = body.substring(startOffset, endOffset)
+        )
+    }
+}
+
+private data class SharedEpubLogicalSection(
+    val entry: SharedEpubTocEntry,
+    val fragmentId: String,
+    val html: String
+)
 
 private data class SharedEpubFontObfuscation(
     val key: ByteArray,

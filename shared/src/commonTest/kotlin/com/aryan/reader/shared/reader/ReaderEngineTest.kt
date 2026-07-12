@@ -355,6 +355,41 @@ class ReaderEngineTest {
     }
 
     @Test
+    fun `resolveLink targets the matching logical chapter for a toc fragment`() {
+        val engine = ReaderEngine()
+        val session = engine.createSession(
+            SharedEpubBook(
+                id = "fragmented-links",
+                fileName = "fragmented-links.epub",
+                title = "Fragmented links",
+                chapters = listOf(
+                    SharedEpubChapter(
+                        id = "chapter#start",
+                        title = "Start",
+                        plainText = "First logical section",
+                        baseHref = "Text/chapter.xhtml",
+                        fragmentId = "start"
+                    ),
+                    SharedEpubChapter(
+                        id = "chapter#next",
+                        title = "Next",
+                        plainText = "Second logical section",
+                        baseHref = "Text/chapter.xhtml",
+                        fragmentId = "next"
+                    )
+                )
+            )
+        )
+
+        val target = engine.resolveLink(session, "chapter.xhtml#next", sourceChapterIndex = 0)
+
+        assertTrue(target is ReaderLinkTarget.Internal)
+        target as ReaderLinkTarget.Internal
+        assertEquals(1, target.locator.chapterIndex)
+        assertEquals("chapter#next", target.locator.chapterId)
+    }
+
+    @Test
     fun `resolveLink maps intercepted about blank fragment to source chapter locator`() {
         val engine = ReaderEngine()
         val text = "Source target paragraph"

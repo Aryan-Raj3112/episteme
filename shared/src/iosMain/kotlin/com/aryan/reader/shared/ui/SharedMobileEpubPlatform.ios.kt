@@ -6,6 +6,7 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +22,7 @@ import com.aryan.reader.shared.ios.loadIosEpubBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.cinterop.ObjCSignatureOverride
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSURL
 import platform.UIKit.UIApplication
@@ -34,6 +36,10 @@ import platform.WebKit.WKUserScript
 import platform.WebKit.WKUserScriptInjectionTime
 import platform.WebKit.WKWebView
 import platform.WebKit.WKWebViewConfiguration
+import platform.AVFAudio.AVSpeechBoundary
+import platform.AVFAudio.AVSpeechSynthesizer
+import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
+import platform.AVFAudio.AVSpeechUtterance
 import platform.darwin.NSObject
 
 @Composable
@@ -96,6 +102,90 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
     val normalized = if (url.trim().startsWith("//")) "https:${url.trim()}" else url.trim()
     val target = NSURL.URLWithString(normalized) ?: return false
     return UIApplication.sharedApplication.openURL(target)
+}
+
+@Composable
+internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts {
+    val controller = remember { IosSharedMobileEpubLocalTts() }
+    DisposableEffect(controller) {
+        onDispose { controller.stop() }
+    }
+    return controller
+}
+
+private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
+    private val synthesizer = AVSpeechSynthesizer()
+    private val delegate = IosSharedMobileEpubSpeechDelegate { state = it }
+    override var state by mutableStateOf(SharedMobileEpubLocalTtsState.IDLE)
+
+    init {
+        synthesizer.delegate = delegate
+    }
+
+    override fun speak(text: String) {
+        val normalized = text.trim()
+        if (normalized.isBlank()) return
+        synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        synthesizer.speakUtterance(AVSpeechUtterance(string = normalized))
+    }
+
+    override fun pause() {
+        synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+    }
+
+    override fun resume() {
+        synthesizer.continueSpeaking()
+    }
+
+    override fun stop() {
+        synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        state = SharedMobileEpubLocalTtsState.IDLE
+    }
+}
+
+private class IosSharedMobileEpubSpeechDelegate(
+    private val onStateChange: (SharedMobileEpubLocalTtsState) -> Unit
+) : NSObject(), AVSpeechSynthesizerDelegateProtocol {
+
+    @ObjCSignatureOverride
+    override fun speechSynthesizer(
+        synthesizer: AVSpeechSynthesizer,
+        didStartSpeechUtterance: AVSpeechUtterance
+    ) {
+        onStateChange(SharedMobileEpubLocalTtsState.SPEAKING)
+    }
+
+    @ObjCSignatureOverride
+    override fun speechSynthesizer(
+        synthesizer: AVSpeechSynthesizer,
+        didFinishSpeechUtterance: AVSpeechUtterance
+    ) {
+        onStateChange(SharedMobileEpubLocalTtsState.IDLE)
+    }
+
+    @ObjCSignatureOverride
+    override fun speechSynthesizer(
+        synthesizer: AVSpeechSynthesizer,
+        didPauseSpeechUtterance: AVSpeechUtterance
+    ) {
+        onStateChange(SharedMobileEpubLocalTtsState.PAUSED)
+    }
+
+    @ObjCSignatureOverride
+    override fun speechSynthesizer(
+        synthesizer: AVSpeechSynthesizer,
+        didContinueSpeechUtterance: AVSpeechUtterance
+    ) {
+        onStateChange(SharedMobileEpubLocalTtsState.SPEAKING)
+    }
+
+    @ObjCSignatureOverride
+    override fun speechSynthesizer(
+        synthesizer: AVSpeechSynthesizer,
+        didCancelSpeechUtterance: AVSpeechUtterance
+    ) {
+        onStateChange(SharedMobileEpubLocalTtsState.IDLE)
+    }
 }
 
 private class IosEpubWebViewCoordinator(

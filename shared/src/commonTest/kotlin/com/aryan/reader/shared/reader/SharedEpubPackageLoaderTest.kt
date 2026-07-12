@@ -100,6 +100,38 @@ class SharedEpubPackageLoaderTest {
     }
 
     @Test
+    fun `materializes fragment toc entries in one spine document as logical chapters`() {
+        val archive = MapEpubArchive(
+            mapOf(
+                "META-INF/container.xml" to "<container><rootfiles><rootfile full-path='OPS/book.opf'/></rootfiles></container>".encodeToByteArray(),
+                "OPS/book.opf" to """
+                    <package><metadata><title>Sections</title></metadata><manifest>
+                      <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    </manifest><spine><itemref idref="chapter"/></spine></package>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/nav.xhtml" to """
+                    <html><body><nav><ol>
+                      <li><a href="chapter.xhtml#start">Start</a></li>
+                      <li><a href="chapter.xhtml#next">Next</a></li>
+                    </ol></nav></body></html>
+                """.trimIndent().encodeToByteArray(),
+                "OPS/chapter.xhtml" to """
+                    <html><body><section id="start"><h1>Start</h1><p>First section.</p></section>
+                    <section id="next"><h1>Next</h1><p>Second section.</p></section></body></html>
+                """.trimIndent().encodeToByteArray()
+            )
+        )
+
+        val book = SharedEpubPackageLoader.load(archive, "sections", "sections.epub")
+
+        assertEquals(listOf("Start", "Next"), book.chapters.map { it.title })
+        assertEquals(listOf("start", "next"), book.chapters.map { it.fragmentId })
+        assertTrue(book.chapters[0].plainText.contains("First section."))
+        assertFalse(book.chapters[0].plainText.contains("Second section."))
+    }
+
+    @Test
     fun `dublin core source metadata does not unwind the package stack`() {
         val archive = MapEpubArchive(
             mapOf(

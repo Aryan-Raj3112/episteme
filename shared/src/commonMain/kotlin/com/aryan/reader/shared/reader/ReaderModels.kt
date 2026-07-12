@@ -28,7 +28,9 @@ data class SharedEpubChapter(
     val plainText: String,
     val semanticBlocks: List<SemanticBlock> = emptyList(),
     val htmlContent: String = "",
-    val baseHref: String? = null
+    val baseHref: String? = null,
+    /** Fragment that identifies this logical section within [baseHref]. */
+    val fragmentId: String? = null
 )
 
 typealias ReaderLocator = com.aryan.reader.shared.ReaderLocator
