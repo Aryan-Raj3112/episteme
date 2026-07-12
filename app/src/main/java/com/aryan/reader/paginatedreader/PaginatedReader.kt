@@ -1986,7 +1986,7 @@ private fun LinkAwareText(
         )
     }
     LaunchedEffect(displayText) {
-        if (displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
+        if (READER_LINK_DIAGNOSTICS_ENABLED && displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
             Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                 "compose_text source=LinkAwareText " + displayText.readerAnnotatedLinkDiagSummary()
             )
@@ -2057,7 +2057,7 @@ private fun LinkAwareText(
                     )
                 }
             }
-            if (displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
+            if (READER_LINK_DIAGNOSTICS_ENABLED && displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
                 Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                     "layout_text source=LinkAwareText size=${it.size.width}x${it.size.height} " +
                         "lines=${it.lineCount} " + displayText.readerAnnotatedLinkDiagSummary()
@@ -2084,7 +2084,7 @@ private fun computeImageRenderSizePx(
         if (block.style.width.isSpecified && block.style.width > 0.dp) {
             block.style.width.toPx()
         } else {
-            maxWidthPx
+            intrinsicImageWidthPx(intrinsicWidth, density, maxWidthPx)
         }
     }
 
@@ -2457,7 +2457,7 @@ private fun WrappingContentLayout(
         }
         textLayouts = layouts
         totalHeight = maxOf(currentY, effectiveImageHeight.toFloat()).roundToInt()
-        if (displayFullText.getStringAnnotations("URL", 0, displayFullText.length).isNotEmpty()) {
+        if (READER_LINK_DIAGNOSTICS_ENABLED && displayFullText.getStringAnnotations("URL", 0, displayFullText.length).isNotEmpty()) {
             Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                 "layout_wrapping block=${block.blockIndex} layouts=${layouts.size} totalHeight=$totalHeight " +
                     displayFullText.readerAnnotatedLinkDiagSummary()
@@ -6441,7 +6441,7 @@ private fun TextWithEmphasis(
             )
         }, onTextLayout = {
         textLayoutResult = it
-        if (displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
+        if (READER_LINK_DIAGNOSTICS_ENABLED && displayText.getStringAnnotations("URL", 0, displayText.length).isNotEmpty()) {
             Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                 "layout_text source=TextWithEmphasis page=$pageIndex block=${block.blockIndex} " +
                     "size=${it.size.width}x${it.size.height} lines=${it.lineCount} " +
@@ -6721,6 +6721,7 @@ internal fun PaginatedReaderContent(
                         }
 
                         LaunchedEffect(pageIndex, pageChapterIndex, currentChapterPath, themedPageContent) {
+                            if (!READER_LINK_DIAGNOSTICS_ENABLED) return@LaunchedEffect
                             val page = themedPageContent ?: return@LaunchedEffect
                             Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                                 "page_render page=$pageIndex chapter=$pageChapterIndex " +

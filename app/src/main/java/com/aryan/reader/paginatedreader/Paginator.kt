@@ -2250,7 +2250,8 @@ private fun measureScaledImageSizePx(
 
     val aspectRatio = intrinsicHeight / intrinsicWidth
     val baseWidth = with(density) {
-        if (block.style.width.isSpecified) block.style.width.toPx() else maxWidthPx
+        if (block.style.width.isSpecified) block.style.width.toPx()
+        else intrinsicImageWidthPx(intrinsicWidth, density, maxWidthPx)
     }
 
     var scaledWidth = baseWidth * imageSizeMultiplier
@@ -2260,6 +2261,20 @@ private fun measureScaledImageSizePx(
     scaledWidth = scaledWidth.coerceAtMost(maxWidthPx)
 
     return scaledWidth to (scaledWidth * aspectRatio)
+}
+
+/**
+ * HTML's default image width is its intrinsic CSS-pixel width. Native readers
+ * must use the same default; only an explicit CSS width should stretch an
+ * image to the available column.
+ */
+internal fun intrinsicImageWidthPx(
+    intrinsicWidth: Float,
+    density: Density,
+    maxWidthPx: Float
+): Float {
+    if (intrinsicWidth <= 0f || maxWidthPx <= 0f) return 0f
+    return with(density) { intrinsicWidth.dp.toPx() }.coerceAtMost(maxWidthPx)
 }
 
 private fun zeroOutBottomMargin(blocks: MutableList<ContentBlock>) {

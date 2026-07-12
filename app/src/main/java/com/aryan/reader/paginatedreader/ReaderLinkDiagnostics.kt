@@ -7,11 +7,16 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 internal const val TAG_PAGINATED_LINK_DIAG = "PaginatedLinkDiag"
+// Link diagnostics walk every URL annotation and its overlapping styles. They
+// are useful for targeted debugging, but are far too expensive during normal
+// layout of link-heavy pages.
+internal const val READER_LINK_DIAGNOSTICS_ENABLED = false
 
 private const val LINK_DIAG_MAX_SAMPLES = 4
 private val linkDiagWhitespaceRegex = Regex("\\s+")
 
 internal fun Document.readerHtmlLinkDiagSummary(): String {
+    if (!READER_LINK_DIAGNOSTICS_ENABLED) return "linkDiagnostics=disabled"
     val linkElements = getElementsByTag("a").mapNotNull { element ->
         element.readerHrefForDiagnostics()?.let { href -> element to href }
     }
@@ -25,24 +30,28 @@ internal fun Document.readerHtmlLinkDiagSummary(): String {
 }
 
 internal fun List<SemanticBlock>.readerSemanticLinkDiagSummary(): String {
+    if (!READER_LINK_DIAGNOSTICS_ENABLED) return "linkDiagnostics=disabled"
     val collector = ReaderLinkDiagCollector()
     forEach { it.collectSemanticLinks(collector) }
     return collector.semanticSummary()
 }
 
 internal fun List<ContentBlock>.readerContentLinkDiagSummary(): String {
+    if (!READER_LINK_DIAGNOSTICS_ENABLED) return "linkDiagnostics=disabled"
     val collector = ReaderLinkDiagCollector()
     forEach { it.collectContentLinks(collector, pageInChapter = null) }
     return collector.contentSummary()
 }
 
 internal fun Page.readerPageLinkDiagSummary(): String {
+    if (!READER_LINK_DIAGNOSTICS_ENABLED) return "linkDiagnostics=disabled"
     val collector = ReaderLinkDiagCollector()
     content.forEach { it.collectContentLinks(collector, pageInChapter = null) }
     return collector.contentSummary()
 }
 
 internal fun List<Page>.readerPagesLinkDiagSummary(): String {
+    if (!READER_LINK_DIAGNOSTICS_ENABLED) return "linkDiagnostics=disabled"
     val collector = ReaderLinkDiagCollector()
     forEachIndexed { pageInChapter, page ->
         page.content.forEach { it.collectContentLinks(collector, pageInChapter) }
@@ -51,6 +60,7 @@ internal fun List<Page>.readerPagesLinkDiagSummary(): String {
 }
 
 internal fun AnnotatedString.readerAnnotatedLinkDiagSummary(): String {
+    if (!READER_LINK_DIAGNOSTICS_ENABLED) return "linkDiagnostics=disabled"
     val collector = ReaderLinkDiagCollector()
     collector.addAnnotatedLinks(
         blockIndex = null,

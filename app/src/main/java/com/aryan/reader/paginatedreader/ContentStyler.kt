@@ -516,7 +516,7 @@ class ContentStyler(
                 }
             }
         }
-        if (block.spans.any { !it.linkHref.isNullOrBlank() }) {
+        if (READER_LINK_DIAGNOSTICS_ENABLED && block.spans.any { !it.linkHref.isNullOrBlank() }) {
             Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
                 "style_text_block type=${block::class.simpleName ?: "Text"} " +
                     "block=${block.blockIndex} cfi=${block.cfi} " +
