@@ -2,6 +2,7 @@ package com.aryan.reader.epubreader
 
 import com.aryan.reader.paginatedreader.TtsChunk
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EpubTtsChunkMatchingTest {
@@ -100,6 +101,39 @@ class EpubTtsChunkMatchingTest {
                 sourceCfi = "/4/4",
                 startOffsetInSource = 0,
                 currentText = "Loaded two"
+            )
+        )
+    }
+
+    @Test
+    fun `vertical continuation advances chapter when final chunk was spoken`() {
+        val chunks = listOf(
+            TtsChunk("First", "/4/2", 0),
+            TtsChunk("Final", "/4/4", 0)
+        )
+
+        assertNull(
+            resolveTtsContinuationStartIndex(
+                chunks = chunks,
+                loadedChunkCount = 0,
+                sourceCfi = "/4/4",
+                startOffsetInSource = 0,
+                currentText = "Final"
+            )
+        )
+    }
+
+    @Test
+    fun `vertical continuation never restarts at zero after an unmatched finished chunk`() {
+        val chunks = listOf(TtsChunk("Only", "/4/2", 0))
+
+        assertNull(
+            resolveTtsContinuationStartIndex(
+                chunks = chunks,
+                loadedChunkCount = 0,
+                sourceCfi = "/previous/chapter",
+                startOffsetInSource = 0,
+                currentText = "different text"
             )
         )
     }

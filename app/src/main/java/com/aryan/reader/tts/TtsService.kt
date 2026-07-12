@@ -1083,7 +1083,13 @@ class TtsService : MediaSessionService() {
             generateAudioChunk = audioGenerator,
             onResetContext = { liveClient.close() },
             onPlaybackSessionPreparing = ::onPlaybackSessionPreparing,
-            onPlaybackSessionStopped = ::onPlaybackSessionStopped
+            onPlaybackSessionStopped = ::onPlaybackSessionStopped,
+            onExplicitStopRequested = {
+                // Do not use this for natural chapter handoffs: #346 relies on
+                // the service staying alive while ordered chunks are generated.
+                // It is only invoked for the user's explicit Stop action.
+                stopSelf()
+            }
         )
 
         val sessionPlayer = TtsSessionPlayer(

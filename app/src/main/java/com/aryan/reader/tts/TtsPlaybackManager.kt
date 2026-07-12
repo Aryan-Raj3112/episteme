@@ -313,7 +313,8 @@ class TtsPlaybackManager(
     private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
     private val onResetContext: () -> Unit,
     private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?) -> Unit = { _, _ -> },
-    private val onPlaybackSessionStopped: () -> Unit = {}
+    private val onPlaybackSessionStopped: () -> Unit = {},
+    private val onExplicitStopRequested: () -> Unit = {}
 ) : MediaSession.Callback, Player.Listener {
 
     private val appContext = context.applicationContext
@@ -576,6 +577,7 @@ class TtsPlaybackManager(
                 Timber.d("Received STOP command.")
                 Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("STOP command received.")
                 handleStopTts(userInitiated = true)
+                onExplicitStopRequested()
             }
             CHANGE_SPEAKER_COMMAND -> {
                 val newSpeakerId = args.getString(KEY_SPEAKER_ID, DEFAULT_SPEAKER_ID)

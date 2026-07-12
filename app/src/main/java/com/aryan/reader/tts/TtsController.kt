@@ -27,7 +27,6 @@ import timber.log.Timber
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -133,6 +132,7 @@ class TtsController(context: Context) : Player.Listener {
 
     private var mediaController: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var pendingStartArgs: Bundle? = null
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var pollingJob: Job? = null
@@ -180,6 +180,10 @@ class TtsController(context: Context) : Player.Listener {
                     )
                     updateStateFromController()
                     startPolling()
+                    pendingStartArgs?.let { args ->
+                        pendingStartArgs = null
+                        sendStartCommand(controller, args)
+                    }
                 } catch (e: Exception) {
                     Timber.w("Failed to connect MediaController: ${e.message}")
                     Timber.tag(TTS_NOTIFICATION_DIAG_TAG).e(e, "MediaController connection failed.")
@@ -254,15 +258,15 @@ class TtsController(context: Context) : Player.Listener {
             putFloat("playback_speed", loadTtsSpeechRate(context))
             putFloat("playback_pitch", loadTtsPitch(context))
         }
-        Timber.tag("TTS_CLOUD_DIAG").d("TtsController sending START. Mode: $effectiveTtsMode, Chunks: ${chunks.size}, Token present: ${!authToken.isNullOrBlank()}")
         val controller = mediaController
         if (controller == null) {
-            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).e("Cannot send START command because MediaController is null.")
+            // Opening a reader must not bind the service or initialize a system
+            // TTS engine. Retain only the user's actual start request until the
+            // controller connection completes.
+            pendingStartArgs = args
+            connect()
         } else {
-            val result = controller.sendCustomCommand(START_TTS_COMMAND, args)
-            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
-                "START command sent. playbackState=${controller.playbackState}, isPlaying=${controller.isPlaying}, mediaItems=${controller.mediaItemCount}, resultDone=${result.isDone}"
-            )
+            sendStartCommand(controller, args)
         }
     }
 
@@ -276,7 +280,28 @@ class TtsController(context: Context) : Player.Listener {
 
     fun stop() {
         Timber.d("UI sending STOP command.")
-        mediaController?.sendCustomCommand(STOP_TTS_COMMAND, Bundle.EMPTY)
+        pendingStartArgs = null
+        _ttsState.value = _ttsState.value.copy(
+            isPlaying = false,
+            isLoading = false,
+            sessionEndedByStop = true,
+            sessionFinished = false
+        )
+        val controller = mediaController ?: run {
+            // Cancel a just-started connection too; otherwise tapping Stop
+            // during startup could still create and warm up the service.
+            disconnect()
+            return
+        }
+        controller.sendCustomCommand(STOP_TTS_COMMAND, Bundle.EMPTY).addListener(
+            {
+                // The service receives an explicit-stop callback and calls
+                // stopSelf(). Releasing our binding lets onDestroy shut down the
+                // heavyweight system engine without affecting Pause or handoffs.
+                if (mediaController === controller) disconnect()
+            },
+            ContextCompat.getMainExecutor(context)
+        )
     }
 
     @Suppress("unused")
@@ -441,9 +466,21 @@ class TtsController(context: Context) : Player.Listener {
         mediaController?.sendCustomCommand(SET_PLAYBACK_PARAMS_COMMAND, args)
     }
 
-    fun release() {
+    private fun sendStartCommand(controller: MediaController, args: Bundle) {
+        Timber.tag("TTS_CLOUD_DIAG").d(
+            "TtsController sending START. Mode: ${args.getString(KEY_TTS_MODE)}, " +
+                "Chunks: ${args.getStringArrayList(KEY_TEXT_CHUNKS)?.size ?: 0}, " +
+                "Token present: ${!args.getString(KEY_AUTH_TOKEN).isNullOrBlank()}"
+        )
+        val result = controller.sendCustomCommand(START_TTS_COMMAND, args)
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
+            "START command sent. playbackState=${controller.playbackState}, isPlaying=${controller.isPlaying}, mediaItems=${controller.mediaItemCount}, resultDone=${result.isDone}"
+        )
+    }
+
+    private fun disconnect() {
         pollingJob?.cancel()
-        scope.cancel()
+        pollingJob = null
 
         val future = controllerFuture
         controllerFuture = null
@@ -456,6 +493,12 @@ class TtsController(context: Context) : Player.Listener {
         mediaController = null
         Timber.d("MediaController released.")
     }
+
+    fun release() {
+        pendingStartArgs = null
+        disconnect()
+        scope.cancel()
+    }
 }
 
 @OptIn(UnstableApi::class)
@@ -464,10 +507,6 @@ fun rememberTtsController(): TtsController {
     val context = LocalContext.current
     val controller = remember {
         TtsController(context)
-    }
-
-    LaunchedEffect(controller) {
-        controller.connect()
     }
 
     DisposableEffect(controller) {

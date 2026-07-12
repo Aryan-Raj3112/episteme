@@ -93,12 +93,15 @@ internal fun resolveTtsContinuationStartIndex(
         currentChunkIndexFallback = -1
     )
 
-    val matchedNextIndex = matchedResumeIndex?.plus(1)
-    if (matchedNextIndex != null && matchedNextIndex in chunks.indices) {
-        return matchedNextIndex
+    if (matchedResumeIndex != null) {
+        // A match at the final chunk means this chapter is consumed. Returning
+        // null lets the caller advance, rather than falling back to zero.
+        return (matchedResumeIndex + 1).takeIf { it in chunks.indices }
     }
 
-    return loadedChunkCount.takeIf { it in chunks.indices }
+    // Zero cannot be a continuation point after a finished TTS session. It is
+    // commonly the stale/default count that previously restarted a chapter.
+    return loadedChunkCount.takeIf { it > 0 && it in chunks.indices }
 }
 
 private fun cfiPathContains(parentPath: String, childPath: String): Boolean {
