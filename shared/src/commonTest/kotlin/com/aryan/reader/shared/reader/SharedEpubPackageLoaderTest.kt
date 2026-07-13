@@ -200,7 +200,7 @@ class SharedEpubPackageLoaderTest {
                 """.trimIndent().encodeToByteArray(),
                 "OPS/chapter.xhtml" to """
                     <html><head><link rel=stylesheet href=book.css></head>
-                    <body><img src=images/picture.png alt=Cover></body></html>
+                    <body><img src=images/picture.png alt=Cover><a href=images/picture.png>Open image</a></body></html>
                 """.trimIndent().encodeToByteArray(),
                 "OPS/book.css" to ".cover { background-image: url(images/picture.png); }".encodeToByteArray(),
                 "OPS/images/picture.png" to byteArrayOf(1, 2, 3)
@@ -210,7 +210,7 @@ class SharedEpubPackageLoaderTest {
         val book = SharedEpubPackageLoader.load(archive, "unquoted", "unquoted.epub")
 
         assertTrue(book.chapters.single().htmlContent.contains("src=\"data:image/png;base64,"))
-        assertTrue(book.chapters.single().htmlContent.contains("href=\"data:text/css;base64,"))
+        assertTrue(book.chapters.single().htmlContent.contains("href=\"data:image/png;base64,"))
     }
 
     @OptIn(ExperimentalEncodingApi::class)

@@ -62,10 +62,12 @@ import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSURL
 import platform.UIKit.UIViewController
 import platform.UIKit.UIApplication
+import platform.UIKit.UIScreen
 
 class ReaderIosBridge {
     private var systemUiHandler: ((hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit)? = null
     private var latestSystemUiState: Triple<Boolean, Boolean, Long>? = null
+    private var originalReaderBrightness: Double? = null
     internal var importedFiles by mutableStateOf<List<IosImportedFile>>(loadPersistedImportedFiles())
         private set
 
@@ -104,6 +106,19 @@ class ReaderIosBridge {
         UIApplication.sharedApplication.idleTimerDisabled = enabled
     }
 
+    fun setReaderBrightness(brightness: Float?) {
+        val screen = UIScreen.mainScreen
+        if (originalReaderBrightness == null) {
+            originalReaderBrightness = screen.brightness
+        }
+        screen.brightness = brightness?.toDouble() ?: originalReaderBrightness ?: screen.brightness
+    }
+
+    fun restoreReaderBrightness() {
+        originalReaderBrightness?.let { UIScreen.mainScreen.brightness = it }
+        originalReaderBrightness = null
+    }
+
     fun setSystemUiHandler(handler: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit) {
         systemUiHandler = handler
         latestSystemUiState?.let { (hidden, lightContent, backgroundArgb) ->
@@ -127,6 +142,16 @@ private const val IosImportsRelativePrefix = "Imports/"
 private const val IosDocumentsRelativePrefix = "Documents/"
 private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
 private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
+private const val IosReaderBrightnessDefaultsKey = "reader_ios_reader_brightness_v1"
+
+private fun loadIosReaderBrightness(): Float? {
+    val stored = NSUserDefaults.standardUserDefaults.stringForKey(IosReaderBrightnessDefaultsKey) ?: return null
+    return stored.toFloatOrNull()?.coerceIn(0.01f, 1f)
+}
+
+private fun persistIosReaderBrightness(brightness: Float?) {
+    NSUserDefaults.standardUserDefaults.setObject(brightness?.coerceIn(0.01f, 1f)?.toString() ?: "system", forKey = IosReaderBrightnessDefaultsKey)
+}
 
 private fun loadPersistedImportedFiles(): List<IosImportedFile> {
     val encoded = NSUserDefaults.standardUserDefaults.stringForKey(IosImportedFilesDefaultsKey) ?: return emptyList()
@@ -329,6 +354,7 @@ private fun ReaderIosApp(
     var selectedPage by remember { mutableStateOf(SharedMobileMainDestination.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(SharedMobileLibraryTab.BOOKS) }
     var activeReaderBook by remember { mutableStateOf<BookItem?>(null) }
+    var readerBrightness by remember { mutableStateOf(loadIosReaderBrightness()) }
     val opdsRepository = remember { IosOpdsRepository() }
     val opdsController = remember {
         SharedOpdsController(
@@ -395,7 +421,10 @@ private fun ReaderIosApp(
                         val initialPdfReaderState = remember(book.id) { loadPersistedIosPdfReaderState(book) }
                         SharedMobilePdfReaderScreen(
                             book = book,
-                            onBack = { activeReaderBook = null },
+                            onBack = {
+                                bridge.restoreReaderBrightness()
+                                activeReaderBook = null
+                            },
                             onNativePdfBridgeNeeded = { pdfBook ->
                                 showMessage("${pdfBook.displayName}: page ${book.lastPageIndex?.plus(1) ?: 1}")
                             },
@@ -414,6 +443,9 @@ private fun ReaderIosApp(
                     }
                     FileType.EPUB -> {
                         val readerBook = remember(book.id) { loadPersistedIosEpubBookState(book) }
+                        LaunchedEffect(readerBook.id, readerBrightness) {
+                            bridge.setReaderBrightness(readerBrightness)
+                        }
                         SharedMobileEpubReaderScreen(
                             book = readerBook,
                             onBack = { activeReaderBook = null },
@@ -449,6 +481,15 @@ private fun ReaderIosApp(
                             readerDefaultSettings = state.readerDefaultSettings,
                             onReaderDefaultSettingsChange = { defaults ->
                                 state = state.reduce(AppAction.ReaderDefaultSettingsChanged(defaults))
+                            },
+                            readerHighlightPalette = state.readerHighlightPalette,
+                            readerToolbarPreferences = state.readerToolbarPreferences,
+                            readerBrightness = readerBrightness,
+                            readerBrightnessSupported = true,
+                            onReaderBrightnessChange = { brightness ->
+                                readerBrightness = brightness
+                                persistIosReaderBrightness(brightness)
+                                bridge.setReaderBrightness(brightness)
                             },
                             modifier = Modifier.fillMaxSize()
                         )

@@ -18,6 +18,8 @@ import androidx.compose.ui.viewinterop.UIKitInteropInteractionMode
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.ReaderTtsChunk
+import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ios.loadIosEpubBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -40,6 +42,15 @@ import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
 import platform.AVFAudio.AVSpeechUtterance
+import platform.AVFAudio.AVAudioSession
+import platform.AVFAudio.AVAudioSessionCategoryPlayback
+import platform.AVFAudio.setActive
+import platform.MediaPlayer.MPMediaItemPropertyArtist
+import platform.MediaPlayer.MPMediaItemPropertyTitle
+import platform.MediaPlayer.MPNowPlayingInfoCenter
+import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackRate
+import platform.MediaPlayer.MPRemoteCommandCenter
+import platform.MediaPlayer.MPRemoteCommandHandlerStatusSuccess
 import platform.darwin.NSObject
 
 @Composable
@@ -115,18 +126,36 @@ internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts
 
 private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private val synthesizer = AVSpeechSynthesizer()
-    private val delegate = IosSharedMobileEpubSpeechDelegate { state = it }
+    private val delegate = IosSharedMobileEpubSpeechDelegate(
+        onStateChange = { state = it; updateNowPlaying() },
+        onUtteranceFinished = ::advance
+    )
     override var state by mutableStateOf(SharedMobileEpubLocalTtsState.IDLE)
+    override var progress by mutableStateOf(ReaderTtsProgress())
+        private set
+    private var bookTitle: String = ""
+    private var chunks: List<ReaderTtsChunk> = emptyList()
+    private var currentChunkIndex = -1
+    private var sessionId = 0L
+    private var stopping = false
 
     init {
         synthesizer.delegate = delegate
+        installRemoteCommands()
     }
 
-    override fun speak(text: String) {
-        val normalized = text.trim()
-        if (normalized.isBlank()) return
+    override fun start(chunks: List<ReaderTtsChunk>, bookTitle: String) {
+        val readableChunks = chunks.filter { it.spokenText.isNotBlank() }
+        if (readableChunks.isEmpty()) return
+        stopping = true
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
-        synthesizer.speakUtterance(AVSpeechUtterance(string = normalized))
+        stopping = false
+        this.chunks = readableChunks
+        this.bookTitle = bookTitle
+        currentChunkIndex = -1
+        sessionId += 1
+        configureAudioSession(active = true)
+        advance()
     }
 
     override fun pause() {
@@ -138,13 +167,99 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     }
 
     override fun stop() {
+        stopping = true
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        chunks = emptyList()
+        currentChunkIndex = -1
+        progress = ReaderTtsProgress()
         state = SharedMobileEpubLocalTtsState.IDLE
+        clearNowPlaying()
+        configureAudioSession(active = false)
+    }
+
+    private fun advance() {
+        if (stopping) return
+        currentChunkIndex += 1
+        speakCurrentChunk()
+    }
+
+    private fun moveBy(offset: Int) {
+        if (chunks.isEmpty()) return
+        stopping = true
+        synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        stopping = false
+        currentChunkIndex = (currentChunkIndex + offset).coerceIn(0, chunks.lastIndex)
+        speakCurrentChunk()
+    }
+
+    private fun speakCurrentChunk() {
+        val chunk = chunks.getOrNull(currentChunkIndex)
+        if (chunk == null) {
+            stop()
+            return
+        }
+        // Keep the reader controls responsive even when a system voice starts slowly.
+        // AVSpeechSynthesizer will still correct this through didStart/didPause callbacks.
+        state = SharedMobileEpubLocalTtsState.SPEAKING
+        progress = ReaderTtsProgress(
+            sessionId = sessionId,
+            chunks = chunks,
+            currentChunkIndex = currentChunkIndex
+        )
+        updateNowPlaying()
+        synthesizer.speakUtterance(AVSpeechUtterance(string = chunk.spokenText))
+    }
+
+    private fun configureAudioSession(active: Boolean) {
+        val audioSession = AVAudioSession.sharedInstance()
+        if (active) {
+            audioSession.setCategory(AVAudioSessionCategoryPlayback, error = null)
+        }
+        audioSession.setActive(active = active, error = null)
+    }
+
+    private fun installRemoteCommands() {
+        val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        commands.playCommand.addTargetWithHandler {
+            resume()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.pauseCommand.addTargetWithHandler {
+            pause()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.stopCommand.addTargetWithHandler {
+            stop()
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.nextTrackCommand.addTargetWithHandler {
+            moveBy(1)
+            MPRemoteCommandHandlerStatusSuccess
+        }
+        commands.previousTrackCommand.addTargetWithHandler {
+            moveBy(-1)
+            MPRemoteCommandHandlerStatusSuccess
+        }
+    }
+
+    private fun updateNowPlaying() {
+        val chunk = progress.currentChunk
+        if (chunk == null) return
+        MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = mapOf(
+            MPMediaItemPropertyTitle to bookTitle,
+            MPMediaItemPropertyArtist to chunk.chapterTitle.ifBlank { "Reading" },
+            MPNowPlayingInfoPropertyPlaybackRate to if (state == SharedMobileEpubLocalTtsState.SPEAKING) 1.0 else 0.0
+        )
+    }
+
+    private fun clearNowPlaying() {
+        MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = null
     }
 }
 
 private class IosSharedMobileEpubSpeechDelegate(
-    private val onStateChange: (SharedMobileEpubLocalTtsState) -> Unit
+    private val onStateChange: (SharedMobileEpubLocalTtsState) -> Unit,
+    private val onUtteranceFinished: () -> Unit
 ) : NSObject(), AVSpeechSynthesizerDelegateProtocol {
 
     @ObjCSignatureOverride
@@ -160,7 +275,7 @@ private class IosSharedMobileEpubSpeechDelegate(
         synthesizer: AVSpeechSynthesizer,
         didFinishSpeechUtterance: AVSpeechUtterance
     ) {
-        onStateChange(SharedMobileEpubLocalTtsState.IDLE)
+        onUtteranceFinished()
     }
 
     @ObjCSignatureOverride

@@ -3,6 +3,8 @@ package com.aryan.reader.shared.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.ReaderTtsChunk
+import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.reader.SharedEpubBook
 
 internal data class SharedMobileEpubLoadState(
@@ -32,7 +34,9 @@ internal enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
 
 internal interface SharedMobileEpubLocalTts {
     val state: SharedMobileEpubLocalTtsState
-    fun speak(text: String)
+    /** The shared planner's active chunk, used to keep the reader in sync with speech. */
+    val progress: ReaderTtsProgress
+    fun start(chunks: List<ReaderTtsChunk>, bookTitle: String)
     fun pause()
     fun resume()
     fun stop()
