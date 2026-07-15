@@ -1,2 +1,15 @@
 app/src/main/cpp/libmobi/** linguist-vendored
 app/src/main/cpp/woff2/** linguist-vendored
+
+# Keep native source checkouts byte-stable for reproducible Android builds.
+app/src/main/cpp/**/*.c text eol=lf
+app/src/main/cpp/**/*.cc text eol=lf
+app/src/main/cpp/**/*.cpp text eol=lf
+app/src/main/cpp/**/*.h text eol=lf
+app/src/main/cpp/**/*.hpp text eol=lf
+app/src/main/cpp/**/CMakeLists.txt text eol=lf
+app/src/main/cpp/**/Makefile text eol=lf
+*.cmake text eol=lf
+*.gradle text eol=lf
+*.gradle.kts text eol=lf
+gradlew text eol=lf
