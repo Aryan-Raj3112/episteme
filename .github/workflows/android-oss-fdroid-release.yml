@@ -43,7 +43,8 @@ jobs:
               source /etc/profile.d/bsenv.sh
               cd /home/vagrant/build/com.aryan.reader.oss
               sed -i -e "/jogamp/d" -e "/https.jitpack/d" settings.gradle.kts
-              ./gradlew :app:assembleOssRelease :app:assembleOssReleaseOffline --no-build-cache
+              ./gradlew :app:assembleOssRelease --no-build-cache --max-workers=1 -Pkotlin.daemon.jvmargs=-Xmx4g
+              ./gradlew :app:assembleOssReleaseOffline --no-build-cache --max-workers=1 -Pkotlin.daemon.jvmargs=-Xmx4g
               cp app/build/outputs/renamed-apk/ossRelease/*.apk /release-assets/
               cp app/build/outputs/renamed-apk/ossReleaseOffline/*.apk /release-assets/
             '
