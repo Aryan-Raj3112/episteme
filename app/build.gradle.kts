@@ -81,7 +81,6 @@ android {
             dimension = "version"
             applicationIdSuffix = ".oss"
             versionNameSuffix = "-oss"
-            proguardFiles("proguard-oss-rules.pro")
             buildConfigField("String", "AI_WORKER_URL", "\"\"")
             buildConfigField("String", "VERIFIER_WORKER_URL", "\"\"")
             buildConfigField("String", "FEEDBACK_WORKER_URL", "\"\"")

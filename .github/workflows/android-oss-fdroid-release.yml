@@ -1,0 +1,67 @@
+name: Android OSS F-Droid release
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft_tag:
+        description: Draft release tag that will receive the APKs
+        required: true
+        default: fdroid-oss-build
+      buildserver_image:
+        description: F-Droid buildserver image (use the digest from an F-Droid job to pin it exactly)
+        required: true
+        default: registry.gitlab.com/fdroid/fdroidserver:buildserver-trixie
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build OSS APKs in F-Droid buildserver
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Build OSS releases
+        shell: bash
+        env:
+          FDROID_BUILDSERVER_IMAGE: ${{ inputs.buildserver_image }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          docker pull "$FDROID_BUILDSERVER_IMAGE"
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/home/vagrant/build/com.aryan.reader.oss" \
+            --volume "$GITHUB_WORKSPACE/release-assets:/release-assets" \
+            "$FDROID_BUILDSERVER_IMAGE" \
+            bash -lc '
+              set -euo pipefail
+              source /etc/profile.d/bsenv.sh
+              cd /home/vagrant/build/com.aryan.reader.oss
+              sed -i -e "/jogamp/d" -e "/https.jitpack/d" settings.gradle.kts
+              cd app
+              ./gradlew assembleOssRelease assembleOssReleaseOffline --no-build-cache
+              cp build/outputs/renamed-apk/ossRelease/*.apk /release-assets/
+              cp build/outputs/renamed-apk/ossReleaseOffline/*.apk /release-assets/
+            '
+          sudo chown -R "$(id -u):$(id -g)" release-assets
+
+      - name: Create or update draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT_TAG: ${{ inputs.draft_tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$DRAFT_TAG" >/dev/null 2>&1; then
+            gh release create "$DRAFT_TAG" \
+              --draft \
+              --target main \
+              --title "F-Droid OSS build" \
+              --notes "Manually built from main in the F-Droid buildserver image."
+          fi
+          gh release upload "$DRAFT_TAG" release-assets/*.apk --clobber
