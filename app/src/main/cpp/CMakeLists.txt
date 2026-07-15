@@ -8,6 +8,7 @@ project("reader-native")
 add_compile_options(
     "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
     "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
+    -fno-ident
 )
 
 if(DEFINED CMAKE_ANDROID_NDK)
@@ -25,11 +26,34 @@ add_compile_options(
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--build-id=none")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--build-id=none")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+function(strip_reproducibility_metadata target_name)
+    add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_OBJCOPY}
+            --remove-section=.comment
+            --remove-section=.note.gnu.build-id
+            $<TARGET_FILE:${target_name}>
+        VERBATIM
+    )
+endfunction()
+
+function(add_reproducibility_metadata_strip_target strip_target_name target_name)
+    add_custom_target(${strip_target_name} ALL
+        COMMAND ${CMAKE_OBJCOPY}
+            --remove-section=.comment
+            --remove-section=.note.gnu.build-id
+            $<TARGET_FILE:${target_name}>
+        DEPENDS ${target_name}
+        VERBATIM
+    )
+endfunction()
 
 # --- CONFIGURE SUBPROJECTS ---
 # Force subprojects to build as static libraries. This is critical for Android.
@@ -70,6 +94,7 @@ set(BUILD_SHARED_LIBS ON)
 add_subdirectory(libmobi)
 
 set_target_properties(mobi PROPERTIES VERSION "" SOVERSION "")
+add_reproducibility_metadata_strip_target(strip_mobi_reproducibility_metadata mobi)
 # Revert back to building static libs for any subsequent dependencies.
 set(BUILD_SHARED_LIBS OFF)
 
@@ -112,3 +137,6 @@ target_link_libraries(
         ${z-lib}
         dl
 )
+
+add_dependencies(native-lib strip_mobi_reproducibility_metadata)
+strip_reproducibility_metadata(native-lib)
