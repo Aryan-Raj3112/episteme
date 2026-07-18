@@ -31,3 +31,5 @@ output/
 policies/
 episteme-bin/
 episteme-oss-bin/
+opencode.json
+AGENTS.md

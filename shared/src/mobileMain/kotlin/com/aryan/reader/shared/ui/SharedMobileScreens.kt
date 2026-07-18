@@ -1247,9 +1247,9 @@ private fun SharedMobilePdfReaderBottomBar(
                     Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Text to speech")
                 }
             }
-            if (state.selectedTool != PdfInkTool.NONE || state.isTextSelectionMode) {
+            if (state.selectedTool != PdfInkTool.NONE) {
                 SharedPdfInteractionDock(
-                    isTextSelectionMode = state.isTextSelectionMode,
+                    isTextSelectionMode = false,
                     selectedTool = state.selectedTool,
                     selectedColor = state.selectedColorArgb,
                     strokeWidth = state.strokeWidth,
@@ -1959,9 +1959,6 @@ private fun SharedMobilePdfPaginatedPages(
                                 strokeWidth = state.strokeWidth,
                                 onCanvasSizeChanged = onCanvasSizeChanged,
                                 onFinishInkStroke = onFinishInkStroke,
-                                // PdfZoomSpec.default controls render resolution, not the
-                                // on-screen page scale. Applying it as a graphics transform
-                                // enlarged the fitted page by 1.35x and exposed adjacent pages.
                                 modifier = Modifier.size(fittedWidth, fittedHeight)
                             )
                         }
@@ -2092,7 +2089,8 @@ private fun SharedMobilePdfPageSurface(
                 onCanvasSizeChanged(it)
             }
             .then(
-                if (selectedTool == PdfInkTool.NONE) Modifier else Modifier.pointerInput(selectedTool, localCanvasSize, pageIndex) {
+                if (selectedTool == PdfInkTool.NONE) Modifier
+                else Modifier.pointerInput(selectedTool, localCanvasSize, pageIndex) {
                     detectDragGestures(
                         onDragStart = { offset ->
                             if (localCanvasSize.width > 0 && localCanvasSize.height > 0) {
@@ -2154,6 +2152,13 @@ private fun SharedMobilePdfPageSurface(
                 activeTool = selectedTool,
                 activeStrokeColorArgb = selectedColorArgb,
                 activeStrokeWidth = strokeWidth
+            )
+            SharedMobilePdfTextSelectionOverlay(
+                book = book,
+                pageIndex = pageIndex,
+                canvasSize = localCanvasSize,
+                selectedTool = selectedTool,
+                modifier = Modifier.fillMaxSize()
             )
             if (showPageNumberOverlay) {
                 SharedPdfPageNumberOverlay(

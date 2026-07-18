@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Create
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_FillRect
@@ -24,15 +25,6 @@ import com.aryan.reader.shared.pdfium.c.FPDF_InitLibrary
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadPage
 import com.aryan.reader.shared.pdfium.c.FPDF_RenderPageBitmap
-import com.aryan.reader.shared.pdfium.c.FPDFText_ClosePage
-import com.aryan.reader.shared.pdfium.c.FPDFText_CountChars
-import com.aryan.reader.shared.pdfium.c.FPDFText_CountRects
-import com.aryan.reader.shared.pdfium.c.FPDFText_GetText
-import com.aryan.reader.shared.pdfium.c.FPDFText_GetRect
-import com.aryan.reader.shared.pdfium.c.FPDFText_LoadPage
-import com.aryan.reader.shared.pdf.SharedPdfSearchResult
-import com.aryan.reader.shared.pdf.PdfPageBounds
-import kotlinx.cinterop.DoubleVar
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
@@ -48,11 +40,6 @@ import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
 import platform.posix.memcpy
 import kotlin.math.roundToInt
-
-internal actual suspend fun searchSharedMobilePdf(
-    book: BookItem,
-    query: String
-): List<SharedPdfSearchResult> = IosPdfiumRenderer.search(book.path, query)
 
 @Composable
 internal actual fun rememberSharedMobilePdfPageRender(
@@ -152,91 +139,6 @@ private object IosPdfiumRenderer {
             } finally {
                 FPDF_CloseDocument(document)
             }
-    }
-
-    fun search(path: String?, rawQuery: String): List<SharedPdfSearchResult> {
-        val query = rawQuery.trim()
-        if (query.length < 2) return emptyList()
-        val resolvedPath = path.resolvedIosPdfPath() ?: return emptyList()
-        if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return emptyList()
-        ensureInitialized()
-        val document = FPDF_LoadDocument(resolvedPath, null) ?: return emptyList()
-        return try {
-            val results = mutableListOf<SharedPdfSearchResult>()
-            val pageCount = FPDF_GetPageCount(document).coerceAtLeast(0)
-            pageLoop@ for (pageIndex in 0 until pageCount) {
-                val page = FPDF_LoadPage(document, pageIndex) ?: continue
-                try {
-                    val textPage = FPDFText_LoadPage(page) ?: continue
-                    try {
-                        val charCount = FPDFText_CountChars(textPage).coerceAtLeast(0)
-                        val textBuffer = UShortArray(charCount + 1)
-                        val copied = if (charCount == 0) 0 else textBuffer.usePinned { pinned ->
-                            FPDFText_GetText(textPage, 0, charCount, pinned.addressOf(0))
-                        }.coerceIn(0, charCount)
-                        val text = buildString(copied) {
-                            for (index in 0 until copied) {
-                                val value = textBuffer[index]
-                                if (value != 0.toUShort()) append(value.toInt().toChar())
-                            }
-                        }
-                        var fromIndex = 0
-                        while (fromIndex < text.length) {
-                            val matchIndex = text.indexOf(query, startIndex = fromIndex, ignoreCase = true)
-                            if (matchIndex < 0) break
-                            val previewStart = (matchIndex - SearchPreviewRadius).coerceAtLeast(0)
-                            val previewEnd = (matchIndex + query.length + SearchPreviewRadius).coerceAtMost(text.length)
-                            val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f).toDouble()
-                            val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f).toDouble()
-                            val matchBounds = memScoped {
-                                val rect = allocArray<DoubleVar>(4)
-                                buildList {
-                                    val rectCount = FPDFText_CountRects(textPage, matchIndex, query.length).coerceAtLeast(0)
-                                    for (rectIndex in 0 until rectCount) {
-                                        val succeeded = FPDFText_GetRect(
-                                            textPage,
-                                            rectIndex,
-                                            rect,
-                                            rect + 1,
-                                            rect + 2,
-                                            rect + 3
-                                        )
-                                        if (succeeded != 0) {
-                                            add(
-                                                PdfPageBounds(
-                                                    left = (rect[0] / pageWidth).toFloat().coerceIn(0f, 1f),
-                                                    top = (1.0 - rect[1] / pageHeight).toFloat().coerceIn(0f, 1f),
-                                                    right = (rect[2] / pageWidth).toFloat().coerceIn(0f, 1f),
-                                                    bottom = (1.0 - rect[3] / pageHeight).toFloat().coerceIn(0f, 1f)
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            results += SharedPdfSearchResult(
-                                pageIndex = pageIndex,
-                                preview = text.substring(previewStart, previewEnd)
-                                    .replace(Regex("\\s+"), " ")
-                                    .trim(),
-                                matchIndex = matchIndex,
-                                matchLength = query.length,
-                                boundsList = matchBounds
-                            )
-                            if (results.size >= MaxSearchResults) break@pageLoop
-                            fromIndex = matchIndex + query.length.coerceAtLeast(1)
-                        }
-                    } finally {
-                        FPDFText_ClosePage(textPage)
-                    }
-                } finally {
-                    FPDF_ClosePage(page)
-                }
-            }
-            results
-        } finally {
-            FPDF_CloseDocument(document)
-        }
     }
 
     private fun ensureInitialized() {

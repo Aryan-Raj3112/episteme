@@ -89,6 +89,11 @@ kotlin {
         // remains the reference app until feature parity is established.
         val mobileMain by creating {
             dependsOn(commonMain)
+            dependencies {
+                implementation(compose.ui)
+                implementation(compose.foundation)
+                implementation(compose.material3)
+            }
         }
         val readerJvmMain by creating {
             dependsOn(commonMain)
