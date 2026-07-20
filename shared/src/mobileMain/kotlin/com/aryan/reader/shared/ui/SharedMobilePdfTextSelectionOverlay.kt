@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -61,6 +62,7 @@ import com.aryan.reader.shared.pdf.PdfSelectionHandle
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import com.aryan.reader.shared.pdf.PdfTextSelectionEngine
 import com.aryan.reader.shared.pdf.PdfTextSelectionRange
+import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.generated.resources.Res
 import com.aryan.reader.shared.generated.resources.teardrop
 import kotlinx.coroutines.Dispatchers
@@ -200,7 +202,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     val tapDetector: Modifier = if (selectedTool != PdfInkTool.NONE) {
         Modifier
     } else if (hasActiveSelection) {
-        // tap dismisses selection; long-press starts a new one.
+        // Selection/menu active: tap dismisses; long-press starts a new word.
         Modifier.pointerInput(book.path, pageIndex, canvasSize) {
             detectTapGestures(
                 onLongPress = { offset ->
@@ -215,14 +217,14 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         }
     } else {
         // No selection present: only long-press matters; taps fall through to
-        // the parent (chrome toggle / page turn).
-        Modifier.pointerInput(book.path, pageIndex, canvasSize) {
-            detectTapGestures(
-                onLongPress = { offset ->
-                    selLog { "longPress at canvas=(${offset.x},${offset.y})" }
-                    scope.launch { startNewSelectionAt(offset) }
-                }
-            )
+        // the parent (chrome toggle / page turn). `detectLongPressOnly` is a
+        // custom detector that does NOT consume quick taps, ensuring the
+        // parent's `detectTapGestures` / `Modifier.clickable` still fires.
+        Modifier.pointerInput(book.path, pageIndex, canvasSize, teardropWidthPx, teardropHeightPx) {
+            detectLongPressOnly { offset ->
+                selLog { "longPress at canvas=(${offset.x},${offset.y})" }
+                scope.launch { startNewSelectionAt(offset) }
+            }
         }
     }
 
@@ -443,6 +445,39 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawHandle(
 private const val SEL_LOG_TAG = "PdfTextSelection"
 internal fun selLog(message: () -> String) {
     println("[$SEL_LOG_TAG] ${message()}")
+}
+
+/**
+ * Detector that fires `onLongPress` *only* after the finger stays stationary
+ * for `ViewConfiguration.longPressTimeoutMillis`. Doesn't consume on quick tap
+ * (so parent `Modifier.clickable` / `detectTapGestures.onTap` still fires to
+ * toggle chrome), and doesn't consume on early move/scroll (lets the parent's
+ * scrollable / pager receive the drag). Only on long-press does it consume the
+ * event so the parent won't interpret the gesture as a tap afterward.
+ *
+ * Mirrors Android docs for `View.setOnLongClickListener`: presses shorter than
+ * the long-press timeout are reported as taps/scrolls to the parent.
+ */
+private suspend fun PointerInputScope.detectLongPressOnly(
+    onLongPress: (Offset) -> Unit
+) {
+    val viewConfig = viewConfiguration
+    val longPressDelay = viewConfig.longPressTimeoutMillis
+    val touchSlop = viewConfig.touchSlop
+    selLog { "detectLongPressOnly installed (longPress=${longPressDelay}ms slop=${touchSlop})" }
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = true, pass = PointerEventPass.Main)
+        selLog { "longPress.down at canvas=(${down.position.x},${down.position.y})" }
+        try {
+            withTimeout(longPressDelay) {
+                waitForUpOrCancellation()
+            }
+        } catch (_: androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException) {
+            down.consume()
+            selLog { "longPress.fired after ${longPressDelay}ms at canvas=(${down.position.x},${down.position.y}) -> consume" }
+            onLongPress(down.position)
+        }
+    }
 }
 
 private class SharedMobilePdfSelectionMenuPositionProvider(
