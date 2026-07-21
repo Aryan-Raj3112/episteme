@@ -10,9 +10,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdf.IosPdfTextPage
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -20,8 +22,10 @@ actual fun rememberPdfTextPageSession(book: BookItem, pageIndex: Int): PdfTextPa
     var session by remember(book.path, pageIndex) { mutableStateOf<PdfTextPageSession?>(null) }
 
     LaunchedEffect(book.path, pageIndex) {
-        session = withContext(Dispatchers.Default) {
-            IosPdfTextPage.open(book.path, pageIndex)
+        session = withContext(Dispatchers.Main) {
+            IosPdfiumRuntime.mutex.withLock {
+                IosPdfTextPage.open(book.path, pageIndex)
+            }
         }
     }
 

@@ -72,6 +72,30 @@ interface PdfTextSelectionBackend {
         xTolerance: Double,
         yTolerance: Double
     ): Int
+
+    /**
+     * If a hyperlink covers the normalised page position `([normX], [normY])`
+     * (top-left origin), returns its target. Returns `null` when there is no
+     * link at the given point (or when the platform backend doesn't support
+     * link introspection).
+     */
+    fun linkAtNormalized(normX: Float, normY: Float): PdfLinkTarget?
+}
+
+/**
+ * Resolved destination of a PDF hyperlink. Mirrors the payloads returned by
+ * pdfium's `FPDFLink_GetLinkAtPoint` + `FPDFAction_Get*` / `FPDFLink_GetDest`
+ * traversal (see Android's `pdfium_bridge.cpp::getLinkInfoAtPoint`).
+ *
+ * - [ExternalUrl] is used both for URI actions and RemoteGoTo / Launch actions;
+ *   the [url] field is whatever pdfium emitted (typically `http(s)://...`,
+ *   `mailto:...`, or a bare file path).
+ * - [InternalPage] references a page inside the same document, by 0-based
+ *   index. Receivers should clamp before using.
+ */
+sealed interface PdfLinkTarget {
+    data class ExternalUrl(val url: String) : PdfLinkTarget
+    data class InternalPage(val pageIndex: Int) : PdfLinkTarget
 }
 
 /**
@@ -85,6 +109,9 @@ interface PdfTextSelectionBackend {
  * The owner is responsible for closing the session via [close].
  */
 interface PdfTextPageSession : PdfTextSelectionBackend, AutoCloseable {
+    /** Link rectangles in normalized, top-left-origin page coordinates. */
+    fun linkBoundsNormalized(): List<PdfPageBounds> = emptyList()
+
     /** Bounding box of [index] in normalised coordinates, or `null` on failure. */
     fun charBoxNormalized(index: Int): PdfPageBounds?
 

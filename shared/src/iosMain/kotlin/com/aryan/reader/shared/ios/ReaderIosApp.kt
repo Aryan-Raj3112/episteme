@@ -438,6 +438,7 @@ private fun ReaderIosApp(
                                 }
                             },
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
+                            onSystemUiAppearanceChange = bridge::updateSystemUi,
                             modifier = Modifier.fillMaxSize()
                         )
                     }

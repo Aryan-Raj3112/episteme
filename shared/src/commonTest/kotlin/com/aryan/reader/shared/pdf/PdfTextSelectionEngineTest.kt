@@ -19,6 +19,8 @@ class PdfTextSelectionEngineTest {
             xTolerance: Double,
             yTolerance: Double
         ): Int = -1
+
+        override fun linkAtNormalized(normX: Float, normY: Float): PdfLinkTarget? = null
     }
 
     @Test

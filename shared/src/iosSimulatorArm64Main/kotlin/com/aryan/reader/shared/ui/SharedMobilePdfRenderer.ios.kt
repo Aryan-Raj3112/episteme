@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Create
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_FillRect
@@ -21,7 +22,6 @@ import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageCount
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageHeightF
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageWidthF
-import com.aryan.reader.shared.pdfium.c.FPDF_InitLibrary
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadPage
 import com.aryan.reader.shared.pdfium.c.FPDF_RenderPageBitmap
@@ -32,6 +32,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.get
 import kotlinx.cinterop.plus
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.sync.withLock
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.Image
@@ -56,9 +57,8 @@ internal actual fun rememberSharedMobilePdfPageRender(
 }
 
 private object IosPdfiumRenderer {
-    private var initialized = false
-
-    fun render(path: String?, pageIndex: Int): SharedMobilePdfPageRender {
+    suspend fun render(path: String?, pageIndex: Int): SharedMobilePdfPageRender =
+        IosPdfiumRuntime.mutex.withLock {
         val resolvedPath = path.resolvedIosPdfPath()
         if (resolvedPath.isNullOrBlank()) {
             return SharedMobilePdfPageRender(errorMessage = "PDF path is unavailable")
@@ -67,7 +67,7 @@ private object IosPdfiumRenderer {
             return SharedMobilePdfPageRender(errorMessage = "PDF file is missing: $resolvedPath")
         }
 
-        ensureInitialized()
+        IosPdfiumRuntime.ensureInitialized()
 
         val document = FPDF_LoadDocument(resolvedPath, null)
             ?: return SharedMobilePdfPageRender(errorMessage = "Pdfium could not open this PDF: $resolvedPath")
@@ -139,14 +139,7 @@ private object IosPdfiumRenderer {
             } finally {
                 FPDF_CloseDocument(document)
             }
-    }
-
-    private fun ensureInitialized() {
-        if (!initialized) {
-            FPDF_InitLibrary()
-            initialized = true
         }
-    }
 }
 
 private fun String?.resolvedIosPdfPath(): String? {

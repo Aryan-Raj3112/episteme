@@ -140,6 +140,8 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -155,6 +157,7 @@ import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.PdfDisplayMode
+import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.ReadStatusFilter
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.SharedReaderScreenState
@@ -397,6 +400,7 @@ fun SharedMobilePdfReaderScreen(
     initialReaderState: SharedPdfReaderState? = null,
     onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
+    onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
@@ -424,6 +428,9 @@ fun SharedMobilePdfReaderScreen(
     var navigationRequestPage by remember(book.id) { mutableStateOf(readerState.pageIndex) }
     var navigationRequestToken by remember(book.id) { mutableStateOf(0) }
     var searchResults by remember(book.id) { mutableStateOf<List<SharedPdfSearchResult>>(emptyList()) }
+    var tableOfContents by remember(book.id) { mutableStateOf<List<PdfTocEntry>>(emptyList()) }
+    var noteAnnotationId by remember(book.id) { mutableStateOf<String?>(null) }
+    var noteDraft by remember(book.id) { mutableStateOf("") }
     var isSearchInProgress by remember(book.id) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -439,6 +446,22 @@ fun SharedMobilePdfReaderScreen(
     val activeTheme = remember(readerState.themeId) {
         BuiltInPdfReaderThemes.firstOrNull { it.id == readerState.themeId }
             ?: BuiltInPdfReaderThemes.first()
+    }
+    val systemBarColor = MaterialTheme.colorScheme.surface
+    val hideSystemUi = when (systemUiMode) {
+        SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> false
+        SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> !showChrome
+        SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> true
+    }
+    LaunchedEffect(hideSystemUi, systemBarColor) {
+        onSystemUiAppearanceChange(
+            hideSystemUi,
+            systemBarColor.luminance() < 0.5f,
+            systemBarColor.toArgb().toLong()
+        )
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL) }
     }
     var canvasSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
     val activeStroke = remember(book.id, readerState.pageIndex) { mutableStateListOf<PdfPagePoint>() }
@@ -529,6 +552,36 @@ fun SharedMobilePdfReaderScreen(
         activeStroke.clear()
     }
 
+    fun addTextHighlight(
+        pageIndex: Int,
+        range: com.aryan.reader.shared.pdf.PdfTextSelectionRange,
+        text: String,
+        bounds: List<PdfPageBounds>,
+        colorArgb: Int,
+        style: HighlightStyle,
+        openNote: Boolean
+    ) {
+        val annotation = SharedPdfAnnotation(
+            id = "ios_pdf_highlight_${currentTimestamp()}_${readerState.annotations.size}",
+            pageIndex = pageIndex,
+            kind = PdfAnnotationKind.HIGHLIGHT,
+            tool = PdfInkTool.HIGHLIGHTER,
+            boundsList = bounds,
+            text = text,
+            colorArgb = colorArgb,
+            highlightStyle = style,
+            strokeWidth = SharedPdfAnnotationDefaults.configFor(PdfInkTool.HIGHLIGHTER).strokeWidth,
+            rangeStartIndex = range.start,
+            rangeEndIndex = range.end,
+            createdAt = currentTimestamp()
+        )
+        dispatch(SharedPdfReaderAction.AnnotationAdded(annotation))
+        if (openNote) {
+            noteAnnotationId = annotation.id
+            noteDraft = ""
+        }
+    }
+
     LaunchedEffect(pageCount) {
         if (readerState.pageCount != pageCount) {
             readerState = readerState.copy(pageCount = pageCount).coerced()
@@ -561,6 +614,10 @@ fun SharedMobilePdfReaderScreen(
         isSearchInProgress = false
     }
 
+    LaunchedEffect(book.path) {
+        tableOfContents = withContext(Dispatchers.Default) { loadSharedMobilePdfOutline(book) }
+    }
+
     LaunchedEffect(keepScreenOn) {
         onKeepScreenOnChange(keepScreenOn)
     }
@@ -575,8 +632,14 @@ fun SharedMobilePdfReaderScreen(
             SharedMobilePdfReaderDrawer(
                 book = book,
                 state = readerState,
+                tableOfContents = tableOfContents,
                 onGoToPage = { page ->
                     navigateToPage(page)
+                    scope.launch { drawerState.close() }
+                },
+                onEditNote = { annotation ->
+                    noteAnnotationId = annotation.id
+                    noteDraft = annotation.note.orEmpty()
                     scope.launch { drawerState.close() }
                 },
                 onToggleBookmark = { dispatch(SharedPdfReaderAction.BookmarkToggled(readerState.pageIndex, createdAt = currentTimestamp())) }
@@ -650,7 +713,10 @@ fun SharedMobilePdfReaderScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(sharedMobilePdfViewerBackground(activeTheme, readerState.displayMode))
-                    .clickable {
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                    ) {
                         when (systemUiMode) {
                             SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> showChrome = true
                             SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> showChrome = !showChrome
@@ -675,6 +741,9 @@ fun SharedMobilePdfReaderScreen(
                         onVisiblePageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onCanvasSizeChanged = { canvasSize = it },
                         onFinishInkStroke = ::finishInkStroke,
+                        onExternalLink = { url -> openSharedMobileExternalUrl(url) },
+                        onInternalLink = ::navigateToPage,
+                        onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
                         userScrollEnabled = !isScrollLocked,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -693,6 +762,9 @@ fun SharedMobilePdfReaderScreen(
                         searchResults = searchResults,
                         activeStroke = activeStroke,
                         tapToTurnPages = tapToTurnPages,
+                        onExternalLink = { url -> openSharedMobileExternalUrl(url) },
+                        onInternalLink = ::navigateToPage,
+                        onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
                         userScrollEnabled = !isScrollLocked,
                         onPageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onToggleChrome = { showChrome = !showChrome },
@@ -783,6 +855,30 @@ fun SharedMobilePdfReaderScreen(
                 onDismiss = { showReaderOptions = false }
             )
         }
+    }
+
+    noteAnnotationId?.let { annotationId ->
+        AlertDialog(
+            onDismissRequest = { noteAnnotationId = null },
+            title = { Text("Note") },
+            text = {
+                OutlinedTextField(
+                    value = noteDraft,
+                    onValueChange = { noteDraft = it },
+                    label = { Text("Add a note") },
+                    minLines = 3
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    readerState.annotations.firstOrNull { it.id == annotationId }?.let { annotation ->
+                        dispatch(SharedPdfReaderAction.AnnotationUpdated(annotation.copy(note = noteDraft.trim().ifBlank { null })))
+                    }
+                    noteAnnotationId = null
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { noteAnnotationId = null }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -1306,7 +1402,9 @@ private fun SharedMobilePdfBottomToolButton(
 private fun SharedMobilePdfReaderDrawer(
     book: BookItem,
     state: SharedPdfReaderState,
+    tableOfContents: List<PdfTocEntry>,
     onGoToPage: (Int) -> Unit,
+    onEditNote: (SharedPdfAnnotation) -> Unit,
     onToggleBookmark: () -> Unit
 ) {
     var selectedSection by remember { mutableStateOf(SharedMobilePdfDrawerSection.CHAPTERS) }
@@ -1322,13 +1420,10 @@ private fun SharedMobilePdfReaderDrawer(
                 }
             }
             when (selectedSection) {
-                SharedMobilePdfDrawerSection.TABS -> SharedMobilePdfPagesDrawerPage(
-                    state = state,
+                SharedMobilePdfDrawerSection.CHAPTERS -> SharedMobilePdfChaptersDrawerPage(
+                    entries = tableOfContents,
+                    currentPageIndex = state.pageIndex,
                     onGoToPage = onGoToPage,
-                    modifier = Modifier.weight(1f)
-                )
-                SharedMobilePdfDrawerSection.CHAPTERS -> SharedMobilePdfEmptyDrawerPage(
-                    text = "Chapters are not available for this book.",
                     modifier = Modifier.weight(1f)
                 )
                 SharedMobilePdfDrawerSection.BOOKMARKS -> SharedMobilePdfBookmarksDrawerPage(
@@ -1339,6 +1434,7 @@ private fun SharedMobilePdfReaderDrawer(
                 SharedMobilePdfDrawerSection.HIGHLIGHTS -> SharedMobilePdfAnnotationsDrawerPage(
                     state = state,
                     onGoToPage = onGoToPage,
+                    onEditNote = onEditNote,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -1347,10 +1443,156 @@ private fun SharedMobilePdfReaderDrawer(
 }
 
 private enum class SharedMobilePdfDrawerSection(val label: String) {
-    TABS("Tabs"),
     CHAPTERS("Chapters"),
     BOOKMARKS("Bookmarks"),
     HIGHLIGHTS("Highlights")
+}
+
+@Composable
+private fun SharedMobilePdfChaptersDrawerPage(
+    entries: List<PdfTocEntry>,
+    currentPageIndex: Int,
+    onGoToPage: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (entries.isEmpty()) {
+        SharedMobilePdfEmptyDrawerPage("No chapters found in this PDF.", modifier)
+        return
+    }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val parentIndices: Set<Int> = remember(entries) {
+        entries.indices.filter { index ->
+            entries.getOrNull(index + 1)?.nestLevel?.let { it > entries[index].nestLevel } == true
+        }.toSet()
+    }
+    var expandedIndices by remember(entries) { mutableStateOf(parentIndices) }
+    var query by remember(entries) { mutableStateOf("") }
+    val activeIndex = entries.indexOfLast { it.pageIndex <= currentPageIndex }
+    val visibleEntries = if (query.isNotBlank()) {
+        entries.mapIndexedNotNull { index, entry ->
+            (index to entry).takeIf { entry.title.contains(query.trim(), ignoreCase = true) }
+        }
+    } else {
+        buildList {
+            val visibleAtLevel = BooleanArray(65)
+            visibleAtLevel[0] = true
+            entries.forEachIndexed { index, entry ->
+                val level = entry.nestLevel.coerceIn(0, visibleAtLevel.lastIndex)
+                if (visibleAtLevel[level]) add(index to entry)
+                if (level < visibleAtLevel.lastIndex) {
+                    visibleAtLevel[level + 1] = visibleAtLevel[level] && index in expandedIndices
+                }
+            }
+        }
+    }
+
+    Column(modifier) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            trailingIcon = if (query.isNotEmpty()) {
+                { IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, contentDescription = "Clear search") } }
+            } else null,
+            placeholder = { Text("Search chapters") },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            TextButton(onClick = { expandedIndices = parentIndices }) { Text("Expand all") }
+            TextButton(onClick = { expandedIndices = emptySet() }) { Text("Collapse all") }
+            TextButton(onClick = {
+                val target = visibleEntries.indexOfFirst { it.first == activeIndex }
+                if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
+            }) { Text("Locate") }
+        }
+        HorizontalDivider()
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(end = 10.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                items(visibleEntries, key = { (index, entry) ->
+                    "${entry.pageIndex}_${entry.nestLevel}_${entry.title}_$index"
+                }) { (index, entry) ->
+                    val hasChildren = index in parentIndices
+                    val expanded = index in expandedIndices
+                    NavigationDrawerItem(
+                        icon = if (hasChildren) {
+                            {
+                                IconButton(
+                                    onClick = {
+                                        expandedIndices = if (expanded) expandedIndices - index else expandedIndices + index
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        if (expanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
+                                        contentDescription = if (expanded) "Collapse chapter" else "Expand chapter"
+                                    )
+                                }
+                            }
+                        } else null,
+                        label = { Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                        selected = index == activeIndex,
+                        onClick = { onGoToPage(entry.pageIndex) },
+                        badge = { Text("${entry.pageIndex + 1}", style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.padding(
+                            start = (4 + entry.nestLevel.coerceAtMost(6) * 16).dp,
+                            end = 4.dp,
+                            top = 2.dp,
+                            bottom = 2.dp
+                        )
+                    )
+                }
+            }
+            SharedMobileLazyListScrollbar(
+                state = listState,
+                itemCount = visibleEntries.size,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileLazyListScrollbar(
+    state: androidx.compose.foundation.lazy.LazyListState,
+    itemCount: Int,
+    modifier: Modifier = Modifier
+) {
+    if (itemCount <= 1) return
+    val visibleCount = state.layoutInfo.visibleItemsInfo.size.coerceAtLeast(1)
+    if (visibleCount >= itemCount) return
+    val scope = rememberCoroutineScope()
+    var trackHeightPx by remember { mutableStateOf(1) }
+    val thumbFraction = (visibleCount.toFloat() / itemCount).coerceIn(0.08f, 1f)
+    val maxFirst = (itemCount - visibleCount).coerceAtLeast(1)
+    val progress = (state.firstVisibleItemIndex.toFloat() / maxFirst).coerceIn(0f, 1f)
+    val thumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    Canvas(
+        modifier = modifier
+            .width(12.dp)
+            .fillMaxHeight()
+            .onSizeChanged { trackHeightPx = it.height.coerceAtLeast(1) }
+            .pointerInput(itemCount, visibleCount) {
+                detectDragGestures { change, _ ->
+                    val target = ((change.position.y / trackHeightPx) * maxFirst).toInt().coerceIn(0, maxFirst)
+                    scope.launch { state.scrollToItem(target) }
+                }
+            }
+    ) {
+        val thumbHeight = size.height * thumbFraction
+        val thumbTop = (size.height - thumbHeight) * progress
+        drawRoundRect(
+            color = thumbColor,
+            topLeft = Offset(size.width - 4.dp.toPx(), thumbTop),
+            size = androidx.compose.ui.geometry.Size(3.dp.toPx(), thumbHeight),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
+        )
+    }
 }
 
 @Composable
@@ -1369,33 +1611,6 @@ private fun SharedMobilePdfEmptyDrawerPage(
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface
         )
-    }
-}
-
-@Composable
-private fun SharedMobilePdfPagesDrawerPage(
-    state: SharedPdfReaderState,
-    onGoToPage: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 16.dp)
-    ) {
-        items(state.pageCount.coerceAtLeast(1)) { page ->
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Description, contentDescription = null) },
-                label = { Text("Page ${page + 1}") },
-                selected = page == state.pageIndex,
-                onClick = { onGoToPage(page) },
-                badge = {
-                    if (state.bookmarks.any { it.pageIndex == page }) {
-                        Icon(Icons.Default.Bookmark, contentDescription = "Bookmarked", modifier = Modifier.size(18.dp))
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-            )
-        }
     }
 }
 
@@ -1432,9 +1647,11 @@ private fun SharedMobilePdfBookmarksDrawerPage(
 private fun SharedMobilePdfAnnotationsDrawerPage(
     state: SharedPdfReaderState,
     onGoToPage: (Int) -> Unit,
+    onEditNote: (SharedPdfAnnotation) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    if (state.annotations.isEmpty()) {
+    val highlights = state.annotations.filter { it.kind == PdfAnnotationKind.HIGHLIGHT }
+    if (highlights.isEmpty()) {
         Box(modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text("No annotations yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -1444,7 +1661,7 @@ private fun SharedMobilePdfAnnotationsDrawerPage(
         modifier = modifier,
         contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 16.dp)
     ) {
-        items(state.annotations.sortedWith(compareBy({ it.pageIndex }, { it.createdAt }, { it.id })), key = { it.id }) { annotation ->
+        items(highlights.sortedWith(compareBy({ it.pageIndex }, { it.createdAt }, { it.id })), key = { it.id }) { annotation ->
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Palette, contentDescription = null) },
                 label = {
@@ -1466,6 +1683,15 @@ private fun SharedMobilePdfAnnotationsDrawerPage(
                 },
                 selected = annotation.pageIndex == state.pageIndex,
                 onClick = { onGoToPage(annotation.pageIndex) },
+                badge = {
+                    IconButton(onClick = { onEditNote(annotation) }) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = if (annotation.note.isNullOrBlank()) "Add note" else "Edit note",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
             )
         }
@@ -1728,9 +1954,10 @@ private fun SharedMobilePdfThemeGridItem(
     }
 }
 
+@Composable
 private fun sharedMobilePdfViewerBackground(theme: ReaderTheme, displayMode: PdfDisplayMode): Color {
     return when (theme.id) {
-        "no_theme", "system" -> if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.White else Color.Black
+        "no_theme", "system" -> if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) MaterialTheme.colorScheme.surfaceContainer else Color.Black
         "reverse" -> if (displayMode == PdfDisplayMode.VERTICAL_SCROLL) Color.Black else Color.White
         else -> theme.backgroundColor.takeIf { it.isSpecified } ?: Color.White
     }
@@ -1799,6 +2026,9 @@ private fun SharedMobilePdfVerticalPages(
     onVisiblePageChanged: (Int) -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int) -> Unit,
+    onExternalLink: (String) -> Unit,
+    onInternalLink: (Int) -> Unit,
+    onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     userScrollEnabled: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -1820,8 +2050,8 @@ private fun SharedMobilePdfVerticalPages(
         state = listState,
         userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
         modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = if (showPageGap) 12.dp else 0.dp),
-        verticalArrangement = Arrangement.spacedBy(if (showPageGap) 12.dp else 0.dp)
+        contentPadding = PaddingValues(0.dp),
+        verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
     ) {
         items(pageCount) { page ->
             val render = rememberSharedMobilePdfPageRender(book, page)
@@ -1839,6 +2069,9 @@ private fun SharedMobilePdfVerticalPages(
                 selectedTool = state.selectedTool,
                 selectedColorArgb = state.selectedColorArgb,
                 strokeWidth = state.strokeWidth,
+                onExternalLink = onExternalLink,
+                onInternalLink = onInternalLink,
+                onHighlight = onHighlight,
                 onCanvasSizeChanged = onCanvasSizeChanged,
                 onFinishInkStroke = onFinishInkStroke,
                 modifier = Modifier.fillMaxWidth()
@@ -1863,6 +2096,9 @@ private fun SharedMobilePdfPaginatedPages(
     searchResults: List<SharedPdfSearchResult>,
     activeStroke: List<PdfPagePoint>,
     tapToTurnPages: Boolean,
+    onExternalLink: (String) -> Unit,
+    onInternalLink: (Int) -> Unit,
+    onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     userScrollEnabled: Boolean,
     onPageChanged: (Int) -> Unit,
     onToggleChrome: () -> Unit,
@@ -1957,6 +2193,9 @@ private fun SharedMobilePdfPaginatedPages(
                                 selectedTool = state.selectedTool,
                                 selectedColorArgb = state.selectedColorArgb,
                                 strokeWidth = state.strokeWidth,
+                                onExternalLink = onExternalLink,
+                                onInternalLink = onInternalLink,
+                                onHighlight = onHighlight,
                                 onCanvasSizeChanged = onCanvasSizeChanged,
                                 onFinishInkStroke = onFinishInkStroke,
                                 modifier = Modifier.size(fittedWidth, fittedHeight)
@@ -2070,6 +2309,9 @@ private fun SharedMobilePdfPageSurface(
     selectedTool: PdfInkTool,
     selectedColorArgb: Int,
     strokeWidth: Float,
+    onExternalLink: (String) -> Unit,
+    onInternalLink: (Int) -> Unit,
+    onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int) -> Unit,
     modifier: Modifier = Modifier
@@ -2158,6 +2400,9 @@ private fun SharedMobilePdfPageSurface(
                 pageIndex = pageIndex,
                 canvasSize = localCanvasSize,
                 selectedTool = selectedTool,
+                onExternalLink = onExternalLink,
+                onInternalLink = onInternalLink,
+                onHighlight = { range, text, bounds, color, style, note -> onHighlight(pageIndex, range, text, bounds, color, style, note) },
                 modifier = Modifier.fillMaxSize()
             )
             if (showPageNumberOverlay) {

@@ -5,10 +5,10 @@ package com.aryan.reader.shared.ui
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.SharedPdfSearchEngine
+import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageCount
-import com.aryan.reader.shared.pdfium.c.FPDF_InitLibrary
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadPage
 import com.aryan.reader.shared.pdfium.c.FPDFText_LoadPage
@@ -19,17 +19,11 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.UShortVar
 import kotlinx.cinterop.get
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
-
-private var searchLibraryInitialized = false
-
-private fun ensureSearchLibraryInitialized() {
-    if (!searchLibraryInitialized) {
-        FPDF_InitLibrary()
-        searchLibraryInitialized = true
-    }
-}
 
 private fun String?.resolvedIosPdfPath(): String? {
     val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
@@ -40,16 +34,17 @@ private fun String?.resolvedIosPdfPath(): String? {
 internal actual suspend fun searchSharedMobilePdf(
     book: BookItem,
     query: String
-): List<SharedPdfSearchResult> {
-    val resolvedPath = book.path.resolvedIosPdfPath() ?: return emptyList()
+): List<SharedPdfSearchResult> = withContext(Dispatchers.Main) {
+    val resolvedPath = book.path.resolvedIosPdfPath() ?: return@withContext emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
-        return emptyList()
+        return@withContext emptyList()
     }
 
-    ensureSearchLibraryInitialized()
+    IosPdfiumRuntime.mutex.withLock {
+        IosPdfiumRuntime.ensureInitialized()
 
-    val document = FPDF_LoadDocument(resolvedPath, null) ?: return emptyList()
-    try {
+        val document = FPDF_LoadDocument(resolvedPath, null) ?: return@withLock emptyList()
+        try {
         val pageCount = FPDF_GetPageCount(document)
         val pageTexts = mutableListOf<String>()
 
@@ -91,8 +86,9 @@ internal actual suspend fun searchSharedMobilePdf(
             }
         }
 
-        return SharedPdfSearchEngine.search(pageTexts, query)
-    } finally {
-        FPDF_CloseDocument(document)
+            SharedPdfSearchEngine.search(pageTexts, query)
+        } finally {
+            FPDF_CloseDocument(document)
+        }
     }
 }

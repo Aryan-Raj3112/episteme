@@ -3,19 +3,23 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Icon
@@ -56,19 +60,20 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.PdfInkTool
+import com.aryan.reader.shared.pdf.PdfLinkTarget
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfSelectionHandle
 import com.aryan.reader.shared.pdf.PdfTextPageSession
 import com.aryan.reader.shared.pdf.PdfTextSelectionEngine
 import com.aryan.reader.shared.pdf.PdfTextSelectionRange
+import com.aryan.reader.shared.pdf.pdfLinkLog
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.generated.resources.Res
 import com.aryan.reader.shared.generated.resources.teardrop
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.NonCancellable
 import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
@@ -89,10 +94,14 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     pageIndex: Int,
     canvasSize: IntSize,
     selectedTool: PdfInkTool,
+    onExternalLink: (String) -> Unit,
+    onInternalLink: (Int) -> Unit,
+    onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
     val session = rememberPdfTextPageSession(book, pageIndex)
+    val linkBounds = remember(session) { session?.linkBoundsNormalized().orEmpty() }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     val density = LocalDensity.current
@@ -157,14 +166,10 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         }
         val coerced = range.coerced(s.pageCharCount)
         selLog { "computeAndApply: coerced=${coerced.start}..${coerced.end} pageChars=${s.pageCharCount}" }
-        val rects = withContext(Dispatchers.Default) {
-            s.rectsForRangeNormalized(coerced.start, coerced.length)
-                .map(::boundsToCanvas)
-                .filter { it.width > 0f && it.height > 0f }
-        }
-        val text = withContext(Dispatchers.Default) {
-            s.textForRange(coerced.start, coerced.length)?.takeIf { it.isNotBlank() }
-        }
+        val rects = s.rectsForRangeNormalized(coerced.start, coerced.length)
+            .map(::boundsToCanvas)
+            .filter { it.width > 0f && it.height > 0f }
+        val text = s.textForRange(coerced.start, coerced.length)?.takeIf { it.isNotBlank() }
         selLog { "computeAndApply: rects=${rects.size} firstRect=${rects.firstOrNull()} textLen=${text?.length ?: 0}" }
         applyRangeUpdate(coerced, rects, text)
     }
@@ -176,14 +181,12 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         val normX = (touchOffset.x / canvasSize.width).coerceIn(0f, 1f)
         val normY = (touchOffset.y / canvasSize.height).coerceIn(0f, 1f)
         selLog { "startNewSelectionAt: touch=(${touchOffset.x},${touchOffset.y}) norm=($normX,$normY) pageChars=${s.pageCharCount}" }
-        val charIndex = withContext(Dispatchers.Default) {
-            s.charIndexAtNormalized(
-                normX = normX,
-                normY = normY,
-                xTolerance = LongPressCharTolerance,
-                yTolerance = LongPressCharTolerance
-            )
-        }
+        val charIndex = s.charIndexAtNormalized(
+            normX = normX,
+            normY = normY,
+            xTolerance = LongPressCharTolerance,
+            yTolerance = LongPressCharTolerance
+        )
         selLog { "startNewSelectionAt: charIndex=$charIndex" }
         if (charIndex < 0) return false
         val word = PdfTextSelectionEngine.wordBoundaries(s, charIndex) ?: run {
@@ -216,14 +219,64 @@ internal fun SharedMobilePdfTextSelectionOverlay(
             )
         }
     } else {
-        // No selection present: only long-press matters; taps fall through to
-        // the parent (chrome toggle / page turn). `detectLongPressOnly` is a
-        // custom detector that does NOT consume quick taps, ensuring the
-        // parent's `detectTapGestures` / `Modifier.clickable` still fires.
-        Modifier.pointerInput(book.path, pageIndex, canvasSize, teardropWidthPx, teardropHeightPx) {
-            detectLongPressOnly { offset ->
-                selLog { "longPress at canvas=(${offset.x},${offset.y})" }
-                scope.launch { startNewSelectionAt(offset) }
+        // No selection present: long-press starts a new selection; quick tap
+        // resolves a PDF link at the finger (if any). If no link, the tap is
+        // NOT consumed so the parent's chrome toggle / page-turn still fires.
+        Modifier.pointerInput(book.path, pageIndex, canvasSize, session, teardropWidthPx, teardropHeightPx) {
+            var pendingLinkTarget: PdfLinkTarget? = null
+            detectTapOrLongPress(
+                onLongPress = { offset ->
+                    selLog { "longPress at canvas=(${offset.x},${offset.y})" }
+                    scope.launch { startNewSelectionAt(offset) }
+                },
+                shouldReserveTap = { offset ->
+                    val s = session
+                    if (s == null) {
+                        pdfLinkLog { "tap page=$pageIndex ignored reason=session-not-ready" }
+                        selLog { "tap.noSession -> not consumed" }
+                        pendingLinkTarget = null
+                        false
+                    } else {
+                        val normX = (offset.x / canvasSize.width).coerceIn(0f, 1f)
+                        val normY = (offset.y / canvasSize.height).coerceIn(0f, 1f)
+                        pdfLinkLog { "hit-test page=$pageIndex canvas=${offset.x},${offset.y} normalized=$normX,$normY" }
+                        selLog { "tap.link.lookup canvas=(${offset.x},${offset.y}) norm=($normX,$normY)" }
+                        pendingLinkTarget = s.linkAtNormalized(normX, normY)
+                        pdfLinkLog { "hit-test-result page=$pageIndex target=$pendingLinkTarget" }
+                        selLog { "tap.link.target=$pendingLinkTarget" }
+                        pendingLinkTarget != null
+                    }
+                },
+                onReservedTap = {
+                    when (val target = pendingLinkTarget) {
+                        is PdfLinkTarget.ExternalUrl -> {
+                            pdfLinkLog { "navigate-external page=$pageIndex url=${target.url}" }
+                            onExternalLink(target.url)
+                        }
+                        is PdfLinkTarget.InternalPage -> {
+                            pdfLinkLog { "navigate-internal from=$pageIndex to=${target.pageIndex}" }
+                            onInternalLink(target.pageIndex)
+                        }
+                        null -> Unit
+                    }
+                    pendingLinkTarget = null
+                }
+            )
+        }
+    }
+
+    if (linkBounds.isNotEmpty()) {
+        val linkColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+        Canvas(Modifier.fillMaxSize()) {
+            linkBounds.forEach { bounds ->
+                drawRect(
+                    color = linkColor,
+                    topLeft = Offset(bounds.left * size.width, bounds.top * size.height),
+                    size = Size(
+                        (bounds.right - bounds.left) * size.width,
+                        (bounds.bottom - bounds.top) * size.height
+                    )
+                )
             }
         }
     }
@@ -313,13 +366,11 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                                 val normX = (fingerCanvas.x / canvasSize.width).coerceIn(0f, 1f)
                                 val normY = (fingerCanvas.y / canvasSize.height).coerceIn(0f, 1f)
                                 scope.launch {
-                                    val charIndex = withContext(Dispatchers.Default) {
-                                        s.charIndexAtNormalized(
-                                            normX = normX, normY = normY,
-                                            xTolerance = DragCharTolerance,
-                                            yTolerance = DragCharTolerance * DragWideYToleranceMultiplier
-                                        )
-                                    }
+                                    val charIndex = s.charIndexAtNormalized(
+                                        normX = normX, normY = normY,
+                                        xTolerance = DragCharTolerance,
+                                        yTolerance = DragCharTolerance * DragWideYToleranceMultiplier
+                                    )
                                     selLog { "drag[$handle] charIndex=$charIndex" }
                                     if (charIndex < 0) return@launch
                                     val update = PdfTextSelectionEngine.extendRange(
@@ -378,6 +429,19 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         ) {
             SharedMobilePdfSelectionMenu(
                 selectedText = selectedText,
+                onHighlight = { colorArgb, style, addNote ->
+                    val range = state.range ?: return@SharedMobilePdfSelectionMenu
+                    val bounds = state.selectionRects.map { rect ->
+                        PdfPageBounds(
+                            left = (rect.left / canvasSize.width).coerceIn(0f, 1f),
+                            top = (rect.top / canvasSize.height).coerceIn(0f, 1f),
+                            right = (rect.right / canvasSize.width).coerceIn(0f, 1f),
+                            bottom = (rect.bottom / canvasSize.height).coerceIn(0f, 1f)
+                        )
+                    }
+                    onHighlight(range, selectedText, bounds, colorArgb, style, addNote)
+                    applyRangeUpdate(null, emptyList(), null)
+                },
                 onCopy = { text ->
                     clipboard.setText(AnnotatedString(text))
                     applyRangeUpdate(null, emptyList(), null)
@@ -458,24 +522,47 @@ internal fun selLog(message: () -> String) {
  * Mirrors Android docs for `View.setOnLongClickListener`: presses shorter than
  * the long-press timeout are reported as taps/scrolls to the parent.
  */
-private suspend fun PointerInputScope.detectLongPressOnly(
-    onLongPress: (Offset) -> Unit
+private suspend fun PointerInputScope.detectTapOrLongPress(
+    onLongPress: (Offset) -> Unit,
+    shouldReserveTap: (Offset) -> Boolean,
+    onReservedTap: () -> Unit
 ) {
-    val viewConfig = viewConfiguration
-    val longPressDelay = viewConfig.longPressTimeoutMillis
-    val touchSlop = viewConfig.touchSlop
-    selLog { "detectLongPressOnly installed (longPress=${longPressDelay}ms slop=${touchSlop})" }
+    val longPressDelay = viewConfiguration.longPressTimeoutMillis
+    selLog { "detectTapOrLongPress installed (longPress=${longPressDelay}ms)" }
     awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = true, pass = PointerEventPass.Main)
-        selLog { "longPress.down at canvas=(${down.position.x},${down.position.y})" }
-        try {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        selLog { "tapLong.down at canvas=(${down.position.x},${down.position.y})" }
+        val reservedForLink = shouldReserveTap(down.position)
+        if (reservedForLink) {
+            down.consume()
+            pdfLinkLog { "gesture-reserved pointer=${down.id} phase=down" }
+        }
+        val up = try {
             withTimeout(longPressDelay) {
-                waitForUpOrCancellation()
+                // Link taps reserve their down event during Initial. Observe the release in the
+                // same pass so the parent reader's tap/page-turn detector cannot consume it first
+                // and turn a valid PDF link into a cancellation.
+                waitForUpOrCancellation(pass = PointerEventPass.Initial)
             }
         } catch (_: androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException) {
+            // Long-press triggered: finger stayed down past the threshold.
             down.consume()
-            selLog { "longPress.fired after ${longPressDelay}ms at canvas=(${down.position.x},${down.position.y}) -> consume" }
+            selLog { "tapLong.longPress.fired at canvas=(${down.position.x},${down.position.y}) -> consume" }
             onLongPress(down.position)
+            return@awaitEachGesture
+        }
+        // Finger lifted before long-press: this is a tap. Ask caller whether to
+        // consume (e.g. link click should consume, plain empty tap should not
+        if (up == null) {
+            pdfLinkLog { "gesture-cancelled reserved=$reservedForLink" }
+            selLog { "tapLong.cancelled" }
+            return@awaitEachGesture
+        }
+        selLog { "tapLong.tap.reserved=$reservedForLink at canvas=(${up.position.x},${up.position.y})" }
+        if (reservedForLink) {
+            up.consume()
+            pdfLinkLog { "gesture-reserved pointer=${up.id} phase=up dispatch=true" }
+            onReservedTap()
         }
     }
 }
@@ -501,28 +588,58 @@ private class SharedMobilePdfSelectionMenuPositionProvider(
 @Composable
 private fun SharedMobilePdfSelectionMenu(
     selectedText: String,
+    onHighlight: (Int, HighlightStyle, Boolean) -> Unit,
     onCopy: (String) -> Unit,
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit
 ) {
+    var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
+    val colors = SharedPdfAndroidHighlightColors.palette.take(4)
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 8.dp,
         tonalElevation = 4.dp
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SharedMobilePdfSelectionMenuAction(icon = Icons.Default.ContentCopy, label = "Copy") {
-                onCopy(selectedText)
+        Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                HighlightStyle.entries.forEach { style ->
+                    TextButton(onClick = { selectedStyle = style }) {
+                        Text(
+                            text = when (style) {
+                                HighlightStyle.BACKGROUND -> "Ab"
+                                HighlightStyle.UNDERLINE -> "A̲"
+                                HighlightStyle.WAVY_UNDERLINE -> "A﹏"
+                                HighlightStyle.STRIKETHROUGH -> "A̶"
+                            },
+                            color = if (selectedStyle == style) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
             }
-            SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Translate, label = "Translate") {
-                onTranslate(selectedText)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                colors.forEach { colorArgb ->
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 7.dp, vertical = 4.dp)
+                            .size(28.dp)
+                            .graphicsLayer { shape = CircleShape; clip = true }
+                            .background(Color(colorArgb))
+                            .pointerInput(colorArgb, selectedStyle) {
+                                detectTapGestures { onHighlight(colorArgb, selectedStyle, false) }
+                            }
+                    )
+                }
             }
-            SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Search, label = "Search") {
-                onSearch(selectedText)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.ContentCopy, label = "Copy") { onCopy(selectedText) }
+                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Edit, label = "Note") {
+                    onHighlight(colors.first(), selectedStyle, true)
+                }
+                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Translate, label = "Translate") { onTranslate(selectedText) }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Search, label = "Search") { onSearch(selectedText) }
             }
         }
     }
