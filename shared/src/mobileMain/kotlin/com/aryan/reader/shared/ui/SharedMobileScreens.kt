@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -28,6 +30,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -145,6 +150,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
@@ -400,7 +406,7 @@ fun SharedMobilePdfReaderScreen(
     initialReaderState: SharedPdfReaderState? = null,
     onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
-    onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _ -> },
+    onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
@@ -453,15 +459,17 @@ fun SharedMobilePdfReaderScreen(
         SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> !showChrome
         SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> true
     }
-    LaunchedEffect(hideSystemUi, systemBarColor) {
+    val edgeToEdgeSystemUi = systemUiMode != SharedMobilePdfSystemUiMode.ALWAYS_SHOW
+    LaunchedEffect(hideSystemUi, systemBarColor, edgeToEdgeSystemUi) {
         onSystemUiAppearanceChange(
             hideSystemUi,
             systemBarColor.luminance() < 0.5f,
-            systemBarColor.toArgb().toLong()
+            systemBarColor.toArgb().toLong(),
+            edgeToEdgeSystemUi
         )
     }
     DisposableEffect(Unit) {
-        onDispose { onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL) }
+        onDispose { onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL, false) }
     }
     var canvasSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
     val activeStroke = remember(book.id, readerState.pageIndex) { mutableStateListOf<PdfPagePoint>() }
@@ -687,7 +695,8 @@ fun SharedMobilePdfReaderScreen(
                         onToggleAutoScroll = { autoScrollEnabled = !autoScrollEnabled },
                         onTextSelection = { dispatch(SharedPdfReaderAction.TextSelectionModeChanged(!readerState.isTextSelectionMode)) },
                         onHighlighterTool = { setTool(readerState.lastActiveHighlighterTool) },
-                        onBridgeInfo = { onNativePdfBridgeNeeded(book) }
+                        onBridgeInfo = { onNativePdfBridgeNeeded(book) },
+                        applySystemBarInsets = systemUiMode == SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS
                     )
                 }
             },
@@ -704,6 +713,7 @@ fun SharedMobilePdfReaderScreen(
                         onUndo = { dispatch(SharedPdfReaderAction.UndoLastAnnotationOnPage(readerState.pageIndex)) },
                         onRedo = { dispatch(SharedPdfReaderAction.RedoAnnotationEdit) },
                         onClearPage = { dispatch(SharedPdfReaderAction.ClearPageAnnotations(readerState.pageIndex)) },
+                        applySystemBarInsets = systemUiMode == SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -717,11 +727,7 @@ fun SharedMobilePdfReaderScreen(
                         indication = null,
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                     ) {
-                        when (systemUiMode) {
-                            SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> showChrome = true
-                            SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> showChrome = !showChrome
-                            SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> showChrome = false
-                        }
+                        showChrome = !showChrome
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -842,11 +848,6 @@ fun SharedMobilePdfReaderScreen(
                 showPageNumberOverlay = showPageNumberOverlay,
                 onSystemUiModeChange = { mode ->
                     systemUiMode = mode
-                    when (mode) {
-                        SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> showChrome = true
-                        SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> Unit
-                        SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> showChrome = false
-                    }
                 },
                 onTwoPageSpreadChange = { useTwoPageSpread = it },
                 onFirstPageStandaloneChange = { firstPageStandaloneInSpread = it },
@@ -912,7 +913,8 @@ private fun SharedMobilePdfReaderTopBar(
     onToggleAutoScroll: () -> Unit,
     onTextSelection: () -> Unit,
     onHighlighterTool: () -> Unit,
-    onBridgeInfo: () -> Unit
+    onBridgeInfo: () -> Unit,
+    applySystemBarInsets: Boolean
 ) {
     var showMoreMenu by remember { mutableStateOf(false) }
     var showHiddenToolsExpanded by remember { mutableStateOf(false) }
@@ -927,6 +929,13 @@ private fun SharedMobilePdfReaderTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(
+                    if (applySystemBarInsets) {
+                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                    } else {
+                        Modifier
+                    }
+                )
                 .height(64.dp)
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -1213,16 +1222,12 @@ private fun SharedMobilePdfVisualOptionsSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SharedMobilePdfSystemUiMode.entries.forEach { mode ->
-                    FilterChip(
-                        selected = mode == systemUiMode,
-                        onClick = { onSystemUiModeChange(mode) },
-                        label = { Text(mode.label, maxLines = 1) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
+            SharedMobilePdfSegmentedControl(
+                options = SharedMobilePdfSystemUiMode.entries,
+                selectedOption = systemUiMode,
+                onOptionSelected = onSystemUiModeChange,
+                label = { it.label }
+            )
             Spacer(Modifier.height(20.dp))
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
@@ -1231,20 +1236,12 @@ private fun SharedMobilePdfVisualOptionsSheet(
                 Spacer(Modifier.height(4.dp))
                 Text("PDF Page Spread", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = !useTwoPageSpread,
-                        onClick = { onTwoPageSpreadChange(false) },
-                        label = { Text("Single") },
-                        modifier = Modifier.weight(1f)
-                    )
-                    FilterChip(
-                        selected = useTwoPageSpread,
-                        onClick = { onTwoPageSpreadChange(true) },
-                        label = { Text("Two Page") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                SharedMobilePdfSegmentedControl(
+                    options = listOf(false, true),
+                    selectedOption = useTwoPageSpread,
+                    onOptionSelected = onTwoPageSpreadChange,
+                    label = { if (it) "Two Page" else "Single" }
+                )
                 if (useTwoPageSpread) {
                     SharedMobilePdfVisualOptionSwitchRow(
                         title = "First Page Alone",
@@ -1267,6 +1264,39 @@ private fun SharedMobilePdfVisualOptionsSheet(
                 checked = !showPageNumberOverlay,
                 onCheckedChange = { onShowPageNumberOverlayChange(!it) }
             )
+        }
+    }
+}
+
+@Composable
+private fun <T> SharedMobilePdfSegmentedControl(
+    options: List<T>,
+    selectedOption: T,
+    onOptionSelected: (T) -> Unit,
+    label: (T) -> String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        options.forEach { option ->
+            val selected = option == selectedOption
+            Box(
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+                    .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                    .clickable { onOptionSelected(option) }
+                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label(option),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 }
@@ -1302,6 +1332,7 @@ private fun SharedMobilePdfReaderBottomBar(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onClearPage: () -> Unit,
+    applySystemBarInsets: Boolean,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -1309,7 +1340,16 @@ private fun SharedMobilePdfReaderBottomBar(
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 4.dp
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(
+            modifier = Modifier.then(
+                if (applySystemBarInsets) {
+                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                } else {
+                    Modifier
+                }
+            ),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

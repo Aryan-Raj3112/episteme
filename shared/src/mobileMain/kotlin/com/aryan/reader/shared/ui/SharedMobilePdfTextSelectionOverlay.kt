@@ -3,7 +3,10 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -12,9 +15,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,6 +29,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -72,9 +80,15 @@ import com.aryan.reader.shared.pdf.PdfTextSelectionRange
 import com.aryan.reader.shared.pdf.pdfLinkLog
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.generated.resources.Res
+import com.aryan.reader.shared.generated.resources.copy
+import com.aryan.reader.shared.generated.resources.font_background
+import com.aryan.reader.shared.generated.resources.format_underlined
+import com.aryan.reader.shared.generated.resources.format_underlined_squiggle
+import com.aryan.reader.shared.generated.resources.select_all
+import com.aryan.reader.shared.generated.resources.strikethrough
 import com.aryan.reader.shared.generated.resources.teardrop
+import com.aryan.reader.shared.generated.resources.translate
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
 private const val LongPressCharTolerance = 5.0
@@ -423,7 +437,10 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     val selectedText = state.selectedText
     if (anchor != null && selectedText != null && selectedText.isNotBlank()) {
         Popup(
-            popupPositionProvider = SharedMobilePdfSelectionMenuPositionProvider(anchor),
+            popupPositionProvider = SharedMobilePdfSelectionMenuPositionProvider(
+                anchor = anchor,
+                marginPx = with(density) { 16.dp.toPx() }
+            ),
             onDismissRequest = { selLog { "popup onDismissRequest (ignored — not clearing selection automatically)" } },
             properties = PopupProperties(focusable = false)
         ) {
@@ -453,6 +470,10 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                 onSearch = { text ->
                     openSharedMobileExternalUrl("https://www.google.com/search?q=${encodeQuery(text)}")
                     applyRangeUpdate(null, emptyList(), null)
+                },
+                onSelectAll = {
+                    val s = session ?: return@SharedMobilePdfSelectionMenu
+                    scope.launch { computeAndApply(PdfTextSelectionRange(0, s.pageCharCount)) }
                 }
             )
         }
@@ -568,7 +589,8 @@ private suspend fun PointerInputScope.detectTapOrLongPress(
 }
 
 private class SharedMobilePdfSelectionMenuPositionProvider(
-    private val anchor: Rect
+    private val anchor: Rect,
+    private val marginPx: Float
 ) : PopupPositionProvider {
     override fun calculatePosition(
         anchorBounds: IntRect,
@@ -576,12 +598,22 @@ private class SharedMobilePdfSelectionMenuPositionProvider(
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize
     ): IntOffset {
-        val centerX = (anchor.left + anchor.right) / 2f
-        val x = (centerX - popupContentSize.width / 2f)
-            .coerceIn(0f, (windowSize.width - popupContentSize.width).toFloat())
-        val gap = 8f
-        val yAbove = (anchor.top - gap - popupContentSize.height).coerceAtLeast(0f)
-        return IntOffset(x.roundToInt(), yAbove.roundToInt())
+        // The selection bounds are local to the page overlay. Popup placement is in window
+        // coordinates, so account for the overlay's window origin before applying the exact
+        // shared policy used by Android PDF and EPUB readers.
+        val placement = sharedSelectionMenuPlacement(
+            viewport = SharedSelectionMenuViewport(windowSize.width, windowSize.height),
+            popup = SharedSelectionMenuSize(popupContentSize.width, popupContentSize.height),
+            selection = SharedSelectionMenuRect(
+                left = anchorBounds.left + anchor.left,
+                top = anchorBounds.top + anchor.top,
+                right = anchorBounds.left + anchor.right,
+                bottom = anchorBounds.top + anchor.bottom
+            ),
+            marginPx = marginPx,
+            gapPx = marginPx
+        )
+        return IntOffset(placement.x, placement.y)
     }
 }
 
@@ -591,7 +623,8 @@ private fun SharedMobilePdfSelectionMenu(
     onHighlight: (Int, HighlightStyle, Boolean) -> Unit,
     onCopy: (String) -> Unit,
     onTranslate: (String) -> Unit,
-    onSearch: (String) -> Unit
+    onSearch: (String) -> Unit,
+    onSelectAll: () -> Unit
 ) {
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
     val colors = SharedPdfAndroidHighlightColors.palette.take(4)
@@ -599,69 +632,96 @@ private fun SharedMobilePdfSelectionMenu(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
         shadowElevation = 8.dp,
-        tonalElevation = 4.dp
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.widthIn(max = 280.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, start = 10.dp, end = 10.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 HighlightStyle.entries.forEach { style ->
-                    TextButton(onClick = { selectedStyle = style }) {
-                        Text(
-                            text = when (style) {
-                                HighlightStyle.BACKGROUND -> "Ab"
-                                HighlightStyle.UNDERLINE -> "A̲"
-                                HighlightStyle.WAVY_UNDERLINE -> "A﹏"
-                                HighlightStyle.STRIKETHROUGH -> "A̶"
-                            },
-                            color = if (selectedStyle == style) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    val painter = painterResource(
+                        when (style) {
+                            HighlightStyle.BACKGROUND -> Res.drawable.font_background
+                            HighlightStyle.UNDERLINE -> Res.drawable.format_underlined
+                            HighlightStyle.WAVY_UNDERLINE -> Res.drawable.format_underlined_squiggle
+                            HighlightStyle.STRIKETHROUGH -> Res.drawable.strikethrough
+                        }
+                    )
+                    Box(
+                        modifier = Modifier.padding(horizontal = 3.dp).size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (selectedStyle == style) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                            .border(1.dp, if (selectedStyle == style) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .clickable { selectedStyle = style },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painter,
+                            contentDescription = style.id,
+                            tint = if (selectedStyle == style) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 10.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 colors.forEach { colorArgb ->
                     Box(
-                        modifier = Modifier
-                            .padding(horizontal = 7.dp, vertical = 4.dp)
-                            .size(28.dp)
-                            .graphicsLayer { shape = CircleShape; clip = true }
+                        modifier = Modifier.padding(horizontal = 4.dp).size(28.dp).clip(CircleShape)
                             .background(Color(colorArgb))
-                            .pointerInput(colorArgb, selectedStyle) {
-                                detectTapGestures { onHighlight(colorArgb, selectedStyle, false) }
-                            }
+                            .clickable { onHighlight(colorArgb, selectedStyle, false) }
                     )
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.ContentCopy, label = "Copy") { onCopy(selectedText) }
-                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Edit, label = "Note") {
-                    onHighlight(colors.first(), selectedStyle, true)
+            HorizontalDivider()
+            val actions = listOf(
+                SharedMobilePdfMenuAction(Res.drawable.copy, "Copy") { onCopy(selectedText) },
+                SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) },
+                SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) },
+                SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = "Note") { onHighlight(colors.first(), selectedStyle, true) },
+                SharedMobilePdfMenuAction(Res.drawable.select_all, "Select all") { onSelectAll() }
+            )
+            Column(Modifier.padding(bottom = 4.dp)) {
+                actions.chunked(3).forEach { rowActions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp),
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly
+                    ) {
+                        rowActions.forEach { SharedMobilePdfSelectionMenuAction(it) }
+                        repeat(3 - rowActions.size) { androidx.compose.foundation.layout.Spacer(Modifier.width(56.dp)) }
+                    }
                 }
-                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Translate, label = "Translate") { onTranslate(selectedText) }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SharedMobilePdfSelectionMenuAction(icon = Icons.Default.Search, label = "Search") { onSearch(selectedText) }
             }
         }
     }
 }
 
+private data class SharedMobilePdfMenuAction(
+    val iconResource: org.jetbrains.compose.resources.DrawableResource? = null,
+    val label: String,
+    val imageVector: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    val onClick: () -> Unit
+)
+
 @Composable
 private fun SharedMobilePdfSelectionMenuAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit
+    action: SharedMobilePdfMenuAction
 ) {
-    TextButton(onClick = onClick) {
-        Row(
-            modifier = Modifier.padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(icon, contentDescription = label, modifier = Modifier.size(18.dp))
-            Text(
-                text = label,
-                modifier = Modifier.padding(start = 4.dp),
-                style = MaterialTheme.typography.labelLarge
-            )
+    Column(
+        modifier = Modifier.width(56.dp).clickable(onClick = action.onClick).padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        when {
+            action.iconResource != null -> Icon(painterResource(action.iconResource), action.label, Modifier.size(22.dp))
+            action.imageVector != null -> Icon(action.imageVector, action.label, Modifier.size(22.dp))
         }
+        Text(action.label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }

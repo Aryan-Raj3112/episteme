@@ -104,14 +104,15 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onImportBooks: onImportBooks
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
-        bridge.setSystemUiHandler { hidden, lightContent, backgroundArgb in
+        bridge.setSystemUiHandler { hidden, lightContent, backgroundArgb, edgeToEdge in
             DispatchQueue.main.async {
                 isSystemUiHidden = hidden.boolValue
             }
             hostController.updateSystemUi(
                 hidden: hidden.boolValue,
                 lightContent: lightContent.boolValue,
-                backgroundArgb: backgroundArgb.int64Value
+                backgroundArgb: backgroundArgb.int64Value,
+                edgeToEdge: edgeToEdge.boolValue
             )
         }
         return hostController
@@ -191,15 +192,15 @@ private final class ReaderStatusBarHostController: UIViewController {
         usesLightStatusBarContent ? .lightContent : .darkContent
     }
 
-    private func updateSystemBarLayout() {
-        contentTopToSafeAreaConstraint?.isActive = !hidesSystemUi
-        contentBottomToSafeAreaConstraint?.isActive = !hidesSystemUi
-        contentTopToEdgeConstraint?.isActive = hidesSystemUi
-        contentBottomToEdgeConstraint?.isActive = hidesSystemUi
+    private func updateSystemBarLayout(edgeToEdge: Bool) {
+        let safeAreaConstraints = [contentTopToSafeAreaConstraint, contentBottomToSafeAreaConstraint].compactMap { $0 }
+        let edgeConstraints = [contentTopToEdgeConstraint, contentBottomToEdgeConstraint].compactMap { $0 }
+        NSLayoutConstraint.deactivate(safeAreaConstraints + edgeConstraints)
+        NSLayoutConstraint.activate(edgeToEdge ? edgeConstraints : safeAreaConstraints)
         view.setNeedsLayout()
     }
 
-    func updateSystemUi(hidden: Bool, lightContent: Bool, backgroundArgb: Int64) {
+    func updateSystemUi(hidden: Bool, lightContent: Bool, backgroundArgb: Int64, edgeToEdge: Bool) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             hidesSystemUi = hidden
@@ -216,7 +217,13 @@ private final class ReaderStatusBarHostController: UIViewController {
             view.window?.backgroundColor = view.backgroundColor
             statusBarBackdrop.backgroundColor = themeColor
             navigationBarBackdrop.backgroundColor = themeColor
-            updateSystemBarLayout()
+            // In edge-to-edge modes these views would sit above Compose and leave a permanent
+            // surface-colored strip after Sync hides the reader chrome. The Compose toolbar
+            // itself paints beneath the system bars while visible; when it is hidden the PDF
+            // must be allowed to draw all the way to the screen edges.
+            statusBarBackdrop.isHidden = edgeToEdge
+            navigationBarBackdrop.isHidden = edgeToEdge
+            updateSystemBarLayout(edgeToEdge: edgeToEdge)
             setNeedsStatusBarAppearanceUpdate()
             setNeedsUpdateOfHomeIndicatorAutoHidden()
         }

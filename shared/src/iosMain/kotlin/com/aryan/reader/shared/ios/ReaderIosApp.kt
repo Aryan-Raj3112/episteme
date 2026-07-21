@@ -65,8 +65,8 @@ import platform.UIKit.UIApplication
 import platform.UIKit.UIScreen
 
 class ReaderIosBridge {
-    private var systemUiHandler: ((hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit)? = null
-    private var latestSystemUiState: Triple<Boolean, Boolean, Long>? = null
+    private var systemUiHandler: ((hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit)? = null
+    private var latestSystemUiState: IosSystemUiState? = null
     private var originalReaderBrightness: Double? = null
     internal var importedFiles by mutableStateOf<List<IosImportedFile>>(loadPersistedImportedFiles())
         private set
@@ -119,18 +119,25 @@ class ReaderIosBridge {
         originalReaderBrightness = null
     }
 
-    fun setSystemUiHandler(handler: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit) {
+    fun setSystemUiHandler(handler: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit) {
         systemUiHandler = handler
-        latestSystemUiState?.let { (hidden, lightContent, backgroundArgb) ->
-            handler(hidden, lightContent, backgroundArgb)
+        latestSystemUiState?.let { state ->
+            handler(state.hidden, state.lightContent, state.backgroundArgb, state.edgeToEdge)
         }
     }
 
-    fun updateSystemUi(hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) {
-        latestSystemUiState = Triple(hidden, lightContent, backgroundArgb)
-        systemUiHandler?.invoke(hidden, lightContent, backgroundArgb)
+    fun updateSystemUi(hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) {
+        latestSystemUiState = IosSystemUiState(hidden, lightContent, backgroundArgb, edgeToEdge)
+        systemUiHandler?.invoke(hidden, lightContent, backgroundArgb, edgeToEdge)
     }
 }
+
+private data class IosSystemUiState(
+    val hidden: Boolean,
+    val lightContent: Boolean,
+    val backgroundArgb: Long,
+    val edgeToEdge: Boolean
+)
 
 data class IosImportedFile(
     val name: String,
@@ -474,7 +481,9 @@ private fun ReaderIosApp(
                                 state = state.withUpdatedIosBook(updatedBook)
                             },
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
-                            onSystemUiAppearanceChange = bridge::updateSystemUi,
+                            onSystemUiAppearanceChange = { hidden, lightContent, backgroundArgb ->
+                                bridge.updateSystemUi(hidden, lightContent, backgroundArgb, edgeToEdge = hidden)
+                            },
                             customReaderThemes = state.customReaderThemes,
                             onCustomReaderThemesChange = { themes ->
                                 state = state.reduce(AppAction.CustomReaderThemesChanged(themes))
