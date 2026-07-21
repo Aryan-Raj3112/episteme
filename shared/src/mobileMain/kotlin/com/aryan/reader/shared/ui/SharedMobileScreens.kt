@@ -102,6 +102,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalBottomSheet
@@ -149,6 +150,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
@@ -436,7 +438,6 @@ fun SharedMobilePdfReaderScreen(
     var searchResults by remember(book.id) { mutableStateOf<List<SharedPdfSearchResult>>(emptyList()) }
     var tableOfContents by remember(book.id) { mutableStateOf<List<PdfTocEntry>>(emptyList()) }
     var noteAnnotationId by remember(book.id) { mutableStateOf<String?>(null) }
-    var noteDraft by remember(book.id) { mutableStateOf("") }
     var isSearchInProgress by remember(book.id) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -586,7 +587,6 @@ fun SharedMobilePdfReaderScreen(
         dispatch(SharedPdfReaderAction.AnnotationAdded(annotation))
         if (openNote) {
             noteAnnotationId = annotation.id
-            noteDraft = ""
         }
     }
 
@@ -647,9 +647,9 @@ fun SharedMobilePdfReaderScreen(
                 },
                 onEditNote = { annotation ->
                     noteAnnotationId = annotation.id
-                    noteDraft = annotation.note.orEmpty()
                     scope.launch { drawerState.close() }
                 },
+                onDeleteHighlight = { dispatch(SharedPdfReaderAction.AnnotationDeleted(it.id)) },
                 onToggleBookmark = { dispatch(SharedPdfReaderAction.BookmarkToggled(readerState.pageIndex, createdAt = currentTimestamp())) }
             )
         },
@@ -749,6 +749,7 @@ fun SharedMobilePdfReaderScreen(
                         onFinishInkStroke = ::finishInkStroke,
                         onExternalLink = { url -> openSharedMobileExternalUrl(url) },
                         onInternalLink = ::navigateToPage,
+                        onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
                         userScrollEnabled = !isScrollLocked,
                         modifier = Modifier.fillMaxSize()
@@ -770,6 +771,7 @@ fun SharedMobilePdfReaderScreen(
                         tapToTurnPages = tapToTurnPages,
                         onExternalLink = { url -> openSharedMobileExternalUrl(url) },
                         onInternalLink = ::navigateToPage,
+                        onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
                         userScrollEnabled = !isScrollLocked,
                         onPageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
@@ -859,27 +861,20 @@ fun SharedMobilePdfReaderScreen(
     }
 
     noteAnnotationId?.let { annotationId ->
-        AlertDialog(
-            onDismissRequest = { noteAnnotationId = null },
-            title = { Text("Note") },
-            text = {
-                OutlinedTextField(
-                    value = noteDraft,
-                    onValueChange = { noteDraft = it },
-                    label = { Text("Add a note") },
-                    minLines = 3
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    readerState.annotations.firstOrNull { it.id == annotationId }?.let { annotation ->
-                        dispatch(SharedPdfReaderAction.AnnotationUpdated(annotation.copy(note = noteDraft.trim().ifBlank { null })))
-                    }
+        val annotation = readerState.annotations.firstOrNull { it.id == annotationId }
+        if (annotation != null) {
+            SharedMobilePdfAnnotationBottomSheet(
+                annotation = annotation,
+                onUpdate = { dispatch(SharedPdfReaderAction.AnnotationUpdated(it)) },
+                onDelete = {
+                    dispatch(SharedPdfReaderAction.AnnotationDeleted(annotationId))
                     noteAnnotationId = null
-                }) { Text("Save") }
-            },
-            dismissButton = { TextButton(onClick = { noteAnnotationId = null }) { Text("Cancel") } }
-        )
+                },
+                onDismiss = { noteAnnotationId = null }
+            )
+        } else {
+            noteAnnotationId = null
+        }
     }
 }
 
@@ -1445,6 +1440,7 @@ private fun SharedMobilePdfReaderDrawer(
     tableOfContents: List<PdfTocEntry>,
     onGoToPage: (Int) -> Unit,
     onEditNote: (SharedPdfAnnotation) -> Unit,
+    onDeleteHighlight: (SharedPdfAnnotation) -> Unit,
     onToggleBookmark: () -> Unit
 ) {
     var selectedSection by remember { mutableStateOf(SharedMobilePdfDrawerSection.CHAPTERS) }
@@ -1475,6 +1471,7 @@ private fun SharedMobilePdfReaderDrawer(
                     state = state,
                     onGoToPage = onGoToPage,
                     onEditNote = onEditNote,
+                    onDeleteHighlight = onDeleteHighlight,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -1688,53 +1685,76 @@ private fun SharedMobilePdfAnnotationsDrawerPage(
     state: SharedPdfReaderState,
     onGoToPage: (Int) -> Unit,
     onEditNote: (SharedPdfAnnotation) -> Unit,
+    onDeleteHighlight: (SharedPdfAnnotation) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val highlights = state.annotations.filter { it.kind == PdfAnnotationKind.HIGHLIGHT }
     if (highlights.isEmpty()) {
         Box(modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-            Text("No annotations yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("No highlights yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 16.dp)
-    ) {
-        items(highlights.sortedWith(compareBy({ it.pageIndex }, { it.createdAt }, { it.id })), key = { it.id }) { annotation ->
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Palette, contentDescription = null) },
-                label = {
-                    Column {
-                        Text("Page ${annotation.pageIndex + 1}")
-                        val detail = when {
-                            annotation.text.isNotBlank() -> annotation.text
-                            annotation.kind == PdfAnnotationKind.HIGHLIGHT -> "Highlight"
-                            else -> annotation.tool.name.lowercase().replaceFirstChar { it.titlecase() }
-                        }
-                        Text(
-                            detail,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                },
-                selected = annotation.pageIndex == state.pageIndex,
-                onClick = { onGoToPage(annotation.pageIndex) },
-                badge = {
-                    IconButton(onClick = { onEditNote(annotation) }) {
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = if (annotation.note.isNullOrBlank()) "Add note" else "Edit note",
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-            )
+    var notesOnly by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
+    val filtered = highlights.filter { !notesOnly || !it.note.isNullOrBlank() }
+        .sortedWith(compareBy({ it.pageIndex }, { it.createdAt }, { it.id }))
+    Column(modifier) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !notesOnly, onClick = { notesOnly = false }, label = { Text("All") })
+            FilterChip(selected = notesOnly, onClick = { notesOnly = true }, label = { Text("With notes") })
         }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+            items(filtered, key = { it.id }) { annotation ->
+                var menuExpanded by remember(annotation.id) { mutableStateOf(false) }
+                ListItem(
+                    headlineContent = {
+                        Text(annotation.text.ifBlank { "Highlighted section" }, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    },
+                    supportingContent = {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(12.dp).background(Color(annotation.colorArgb), CircleShape))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Page ${annotation.pageIndex + 1}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (annotation.comments.any { it.contents.isNotBlank() }) {
+                                    Spacer(Modifier.width(8.dp)); Text("${annotation.comments.count { it.contents.isNotBlank() }} comments", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            annotation.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                Spacer(Modifier.height(8.dp))
+                                Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), modifier = Modifier.fillMaxWidth()) {
+                                    Text(note, style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic), modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    },
+                    trailingContent = {
+                        Box {
+                            IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Default.MoreVert, "Highlight options") }
+                            DropdownMenu(menuExpanded, { menuExpanded = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(if (annotation.note.isNullOrBlank()) "Add note" else "Edit note") },
+                                    onClick = { menuExpanded = false; onEditNote(annotation) }
+                                )
+                                DropdownMenuItem(text = { Text("Delete") }, onClick = { menuExpanded = false; deleteTarget = annotation })
+                            }
+                        }
+                    },
+                    modifier = Modifier.clickable { onGoToPage(annotation.pageIndex) }
+                )
+                HorizontalDivider()
+            }
+        }
+    }
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete highlight?") },
+            text = { Text("This highlight, its note, and its comments will be removed.") },
+            confirmButton = { TextButton(onClick = { onDeleteHighlight(target); deleteTarget = null }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -2068,6 +2088,7 @@ private fun SharedMobilePdfVerticalPages(
     onFinishInkStroke: (Int) -> Unit,
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
+    onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     userScrollEnabled: Boolean,
     modifier: Modifier = Modifier
@@ -2111,6 +2132,7 @@ private fun SharedMobilePdfVerticalPages(
                 strokeWidth = state.strokeWidth,
                 onExternalLink = onExternalLink,
                 onInternalLink = onInternalLink,
+                onExistingHighlightTap = onExistingHighlightTap,
                 onHighlight = onHighlight,
                 onCanvasSizeChanged = onCanvasSizeChanged,
                 onFinishInkStroke = onFinishInkStroke,
@@ -2138,6 +2160,7 @@ private fun SharedMobilePdfPaginatedPages(
     tapToTurnPages: Boolean,
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
+    onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     userScrollEnabled: Boolean,
     onPageChanged: (Int) -> Unit,
@@ -2235,6 +2258,7 @@ private fun SharedMobilePdfPaginatedPages(
                                 strokeWidth = state.strokeWidth,
                                 onExternalLink = onExternalLink,
                                 onInternalLink = onInternalLink,
+                                onExistingHighlightTap = onExistingHighlightTap,
                                 onHighlight = onHighlight,
                                 onCanvasSizeChanged = onCanvasSizeChanged,
                                 onFinishInkStroke = onFinishInkStroke,
@@ -2351,6 +2375,7 @@ private fun SharedMobilePdfPageSurface(
     strokeWidth: Float,
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
+    onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onFinishInkStroke: (Int) -> Unit,
@@ -2442,6 +2467,8 @@ private fun SharedMobilePdfPageSurface(
                 selectedTool = selectedTool,
                 onExternalLink = onExternalLink,
                 onInternalLink = onInternalLink,
+                existingHighlights = annotations.filter { it.kind == PdfAnnotationKind.HIGHLIGHT },
+                onExistingHighlightTap = onExistingHighlightTap,
                 onHighlight = { range, text, bounds, color, style, note -> onHighlight(pageIndex, range, text, bounds, color, style, note) },
                 modifier = Modifier.fillMaxSize()
             )

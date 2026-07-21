@@ -70,6 +70,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
+import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfLinkTarget
 import com.aryan.reader.shared.pdf.PdfPageBounds
@@ -110,6 +111,8 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     selectedTool: PdfInkTool,
     onExternalLink: (String) -> Unit,
     onInternalLink: (Int) -> Unit,
+    existingHighlights: List<SharedPdfAnnotation>,
+    onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -236,14 +239,26 @@ internal fun SharedMobilePdfTextSelectionOverlay(
         // No selection present: long-press starts a new selection; quick tap
         // resolves a PDF link at the finger (if any). If no link, the tap is
         // NOT consumed so the parent's chrome toggle / page-turn still fires.
-        Modifier.pointerInput(book.path, pageIndex, canvasSize, session, teardropWidthPx, teardropHeightPx) {
+        Modifier.pointerInput(book.path, pageIndex, canvasSize, session, existingHighlights, teardropWidthPx, teardropHeightPx) {
             var pendingLinkTarget: PdfLinkTarget? = null
+            var pendingHighlight: SharedPdfAnnotation? = null
             detectTapOrLongPress(
                 onLongPress = { offset ->
                     selLog { "longPress at canvas=(${offset.x},${offset.y})" }
                     scope.launch { startNewSelectionAt(offset) }
                 },
                 shouldReserveTap = { offset ->
+                    val normX = (offset.x / canvasSize.width).coerceIn(0f, 1f)
+                    val normY = (offset.y / canvasSize.height).coerceIn(0f, 1f)
+                    pendingHighlight = existingHighlights.lastOrNull { annotation ->
+                        annotation.boundsList.ifEmpty { listOfNotNull(annotation.bounds) }.any { bounds ->
+                            normX in bounds.left..bounds.right && normY in bounds.top..bounds.bottom
+                        }
+                    }
+                    if (pendingHighlight != null) {
+                        pendingLinkTarget = null
+                        true
+                    } else {
                     val s = session
                     if (s == null) {
                         pdfLinkLog { "tap page=$pageIndex ignored reason=session-not-ready" }
@@ -251,8 +266,6 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                         pendingLinkTarget = null
                         false
                     } else {
-                        val normX = (offset.x / canvasSize.width).coerceIn(0f, 1f)
-                        val normY = (offset.y / canvasSize.height).coerceIn(0f, 1f)
                         pdfLinkLog { "hit-test page=$pageIndex canvas=${offset.x},${offset.y} normalized=$normX,$normY" }
                         selLog { "tap.link.lookup canvas=(${offset.x},${offset.y}) norm=($normX,$normY)" }
                         pendingLinkTarget = s.linkAtNormalized(normX, normY)
@@ -260,9 +273,13 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                         selLog { "tap.link.target=$pendingLinkTarget" }
                         pendingLinkTarget != null
                     }
+                    }
                 },
                 onReservedTap = {
-                    when (val target = pendingLinkTarget) {
+                    val highlight = pendingHighlight
+                    if (highlight != null) {
+                        onExistingHighlightTap(highlight)
+                    } else when (val target = pendingLinkTarget) {
                         is PdfLinkTarget.ExternalUrl -> {
                             pdfLinkLog { "navigate-external page=$pageIndex url=${target.url}" }
                             onExternalLink(target.url)
@@ -273,6 +290,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                         }
                         null -> Unit
                     }
+                    pendingHighlight = null
                     pendingLinkTarget = null
                 }
             )
