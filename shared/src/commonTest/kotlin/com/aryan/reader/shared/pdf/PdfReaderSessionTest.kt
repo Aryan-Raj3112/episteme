@@ -83,6 +83,28 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `scroll lock captures and restores its zoom camera`() {
+        val locked = SharedPdfReaderState.initial(pageCount = 8)
+            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 4.25f, -120f, 340f))
+        val restored = SharedPdfReaderStateSerializer.decode(SharedPdfReaderStateSerializer.encode(locked))
+
+        assertEquals(true, restored?.isScrollLocked)
+        assertEquals(4.25f, restored?.lockedZoomScale)
+        assertEquals(-120f, restored?.lockedZoomOffsetX)
+        assertEquals(340f, restored?.lockedZoomOffsetY)
+    }
+
+    @Test
+    fun `invalid locked camera values are sanitized`() {
+        val state = SharedPdfReaderState.initial(pageCount = 1)
+            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, Float.NaN, Float.POSITIVE_INFINITY, Float.NaN))
+
+        assertEquals(1f, state.lockedZoomScale)
+        assertEquals(0f, state.lockedZoomOffsetX)
+        assertEquals(0f, state.lockedZoomOffsetY)
+    }
+
+    @Test
     fun `reader viewport clamps zoom pages and scroll offsets`() {
         val viewport = SharedPdfReaderViewport(
             pageIndex = 99,

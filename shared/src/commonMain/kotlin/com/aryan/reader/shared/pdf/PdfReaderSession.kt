@@ -36,6 +36,10 @@ data class SharedPdfReaderStore(
     val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
     val themeId: String = "no_theme",
     val zoom: Float = PdfZoomSpec().default,
+    val isScrollLocked: Boolean = false,
+    val lockedZoomScale: Float = 1f,
+    val lockedZoomOffsetX: Float = 0f,
+    val lockedZoomOffsetY: Float = 0f,
     val selectedTool: PdfInkTool = PdfInkTool.NONE,
     val selectedColorArgb: Int = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE).colorArgb,
     val strokeWidth: Float = SharedPdfAnnotationDefaults.configFor(PdfInkTool.NONE).strokeWidth,
@@ -83,6 +87,10 @@ object SharedPdfReaderStateSerializer {
                 displayMode = state.displayMode,
                 themeId = state.themeId,
                 zoom = state.zoom,
+                isScrollLocked = state.isScrollLocked,
+                lockedZoomScale = state.lockedZoomScale,
+                lockedZoomOffsetX = state.lockedZoomOffsetX,
+                lockedZoomOffsetY = state.lockedZoomOffsetY,
                 selectedTool = state.selectedTool,
                 selectedColorArgb = state.selectedColorArgb,
                 strokeWidth = state.strokeWidth,
@@ -106,6 +114,10 @@ object SharedPdfReaderStateSerializer {
             displayMode = store.displayMode,
             themeId = store.themeId,
             zoom = store.zoom,
+            isScrollLocked = store.isScrollLocked,
+            lockedZoomScale = store.lockedZoomScale,
+            lockedZoomOffsetX = store.lockedZoomOffsetX,
+            lockedZoomOffsetY = store.lockedZoomOffsetY,
             selectedTool = store.selectedTool,
             selectedColorArgb = store.selectedColorArgb,
             strokeWidth = store.strokeWidth,
@@ -249,6 +261,10 @@ data class SharedPdfReaderState(
     val displayMode: PdfDisplayMode = PdfDisplayMode.PAGINATION,
     val themeId: String = "no_theme",
     val zoom: Float = PdfZoomSpec().default,
+    val isScrollLocked: Boolean = false,
+    val lockedZoomScale: Float = 1f,
+    val lockedZoomOffsetX: Float = 0f,
+    val lockedZoomOffsetY: Float = 0f,
     val isSearchActive: Boolean = false,
     val showSearchResultsPanel: Boolean = true,
     val searchQuery: String = "",
@@ -283,6 +299,9 @@ data class SharedPdfReaderState(
             pageCount = safePageCount,
             activeSearchResultIndex = activeSearchResultIndex.coerceAtLeast(-1),
             zoom = zoomSpec.clamp(zoom),
+            lockedZoomScale = lockedZoomScale.takeIf { it.isFinite() }?.coerceIn(1f, 5f) ?: 1f,
+            lockedZoomOffsetX = lockedZoomOffsetX.takeIf { it.isFinite() } ?: 0f,
+            lockedZoomOffsetY = lockedZoomOffsetY.takeIf { it.isFinite() } ?: 0f,
             bookmarks = bookmarks.normalizedBookmarks(lastPageIndex),
             penPalette = penPalette.sanitizedSharedPdfPenPalette(),
             lastActivePenTool = lastActivePenTool.takeIf { it.isSharedPdfPenTool } ?: PdfInkTool.PEN,
@@ -327,6 +346,12 @@ sealed interface SharedPdfReaderAction {
     data class ThemeChanged(val themeId: String) : SharedPdfReaderAction
     data class ZoomChanged(val zoom: Float) : SharedPdfReaderAction
     data class ZoomBy(val delta: Float) : SharedPdfReaderAction
+    data class ScrollLockChanged(
+        val locked: Boolean,
+        val zoomScale: Float,
+        val offsetX: Float,
+        val offsetY: Float
+    ) : SharedPdfReaderAction
     data class SearchChanged(val query: String) : SharedPdfReaderAction
     data object SearchOpened : SharedPdfReaderAction
     data object SearchClosed : SharedPdfReaderAction
@@ -384,6 +409,12 @@ fun SharedPdfReaderState.reduce(
         is SharedPdfReaderAction.ThemeChanged -> copy(themeId = action.themeId.ifBlank { "no_theme" })
         is SharedPdfReaderAction.ZoomChanged -> copy(zoom = zoomSpec.clamp(action.zoom))
         is SharedPdfReaderAction.ZoomBy -> copy(zoom = zoomSpec.clamp(zoom + action.delta))
+        is SharedPdfReaderAction.ScrollLockChanged -> copy(
+            isScrollLocked = action.locked,
+            lockedZoomScale = action.zoomScale.takeIf { it.isFinite() }?.coerceIn(1f, 5f) ?: 1f,
+            lockedZoomOffsetX = action.offsetX.takeIf { it.isFinite() } ?: 0f,
+            lockedZoomOffsetY = action.offsetY.takeIf { it.isFinite() } ?: 0f
+        )
         is SharedPdfReaderAction.SearchChanged -> {
             val normalized = action.query.trim()
             copy(

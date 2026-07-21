@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.pdf.PdfPageBounds
+import com.aryan.reader.shared.pdf.PdfZoomTileRequest
+import com.aryan.reader.shared.pdf.planPdfZoomTiles
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Create
 import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
@@ -25,6 +27,7 @@ import com.aryan.reader.shared.pdfium.c.FPDF_GetPageWidthF
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadPage
 import com.aryan.reader.shared.pdfium.c.FPDF_RenderPageBitmap
+import cnames.structs.fpdf_page_t__
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
@@ -45,19 +48,108 @@ import kotlin.math.roundToInt
 @Composable
 internal actual fun rememberSharedMobilePdfPageRender(
     book: BookItem,
-    pageIndex: Int
+    pageIndex: Int,
+    zoomScale: Float
 ): SharedMobilePdfPageRender {
     var render by remember(book.path, pageIndex) { mutableStateOf(SharedMobilePdfPageRender()) }
 
     LaunchedEffect(book.path, pageIndex) {
-        render = IosPdfiumRenderer.render(book.path, pageIndex)
+        render = IosPdfiumRenderer.render(book.path, pageIndex, 1f)
     }
 
     return render
 }
 
+@Composable
+internal actual fun rememberSharedMobilePdfTileRenders(
+    book: BookItem,
+    pageIndex: Int,
+    pageAspectRatio: Float,
+    zoomScale: Float,
+    visibleBounds: PdfPageBounds?
+): List<SharedMobilePdfTileRender> {
+    val requests = remember(pageAspectRatio, zoomScale, visibleBounds) {
+        visibleBounds?.let { planPdfZoomTiles(pageAspectRatio, zoomScale, it) }.orEmpty()
+    }
+    var tiles by remember(book.path, pageIndex) { mutableStateOf<List<SharedMobilePdfTileRender>>(emptyList()) }
+    LaunchedEffect(book.path, pageIndex, requests) {
+        if (requests.isEmpty()) {
+            tiles = emptyList()
+            return@LaunchedEffect
+        }
+        val requestedIds = requests.mapTo(mutableSetOf()) { it.id }
+        val renderScale = requests.first().renderScale
+        val retained = tiles.filter { it.request.id in requestedIds && it.request.renderScale == renderScale }
+        val retainedIds = retained.mapTo(mutableSetOf()) { it.request.id }
+        val missing = requests.filterNot { it.id in retainedIds }
+        if (missing.isEmpty()) {
+            tiles = retained
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(60)
+        tiles = retained + IosPdfiumRenderer.renderTiles(book.path, pageIndex, missing)
+    }
+    val activeScale = requests.firstOrNull()?.renderScale
+    val activeIds = requests.mapTo(mutableSetOf()) { it.id }
+    return tiles.filter { it.request.renderScale == activeScale && it.request.id in activeIds }
+}
+
 private object IosPdfiumRenderer {
-    suspend fun render(path: String?, pageIndex: Int): SharedMobilePdfPageRender =
+    suspend fun renderTiles(
+        path: String?,
+        pageIndex: Int,
+        requests: List<PdfZoomTileRequest>
+    ): List<SharedMobilePdfTileRender> = IosPdfiumRuntime.mutex.withLock {
+        val resolvedPath = path.resolvedIosPdfPath() ?: return@withLock emptyList()
+        if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withLock emptyList()
+        IosPdfiumRuntime.ensureInitialized()
+        val document = FPDF_LoadDocument(resolvedPath, null) ?: return@withLock emptyList()
+        try {
+            val count = FPDF_GetPageCount(document).coerceAtLeast(1)
+            val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withLock emptyList()
+            try {
+                requests.mapNotNull { request -> renderTile(page, request) }
+            } finally {
+                FPDF_ClosePage(page)
+            }
+        } finally {
+            FPDF_CloseDocument(document)
+        }
+    }
+
+    private fun renderTile(
+        page: kotlinx.cinterop.CPointer<fpdf_page_t__>,
+        request: PdfZoomTileRequest
+    ): SharedMobilePdfTileRender? {
+        val bitmap = FPDFBitmap_Create(request.widthPx, request.heightPx, 1) ?: return null
+        return try {
+            FPDFBitmap_FillRect(bitmap, 0, 0, request.widthPx, request.heightPx, 0xFFFFFFFFu)
+            FPDF_RenderPageBitmap(
+                bitmap,
+                page,
+                -request.leftPx,
+                -request.topPx,
+                request.fullWidthPx,
+                request.fullHeightPx,
+                0,
+                0
+            )
+            val buffer = FPDFBitmap_GetBuffer(bitmap) ?: return null
+            val stride = FPDFBitmap_GetStride(bitmap).coerceAtLeast(request.widthPx * 4)
+            val bytes = ByteArray(stride * request.heightPx)
+            bytes.usePinned { pinned -> memcpy(pinned.addressOf(0), buffer, bytes.size.convert()) }
+            val image = Image.makeRaster(
+                ImageInfo(request.widthPx, request.heightPx, ColorType.BGRA_8888, ColorAlphaType.OPAQUE),
+                bytes,
+                stride
+            ).toComposeImageBitmap()
+            SharedMobilePdfTileRender(request, image)
+        } finally {
+            FPDFBitmap_Destroy(bitmap)
+        }
+    }
+
+    suspend fun render(path: String?, pageIndex: Int, zoomScale: Float): SharedMobilePdfPageRender =
         IosPdfiumRuntime.mutex.withLock {
         val resolvedPath = path.resolvedIosPdfPath()
         if (resolvedPath.isNullOrBlank()) {
@@ -83,7 +175,8 @@ private object IosPdfiumRenderer {
                     val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
                     val pageHeight = FPDF_GetPageHeightF(page).coerceAtLeast(1f)
                     val aspectRatio = (pageWidth / pageHeight).coerceIn(0.1f, 10f)
-                    val scale = MaxRenderedPageSidePx / maxOf(pageWidth, pageHeight)
+                    val targetSide = MaxRenderedPageSidePx
+                    val scale = targetSide / maxOf(pageWidth, pageHeight)
                     val bitmapWidth = (pageWidth * scale).roundToInt().coerceAtLeast(1)
                     val bitmapHeight = (pageHeight * scale).roundToInt().coerceAtLeast(1)
                     val bitmap = FPDFBitmap_Create(bitmapWidth, bitmapHeight, 1)

@@ -1,5 +1,12 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -11,6 +18,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -129,6 +142,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -149,16 +163,27 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToDown
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.FileType
@@ -186,6 +211,14 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.PdfSpreadLayout
+import com.aryan.reader.shared.pdf.PdfZoomCamera
+import com.aryan.reader.shared.pdf.PdfZoomPoint
+import com.aryan.reader.shared.pdf.PdfZoomSize
+import com.aryan.reader.shared.pdf.isZoomed
+import com.aryan.reader.shared.pdf.pdfDoubleTapTargetScale
+import com.aryan.reader.shared.pdf.pdfVerticalDoubleTapTargetScale
+import com.aryan.reader.shared.pdf.pdfZoomIndicatorPercent
+import com.aryan.reader.shared.pdf.visiblePdfPageBounds
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
 import com.aryan.reader.shared.pdf.SharedPdfReaderAction
@@ -204,10 +237,13 @@ import com.aryan.reader.shared.generated.resources.retina_wood
 import com.aryan.reader.shared.generated.resources.retro_intro
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.jetbrains.compose.resources.imageResource
+import kotlin.math.roundToInt
 
 @Composable
 fun SharedMobileAppDrawerContent(
@@ -432,7 +468,13 @@ fun SharedMobilePdfReaderScreen(
     var keepScreenOn by remember(book.id) { mutableStateOf(false) }
     var autoScrollEnabled by remember(book.id) { mutableStateOf(false) }
     var tapToTurnPages by remember(book.id) { mutableStateOf(true) }
-    var isScrollLocked by remember(book.id) { mutableStateOf(false) }
+    var pdfZoomCamera by remember(book.id, initialReaderState) {
+        mutableStateOf(
+            initialReaderState?.takeIf { it.isScrollLocked }?.let {
+                PdfZoomCamera(it.lockedZoomScale, PdfZoomPoint(it.lockedZoomOffsetX, it.lockedZoomOffsetY))
+            } ?: PdfZoomCamera()
+        )
+    }
     var navigationRequestPage by remember(book.id) { mutableStateOf(readerState.pageIndex) }
     var navigationRequestToken by remember(book.id) { mutableStateOf(0) }
     var searchResults by remember(book.id) { mutableStateOf<List<SharedPdfSearchResult>>(emptyList()) }
@@ -687,8 +729,17 @@ fun SharedMobilePdfReaderScreen(
                         onVisualOptions = { showReaderOptions = !showReaderOptions },
                         tapToTurnPages = tapToTurnPages,
                         onToggleTapToTurnPages = { tapToTurnPages = !tapToTurnPages },
-                        isScrollLocked = isScrollLocked,
-                        onToggleScrollLock = { isScrollLocked = !isScrollLocked },
+                        isScrollLocked = readerState.isScrollLocked,
+                        onToggleScrollLock = {
+                            dispatch(
+                                SharedPdfReaderAction.ScrollLockChanged(
+                                    locked = !readerState.isScrollLocked,
+                                    zoomScale = pdfZoomCamera.scale,
+                                    offsetX = pdfZoomCamera.offset.x,
+                                    offsetY = pdfZoomCamera.offset.y
+                                )
+                            )
+                        },
                         keepScreenOn = keepScreenOn,
                         onToggleKeepScreenOn = { keepScreenOn = !keepScreenOn },
                         autoScrollEnabled = autoScrollEnabled,
@@ -722,13 +773,7 @@ fun SharedMobilePdfReaderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(sharedMobilePdfViewerBackground(activeTheme, readerState.displayMode))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                    ) {
-                        showChrome = !showChrome
-                    },
+                    .background(sharedMobilePdfViewerBackground(activeTheme, readerState.displayMode)),
                 contentAlignment = Alignment.Center
             ) {
                 if (readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
@@ -751,7 +796,11 @@ fun SharedMobilePdfReaderScreen(
                         onInternalLink = ::navigateToPage,
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
-                        userScrollEnabled = !isScrollLocked,
+                        userScrollEnabled = !readerState.isScrollLocked,
+                        isScrollLocked = readerState.isScrollLocked,
+                        zoomCamera = pdfZoomCamera,
+                        onZoomCameraChanged = { pdfZoomCamera = it },
+                        onToggleChrome = { showChrome = !showChrome },
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
@@ -773,7 +822,10 @@ fun SharedMobilePdfReaderScreen(
                         onInternalLink = ::navigateToPage,
                         onExistingHighlightTap = { noteAnnotationId = it.id },
                         onHighlight = { page, range, text, bounds, color, style, note -> addTextHighlight(page, range, text, bounds, color, style, note) },
-                        userScrollEnabled = !isScrollLocked,
+                        userScrollEnabled = !readerState.isScrollLocked,
+                        isScrollLocked = readerState.isScrollLocked,
+                        zoomCamera = pdfZoomCamera,
+                        onZoomCameraChanged = { pdfZoomCamera = it },
                         onPageChanged = { dispatch(SharedPdfReaderAction.GoToPage(it)) },
                         onToggleChrome = { showChrome = !showChrome },
                         onCanvasSizeChanged = { canvasSize = it },
@@ -2071,6 +2123,284 @@ private fun sharedMobilePdfColorFilter(theme: ReaderTheme): ColorFilter? {
 }
 
 @Composable
+private fun SharedMobilePdfZoomViewport(
+    camera: PdfZoomCamera,
+    onCameraChanged: (PdfZoomCamera) -> Unit,
+    zoomEnabled: Boolean,
+    tapGesturesEnabled: Boolean = true,
+    maxScale: Float,
+    verticalDocumentMode: Boolean = false,
+    onSingleTap: (Offset) -> Unit = {},
+    onZoomChanged: (Float) -> Unit = {},
+    modifier: Modifier = Modifier,
+    content: @Composable (PdfZoomCamera) -> Unit
+) {
+    val latestCamera by rememberUpdatedState(camera)
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+    val oneHandZoomDistancePx = with(LocalDensity.current) { 240.dp.toPx() }
+    val scope = rememberCoroutineScope()
+    var cameraAnimationJob by remember { mutableStateOf<Job?>(null) }
+    var showZoomIndicator by remember { mutableStateOf(false) }
+    val zoomPercentage = pdfZoomIndicatorPercent(camera.scale)
+
+    LaunchedEffect(zoomPercentage) {
+        showZoomIndicator = camera.isZoomed()
+        if (showZoomIndicator) {
+            delay(1500)
+            showZoomIndicator = false
+        }
+    }
+
+    fun updateCamera(next: PdfZoomCamera) {
+        onCameraChanged(next)
+        onZoomChanged(next.scale)
+    }
+
+    fun animateCameraTo(target: PdfZoomCamera, durationMillis: Int) {
+        cameraAnimationJob?.cancel()
+        val start = latestCamera
+        cameraAnimationJob = scope.launch {
+            try {
+                Animatable(0f).animateTo(
+                    1f,
+                    animationSpec = tween(durationMillis, easing = FastOutSlowInEasing)
+                ) {
+                    val progress = value
+                    updateCamera(
+                        PdfZoomCamera(
+                            scale = start.scale + (target.scale - start.scale) * progress,
+                            offset = PdfZoomPoint(
+                                start.offset.x + (target.offset.x - start.offset.x) * progress,
+                                start.offset.y + (target.offset.y - start.offset.y) * progress
+                            )
+                        )
+                    )
+                }
+                updateCamera(target)
+            } finally {
+                cameraAnimationJob = null
+            }
+        }
+    }
+
+    fun flingCamera(velocityX: Float, velocityY: Float) {
+        val speed = kotlin.math.sqrt(velocityX * velocityX + velocityY * velocityY)
+        if (speed < 600f || viewport.width <= 0 || viewport.height <= 0) return
+        cameraAnimationJob?.cancel()
+        val start = latestCamera
+        val directionX = velocityX / speed
+        val directionY = velocityY / speed
+        val viewportSize = PdfZoomSize(viewport.width.toFloat(), viewport.height.toFloat())
+        cameraAnimationJob = scope.launch {
+            try {
+                Animatable(0f).animateDecay(
+                    initialVelocity = speed * 0.72f,
+                    animationSpec = exponentialDecay(frictionMultiplier = 2f)
+                ) {
+                    updateCamera(
+                        PdfZoomCamera(
+                            scale = start.scale,
+                            offset = PdfZoomPoint(
+                                start.offset.x + value * directionX,
+                                start.offset.y + value * directionY
+                            )
+                        ).normalized(viewportSize, viewportSize, maxScale = maxScale)
+                    )
+                }
+            } finally {
+                cameraAnimationJob = null
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clipToBounds()
+            .onSizeChanged { viewport = it }
+            .pointerInput(zoomEnabled, viewport, maxScale, verticalDocumentMode) {
+                if (!zoomEnabled) return@pointerInput
+                awaitEachGesture {
+                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    cameraAnimationJob?.cancel()
+                    val velocityTracker = VelocityTracker()
+                    velocityTracker.addPosition(firstDown.uptimeMillis, firstDown.position)
+                    var gestureAccepted = latestCamera.isZoomed() && !verticalDocumentMode
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressedCount = event.changes.count { it.pressed }
+                        val zoom = event.calculateZoom()
+                        val pan = event.calculatePan()
+                        event.changes.firstOrNull { it.pressed }?.let {
+                            velocityTracker.addPosition(it.uptimeMillis, it.position)
+                        }
+                        if (pressedCount > 1 && kotlin.math.abs(zoom - 1f) > 0.005f) gestureAccepted = true
+                        if (
+                            verticalDocumentMode && latestCamera.isZoomed() && pressedCount == 1 &&
+                            kotlin.math.abs(pan.x) > kotlin.math.abs(pan.y) * 1.2f
+                        ) gestureAccepted = true
+                        if (gestureAccepted && viewport.width > 0 && viewport.height > 0) {
+                            val centroid = event.calculateCentroid(useCurrent = false)
+                            val pivot = if (centroid == Offset.Unspecified) {
+                                Offset(viewport.width / 2f, viewport.height / 2f)
+                            } else centroid
+                            updateCamera(
+                                latestCamera.transformed(
+                                    zoomChange = if (pressedCount > 1) zoom else 1f,
+                                    panChange = PdfZoomPoint(pan.x, pan.y),
+                                    pivot = PdfZoomPoint(pivot.x, pivot.y),
+                                    viewport = PdfZoomSize(viewport.width.toFloat(), viewport.height.toFloat()),
+                                    content = PdfZoomSize(viewport.width.toFloat(), viewport.height.toFloat()),
+                                    maxScale = maxScale
+                                )
+                            )
+                            event.changes.forEach { if (it.pressed) it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                    if (latestCamera.scale <= 1.05f) updateCamera(PdfZoomCamera())
+                    if (gestureAccepted && latestCamera.isZoomed()) {
+                        velocityTracker.calculateVelocity().let { velocity ->
+                            flingCamera(velocity.x, if (verticalDocumentMode) 0f else velocity.y)
+                        }
+                    }
+                }
+            }
+            .pointerInput(zoomEnabled, tapGesturesEnabled, viewport, verticalDocumentMode, oneHandZoomDistancePx) {
+                if (!tapGesturesEnabled) return@pointerInput
+                awaitEachGesture {
+                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    val firstUp = waitForUpOrCancellation() ?: return@awaitEachGesture
+                    var secondDown: androidx.compose.ui.input.pointer.PointerInputChange? = null
+                    try {
+                        withTimeout(viewConfiguration.doubleTapTimeoutMillis) {
+                            while (secondDown == null) {
+                                secondDown = awaitPointerEvent().changes.firstOrNull { it.changedToDown() }
+                            }
+                        }
+                    } catch (_: PointerEventTimeoutCancellationException) {
+                        if (!firstUp.isConsumed) onSingleTap(firstDown.position)
+                        return@awaitEachGesture
+                    }
+                    val pivot = secondDown?.position ?: firstDown.position
+                    val startCamera = latestCamera
+                    var latest = pivot
+                    var quickUp = false
+                    var earlyOneHandZoom = false
+                    val movementSlop = maxOf(2f, viewConfiguration.touchSlop * 0.35f)
+                    try {
+                        withTimeout(90L) {
+                            while (true) {
+                                val change = awaitPointerEvent().changes.firstOrNull { it.id == secondDown?.id }
+                                    ?: return@withTimeout
+                                latest = change.position
+                                val delta = latest - pivot
+                                if (zoomEnabled &&
+                                    kotlin.math.abs(delta.y) >= movementSlop &&
+                                    kotlin.math.abs(delta.y) >= kotlin.math.abs(delta.x) * 1.1f
+                                ) {
+                                    earlyOneHandZoom = true
+                                    change.consume()
+                                    return@withTimeout
+                                }
+                                if (change.changedToUp()) {
+                                    quickUp = true
+                                    change.consume()
+                                    return@withTimeout
+                                }
+                            }
+                        }
+                    } catch (_: PointerEventTimeoutCancellationException) {
+                        // Holding the second tap enters Android's one-hand zoom mode.
+                    }
+
+                    if (!zoomEnabled) {
+                        if (!quickUp) waitForUpOrCancellation()
+                        return@awaitEachGesture
+                    }
+
+                    val viewportSize = PdfZoomSize(viewport.width.toFloat(), viewport.height.toFloat())
+                    if (quickUp && !earlyOneHandZoom) {
+                        val target = if (verticalDocumentMode) {
+                            pdfVerticalDoubleTapTargetScale(startCamera.scale)
+                        } else {
+                            pdfDoubleTapTargetScale(startCamera.scale)
+                        }
+                        val targetCamera = if (target <= 1f) PdfZoomCamera()
+                            else startCamera.transformed(
+                                zoomChange = target / startCamera.scale,
+                                panChange = PdfZoomPoint(0f, 0f),
+                                pivot = PdfZoomPoint(pivot.x, pivot.y),
+                                viewport = viewportSize,
+                                content = viewportSize,
+                                maxScale = maxScale
+                            )
+                        animateCameraTo(targetCamera, if (verticalDocumentMode) 400 else 300)
+                        return@awaitEachGesture
+                    }
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == secondDown?.id } ?: break
+                        latest = change.position
+                        val rawDragY = latest.y - pivot.y
+                        val nextScale = com.aryan.reader.shared.pdf.pdfOneHandZoomScale(
+                            startScale = startCamera.scale,
+                            totalDragY = if (verticalDocumentMode) rawDragY * startCamera.scale else rawDragY,
+                            dragDistanceForDoublePx = oneHandZoomDistancePx,
+                            maxScale = maxScale
+                        )
+                        updateCamera(
+                            startCamera.transformed(
+                                zoomChange = nextScale / startCamera.scale,
+                                panChange = PdfZoomPoint(0f, 0f),
+                                pivot = PdfZoomPoint(viewport.width / 2f, viewport.height / 2f),
+                                viewport = viewportSize,
+                                content = viewportSize,
+                                maxScale = maxScale
+                            )
+                        )
+                        change.consume()
+                        if (change.changedToUp()) break
+                    }
+                    if (latestCamera.scale <= 1.05f) animateCameraTo(PdfZoomCamera(), 180)
+                }
+            }
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = camera.scale
+                    scaleY = camera.scale
+                    translationX = camera.offset.x
+                    translationY = camera.offset.y
+                    transformOrigin = TransformOrigin.Center
+                }
+        ) {
+            content(camera)
+        }
+        AnimatedVisibility(
+            visible = showZoomIndicator,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 88.dp, end = 16.dp),
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.88f),
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.clickable(enabled = zoomEnabled) { animateCameraTo(PdfZoomCamera(), 400) }
+            ) {
+                Text(
+                    text = "$zoomPercentage%",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SharedMobilePdfVerticalPages(
     book: BookItem,
     state: SharedPdfReaderState,
@@ -2091,6 +2421,10 @@ private fun SharedMobilePdfVerticalPages(
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     userScrollEnabled: Boolean,
+    isScrollLocked: Boolean,
+    zoomCamera: PdfZoomCamera,
+    onZoomCameraChanged: (PdfZoomCamera) -> Unit,
+    onToggleChrome: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.pageIndex.coerceIn(0, pageCount - 1))
@@ -2107,20 +2441,32 @@ private fun SharedMobilePdfVerticalPages(
                 onVisiblePageChanged(visiblePage.coerceIn(0, pageCount - 1))
             }
     }
-    LazyColumn(
-        state = listState,
-        userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
-        modifier = modifier,
-        contentPadding = PaddingValues(0.dp),
-        verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
-    ) {
-        items(pageCount) { page ->
-            val render = rememberSharedMobilePdfPageRender(book, page)
-            SharedMobilePdfPageSurface(
+    SharedMobilePdfZoomViewport(
+        camera = zoomCamera,
+        onCameraChanged = onZoomCameraChanged,
+        zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+        tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT,
+        maxScale = 5f,
+        verticalDocumentMode = true,
+        onSingleTap = { onToggleChrome() },
+        modifier = modifier
+    ) { zoomCamera ->
+        val zoomScale = zoomCamera.scale
+        LazyColumn(
+            state = listState,
+            userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(0.dp),
+            verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
+        ) {
+            items(pageCount) { page ->
+                val render = rememberSharedMobilePdfPageRender(book, page, zoomScale)
+                SharedMobilePdfPageSurface(
                 book = book,
                 pageIndex = page,
                 pageCount = pageCount,
                 pageRender = render,
+                zoomCamera = zoomCamera,
                 activeTheme = activeTheme,
                 textureAlpha = textureAlpha,
                 showPageNumberOverlay = showPageNumberOverlay,
@@ -2136,8 +2482,9 @@ private fun SharedMobilePdfVerticalPages(
                 onHighlight = onHighlight,
                 onCanvasSizeChanged = onCanvasSizeChanged,
                 onFinishInkStroke = onFinishInkStroke,
-                modifier = Modifier.fillMaxWidth()
-            )
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
 }
@@ -2163,6 +2510,9 @@ private fun SharedMobilePdfPaginatedPages(
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (Int, com.aryan.reader.shared.pdf.PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
     userScrollEnabled: Boolean,
+    isScrollLocked: Boolean,
+    zoomCamera: PdfZoomCamera,
+    onZoomCameraChanged: (PdfZoomCamera) -> Unit,
     onPageChanged: (Int) -> Unit,
     onToggleChrome: () -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
@@ -2170,6 +2520,7 @@ private fun SharedMobilePdfPaginatedPages(
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
+    var paginationViewportSize by remember(book.id) { mutableStateOf(IntSize.Zero) }
     val spreadStarts = remember(pageCount, useTwoPageSpread, firstPageStandaloneInSpread) {
         sharedMobilePdfSpreadStarts(pageCount, useTwoPageSpread, firstPageStandaloneInSpread)
     }
@@ -2193,9 +2544,16 @@ private fun SharedMobilePdfPaginatedPages(
                 onPageChanged(spreadStarts.getOrElse(settledPage) { 0 })
             }
     }
+    var previousSettledPage by remember(book.id) { mutableStateOf(pagerState.settledPage) }
+    LaunchedEffect(pagerState.settledPage, isScrollLocked) {
+        if (pagerState.settledPage != previousSettledPage) {
+            if (!isScrollLocked) onZoomCameraChanged(PdfZoomCamera())
+            previousSettledPage = pagerState.settledPage
+        }
+    }
     HorizontalPager(
         state = pagerState,
-        userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+        userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !zoomCamera.isZoomed(),
         beyondViewportPageCount = 1,
         modifier = modifier
     ) { pagerPage ->
@@ -2207,20 +2565,28 @@ private fun SharedMobilePdfPaginatedPages(
                 else -> listOf(start, start + 1).filter { it in 0 until pageCount }
             }
         }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(tapToTurnPages, pagerPage, spreadStarts, state.selectedTool) {
-                    if (state.selectedTool != PdfInkTool.NONE) return@pointerInput
-                    detectTapGestures { offset ->
-                        val edge = size.width * 0.25f
-                        when {
-                            tapToTurnPages && offset.x < edge && pagerPage > 0 -> scope.launch { pagerState.animateScrollToPage(pagerPage - 1) }
-                            tapToTurnPages && offset.x > size.width - edge && pagerPage < spreadStarts.lastIndex -> scope.launch { pagerState.animateScrollToPage(pagerPage + 1) }
-                            else -> onToggleChrome()
-                        }
-                    }
-                },
+        SharedMobilePdfZoomViewport(
+            camera = zoomCamera,
+            onCameraChanged = onZoomCameraChanged,
+            zoomEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE,
+            tapGesturesEnabled = state.selectedTool == PdfInkTool.NONE || state.selectedTool == PdfInkTool.TEXT,
+            maxScale = 4f,
+            onSingleTap = { offset ->
+                val viewportWidthForTap = paginationViewportSize.width.toFloat()
+                val edge = viewportWidthForTap * 0.25f
+                when {
+                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x < edge && pagerPage > 0 ->
+                        scope.launch { pagerState.animateScrollToPage(pagerPage - 1) }
+                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x > viewportWidthForTap - edge && pagerPage < spreadStarts.lastIndex ->
+                        scope.launch { pagerState.animateScrollToPage(pagerPage + 1) }
+                    else -> onToggleChrome()
+                }
+            },
+            modifier = Modifier.fillMaxSize().onSizeChanged { paginationViewportSize = it }
+        ) { activeZoomCamera ->
+          val zoomScale = activeZoomCamera.scale
+          Box(
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -2233,7 +2599,7 @@ private fun SharedMobilePdfPaginatedPages(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     spreadPages.forEach { pageIndex ->
-                        val render = rememberSharedMobilePdfPageRender(book, pageIndex)
+                        val render = rememberSharedMobilePdfPageRender(book, pageIndex, zoomScale)
                         val aspectRatio = render.aspectRatio.coerceIn(0.1f, 10f)
                         val widthLimited = slotWidth.value / viewportHeight.value <= aspectRatio
                         val fittedWidth = if (widthLimited) slotWidth else viewportHeight * aspectRatio
@@ -2247,6 +2613,7 @@ private fun SharedMobilePdfPaginatedPages(
                                 pageIndex = pageIndex,
                                 pageCount = pageCount,
                                 pageRender = render,
+                                zoomCamera = activeZoomCamera,
                                 activeTheme = activeTheme,
                                 textureAlpha = textureAlpha,
                                 showPageNumberOverlay = showPageNumberOverlay,
@@ -2264,10 +2631,11 @@ private fun SharedMobilePdfPaginatedPages(
                                 onFinishInkStroke = onFinishInkStroke,
                                 modifier = Modifier.size(fittedWidth, fittedHeight)
                             )
-                        }
-                    }
-                }
             }
+          }
+        }
+    }
+}
         }
     }
 }
@@ -2364,6 +2732,7 @@ private fun SharedMobilePdfPageSurface(
     pageIndex: Int,
     pageCount: Int,
     pageRender: SharedMobilePdfPageRender,
+    zoomCamera: PdfZoomCamera,
     activeTheme: ReaderTheme,
     textureAlpha: Float,
     showPageNumberOverlay: Boolean,
@@ -2382,7 +2751,15 @@ private fun SharedMobilePdfPageSurface(
     modifier: Modifier = Modifier
 ) {
     var localCanvasSize by remember(pageIndex) { mutableStateOf(IntSize.Zero) }
+    var visiblePageBounds by remember(pageIndex) { mutableStateOf<PdfPageBounds?>(null) }
     val textureBitmap = sharedMobilePdfTextureBitmap(activeTheme)
+    val highResolutionTiles = rememberSharedMobilePdfTileRenders(
+        book = book,
+        pageIndex = pageIndex,
+        pageAspectRatio = pageRender.aspectRatio,
+        zoomScale = zoomCamera.scale,
+        visibleBounds = visiblePageBounds
+    )
     Surface(
         color = sharedMobilePdfPageBackground(activeTheme),
         contentColor = sharedMobilePdfPageTextColor(activeTheme),
@@ -2394,6 +2771,21 @@ private fun SharedMobilePdfPageSurface(
             .onSizeChanged {
                 localCanvasSize = it
                 onCanvasSizeChanged(it)
+            }
+            .onGloballyPositioned { coordinates ->
+                val page = coordinates.boundsInWindow()
+                val viewport = coordinates.findRootCoordinates().boundsInWindow()
+                visiblePageBounds = visiblePdfPageBounds(
+                    camera = zoomCamera,
+                    transformedPageLeft = page.left,
+                    transformedPageTop = page.top,
+                    transformedPageRight = page.right,
+                    transformedPageBottom = page.bottom,
+                    viewportLeft = viewport.left,
+                    viewportTop = viewport.top,
+                    viewportRight = viewport.right,
+                    viewportBottom = viewport.bottom
+                )
             }
             .then(
                 if (selectedTool == PdfInkTool.NONE) Modifier
@@ -2425,6 +2817,23 @@ private fun SharedMobilePdfPageSurface(
                     contentScale = ContentScale.Fit,
                     colorFilter = sharedMobilePdfColorFilter(activeTheme)
                 )
+                if (highResolutionTiles.isNotEmpty()) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        highResolutionTiles.forEach { tile ->
+                            val bounds = tile.request.normalizedBounds
+                            val left = (bounds.left * size.width).roundToInt()
+                            val top = (bounds.top * size.height).roundToInt()
+                            val right = (bounds.right * size.width).roundToInt()
+                            val bottom = (bounds.bottom * size.height).roundToInt()
+                            drawImage(
+                                image = tile.bitmap,
+                                dstOffset = IntOffset(left, top),
+                                dstSize = IntSize((right - left).coerceAtLeast(1), (bottom - top).coerceAtLeast(1)),
+                                colorFilter = sharedMobilePdfColorFilter(activeTheme)
+                            )
+                        }
+                    }
+                }
             } else {
                 SharedMobilePdfPagePlaceholder(
                     book = book,
