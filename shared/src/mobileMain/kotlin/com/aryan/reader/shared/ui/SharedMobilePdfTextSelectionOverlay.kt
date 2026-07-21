@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -114,6 +115,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     existingHighlights: List<SharedPdfAnnotation>,
     onExistingHighlightTap: (SharedPdfAnnotation) -> Unit,
     onHighlight: (PdfTextSelectionRange, String, List<PdfPageBounds>, Int, HighlightStyle, Boolean) -> Unit,
+    onReadAloud: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
@@ -489,6 +491,10 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     openSharedMobileExternalUrl("https://www.google.com/search?q=${encodeQuery(text)}")
                     applyRangeUpdate(null, emptyList(), null)
                 },
+                onReadAloud = {
+                    state.range?.let { onReadAloud(it.start) }
+                    applyRangeUpdate(null, emptyList(), null)
+                },
                 onSelectAll = {
                     val s = session ?: return@SharedMobilePdfSelectionMenu
                     scope.launch { computeAndApply(PdfTextSelectionRange(0, s.pageCharCount)) }
@@ -642,6 +648,7 @@ private fun SharedMobilePdfSelectionMenu(
     onCopy: (String) -> Unit,
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
+    onReadAloud: () -> Unit,
     onSelectAll: () -> Unit
 ) {
     var selectedStyle by remember { mutableStateOf(HighlightStyle.BACKGROUND) }
@@ -704,6 +711,7 @@ private fun SharedMobilePdfSelectionMenu(
                 SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) },
                 SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) },
                 SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = "Note") { onHighlight(colors.first(), selectedStyle, true) },
+                SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud") { onReadAloud() },
                 SharedMobilePdfMenuAction(Res.drawable.select_all, "Select all") { onSelectAll() }
             )
             Column(Modifier.padding(bottom = 4.dp)) {

@@ -25,8 +25,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.cinterop.ObjCSignatureOverride
+import kotlinx.cinterop.CValue
+import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSURL
+import platform.Foundation.NSRange
 import platform.UIKit.UIApplication
 import platform.UIKit.UIColor
 import platform.WebKit.WKScriptMessage
@@ -46,9 +49,12 @@ import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
 import platform.AVFAudio.setActive
 import platform.MediaPlayer.MPMediaItemPropertyArtist
+import platform.MediaPlayer.MPMediaItemPropertyAlbumTitle
 import platform.MediaPlayer.MPMediaItemPropertyTitle
 import platform.MediaPlayer.MPNowPlayingInfoCenter
 import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackRate
+import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackQueueCount
+import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackQueueIndex
 import platform.MediaPlayer.MPRemoteCommandCenter
 import platform.MediaPlayer.MPRemoteCommandHandlerStatusSuccess
 import platform.darwin.NSObject
@@ -119,7 +125,7 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
 internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts {
     val controller = remember { IosSharedMobileEpubLocalTts() }
     DisposableEffect(controller) {
-        onDispose { controller.stop() }
+        onDispose { controller.release() }
     }
     return controller
 }
@@ -127,87 +133,212 @@ internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts
 private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private val synthesizer = AVSpeechSynthesizer()
     private val delegate = IosSharedMobileEpubSpeechDelegate(
-        onStateChange = { state = it; updateNowPlaying() },
-        onUtteranceFinished = ::advance
+        onStarted = ::utteranceStarted,
+        onPaused = ::utterancePaused,
+        onContinued = ::utteranceContinued,
+        onFinished = ::utteranceFinished,
+        onCancelled = ::utteranceCancelled,
+        onWillSpeakRange = ::utteranceWillSpeakRange
     )
     override var state by mutableStateOf(SharedMobileEpubLocalTtsState.IDLE)
+    override var isSessionActive by mutableStateOf(false)
+        private set
     override var progress by mutableStateOf(ReaderTtsProgress())
+        private set
+    override var completionCount by mutableStateOf(0L)
+        private set
+    override var speechRate by mutableStateOf(1f)
+        private set
+    override var speechPitch by mutableStateOf(1f)
         private set
     private var bookTitle: String = ""
     private var chunks: List<ReaderTtsChunk> = emptyList()
     private var currentChunkIndex = -1
     private var sessionId = 0L
-    private var stopping = false
+    private var activeUtterance: AVSpeechUtterance? = null
+    private var activeSpokenOffset = 0
+    private var activeUtteranceBaseOffset = 0
+    private var wantsPlayback = true
+    private var audioSessionActive = false
 
     init {
         synthesizer.delegate = delegate
         installRemoteCommands()
     }
 
-    override fun start(chunks: List<ReaderTtsChunk>, bookTitle: String) {
+    override fun prepare() {
+        if (!audioSessionActive) {
+            configureAudioSession(active = true)
+            audioSessionActive = true
+        }
+        isSessionActive = true
+    }
+
+    override fun start(
+        chunks: List<ReaderTtsChunk>,
+        bookTitle: String,
+        startChunkIndex: Int,
+        playWhenReady: Boolean
+    ) {
         val readableChunks = chunks.filter { it.spokenText.isNotBlank() }
         if (readableChunks.isEmpty()) return
-        stopping = true
+        invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
-        stopping = false
         this.chunks = readableChunks
         this.bookTitle = bookTitle
-        currentChunkIndex = -1
+        currentChunkIndex = startChunkIndex.coerceIn(0, readableChunks.lastIndex) - 1
         sessionId += 1
-        configureAudioSession(active = true)
+        wantsPlayback = playWhenReady
+        prepare()
         advance()
     }
 
     override fun pause() {
+        wantsPlayback = false
         synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        if (activeUtterance != null) state = SharedMobileEpubLocalTtsState.PAUSED
+        updateNowPlaying()
     }
 
     override fun resume() {
+        wantsPlayback = true
         synthesizer.continueSpeaking()
+        if (activeUtterance != null) state = SharedMobileEpubLocalTtsState.SPEAKING
+        updateNowPlaying()
+    }
+
+    override fun skipPrevious() = moveBy(-1)
+
+    override fun skipNext() = moveBy(1)
+
+    override fun setSpeechParameters(rate: Float, pitch: Float) {
+        speechRate = rate.coerceIn(0.5f, 3f)
+        speechPitch = pitch.coerceIn(0.5f, 2f)
+        val chunkText = chunks.getOrNull(currentChunkIndex)?.spokenText.orEmpty()
+        val restartOffset = activeSpokenOffset.coerceIn(0, chunkText.length)
+        if (activeUtterance != null && restartOffset < chunkText.length) {
+            invalidateActiveUtterance()
+            synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+            speakCurrentChunk(
+                spokenText = chunkText.substring(restartOffset),
+                sourceOffset = restartOffset
+            )
+        }
+        updateNowPlaying()
     }
 
     override fun stop() {
-        stopping = true
+        sessionId += 1
+        invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         chunks = emptyList()
         currentChunkIndex = -1
+        wantsPlayback = false
+        isSessionActive = false
         progress = ReaderTtsProgress()
         state = SharedMobileEpubLocalTtsState.IDLE
         clearNowPlaying()
-        configureAudioSession(active = false)
+        if (audioSessionActive) {
+            configureAudioSession(active = false)
+            audioSessionActive = false
+        }
     }
 
     private fun advance() {
-        if (stopping) return
         currentChunkIndex += 1
         speakCurrentChunk()
     }
 
     private fun moveBy(offset: Int) {
         if (chunks.isEmpty()) return
-        stopping = true
+        val target = (currentChunkIndex + offset).coerceIn(0, chunks.lastIndex)
+        if (target == currentChunkIndex) return
+        invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
-        stopping = false
-        currentChunkIndex = (currentChunkIndex + offset).coerceIn(0, chunks.lastIndex)
+        currentChunkIndex = target
         speakCurrentChunk()
     }
 
-    private fun speakCurrentChunk() {
+    private fun speakCurrentChunk(
+        spokenText: String? = null,
+        sourceOffset: Int = 0
+    ) {
         val chunk = chunks.getOrNull(currentChunkIndex)
         if (chunk == null) {
-            stop()
+            chunks = emptyList()
+            currentChunkIndex = -1
+            progress = ReaderTtsProgress()
+            state = SharedMobileEpubLocalTtsState.IDLE
+            completionCount += 1
+            clearNowPlaying()
+            configureAudioSession(active = false)
             return
         }
         // Keep the reader controls responsive even when a system voice starts slowly.
         // AVSpeechSynthesizer will still correct this through didStart/didPause callbacks.
-        state = SharedMobileEpubLocalTtsState.SPEAKING
+        state = if (wantsPlayback) SharedMobileEpubLocalTtsState.SPEAKING else SharedMobileEpubLocalTtsState.PAUSED
         progress = ReaderTtsProgress(
             sessionId = sessionId,
             chunks = chunks,
             currentChunkIndex = currentChunkIndex
         )
         updateNowPlaying()
-        synthesizer.speakUtterance(AVSpeechUtterance(string = chunk.spokenText))
+        activeSpokenOffset = sourceOffset
+        activeUtteranceBaseOffset = sourceOffset
+        val utterance = AVSpeechUtterance(string = spokenText ?: chunk.spokenText).apply {
+            this.rate = (0.5f * speechRate).coerceIn(0.1f, 1f)
+            pitchMultiplier = speechPitch
+        }
+        activeUtterance = utterance
+        synthesizer.speakUtterance(utterance)
+    }
+
+    private fun invalidateActiveUtterance() {
+        activeUtterance = null
+    }
+
+    private fun isActive(utterance: AVSpeechUtterance): Boolean =
+        activeUtterance?.isEqual(utterance) == true
+
+    private fun utteranceStarted(utterance: AVSpeechUtterance) {
+        if (!isActive(utterance)) return
+        if (wantsPlayback) {
+            state = SharedMobileEpubLocalTtsState.SPEAKING
+        } else {
+            synthesizer.pauseSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+            state = SharedMobileEpubLocalTtsState.PAUSED
+        }
+        updateNowPlaying()
+    }
+
+    private fun utterancePaused(utterance: AVSpeechUtterance) {
+        if (!isActive(utterance)) return
+        state = SharedMobileEpubLocalTtsState.PAUSED
+        updateNowPlaying()
+    }
+
+    private fun utteranceContinued(utterance: AVSpeechUtterance) {
+        if (!isActive(utterance)) return
+        state = SharedMobileEpubLocalTtsState.SPEAKING
+        updateNowPlaying()
+    }
+
+    private fun utteranceFinished(utterance: AVSpeechUtterance) {
+        if (!isActive(utterance)) return
+        activeUtterance = null
+        advance()
+    }
+
+    private fun utteranceCancelled(utterance: AVSpeechUtterance) {
+        if (!isActive(utterance)) return
+        activeUtterance = null
+        if (chunks.isEmpty()) state = SharedMobileEpubLocalTtsState.IDLE
+        updateNowPlaying()
+    }
+
+    private fun utteranceWillSpeakRange(utterance: AVSpeechUtterance, range: CValue<NSRange>) {
+        if (!isActive(utterance)) return
+        activeSpokenOffset = activeUtteranceBaseOffset + range.useContents { location.toInt() }
     }
 
     private fun configureAudioSession(active: Boolean) {
@@ -242,24 +373,48 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         }
     }
 
+    fun release() {
+        stop()
+        synthesizer.delegate = null
+        val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        commands.playCommand.removeTarget(null)
+        commands.pauseCommand.removeTarget(null)
+        commands.stopCommand.removeTarget(null)
+        commands.nextTrackCommand.removeTarget(null)
+        commands.previousTrackCommand.removeTarget(null)
+    }
+
     private fun updateNowPlaying() {
         val chunk = progress.currentChunk
         if (chunk == null) return
         MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = mapOf(
             MPMediaItemPropertyTitle to bookTitle,
             MPMediaItemPropertyArtist to chunk.chapterTitle.ifBlank { "Reading" },
-            MPNowPlayingInfoPropertyPlaybackRate to if (state == SharedMobileEpubLocalTtsState.SPEAKING) 1.0 else 0.0
+            MPMediaItemPropertyAlbumTitle to "Part ${currentChunkIndex + 1} of ${chunks.size}",
+            MPNowPlayingInfoPropertyPlaybackQueueIndex to currentChunkIndex,
+            MPNowPlayingInfoPropertyPlaybackQueueCount to chunks.size,
+            MPNowPlayingInfoPropertyPlaybackRate to if (state == SharedMobileEpubLocalTtsState.SPEAKING) speechRate.toDouble() else 0.0
         )
+        val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        commands.previousTrackCommand.enabled = currentChunkIndex > 0
+        commands.nextTrackCommand.enabled = currentChunkIndex in 0 until chunks.lastIndex
     }
 
     private fun clearNowPlaying() {
         MPNowPlayingInfoCenter.defaultCenter().nowPlayingInfo = null
+        val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        commands.previousTrackCommand.enabled = false
+        commands.nextTrackCommand.enabled = false
     }
 }
 
 private class IosSharedMobileEpubSpeechDelegate(
-    private val onStateChange: (SharedMobileEpubLocalTtsState) -> Unit,
-    private val onUtteranceFinished: () -> Unit
+    private val onStarted: (AVSpeechUtterance) -> Unit,
+    private val onPaused: (AVSpeechUtterance) -> Unit,
+    private val onContinued: (AVSpeechUtterance) -> Unit,
+    private val onFinished: (AVSpeechUtterance) -> Unit,
+    private val onCancelled: (AVSpeechUtterance) -> Unit,
+    private val onWillSpeakRange: (AVSpeechUtterance, CValue<NSRange>) -> Unit
 ) : NSObject(), AVSpeechSynthesizerDelegateProtocol {
 
     @ObjCSignatureOverride
@@ -267,7 +422,7 @@ private class IosSharedMobileEpubSpeechDelegate(
         synthesizer: AVSpeechSynthesizer,
         didStartSpeechUtterance: AVSpeechUtterance
     ) {
-        onStateChange(SharedMobileEpubLocalTtsState.SPEAKING)
+        onStarted(didStartSpeechUtterance)
     }
 
     @ObjCSignatureOverride
@@ -275,7 +430,7 @@ private class IosSharedMobileEpubSpeechDelegate(
         synthesizer: AVSpeechSynthesizer,
         didFinishSpeechUtterance: AVSpeechUtterance
     ) {
-        onUtteranceFinished()
+        onFinished(didFinishSpeechUtterance)
     }
 
     @ObjCSignatureOverride
@@ -283,7 +438,7 @@ private class IosSharedMobileEpubSpeechDelegate(
         synthesizer: AVSpeechSynthesizer,
         didPauseSpeechUtterance: AVSpeechUtterance
     ) {
-        onStateChange(SharedMobileEpubLocalTtsState.PAUSED)
+        onPaused(didPauseSpeechUtterance)
     }
 
     @ObjCSignatureOverride
@@ -291,7 +446,7 @@ private class IosSharedMobileEpubSpeechDelegate(
         synthesizer: AVSpeechSynthesizer,
         didContinueSpeechUtterance: AVSpeechUtterance
     ) {
-        onStateChange(SharedMobileEpubLocalTtsState.SPEAKING)
+        onContinued(didContinueSpeechUtterance)
     }
 
     @ObjCSignatureOverride
@@ -299,7 +454,16 @@ private class IosSharedMobileEpubSpeechDelegate(
         synthesizer: AVSpeechSynthesizer,
         didCancelSpeechUtterance: AVSpeechUtterance
     ) {
-        onStateChange(SharedMobileEpubLocalTtsState.IDLE)
+        onCancelled(didCancelSpeechUtterance)
+    }
+
+    @ObjCSignatureOverride
+    override fun speechSynthesizer(
+        synthesizer: AVSpeechSynthesizer,
+        willSpeakRangeOfSpeechString: CValue<NSRange>,
+        utterance: AVSpeechUtterance
+    ) {
+        onWillSpeakRange(utterance, willSpeakRangeOfSpeechString)
     }
 }
 
