@@ -1103,6 +1103,7 @@ class TtsService : MediaSessionService() {
         )
 
         mediaSession = MediaSession.Builder(this, sessionPlayer)
+            .setId("reader-tts-playback")
             .setCallback(playbackManager)
             .build()
 

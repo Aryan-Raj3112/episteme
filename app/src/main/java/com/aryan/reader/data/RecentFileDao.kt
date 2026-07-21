@@ -81,6 +81,9 @@ interface RecentFileDao {
     @Query("UPDATE recent_files SET lastPage = :page, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updatePdfReadingPosition(bookId: String, page: Int, progress: Float, timestamp: Long)
 
+    @Query("UPDATE recent_files SET progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
+    suspend fun updateAudiobookPosition(bookId: String, progress: Float, timestamp: Long)
+
     @Query("UPDATE recent_files SET bookmarks = :bookmarksJson, lastModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateBookmarks(bookId: String, bookmarksJson: String, timestamp: Long)
 

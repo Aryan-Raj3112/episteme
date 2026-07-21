@@ -6526,8 +6526,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setUnifiedLibrarySection(section: Int) {
-        val maxSection = if (BuildConfig.IS_OFFLINE) 2 else 3
-        val sanitizedSection = section.coerceIn(0, maxSection)
+        val sanitizedSection = section.coerceIn(0, 4)
         if (_internalState.value.unifiedLibrarySection == sanitizedSection) return
         _internalState.update { it.copy(unifiedLibrarySection = sanitizedSection) }
         persistLibraryLandingState()

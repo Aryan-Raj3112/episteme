@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
@@ -115,6 +116,8 @@ import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.data.AppDatabase
+import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.shared.AnnotationExportFormat
 import kotlinx.coroutines.launch
 
@@ -133,6 +136,9 @@ fun UnifiedLibraryScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val accountDrawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val audiobookImporter = remember(context) { AudiobookImporter(context.applicationContext) }
+    val importedAudiobooks by remember(context) { AppDatabase.getDatabase(context).audiobookDao().observeAll() }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -148,10 +154,21 @@ fun UnifiedLibraryScreen(
     var pendingSaveOriginalItem by remember { mutableStateOf<RecentFileItem?>(null) }
     var pendingAnnotationExportText by remember { mutableStateOf<String?>(null) }
     var showAnnotationExportFormatDialogFor by remember { mutableStateOf<RecentFileItem?>(null) }
+    var showAudiobookAddSheet by rememberSaveable { mutableStateOf(false) }
+    var audiobookPlayerItem by remember { mutableStateOf<AudiobookUiItem?>(null) }
 
     val filePicker = rememberFilePickerLauncher(viewModel::onFilesSelected)
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::addSyncedFolder)
+    }
+    val audiobookPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let {
+            scope.launch {
+                audiobookImporter.import(it)
+                    .onSuccess { imported -> viewModel.showBanner(context.getString(R.string.audiobooks_imported, imported.book.title ?: imported.book.displayName)) }
+                    .onFailure { error -> viewModel.showBanner(error.message ?: context.getString(R.string.audiobooks_import_failed), isError = true) }
+            }
+        }
     }
     val saveOriginalLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -360,6 +377,12 @@ fun UnifiedLibraryScreen(
                     ) {
                         Icon(Icons.Default.Add, contentDescription = stringResource(R.string.unified_library_import))
                     }
+                    UnifiedLibrarySection.AUDIOBOOKS -> FloatingActionButton(
+                        onClick = { showAudiobookAddSheet = true },
+                        modifier = Modifier.testTag("UnifiedLibraryAddAudiobook")
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.audiobooks_add))
+                    }
                     UnifiedLibrarySection.SHELVES -> if (selectedShelfId == null) {
                         ExtendedFloatingActionButton(
                             onClick = viewModel::showCreateShelfDialog,
@@ -401,8 +424,20 @@ fun UnifiedLibraryScreen(
                         if (!isSearchVisible) query = ""
                     },
                     onControlsClick = { showLibraryControls = true },
-                    onBookClick = viewModel::onRecentFileClicked,
+                    onBookClick = { item ->
+                        if (item.type == FileType.AUDIOBOOK) {
+                            importedAudiobooks.firstOrNull { it.bookId == item.bookId }?.let { audiobookPlayerItem = it.toUiItem() }
+                        } else viewModel.onRecentFileClicked(item)
+                    },
                     onBookLongClick = viewModel::onRecentItemLongPress
+                )
+                UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
+                    modifier = Modifier.padding(padding),
+                    audiobooks = importedAudiobooks,
+                    ebooks = uiState.rawLibraryFiles.filter { it.type != FileType.AUDIOBOOK },
+                    onAudiobookClick = { audiobookPlayerItem = it },
+                    onListenWithTtsClick = { book -> audiobookPlayerItem = book.toTtsAudiobookUiItem() },
+                    onAddAudiobookClick = { showAudiobookAddSheet = true }
                 )
                 UnifiedLibrarySection.SHELVES -> UnifiedShelvesSection(
                     modifier = Modifier.padding(padding),
@@ -463,6 +498,18 @@ fun UnifiedLibraryScreen(
             },
             onDismiss = { showLibraryControls = false }
         )
+    }
+    if (showAudiobookAddSheet) {
+        AudiobookAddSheet(
+            onChooseFile = {
+                showAudiobookAddSheet = false
+                audiobookPicker.launch(arrayOf("audio/*", "application/octet-stream"))
+            },
+            onDismiss = { showAudiobookAddSheet = false }
+        )
+    }
+    audiobookPlayerItem?.let { item ->
+        AudiobookPlayerSheet(item = item, onBeforePlay = viewModel.ttsController::stop, onDismiss = { audiobookPlayerItem = null })
     }
     if (showAdvancedFilters) {
         LibraryFilterSheet(
@@ -554,7 +601,8 @@ private enum class UnifiedLibrarySection(val persistedValue: Int) {
     HOME(0),
     SHELVES(1),
     FOLDERS(2),
-    CATALOGS(3);
+    CATALOGS(3),
+    AUDIOBOOKS(4);
 
     companion object {
         fun fromPersisted(value: Int): UnifiedLibrarySection =
@@ -571,7 +619,7 @@ private fun UnifiedLibraryDrawer(
     onFontsClick: () -> Unit,
     onAiSettingsClick: () -> Unit,
 ) {
-    ModalDrawerSheet(modifier = Modifier.navigationBarsPadding()) {
+    ModalDrawerSheet(modifier = Modifier.fillMaxHeight()) {
         Column(modifier = Modifier.fillMaxHeight()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -605,6 +653,7 @@ private fun UnifiedLibraryDrawer(
                 modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
             )
             UnifiedLibraryDestination(stringResource(R.string.unified_library_home), currentSection == UnifiedLibrarySection.HOME, { Icon(Icons.Default.Home, null) }) { onSectionSelected(UnifiedLibrarySection.HOME) }
+            UnifiedLibraryDestination(stringResource(R.string.audiobooks_title), currentSection == UnifiedLibrarySection.AUDIOBOOKS, { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) }) { onSectionSelected(UnifiedLibrarySection.AUDIOBOOKS) }
             UnifiedLibraryDestination(stringResource(R.string.tab_shelves), currentSection == UnifiedLibrarySection.SHELVES, { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) }) { onSectionSelected(UnifiedLibrarySection.SHELVES) }
             UnifiedLibraryDestination(stringResource(R.string.tab_folders), currentSection == UnifiedLibrarySection.FOLDERS, { Icon(Icons.Default.Folder, null) }) { onSectionSelected(UnifiedLibrarySection.FOLDERS) }
             if (!BuildConfig.IS_OFFLINE) {
@@ -657,8 +706,9 @@ private fun UnifiedLibraryTopBar(
             } else {
                 IconButton(onClick = onMenuClick) { Icon(Icons.Default.Menu, stringResource(R.string.unified_library_drawer_title)) }
             }
-            val title = selectedShelf?.name ?: when (section) {
+                val title = selectedShelf?.name ?: when (section) {
                     UnifiedLibrarySection.HOME -> null
+                    UnifiedLibrarySection.AUDIOBOOKS -> stringResource(R.string.audiobooks_title)
                     UnifiedLibrarySection.SHELVES -> stringResource(R.string.tab_shelves)
                     UnifiedLibrarySection.FOLDERS -> stringResource(R.string.tab_folders)
                     UnifiedLibrarySection.CATALOGS -> stringResource(R.string.tab_catalogs)
