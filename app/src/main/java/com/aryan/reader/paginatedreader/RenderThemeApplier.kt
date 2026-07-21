@@ -90,6 +90,15 @@ private fun ContentBlock.applyReaderThemeForDisplay(
             },
             style = themedStyle
         )
+        is ChantScoreBlock -> copy(
+            units = units.map { unit ->
+                unit.copy(
+                    neume = unit.neume.applyReaderThemeForDisplay(isDarkTheme, themeBackgroundColor, themeTextColor),
+                    lyric = unit.lyric.applyReaderThemeForDisplay(isDarkTheme, themeBackgroundColor, themeTextColor)
+                )
+            },
+            style = themedStyle
+        )
     }
 }
 

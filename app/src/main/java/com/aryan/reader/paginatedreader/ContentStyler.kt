@@ -202,13 +202,17 @@ class ContentStyler(
                 val height = if (block.isExplicitLineBreak) with(density) { baseTextStyle.fontSize.toDp() } else 8.dp
                 SpacerBlock(height = height, style = themedStyle.blockStyle, elementId = block.elementId, cfi = block.cfi, blockIndex = block.blockIndex)
             }
-            is SemanticFlexContainer -> FlexContainerBlock(
-                children = block.children.mapNotNull { styleBlock(it) },
-                style = themedStyle.blockStyle,
-                elementId = block.elementId,
-                cfi = block.cfi,
-                blockIndex = block.blockIndex
-            )
+            is SemanticFlexContainer -> if (block.style.blockStyle.display == "reader-chant-flow") {
+                styleChantScore(block, themedStyle)
+            } else {
+                FlexContainerBlock(
+                    children = block.children.mapNotNull { styleBlock(it) },
+                    style = themedStyle.blockStyle,
+                    elementId = block.elementId,
+                    cfi = block.cfi,
+                    blockIndex = block.blockIndex
+                )
+            }
             is SemanticWrappingBlock -> {
                 val styledImage = styleBlock(block.floatedImage) as? ImageBlock
                 val styledParagraphs = block.paragraphsToWrap.mapNotNull { styleBlock(it) as? ParagraphBlock }
@@ -229,6 +233,42 @@ class ContentStyler(
                 null
             }
         }
+    }
+
+    private fun styleChantScore(block: SemanticFlexContainer, themedStyle: CssStyle): ChantScoreBlock {
+        val units = mutableListOf<ChantUnitBlock>()
+
+        fun addUnit(unit: SemanticFlexContainer, keepWithNext: Boolean) {
+            val rows = unit.children.mapNotNull { styleBlock(it) as? TextContentBlock }
+            val marker = unit.style.blockStyle.display.orEmpty()
+            val isDropCap = marker == "reader-chant-dropcap"
+            units += ChantUnitBlock(
+                neume = if (isDropCap) AnnotatedString("") else rows.getOrNull(0)?.content ?: AnnotatedString(""),
+                lyric = if (isDropCap) rows.getOrNull(0)?.content ?: AnnotatedString("") else rows.getOrNull(1)?.content ?: AnnotatedString(""),
+                keepWithNext = keepWithNext,
+                underlineBefore = ":before" in marker,
+                underlineAfter = ":after" in marker,
+                isDropCap = isDropCap
+            )
+        }
+
+        block.children.forEach { child ->
+            val container = child as? SemanticFlexContainer ?: return@forEach
+            if (container.style.blockStyle.display == "reader-chant-nonbreaking") {
+                container.children.filterIsInstance<SemanticFlexContainer>().forEachIndexed { index, unit ->
+                    addUnit(unit, keepWithNext = index < container.children.lastIndex)
+                }
+            } else {
+                addUnit(container, keepWithNext = false)
+            }
+        }
+        return ChantScoreBlock(
+            units = units,
+            style = themedStyle.blockStyle,
+            elementId = block.elementId,
+            cfi = block.cfi,
+            blockIndex = block.blockIndex
+        )
     }
 
     private fun applyThemeToStyle(style: CssStyle): CssStyle {
@@ -409,9 +449,12 @@ class ContentStyler(
                 rootFontFamily ?: baseTextStyle.fontFamily
             }
 
-            val initialSpanStyle = baseTextStyle.toSpanStyle()
+            var initialSpanStyle = baseTextStyle.toSpanStyle()
                 .merge(blockStyle.spanStyle)
                 .copy(fontFamily = effectiveBlockFontFamily)
+            if (blockStyle.fontSize.isSpecified) {
+                initialSpanStyle = initialSpanStyle.copy(fontSize = blockStyle.fontSize)
+            }
 
             if (DEBUG_CONTENT_STYLING) {
                 Timber.d("ContentStyler: InitialSpanStyle. BaseFontSize=${baseTextStyle.fontSize}, BlockFontSize=${blockStyle.spanStyle.fontSize} -> Merged=${initialSpanStyle.fontSize}")
@@ -444,6 +487,9 @@ class ContentStyler(
                             fontFamily = effectiveSpanFontFamily,
                             baselineShift = baselineShift
                         )
+                        if (themedSpanStyle.fontSize.isSpecified) {
+                            finalSpanStyle = finalSpanStyle.copy(fontSize = themedSpanStyle.fontSize)
+                        }
 
                         if (!span.linkHref.isNullOrBlank()) {
                             linkSpans.add(span)

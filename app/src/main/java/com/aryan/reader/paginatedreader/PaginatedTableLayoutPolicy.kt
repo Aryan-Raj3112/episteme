@@ -111,6 +111,7 @@ private fun ContentBlock.withoutFlexPaginationChildMargin(): ContentBlock {
         is WrappingContentBlock -> copy(style = newStyle)
         is TableBlock -> copy(style = newStyle)
         is FlexContainerBlock -> copy(style = newStyle)
+        is ChantScoreBlock -> copy(style = newStyle)
         is MathBlock -> copy(style = newStyle)
     }
 }

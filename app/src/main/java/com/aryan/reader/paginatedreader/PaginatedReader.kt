@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -4567,6 +4569,7 @@ private fun NativeVerticalPage(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NativeVerticalContentBlock(
     block: ContentBlock,
@@ -4633,6 +4636,7 @@ private fun NativeVerticalContentBlock(
                 modifier = styledModifier
             )
         }
+        is ChantScoreBlock -> NativeChantScore(block, textStyle, styledModifier)
         is FlexContainerBlock -> {
             val renderChild: @Composable (ContentBlock) -> Unit = { child ->
                 NativeVerticalContentBlock(
@@ -4657,10 +4661,24 @@ private fun NativeVerticalContentBlock(
                     blockLayoutMap = blockLayoutMap,
                     density = density,
                     imageLoader = imageLoader,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = if (child.style.display == "reader-chant-unit") {
+                        Modifier.widthIn(min = 1.dp)
+                    } else {
+                        Modifier.fillMaxWidth()
+                    }
                 )
             }
-            if (block.style.flexDirection == "row") {
+            if (block.style.display == "reader-chant-flow") {
+                FlowRow(
+                    modifier = styledModifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalArrangement = Arrangement.Bottom
+                ) {
+                    block.children.forEach { child ->
+                        Box(modifier = Modifier.wrapContentHeight()) { renderChild(child) }
+                    }
+                }
+            } else if (block.style.flexDirection == "row") {
                 Row(modifier = styledModifier.fillMaxWidth()) {
                     block.children.forEach { child ->
                         Box(modifier = Modifier.weight(1f, fill = false)) {
@@ -4700,6 +4718,53 @@ private fun NativeVerticalContentBlock(
                     pageIndex = pageIndex,
                     registerStableLayoutKey = true
                 )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NativeChantScore(
+    block: ChantScoreBlock,
+    textStyle: TextStyle,
+    modifier: Modifier = Modifier
+) {
+    val groups = remember(block.units) {
+        buildList {
+            var start = 0
+            while (start < block.units.size) {
+                var end = start + 1
+                while (end < block.units.size && block.units[end - 1].keepWithNext) end++
+                add(block.units.subList(start, end))
+                start = end
+            }
+        }
+    }
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        groups.forEach { group ->
+            Row(verticalAlignment = Alignment.Bottom) {
+                group.forEach { unit ->
+                    Column(
+                        modifier = Modifier
+                            .padding(horizontal = 2.dp)
+                            .drawBehind {
+                                val y = size.height - 1.dp.toPx()
+                                if (unit.underlineBefore) drawLine(Color.Gray, Offset(0f, y), Offset(size.width / 2f, y), 1.dp.toPx())
+                                if (unit.underlineAfter) drawLine(Color.Gray, Offset(size.width / 2f, y), Offset(size.width, y), 1.dp.toPx())
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (!unit.isDropCap) {
+                            Text(text = unit.neume, style = textStyle, maxLines = 1, softWrap = false)
+                        }
+                        Text(text = unit.lyric, style = textStyle, maxLines = 1, softWrap = false)
+                    }
+                }
             }
         }
     }
@@ -5471,6 +5536,7 @@ private fun ContentBlock.androidEpubKindName(): String {
         is MathBlock -> "math"
         is TableBlock -> "table"
         is FlexContainerBlock -> "flex"
+        is ChantScoreBlock -> "chant"
         is WrappingContentBlock -> "wrapping"
         is SpacerBlock -> "spacer"
     }
@@ -6488,7 +6554,7 @@ private fun checkLayoutMismatch(
 
 @Suppress("unused")
 @SuppressLint("UnusedBoxWithConstraintsScope", "BinaryOperationInTimber")
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 @Composable
 internal fun PaginatedReaderContent(
@@ -7269,6 +7335,7 @@ internal fun PaginatedReaderContent(
                                                         }
 
                                                     @Suppress("DEPRECATION") when (block) {
+                                                        is ChantScoreBlock -> NativeChantScore(block, textStyle, paddingModifier)
                                                         is ParagraphBlock -> {
                                                             val paragraphStyle = textStyle.copy(
                                                                 textAlign = block.textAlign
@@ -7724,11 +7791,7 @@ internal fun PaginatedReaderContent(
                                                                         "flex-end" -> Alignment.Bottom
                                                                         else -> Alignment.Top
                                                                     }
-                                                                Row(
-                                                                    modifier = paddingModifier.fillMaxWidth(),
-                                                                    horizontalArrangement = horizontalArrangement,
-                                                                    verticalAlignment = verticalAlignment
-                                                                ) {
+                                                                val chantChildren: @Composable () -> Unit = {
                                                                     block.children.forEach { childBlock ->
                                                                         RenderFlexChildBlock(
                                                                             childBlock = childBlock,
@@ -7763,6 +7826,21 @@ internal fun PaginatedReaderContent(
                                                                             pageIndex = pageIndex
                                                                         )
                                                                     }
+                                                                }
+                                                                if (block.style.display == "reader-chant-flow") {
+                                                                    FlowRow(
+                                                                        modifier = paddingModifier.fillMaxWidth(),
+                                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                                        verticalArrangement = Arrangement.Bottom,
+                                                                        content = { chantChildren() }
+                                                                    )
+                                                                } else {
+                                                                    Row(
+                                                                        modifier = paddingModifier.fillMaxWidth(),
+                                                                        horizontalArrangement = horizontalArrangement,
+                                                                        verticalAlignment = verticalAlignment,
+                                                                        content = { chantChildren() }
+                                                                    )
                                                                 }
                                                             } else {
                                                                 val verticalArrangement =
@@ -9305,6 +9383,42 @@ private fun RenderFlexChildBlock(
                         }
                     }
                 }
+            }
+        }
+
+        is FlexContainerBlock -> {
+            val content: @Composable () -> Unit = {
+                childBlock.children.forEach { nested ->
+                    RenderFlexChildBlock(
+                        childBlock = nested,
+                        textStyle = textStyle,
+                        imageSizeMultiplier = imageSizeMultiplier,
+                        searchQuery = searchQuery,
+                        searchHighlightColor = searchHighlightColor,
+                        ttsHighlightInfo = ttsHighlightInfo,
+                        ttsHighlightColor = ttsHighlightColor,
+                        textMeasurer = textMeasurer,
+                        onLinkClickCallback = onLinkClickCallback,
+                        onGeneralTapCallback = onGeneralTapCallback,
+                        userHighlights = userHighlights,
+                        activeSelection = activeSelection,
+                        onSelectionChange = onSelectionChange,
+                        onHighlightClick = onHighlightClick,
+                        isDarkTheme = isDarkTheme,
+                        themeBackgroundColor = themeBackgroundColor,
+                        themeTextColor = themeTextColor,
+                        blockLayoutMap = blockLayoutMap,
+                        density = density,
+                        imageLoader = imageLoader,
+                        pageIndex = pageIndex,
+                        registerStableLayoutKey = registerStableLayoutKey
+                    )
+                }
+            }
+            if (childBlock.style.flexDirection == "row") {
+                Row { content() }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { content() }
             }
         }
 

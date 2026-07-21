@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.sp
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import androidx.compose.ui.graphics.Color
 
 class HtmlParserLinkTest {
     @Test
@@ -165,6 +166,55 @@ class HtmlParserLinkTest {
         assertEquals(androidx.compose.ui.graphics.Color.Blue, paragraph.style.spanStyle.color)
         assertTrue(paragraph.spans.any { it.tag == "::before" && it.start == 0 })
         assertTrue(paragraph.spans.any { it.tag == "::after" && it.end == paragraph.text.length })
+    }
+
+    @Test
+    fun `chant score preserves neume and lyric as atomic native flow units`() {
+        val cssRules = CssParser.parse(
+            cssContent = """
+                .chant-unit { display: inline-grid; }
+                .neume-slot { font-family: "BUMEByzantina"; font-size: 175%; font-feature-settings: "liga" on, "calt" on; }
+                .dichrom-neumes { display: none; }
+                .lyric-slot { white-space: nowrap; }
+            """.trimIndent(),
+            cssPath = null,
+            baseFontSizeSp = 16f,
+            density = 1f,
+            constraints = Constraints(maxWidth = 400, maxHeight = 800),
+            isDarkTheme = false
+        ).rules
+        val blocks = parse(
+            html = """
+                <html><body><div class="hymn-score-canvas">
+                  <div class="chant-unit">
+                    <div class="neume-slot dichrom-neumes">𝁕<span style="color: red">𝃬</span></div>
+                    <div class="neume-slot compat-neumes">𝁕𝃬</div>
+                    <div class="lyric-slot">what</div>
+                  </div>
+                  <div class="non-breaking"><div class="chant-unit">
+                    <div class="neume-slot">𝁇</div><div class="lyric-slot">crowns</div>
+                  </div></div>
+                </div></body></html>
+            """.trimIndent(),
+            cssRules = cssRules,
+            fontFamilyMap = mapOf("bumebyzantina" to FontFamily.Serif)
+        )
+
+        val score = blocks.single() as SemanticFlexContainer
+        assertEquals("reader-chant-flow", score.style.blockStyle.display)
+        assertEquals(2, score.children.size)
+        val firstUnit = score.children.first() as SemanticFlexContainer
+        assertEquals("reader-chant-unit", firstUnit.style.blockStyle.display)
+        assertEquals(2, firstUnit.children.size)
+        val nonBreakingGroup = score.children[1] as SemanticFlexContainer
+        assertEquals("reader-chant-nonbreaking", nonBreakingGroup.style.blockStyle.display)
+        assertEquals("reader-chant-unit", (nonBreakingGroup.children.single() as SemanticFlexContainer).style.blockStyle.display)
+        assertEquals("𝁕𝃬", (firstUnit.children[0] as SemanticParagraph).text)
+        assertEquals("what", (firstUnit.children[1] as SemanticParagraph).text)
+        assertEquals(FontFamily.Serif, (firstUnit.children[0] as SemanticParagraph).style.spanStyle.fontFamily)
+        assertEquals("\"liga\" on, \"calt\" on", (firstUnit.children[0] as SemanticParagraph).style.spanStyle.fontFeatureSettings)
+        assertEquals(28.sp, (firstUnit.children[0] as SemanticParagraph).style.fontSize)
+        assertTrue((firstUnit.children[0] as SemanticParagraph).spans.any { it.style.spanStyle.color == Color.Red })
     }
 
     private fun parse(

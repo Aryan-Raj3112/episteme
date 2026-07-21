@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnitType
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
@@ -269,7 +270,12 @@ private class SemanticHtmlParser(
         document.select("script, style, noscript, template").remove()
 
         val body = document.body()
-        return parseContainer(body, getElementStyle(body).withResolvedFontFamily())
+        return parseContainer(
+            body,
+            getElementStyle(body)
+                .resolveFontSizeAgainst(CssStyle(fontSize = textStyle.fontSize))
+                .withResolvedFontFamily()
+        )
     }
 
     private inline fun Element.anyChildElement(predicate: (Element) -> Boolean): Boolean {
@@ -352,7 +358,7 @@ private class SemanticHtmlParser(
             textEmphasis = elementOwnStyle.textEmphasis ?: inheritedStyle.textEmphasis,
             whiteSpace = elementOwnStyle.whiteSpace ?: inheritedStyle.whiteSpace,
             customProperties = inheritedStyle.customProperties + elementOwnStyle.customProperties
-        ).withResolvedFontFamily()
+        ).resolveFontSizeAgainst(inheritedStyle).withResolvedFontFamily()
 
         if (finalStyle.display == "none") return emptyList()
 
@@ -467,6 +473,14 @@ private class SemanticHtmlParser(
         return copy(spanStyle = spanStyle.copy(fontFamily = resolvedFontFamily))
     }
 
+    private fun CssStyle.resolveFontSizeAgainst(parent: CssStyle): CssStyle {
+        if (!fontSize.isSpecified) return copy(fontSize = parent.fontSize)
+        if (fontSize.type != TextUnitType.Em) return this
+        val parentSize = parent.fontSize.takeIf { it.isSpecified && it.type != TextUnitType.Em }
+            ?: textStyle.fontSize
+        return copy(fontSize = (parentSize.value * fontSize.value).sp)
+    }
+
     private fun firstCssUrl(value: String): String? {
         return cssUrlRegex.find(value)?.groupValues?.getOrNull(2)?.trim()?.takeIf { it.isNotBlank() }
     }
@@ -490,6 +504,15 @@ private class SemanticHtmlParser(
     ): List<SemanticBlock> {
         val elementId = element.id().ifBlank { null }
         val cfi = element.getCfiPath()
+
+        // Byzantine chant EPUBs commonly encode every syllable as an inline grid whose
+        // first row is a neume and whose second row is its lyric. Flattening the nested
+        // divs destroys that relationship, so retain it as two nested native flex
+        // containers. The renderer recognizes the private display markers and lays the
+        // outer container out as a wrapping flow of atomic, vertically stacked units.
+        if (element.hasClass("hymn-score-canvas") && element.directChantUnits().isNotEmpty()) {
+            return listOf(parseChantScore(element, elementStyle, inheritedLinkHref, elementId, cfi))
+        }
 
         if (element.tagName().equals("br", ignoreCase = true)) {
             return listOf(SemanticSpacer(style = elementStyle, elementId = elementId, cfi = cfi, isExplicitLineBreak = true, blockIndex = nextBlockIndex++))
@@ -609,6 +632,116 @@ private class SemanticHtmlParser(
                 listOf(first.withElementId(elementId)) + result.drop(1)
             } else result
         } else result
+    }
+
+    private fun parseChantScore(
+        score: Element,
+        scoreStyle: CssStyle,
+        inheritedLinkHref: String?,
+        elementId: String?,
+        cfi: String
+    ): SemanticFlexContainer {
+        fun parseUnit(unit: Element): SemanticFlexContainer {
+            val unitStyle = getElementStyle(unit, scoreStyle.customProperties)
+            val inheritedUnitStyle = scoreStyle.merge(unitStyle)
+                .resolveFontSizeAgainst(scoreStyle)
+                .withResolvedFontFamily()
+            val rows = listOfNotNull(
+                unit.children().firstOrNull { it.hasClass("neume-slot") && it.hasClass("dichrom-neumes") }
+                    ?: unit.children().firstOrNull { it.hasClass("neume-slot") },
+                unit.children().firstOrNull { it.hasClass("lyric-slot") }
+            ).flatMap { row ->
+                var rowStyle = inheritedUnitStyle.merge(
+                    getElementStyle(row, inheritedUnitStyle.customProperties)
+                ).resolveFontSizeAgainst(inheritedUnitStyle).withResolvedFontFamily()
+                if (row.hasClass("dichrom-neumes")) {
+                    rowStyle = rowStyle.copy(
+                        display = "block",
+                        blockStyle = rowStyle.blockStyle.copy(display = "block")
+                    )
+                }
+                textElementToSemanticParagraphs(row, rowStyle, inheritedLinkHref)
+            }
+            val underlineBefore = unit.children().any { it.hasClass("pre-underscore") && it.hasClass("activated") }
+            val underlineAfter = unit.children().any { it.hasClass("post-underscore") && it.hasClass("activated") }
+            return SemanticFlexContainer(
+                children = rows,
+                style = inheritedUnitStyle.copy(
+                    blockStyle = inheritedUnitStyle.blockStyle.copy(
+                        display = buildString {
+                            append("reader-chant-unit")
+                            if (underlineBefore) append(":before")
+                            if (underlineAfter) append(":after")
+                        },
+                        flexDirection = "column"
+                    )
+                ),
+                elementId = unit.id().ifBlank { null },
+                cfi = unit.getCfiPath(),
+                blockIndex = nextBlockIndex++
+            )
+        }
+        val units = score.children().flatMap { child ->
+            when {
+                child.hasClass("drop-cap-visual") -> {
+                    val dropCapStyle = scoreStyle.merge(getElementStyle(child, scoreStyle.customProperties))
+                        .resolveFontSizeAgainst(scoreStyle)
+                        .withResolvedFontFamily()
+                    listOf(
+                        SemanticFlexContainer(
+                            children = textElementToSemanticParagraphs(child, dropCapStyle, inheritedLinkHref),
+                            style = dropCapStyle.copy(
+                                blockStyle = dropCapStyle.blockStyle.copy(display = "reader-chant-dropcap", flexDirection = "column")
+                            ),
+                            elementId = child.id().ifBlank { null },
+                            cfi = child.getCfiPath(),
+                            blockIndex = nextBlockIndex++
+                        )
+                    )
+                }
+                child.hasClass("chant-unit") -> listOf(parseUnit(child))
+                child.hasClass("non-breaking") -> {
+                    val grouped = child.children().filter { it.hasClass("chant-unit") }.map(::parseUnit)
+                    listOf(
+                        SemanticFlexContainer(
+                            children = grouped,
+                            style = scoreStyle.copy(
+                                blockStyle = scoreStyle.blockStyle.copy(
+                                    display = "reader-chant-nonbreaking",
+                                    flexDirection = "row",
+                                    pageBreakInsideAvoid = true
+                                )
+                            ),
+                            elementId = child.id().ifBlank { null },
+                            cfi = child.getCfiPath(),
+                            blockIndex = nextBlockIndex++
+                        )
+                    )
+                }
+                else -> emptyList()
+            }
+        }
+        return SemanticFlexContainer(
+            children = units,
+            style = scoreStyle.copy(
+                blockStyle = scoreStyle.blockStyle.copy(
+                    display = "reader-chant-flow",
+                    flexDirection = "row",
+                    pageBreakInsideAvoid = false
+                )
+            ),
+            elementId = elementId,
+            cfi = cfi,
+            blockIndex = nextBlockIndex++
+        )
+    }
+
+    private fun Element.directChantUnits(): List<Element> = children().flatMap { child ->
+        when {
+            child.hasClass("chant-unit") -> listOf(child)
+            child.hasClass("non-breaking") -> child.children().filter { it.hasClass("chant-unit") }
+            else -> emptyList()
+        }
     }
 
     private fun textElementToSemanticParagraphs(
@@ -906,7 +1039,9 @@ private class SemanticHtmlParser(
                     }
                     if (node.tagName().lowercase() in nonRenderableHtmlTags) return
                     val currentElementStyle = getElementStyle(node, inheritedStyle.customProperties)
-                    val newStyle = inheritedStyle.merge(currentElementStyle).withResolvedFontFamily()
+                    val newStyle = inheritedStyle.merge(currentElementStyle)
+                        .resolveFontSizeAgainst(inheritedStyle)
+                        .withResolvedFontFamily()
                     if (newStyle.display == "none") return
                     val tag = node.tagName().lowercase()
                     val href = node.linkHrefOrNull()

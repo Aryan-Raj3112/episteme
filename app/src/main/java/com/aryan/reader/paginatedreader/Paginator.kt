@@ -141,6 +141,7 @@ interface BlockMeasurementProvider {
     suspend fun split(block: WrappingContentBlock, availableHeight: Int): Pair<WrappingContentBlock, List<ContentBlock>>?
     suspend fun split(block: TableBlock, availableHeight: Int): Pair<TableBlock, TableBlock>?
     suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>?
+    suspend fun split(block: ChantScoreBlock, availableHeight: Int): Pair<ChantScoreBlock, ChantScoreBlock>?
 }
 
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -152,13 +153,23 @@ class SuspendingAndroidBlockMeasurementProvider(
     private val imageSizeMultiplier: Float
 ) : BlockMeasurementProvider {
     private val measurementCache = ConcurrentHashMap<Int, Int>()
+    private val chantUnitMeasurementCache = ConcurrentHashMap<Int, Pair<Int, Int>>()
 
     override suspend fun measure(block: ContentBlock): Int {
         coroutineContext.ensureActive()
         val cacheKey = blockMeasurementCacheKey(block)
         measurementCache[cacheKey]?.let { return it }
 
-        val measured = measureBlockHeight(
+        val measured = if (block is ChantScoreBlock) {
+            measureChantRows(
+                block.units,
+                textMeasurer,
+                constraints.maxWidth,
+                textStyle,
+                density,
+                chantUnitMeasurementCache
+            ).sumOf { it.heightPx }
+        } else measureBlockHeight(
             block = block,
             textMeasurer = textMeasurer,
             constraints = constraints,
@@ -477,6 +488,31 @@ class SuspendingAndroidBlockMeasurementProvider(
 
     override suspend fun split(block: FlexContainerBlock, availableHeight: Int): Pair<FlexContainerBlock, FlexContainerBlock>? {
         coroutineContext.ensureActive()
+        if (block.style.display == "reader-chant-flow") {
+            val maxWidth = constraints.maxWidth.coerceAtLeast(1)
+            var rowWidth = 0
+            var rowHeight = 0
+            var usedHeight = 0
+            var splitIndex = block.children.size
+            for ((index, unit) in block.children.withIndex()) {
+                val unitWidth = chantUnitEstimatedWidthPx(unit, textStyle, density).coerceAtMost(maxWidth)
+                val unitHeight = measure(unit)
+                if (rowWidth > 0 && rowWidth + unitWidth > maxWidth) {
+                    if (usedHeight + rowHeight + unitHeight > availableHeight) {
+                        splitIndex = index
+                        break
+                    }
+                    usedHeight += rowHeight
+                    rowWidth = 0
+                    rowHeight = 0
+                }
+                rowWidth += unitWidth
+                rowHeight = maxOf(rowHeight, unitHeight)
+            }
+            if (splitIndex <= 0 || splitIndex >= block.children.size) return null
+            return block.copy(children = block.children.take(splitIndex)) to
+                block.copy(children = block.children.drop(splitIndex))
+        }
         if (block.style.flexDirection == "row") return null
 
         var currentHeight = 0
@@ -515,6 +551,20 @@ class SuspendingAndroidBlockMeasurementProvider(
 
         return part1 to part2
     }
+
+    override suspend fun split(block: ChantScoreBlock, availableHeight: Int): Pair<ChantScoreBlock, ChantScoreBlock>? {
+        val rows = measureChantRows(block.units, textMeasurer, constraints.maxWidth, textStyle, density, chantUnitMeasurementCache)
+        var used = 0
+        var splitIndex = 0
+        for (row in rows) {
+            if (used + row.heightPx > availableHeight) break
+            used += row.heightPx
+            splitIndex = row.endExclusive
+        }
+        if (splitIndex <= 0 || splitIndex >= block.units.size) return null
+        return block.copy(units = block.units.take(splitIndex)) to
+            block.copy(units = block.units.drop(splitIndex))
+    }
 }
 
 private fun copyBlockWithNewStyle(block: ContentBlock, newStyle: BlockStyle): ContentBlock {
@@ -528,6 +578,7 @@ private fun copyBlockWithNewStyle(block: ContentBlock, newStyle: BlockStyle): Co
         is WrappingContentBlock -> block.copy(style = newStyle)
         is TableBlock -> block.copy(style = newStyle)
         is FlexContainerBlock -> block.copy(style = newStyle)
+        is ChantScoreBlock -> block.copy(style = newStyle)
         is MathBlock -> block.copy(style = newStyle)
     }
 }
@@ -544,6 +595,7 @@ private fun <T : ContentBlock> setBlockExpectedHeight(block: T, height: Int): T 
         is WrappingContentBlock -> block.copy(expectedHeight = height)
         is TableBlock -> block.copy(expectedHeight = height)
         is FlexContainerBlock -> block.copy(expectedHeight = height)
+        is ChantScoreBlock -> block.copy(expectedHeight = height)
         is MathBlock -> block.copy(expectedHeight = height)
     } as T
 }
@@ -859,6 +911,17 @@ suspend fun paginate(
                             }
                     }
 
+                    is ChantScoreBlock -> {
+                        measurementProvider.split(block, heightForSplitting)?.let { (part1, part2) ->
+                            var measuredPart1 = part1
+                            val part1Height = measurementProvider.measure(part1)
+                            measuredPart1 = setBlockExpectedHeight(measuredPart1, part1Height + spaceBetweenBlocks)
+                            currentPageContent.add(measuredPart1)
+                            remainingBlocks.add(0, part2)
+                            wasSplit = true
+                        }
+                    }
+
                     else -> {
                         if (DEBUG_PAGINATION_LOGS) {
                             Timber.d("Page ${pageIndex + 1}: Block type is not splittable.")
@@ -1159,7 +1222,24 @@ private suspend fun measureBlockHeight(
         is FlexContainerBlock -> {
             val isRow = block.style.flexDirection == "row"
             val childrenForMeasure = block.childrenForFlexPaginationMeasurement()
-            val height = if (isRow) {
+            val height = if (block.style.display == "reader-chant-flow") {
+                var totalHeight = 0
+                var rowWidth = 0
+                var rowHeight = 0
+                childrenForMeasure.forEach { child ->
+                    val childWidth = chantUnitEstimatedWidthPx(child, defaultStyle, density)
+                        .coerceAtMost(adjustedConstraints.maxWidth)
+                    val childHeight = measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
+                    if (rowWidth > 0 && rowWidth + childWidth > adjustedConstraints.maxWidth) {
+                        totalHeight += rowHeight
+                        rowWidth = 0
+                        rowHeight = 0
+                    }
+                    rowWidth += childWidth
+                    rowHeight = maxOf(rowHeight, childHeight)
+                }
+                totalHeight + rowHeight
+            } else if (isRow) {
                 childrenForMeasure.maxOfOrNull { child ->
                     measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier)
                 } ?: 0
@@ -1170,6 +1250,13 @@ private suspend fun measureBlockHeight(
             }
             height
         }
+        is ChantScoreBlock -> measureChantRows(
+            block.units,
+            textMeasurer,
+            adjustedConstraints.maxWidth,
+            defaultStyle,
+            density
+        ).sumOf { it.heightPx }
         is MathBlock -> {
             val fontSizePx = with(density) { defaultStyle.fontSize.toPx() }
             val containerWidthPx = adjustedConstraints.maxWidth
@@ -1212,6 +1299,66 @@ private suspend fun measureBlockHeight(
         Timber.tag("PAGINATION_DEBUG").v("Measure result for ${block::class.simpleName}: content=$contentHeight, paddingV=$verticalPaddingPx, borderV=$verticalBorderPx, total=$finalHeight")
     }
     return finalHeight
+}
+
+private fun chantUnitEstimatedWidthPx(block: ContentBlock, textStyle: TextStyle, density: Density): Int {
+    val container = block as? FlexContainerBlock
+    if (container?.style?.display == "reader-chant-nonbreaking") {
+        return container.children.sumOf { chantUnitEstimatedWidthPx(it, textStyle, density) }
+    }
+    val textRows = container?.children.orEmpty().filterIsInstance<TextContentBlock>()
+    val longest = textRows.maxOfOrNull { row ->
+        val fontScale = if (row.content.spanStyles.any { it.item.fontSize.isSpecified }) 1.75f else 1f
+        row.content.text.codePointCount(0, row.content.length) * fontScale
+    } ?: 1f
+    val fontPx = with(density) { textStyle.fontSize.toPx() }
+    return (longest * fontPx * 0.68f + with(density) { 6.dp.toPx() }).roundToInt().coerceAtLeast(1)
+}
+
+private data class MeasuredChantRow(val endExclusive: Int, val heightPx: Int)
+
+private suspend fun measureChantRows(
+    units: List<ChantUnitBlock>,
+    textMeasurer: TextMeasurer,
+    maxWidth: Int,
+    textStyle: TextStyle,
+    density: Density,
+    unitCache: MutableMap<Int, Pair<Int, Int>>? = null
+): List<MeasuredChantRow> = withContext(Dispatchers.Main) {
+    if (units.isEmpty()) return@withContext emptyList()
+    val gap = with(density) { 4.dp.toPx() }.roundToInt()
+    val maxTextWidth = maxWidth.coerceAtLeast(1)
+    val measured = units.map { unit ->
+        val key = 31 * unit.hashCode() + maxTextWidth
+        unitCache?.get(key) ?: run {
+            val neume = if (unit.isDropCap) null else textMeasurer.measure(unit.neume, style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
+            val lyric = textMeasurer.measure(unit.lyric, style = textStyle, constraints = Constraints(maxWidth = maxTextWidth))
+            val size = maxOf(neume?.size?.width ?: 0, lyric.size.width).coerceAtLeast(1) + gap to
+                ((neume?.size?.height ?: 0) + lyric.size.height + gap)
+            unitCache?.set(key, size)
+            size
+        }
+    }
+    val rows = mutableListOf<MeasuredChantRow>()
+    var rowWidth = 0
+    var rowHeight = 0
+    var index = 0
+    while (index < units.size) {
+        var groupEnd = index + 1
+        while (groupEnd < units.size && units[groupEnd - 1].keepWithNext) groupEnd++
+        val groupWidth = (index until groupEnd).sumOf { measured[it].first }
+        val groupHeight = (index until groupEnd).maxOf { measured[it].second }
+        if (rowWidth > 0 && rowWidth + groupWidth > maxTextWidth) {
+            rows += MeasuredChantRow(index, rowHeight)
+            rowWidth = 0
+            rowHeight = 0
+        }
+        rowWidth += groupWidth
+        rowHeight = maxOf(rowHeight, groupHeight)
+        index = groupEnd
+    }
+    rows += MeasuredChantRow(units.size, rowHeight)
+    rows
 }
 
 private suspend fun measureTableRowHeight(
