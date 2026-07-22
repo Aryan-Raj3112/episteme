@@ -61,7 +61,7 @@ android {
     defaultConfig {
         applicationId = "com.aryan.reader"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 56
         versionName = "1.0.52"
 
