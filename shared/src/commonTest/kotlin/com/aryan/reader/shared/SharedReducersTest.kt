@@ -30,4 +30,20 @@ class SharedReducersTest {
             selected.replaceBookSelectionWithVisibleBooks(visibleBooks).selectedBookIds
         )
     }
+
+    @Test
+    fun `custom font imports enter shared application state`() {
+        val font = CustomFontItem(
+            id = "font-1",
+            displayName = "Reader Serif",
+            fileName = "ReaderSerif.ttf",
+            fileExtension = "ttf",
+            path = "/fonts/ReaderSerif.ttf",
+            timestamp = 10L
+        )
+
+        val result = SharedReaderScreenState().reduce(AppAction.CustomFontsChanged(listOf(font)))
+
+        assertEquals(listOf(font), result.customFonts)
+    }
 }

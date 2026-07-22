@@ -92,6 +92,7 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.CustomReaderThemesChanged -> copy(
             customReaderThemes = action.themes.sanitizeCustomReaderThemes()
         )
+        is AppAction.CustomFontsChanged -> copy(customFonts = action.fonts)
         is AppAction.SyncEnabledChanged -> copy(isSyncEnabled = action.enabled)
         is AppAction.FolderSyncEnabledChanged -> copy(isFolderSyncEnabled = action.enabled)
         is AppAction.TabsEnabledChanged -> copy(
@@ -161,6 +162,9 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         )
         is AppAction.ReaderTtsReplacementPreferencesChanged -> copy(
             readerTtsReplacementPreferences = action.preferences
+        )
+        is AppAction.ReaderBookReplacementPreferencesChanged -> copy(
+            readerBookReplacementPreferences = action.preferences
         )
     }
 }

@@ -117,6 +117,13 @@ class SharedNativeVerticalReaderFlowTest {
                 fallbackTextAlign = TextAlign.Right
             )
         )
+        assertEquals(
+            TextAlign.Left,
+            resolveSharedReaderTextAlign(
+                cssTextAlign = TextAlign.Center,
+                fallbackTextAlign = TextAlign.Left
+            )
+        )
     }
 
     @Test

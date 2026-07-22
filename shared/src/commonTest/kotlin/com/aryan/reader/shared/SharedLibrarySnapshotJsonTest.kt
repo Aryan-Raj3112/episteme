@@ -75,18 +75,29 @@ class SharedLibrarySnapshotJsonTest {
                         pageInfoPosition = PageInfoPosition.TOP,
                         pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
                         rightToLeftPagination = true,
+                        pageTurnAnimationEnabled = true,
                         pdfVerticalPageGapVisible = false,
                         pdfPageNumberOverlayVisible = false,
                         pdfFirstPageStandaloneInSpread = true,
                         seamlessChapterNavigation = false,
                         chapterTurnDragMultiplier = 1.6f
                     ),
+                    readerFormatIsLocal = true,
+            readerLocalFormatSettings = ReaderSettings(
+                        fontSize = 27,
+                        lineSpacing = 1.9f,
+                        textAlign = SharedReaderTextAlign.LEFT,
+                fontFamily = "Lora"
+            ),
+            readerAutoScrollIsLocal = true,
+            readerAutoScrollLocalSpeed = 72f,
                     readerBookmarks = listOf(
                         ReaderBookmark(
                             id = "book_4",
                             pageIndex = 4,
                             chapterTitle = "Chapter",
                             preview = "A useful paragraph",
+                            label = "Important passage",
                             locator = ReaderLocator(
                                 chapterIndex = 0,
                                 pageIndex = 4,
@@ -208,6 +219,11 @@ class SharedLibrarySnapshotJsonTest {
                 bookSettings = mapOf(
                     "book" to ReaderTtsReplacementBookSettings(disabledGlobalRuleIds = setOf("dr"))
                 )
+            ),
+            readerBookReplacementPreferences = ReaderBookReplacementPreferences(
+                fileRules = mapOf(
+                    "book" to listOf(ReaderWordReplacementRule("visible", "Alice", "Mina"))
+                )
             )
         )
 
@@ -274,6 +290,7 @@ class SharedLibrarySnapshotJsonTest {
         assertTrue(settings.pdfVerticalPageGapVisible)
         assertTrue(settings.pdfPageNumberOverlayVisible)
         assertFalse(settings.rightToLeftPagination)
+        assertFalse(settings.pageTurnAnimationEnabled)
     }
 
     @Test

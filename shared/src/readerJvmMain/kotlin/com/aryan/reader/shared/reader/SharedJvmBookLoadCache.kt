@@ -39,7 +39,9 @@ class SharedJvmBookLoadCache(
 ) {
     private val proto = ProtoBuf {
         serializersModule = semanticBlockModule
-        encodeDefaults = true
+        // ProtoBuf cannot encode explicit nulls for optional fields. Omitting default-null
+        // Compose style properties preserves their defaults and keeps semantic blocks cacheable.
+        encodeDefaults = false
     }
 
     fun load(key: SharedJvmBookLoadCacheKey): SharedEpubBook? {

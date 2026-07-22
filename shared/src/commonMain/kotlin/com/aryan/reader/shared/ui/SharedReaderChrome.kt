@@ -1881,6 +1881,13 @@ fun SharedReaderFormatControls(
                         onClick = {
                             onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.START)))
                         },
+                        label = { Text(readerString("label_default", "Default")) }
+                    )
+                    FilterChip(
+                        selected = settings.textAlign == SharedReaderTextAlign.LEFT,
+                        onClick = {
+                            onReaderAction(ReaderAction.SettingsChanged(settings.copy(textAlign = SharedReaderTextAlign.LEFT)))
+                        },
                         label = { Text(readerString("label_left", "Left")) }
                     )
                     FilterChip(
@@ -3328,9 +3335,10 @@ private fun newSharedReplacementRuleId(
 @Composable
 fun SharedReaderToolbarControls(
     toolbarPreferences: ReaderToolbarPreferences,
-    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit
+    onToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit,
+    availableTools: Set<ReaderTool> = ReaderTool.entries.toSet()
 ) {
-    val orderedTools = toolbarPreferences.sanitized().toolOrder
+    val orderedTools = toolbarPreferences.sanitized().toolOrder.filter { it in availableTools }
     val toolbarTools = orderedTools.filter { it.category != "Overflow Menu" }
     val moreTools = orderedTools.filter { it.category == "Overflow Menu" }
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {

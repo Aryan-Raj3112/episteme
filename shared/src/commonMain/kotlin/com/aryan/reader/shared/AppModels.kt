@@ -273,6 +273,7 @@ data class SharedReaderScreenState(
     val appFontPreference: AppFontPreference = AppFontPreference.System,
     val customAppThemes: List<CustomAppTheme> = emptyList(),
     val customReaderThemes: List<ReaderTheme> = emptyList(),
+    val customFonts: List<CustomFontItem> = emptyList(),
     val readerDefaultSettings: ReaderSettings = ReaderSettings(),
     val pdfReaderDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
     val allTags: List<Tag> = emptyList(),
@@ -280,5 +281,6 @@ data class SharedReaderScreenState(
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
-    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
+    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
+    val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences()
 )

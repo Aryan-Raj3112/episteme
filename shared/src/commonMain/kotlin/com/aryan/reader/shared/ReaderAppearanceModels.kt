@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontFamily
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
@@ -16,6 +17,13 @@ enum class ReaderFont(val id: String, val displayName: String, val fontFamilyNam
     LORA("lora", "Lora", "Lora"),
     ROBOTO_MONO("roboto_mono", "Roboto Mono", "Roboto Mono"),
     LEXEND("lexend", "Lexend", "Lexend")
+}
+
+fun ReaderSettings.toSharedReaderFontFamily(): FontFamily = when (fontFamily) {
+    "Merriweather", "Lora", "Serif" -> FontFamily.Serif
+    "Lato", "Lexend", "Sans" -> FontFamily.SansSerif
+    "Roboto Mono", "Mono" -> FontFamily.Monospace
+    else -> FontFamily.Default
 }
 
 enum class ReaderTextAlign(val id: String, val cssValue: String, val displayName: String) {
@@ -170,6 +178,20 @@ fun FormatSettings.toReaderSettings(base: ReaderSettings = ReaderSettings()): Re
     )
 }
 
+/** Replaces only Android's Global/Local Format fields, preserving reader mode and visual options. */
+fun ReaderSettings.withReaderFormatFrom(format: ReaderSettings): ReaderSettings = copy(
+    fontSize = format.fontSize,
+    lineSpacing = format.lineSpacing,
+    margin = format.margin,
+    horizontalMargin = format.horizontalMargin,
+    verticalMargin = format.verticalMargin,
+    textAlign = format.textAlign,
+    fontFamily = format.fontFamily,
+    customFontPath = format.customFontPath,
+    paragraphSpacing = format.paragraphSpacing,
+    imageScale = format.imageScale
+)
+
 fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
     return base.copy(
         darkMode = isDark,
@@ -260,8 +282,8 @@ fun RenderMode.toReaderReadingMode(): ReaderReadingMode {
 
 fun ReaderTextAlign.toSharedReaderTextAlign(): SharedReaderTextAlign {
     return when (this) {
-        ReaderTextAlign.DEFAULT,
-        ReaderTextAlign.LEFT -> SharedReaderTextAlign.START
+        ReaderTextAlign.DEFAULT -> SharedReaderTextAlign.START
+        ReaderTextAlign.LEFT -> SharedReaderTextAlign.LEFT
         ReaderTextAlign.RIGHT -> SharedReaderTextAlign.RIGHT
         ReaderTextAlign.JUSTIFY -> SharedReaderTextAlign.JUSTIFY
     }

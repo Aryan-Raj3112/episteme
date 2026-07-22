@@ -20,18 +20,27 @@ import androidx.compose.ui.viewinterop.UIKitView
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.externalLookupUrl
 import com.aryan.reader.shared.ios.loadIosEpubBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.cinterop.ObjCSignatureOverride
 import kotlinx.cinterop.CValue
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSURL
+import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSRange
+import platform.Foundation.NSUserDefaults
 import platform.UIKit.UIApplication
 import platform.UIKit.UIColor
+import platform.UIKit.UIActivityViewController
+import platform.UIKit.UIModalPresentationFullScreen
+import platform.UIKit.UIReferenceLibraryViewController
 import platform.WebKit.WKScriptMessage
 import platform.WebKit.WKScriptMessageHandlerProtocol
 import platform.WebKit.WKNavigation
@@ -44,6 +53,7 @@ import platform.WebKit.WKWebViewConfiguration
 import platform.AVFAudio.AVSpeechBoundary
 import platform.AVFAudio.AVSpeechSynthesizer
 import platform.AVFAudio.AVSpeechSynthesizerDelegateProtocol
+import platform.AVFAudio.AVSpeechSynthesisVoice
 import platform.AVFAudio.AVSpeechUtterance
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayback
@@ -58,6 +68,9 @@ import platform.MediaPlayer.MPNowPlayingInfoPropertyPlaybackQueueIndex
 import platform.MediaPlayer.MPRemoteCommandCenter
 import platform.MediaPlayer.MPRemoteCommandHandlerStatusSuccess
 import platform.darwin.NSObject
+import platform.posix.fclose
+import platform.posix.fopen
+import platform.posix.fwrite
 
 @Composable
 internal actual fun rememberSharedMobileEpubLoadState(book: BookItem): SharedMobileEpubLoadState {
@@ -121,6 +134,43 @@ internal actual fun openSharedMobileEpubExternalLink(url: String): Boolean {
     return UIApplication.sharedApplication.openURL(target)
 }
 
+internal actual fun openSharedMobileEpubLookup(
+    action: ReaderExternalLookupAction,
+    text: String
+): Boolean {
+    val query = text.trim()
+    if (query.isEmpty()) return false
+    if (action != ReaderExternalLookupAction.DICTIONARY) {
+        return openSharedMobileEpubExternalLink(externalLookupUrl(action, query))
+    }
+    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+    presenter.presentViewController(
+        UIReferenceLibraryViewController(term = query),
+        animated = true,
+        completion = null
+    )
+    return true
+}
+
+internal actual fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean {
+    if (bytes.isEmpty()) return false
+    val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]+"), "_").ifBlank { "image.png" }
+    val path = NSTemporaryDirectory() + safeName
+    val file = fopen(path, "wb") ?: return false
+    val written = try {
+        bytes.usePinned { pinned -> fwrite(pinned.addressOf(0), 1u, bytes.size.toULong(), file) }
+    } finally {
+        fclose(file)
+    }
+    if (written != bytes.size.toULong()) return false
+    val url = NSURL.fileURLWithPath(path)
+    val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
+    val controller = UIActivityViewController(activityItems = listOf(url), applicationActivities = null)
+    controller.modalPresentationStyle = UIModalPresentationFullScreen
+    presenter.presentViewController(controller, animated = true, completion = null)
+    return true
+}
+
 @Composable
 internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts {
     val controller = remember { IosSharedMobileEpubLocalTts() }
@@ -130,8 +180,18 @@ internal actual fun rememberSharedMobileEpubLocalTts(): SharedMobileEpubLocalTts
     return controller
 }
 
+private const val IosReaderTtsRateKey = "reader.tts.speechRate"
+private const val IosReaderTtsPitchKey = "reader.tts.pitch"
+private const val IosReaderTtsVoiceKey = "reader.tts.voiceIdentifier"
+
+private fun NSUserDefaults.readerTtsFloat(key: String, fallback: Float): Float {
+    return if (objectForKey(key) == null) fallback else doubleForKey(key).toFloat()
+}
+
 private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
+    private val preferences = NSUserDefaults.standardUserDefaults
     private val synthesizer = AVSpeechSynthesizer()
+    private val previewSynthesizer = AVSpeechSynthesizer()
     private val delegate = IosSharedMobileEpubSpeechDelegate(
         onStarted = ::utteranceStarted,
         onPaused = ::utterancePaused,
@@ -147,9 +207,29 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         private set
     override var completionCount by mutableStateOf(0L)
         private set
-    override var speechRate by mutableStateOf(1f)
+    override var speechRate by mutableStateOf(
+        preferences.readerTtsFloat(IosReaderTtsRateKey, 1f).coerceIn(0.5f, 3f)
+    )
         private set
-    override var speechPitch by mutableStateOf(1f)
+    override var speechPitch by mutableStateOf(
+        preferences.readerTtsFloat(IosReaderTtsPitchKey, 1f).coerceIn(0.5f, 2f)
+    )
+        private set
+    override val availableVoices: List<SharedMobileEpubVoice> =
+        AVSpeechSynthesisVoice.speechVoices()
+            .mapNotNull { it as? AVSpeechSynthesisVoice }
+            .map { voice ->
+                SharedMobileEpubVoice(
+                    identifier = voice.identifier,
+                    name = voice.name,
+                    language = voice.language
+                )
+            }
+            .sortedWith(compareBy(SharedMobileEpubVoice::language, SharedMobileEpubVoice::name))
+    override var selectedVoiceIdentifier by mutableStateOf(
+        preferences.stringForKey(IosReaderTtsVoiceKey)
+            ?.takeIf { saved -> availableVoices.any { it.identifier == saved } }
+    )
         private set
     private var bookTitle: String = ""
     private var chunks: List<ReaderTtsChunk> = emptyList()
@@ -214,17 +294,35 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     override fun setSpeechParameters(rate: Float, pitch: Float) {
         speechRate = rate.coerceIn(0.5f, 3f)
         speechPitch = pitch.coerceIn(0.5f, 2f)
-        val chunkText = chunks.getOrNull(currentChunkIndex)?.spokenText.orEmpty()
-        val restartOffset = activeSpokenOffset.coerceIn(0, chunkText.length)
-        if (activeUtterance != null && restartOffset < chunkText.length) {
-            invalidateActiveUtterance()
-            synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
-            speakCurrentChunk(
-                spokenText = chunkText.substring(restartOffset),
-                sourceOffset = restartOffset
-            )
-        }
+        preferences.setDouble(speechRate.toDouble(), IosReaderTtsRateKey)
+        preferences.setDouble(speechPitch.toDouble(), IosReaderTtsPitchKey)
+        restartCurrentUtterance()
         updateNowPlaying()
+    }
+
+    override fun setVoice(identifier: String?) {
+        selectedVoiceIdentifier = identifier
+            ?.takeIf { candidate -> availableVoices.any { it.identifier == candidate } }
+        if (selectedVoiceIdentifier == null) {
+            preferences.removeObjectForKey(IosReaderTtsVoiceKey)
+        } else {
+            preferences.setObject(selectedVoiceIdentifier, IosReaderTtsVoiceKey)
+        }
+        restartCurrentUtterance()
+    }
+
+    override fun previewVoice(identifier: String?) {
+        previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+        val utterance = AVSpeechUtterance(
+            string = "This is a sample of the selected reading voice."
+        ).apply {
+            rate = (0.5f * speechRate).coerceIn(0.1f, 1f)
+            pitchMultiplier = speechPitch
+            identifier
+                ?.let(AVSpeechSynthesisVoice::voiceWithIdentifier)
+                ?.let { voice = it }
+        }
+        previewSynthesizer.speakUtterance(utterance)
     }
 
     override fun stop() {
@@ -288,6 +386,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         val utterance = AVSpeechUtterance(string = spokenText ?: chunk.spokenText).apply {
             this.rate = (0.5f * speechRate).coerceIn(0.1f, 1f)
             pitchMultiplier = speechPitch
+            selectedVoiceIdentifier
+                ?.let(AVSpeechSynthesisVoice::voiceWithIdentifier)
+                ?.let { voice = it }
         }
         activeUtterance = utterance
         synthesizer.speakUtterance(utterance)
@@ -295,6 +396,19 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     private fun invalidateActiveUtterance() {
         activeUtterance = null
+    }
+
+    private fun restartCurrentUtterance() {
+        val chunkText = chunks.getOrNull(currentChunkIndex)?.spokenText.orEmpty()
+        val restartOffset = activeSpokenOffset.coerceIn(0, chunkText.length)
+        if (activeUtterance != null && restartOffset < chunkText.length) {
+            invalidateActiveUtterance()
+            synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
+            speakCurrentChunk(
+                spokenText = chunkText.substring(restartOffset),
+                sourceOffset = restartOffset
+            )
+        }
     }
 
     private fun isActive(utterance: AVSpeechUtterance): Boolean =
@@ -375,6 +489,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     fun release() {
         stop()
+        previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         synthesizer.delegate = null
         val commands = MPRemoteCommandCenter.sharedCommandCenter()
         commands.playCommand.removeTarget(null)
@@ -664,6 +779,16 @@ private val IosEpubBridgeBootstrapScript = """
           var multiplier = Math.max(0.5, Math.min(2.0, Number(window.readerIosPullMultiplier || 1)));
           var threshold = 100 * multiplier;
           post('readerChapterPull', JSON.stringify({ direction: dy >= 0 ? 'previous' : 'next', progress: 0 }));
+          if (window.readerIosSeamlessChapter === true && Math.abs(dy) >= 18 && Math.abs(dy) > Math.abs(dx) * 1.25) {
+            if (startedAtTop && dy > 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));
+              return;
+            }
+            if (startedAtBottom && dy < 0) {
+              post('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
+              return;
+            }
+          }
           if (window.readerIosPullEnabled !== false && elapsed <= 1400 && Math.abs(dy) >= threshold && Math.abs(dy) > Math.abs(dx) * 1.25) {
             if (startedAtTop && dy > 0) {
               post('readerChapterBoundary', JSON.stringify({ direction: 'previous' }));

@@ -498,7 +498,9 @@ class ReaderWorkspaceModelsTest {
         assertNull(ReaderTool.fromId("auto_scroll"))
         assertFalse("auto_scroll" in preferences.sanitized().hiddenToolIds)
         assertFalse(tools.any { it.id == "auto_scroll" })
-        assertFalse(ReaderWorkspaceTopAction.TOOLS in model.topActions)
+        // The generic tools action remains available for the appearance and reading
+        // inspectors; retiring auto-scroll must not hide those unrelated controls.
+        assertTrue(ReaderWorkspaceTopAction.TOOLS in model.topActions)
         assertFalse("auto-scroll" in model.chrome.forceVisibleReasons)
     }
 

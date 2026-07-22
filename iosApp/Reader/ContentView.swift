@@ -10,8 +10,11 @@ import ReaderShared
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    private enum ImportKind { case books, fonts }
+
     private let bridge = ReaderIosBridge()
     @State private var isImportPickerPresented = false
+    @State private var importKind: ImportKind = .books
     @State private var isReaderSystemUiHidden = false
 
     var body: some View {
@@ -19,6 +22,11 @@ struct ContentView: View {
             bridge: bridge,
             isSystemUiHidden: $isReaderSystemUiHidden,
             onImportBooks: {
+                importKind = .books
+                isImportPickerPresented = true
+            },
+            onImportFonts: {
+                importKind = .fonts
                 isImportPickerPresented = true
             }
         )
@@ -27,20 +35,25 @@ struct ContentView: View {
         .persistentSystemOverlays(isReaderSystemUiHidden ? .hidden : .visible)
         .fileImporter(
             isPresented: $isImportPickerPresented,
-            allowedContentTypes: [.item],
+            allowedContentTypes: importKind == .fonts ? [.font] : [.item],
             allowsMultipleSelection: true
         ) { result in
             switch result {
             case .success(let urls):
                 let importedFiles = urls.compactMap { url in
-                    copyImportedFileToAppSupport(url)
+                    copyImportedFileToAppSupport(url, directoryName: importKind == .fonts ? "Fonts" : "Imports")
                 }
-                bridge.recordImportedFiles(
-                    fileNames: importedFiles.map(\.name),
-                    filePaths: importedFiles.map(\.path)
-                )
+                if importKind == .fonts {
+                    bridge.recordImportedFonts(fileNames: importedFiles.map(\.name), filePaths: importedFiles.map(\.path))
+                } else {
+                    bridge.recordImportedFiles(fileNames: importedFiles.map(\.name), filePaths: importedFiles.map(\.path))
+                }
             case .failure:
-                bridge.recordImportedFiles(fileNames: [], filePaths: [])
+                if importKind == .fonts {
+                    bridge.recordImportedFonts(fileNames: [], filePaths: [])
+                } else {
+                    bridge.recordImportedFiles(fileNames: [], filePaths: [])
+                }
             }
         }
     }
@@ -51,7 +64,7 @@ private struct ImportedReaderFile {
     let path: String
 }
 
-private func copyImportedFileToAppSupport(_ sourceURL: URL) -> ImportedReaderFile? {
+private func copyImportedFileToAppSupport(_ sourceURL: URL, directoryName: String) -> ImportedReaderFile? {
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
     defer {
         if didStartAccessing {
@@ -67,7 +80,7 @@ private func copyImportedFileToAppSupport(_ sourceURL: URL) -> ImportedReaderFil
             appropriateFor: nil,
             create: true
         )
-        let importsDirectory = appSupport.appendingPathComponent("Imports", isDirectory: true)
+        let importsDirectory = appSupport.appendingPathComponent(directoryName, isDirectory: true)
         try fileManager.createDirectory(at: importsDirectory, withIntermediateDirectories: true)
 
         let fileName = sourceURL.lastPathComponent
@@ -97,11 +110,13 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
     let bridge: ReaderIosBridge
     @Binding var isSystemUiHidden: Bool
     let onImportBooks: () -> Void
+    let onImportFonts: () -> Void
 
     func makeUIViewController(context: Context) -> UIViewController {
         let composeController = ReaderIosAppKt.readerComposeViewController(
             bridge: bridge,
-            onImportBooks: onImportBooks
+            onImportBooks: onImportBooks,
+            onImportFonts: onImportFonts
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
         bridge.setSystemUiHandler { hidden, lightContent, backgroundArgb, edgeToEdge in
@@ -115,6 +130,9 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
                 edgeToEdge: edgeToEdge.boolValue
             )
         }
+        bridge.setOrientationHandler { mode in
+            hostController.updateReaderOrientation(mode: mode.int32Value)
+        }
         return hostController
     }
 
@@ -127,6 +145,7 @@ private final class ReaderStatusBarHostController: UIViewController {
     private var hidesSystemUi = false
     private var usesLightStatusBarContent = false
     private var contentInterfaceStyle: UIUserInterfaceStyle = .unspecified
+    private var readerOrientationMode: Int32 = 0
     private let statusBarBackdrop = UIView()
     private let navigationBarBackdrop = UIView()
     private var contentTopToSafeAreaConstraint: NSLayoutConstraint?
@@ -190,6 +209,25 @@ private final class ReaderStatusBarHostController: UIViewController {
     override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation { .fade }
     override var preferredStatusBarStyle: UIStatusBarStyle {
         usesLightStatusBarContent ? .lightContent : .darkContent
+    }
+
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        switch readerOrientationMode {
+        case 1: return .portrait
+        case 2: return .landscape
+        default: return .all
+        }
+    }
+
+    func updateReaderOrientation(mode: Int32) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            readerOrientationMode = mode
+            setNeedsUpdateOfSupportedInterfaceOrientations()
+            guard let windowScene = view.window?.windowScene else { return }
+            let preferences = UIWindowScene.GeometryPreferences.iOS(interfaceOrientations: supportedInterfaceOrientations)
+            windowScene.requestGeometryUpdate(preferences)
+        }
     }
 
     private func updateSystemBarLayout(edgeToEdge: Bool) {

@@ -52,11 +52,12 @@ data class SharedLibrarySnapshot(
     val readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
     val readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     val pdfHighlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
-    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
+    val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
+    val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences()
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 22
+    private const val SCHEMA_VERSION = 26
 
     private val json = Json {
         prettyPrint = true
@@ -132,7 +133,11 @@ object SharedLibrarySnapshotJson {
             readerTtsReplacementPreferences = root["readerTtsReplacementPreferences"]
                 ?.takeUnless { it is JsonNull }
                 ?.let { ReaderTtsReplacementPreferencesJson.fromJsonElement(it) }
-                ?: ReaderTtsReplacementPreferences()
+                ?: ReaderTtsReplacementPreferences(),
+            readerBookReplacementPreferences = root["readerBookReplacementPreferences"]
+                ?.takeUnless { it is JsonNull }
+                ?.let { ReaderBookReplacementPreferencesJson.decodeOrEmpty(it.toString()) }
+                ?: ReaderBookReplacementPreferences()
         )
     }
 
@@ -171,6 +176,9 @@ object SharedLibrarySnapshotJson {
                 "pdfHighlighterPalette" to snapshot.pdfHighlighterPalette.sanitized().toJsonObject(),
                 "readerTtsReplacementPreferences" to ReaderTtsReplacementPreferencesJson.toJsonElement(
                     snapshot.readerTtsReplacementPreferences,
+                ),
+                "readerBookReplacementPreferences" to json.parseToJsonElement(
+                    ReaderBookReplacementPreferencesJson.encode(snapshot.readerBookReplacementPreferences)
                 )
             )
         )
@@ -287,6 +295,10 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         lastPageIndex = obj.int("lastPageIndex"),
         readerPosition = obj["readerPosition"]?.takeUnless { it is JsonNull }?.asReaderLocatorOrNull(),
         readerSettings = obj["readerSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
+        readerFormatIsLocal = obj.boolean("readerFormatIsLocal", false),
+        readerLocalFormatSettings = obj["readerLocalFormatSettings"]?.takeUnless { it is JsonNull }?.asReaderSettingsOrNull(),
+        readerAutoScrollIsLocal = obj.boolean("readerAutoScrollIsLocal", false),
+        readerAutoScrollLocalSpeed = obj.float("readerAutoScrollLocalSpeed"),
         readerBookmarks = obj.array("readerBookmarks").mapNotNull { it.asReaderBookmarkOrNull() },
         readerHighlights = obj.array("readerHighlights").mapNotNull { it.asReaderHighlightOrNull() },
         pdfReaderViewport = obj["pdfReaderViewport"]?.takeUnless { it is JsonNull }?.asSharedPdfReaderViewportOrNull(),
@@ -414,6 +426,10 @@ private fun BookItem.toJsonObject(): JsonObject {
             "lastPageIndex" to lastPageIndex.asJson(),
             "readerPosition" to readerPosition.asJson(),
             "readerSettings" to readerSettings.asJson(),
+            "readerFormatIsLocal" to JsonPrimitive(readerFormatIsLocal),
+            "readerLocalFormatSettings" to readerLocalFormatSettings.asJson(),
+            "readerAutoScrollIsLocal" to JsonPrimitive(readerAutoScrollIsLocal),
+            "readerAutoScrollLocalSpeed" to readerAutoScrollLocalSpeed.asJson(),
             "readerBookmarks" to JsonArray(readerBookmarks.map { it.toJsonObject() }),
             "readerHighlights" to JsonArray(readerHighlights.map { it.toJsonObject() }),
             "pdfReaderViewport" to pdfReaderViewport.asJson(),
@@ -569,6 +585,8 @@ private fun JsonElement.asReaderSettingsOrNull(): ReaderSettings? {
             ?.let { runCatching { ReaderPageSpreadMode.valueOf(it) }.getOrNull() }
             ?: defaults.pageSpreadMode,
         rightToLeftPagination = obj.boolean("rightToLeftPagination", defaults.rightToLeftPagination),
+        tapToNavigateEnabled = obj.boolean("tapToNavigateEnabled", defaults.tapToNavigateEnabled),
+        pageTurnAnimationEnabled = obj.boolean("pageTurnAnimationEnabled", defaults.pageTurnAnimationEnabled),
         pdfVerticalPageGapVisible = obj.boolean(
             "pdfVerticalPageGapVisible",
             defaults.pdfVerticalPageGapVisible
@@ -639,6 +657,7 @@ private fun JsonElement.asReaderBookmarkOrNull(): ReaderBookmark? {
         pageIndex = pageIndex,
         chapterTitle = obj.string("chapterTitle") ?: "",
         preview = obj.string("preview") ?: "",
+        label = obj.string("label"),
         locator = obj["locator"]
             ?.takeUnless { it is JsonNull }
             ?.asReaderLocatorOrNull()
@@ -725,6 +744,8 @@ private fun ReaderSettings?.asJson(): JsonElement {
             "pageInfoPosition" to JsonPrimitive(settings.pageInfoPosition.name),
             "pageSpreadMode" to JsonPrimitive(settings.pageSpreadMode.name),
             "rightToLeftPagination" to JsonPrimitive(settings.rightToLeftPagination),
+            "tapToNavigateEnabled" to JsonPrimitive(settings.tapToNavigateEnabled),
+            "pageTurnAnimationEnabled" to JsonPrimitive(settings.pageTurnAnimationEnabled),
             "pdfVerticalPageGapVisible" to JsonPrimitive(settings.pdfVerticalPageGapVisible),
             "pdfPageNumberOverlayVisible" to JsonPrimitive(settings.pdfPageNumberOverlayVisible),
             "pdfFirstPageStandaloneInSpread" to JsonPrimitive(settings.pdfFirstPageStandaloneInSpread),
@@ -783,6 +804,7 @@ private fun ReaderBookmark.toJsonObject(): JsonObject {
             "pageIndex" to JsonPrimitive(pageIndex),
             "chapterTitle" to JsonPrimitive(chapterTitle),
             "preview" to JsonPrimitive(preview),
+            "label" to label.asJson(),
             "locator" to locator.toJsonObject()
         )
     )

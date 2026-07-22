@@ -122,6 +122,7 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
@@ -141,10 +142,59 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+internal enum class SharedPaginatedTapAction {
+    PREVIOUS_PAGE,
+    TOGGLE_CHROME,
+    NEXT_PAGE
+}
+
+internal fun sharedPaginatedTapAction(
+    horizontalFraction: Float,
+    tapToNavigateEnabled: Boolean,
+    rightToLeftPagination: Boolean
+): SharedPaginatedTapAction {
+    if (!tapToNavigateEnabled) return SharedPaginatedTapAction.TOGGLE_CHROME
+    return when {
+        horizontalFraction < 0.25f -> if (rightToLeftPagination) {
+            SharedPaginatedTapAction.NEXT_PAGE
+        } else {
+            SharedPaginatedTapAction.PREVIOUS_PAGE
+        }
+        horizontalFraction > 0.75f -> if (rightToLeftPagination) {
+            SharedPaginatedTapAction.PREVIOUS_PAGE
+        } else {
+            SharedPaginatedTapAction.NEXT_PAGE
+        }
+        else -> SharedPaginatedTapAction.TOGGLE_CHROME
+    }
+}
+
+internal fun sharedPaginatedTransitionDirection(
+    initialPageIndex: Int,
+    targetPageIndex: Int,
+    rightToLeftPagination: Boolean
+): Int {
+    if (initialPageIndex == targetPageIndex) return 0
+    val logicalDirection = if (targetPageIndex > initialPageIndex) 1 else -1
+    return if (rightToLeftPagination) -logicalDirection else logicalDirection
+}
+
 enum class SharedNativeReaderSelectionAction {
     DEFINE,
+    TRANSLATE,
     SEARCH,
-    SPEAK
+    SPEAK,
+    NOTE
+}
+
+internal fun SharedNativeReaderSelectionAction.externalLookupActionOrNull(): ReaderExternalLookupAction? {
+    return when (this) {
+        SharedNativeReaderSelectionAction.DEFINE -> ReaderExternalLookupAction.DICTIONARY
+        SharedNativeReaderSelectionAction.TRANSLATE -> ReaderExternalLookupAction.TRANSLATE
+        SharedNativeReaderSelectionAction.SEARCH -> ReaderExternalLookupAction.SEARCH
+        SharedNativeReaderSelectionAction.SPEAK,
+        SharedNativeReaderSelectionAction.NOTE -> null
+    }
 }
 
 data class SharedNativeReaderLinkClick(
@@ -288,6 +338,7 @@ fun SharedNativePaginatedReader(
     onHighlightSelected: (String) -> Unit = {},
     onLinkClicked: (SharedNativeReaderLinkClick) -> Unit = {},
     onReaderTap: () -> Unit = {},
+    onReaderHorizontalTap: ((Float) -> Unit)? = null,
     imageContent: (@Composable (SemanticImage, Modifier) -> Unit)? = null
 ) {
     val visiblePages = renderPlan.visiblePages
@@ -343,9 +394,9 @@ fun SharedNativePaginatedReader(
     val selectionHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
     Box(
         modifier = modifier
-            .readerChromeTapTogglePointerInput {
+            .readerHorizontalTapPointerInput { horizontalFraction ->
                 if (activeSelection == null) {
-                    onReaderTap()
+                    onReaderHorizontalTap?.invoke(horizontalFraction) ?: onReaderTap()
                 }
             }
             .onGloballyPositioned { readerCoordinates = it }
@@ -1077,12 +1128,30 @@ private fun SharedNativeSelectionMenu(
                 )
             )
         }
+        if (SharedNativeReaderSelectionAction.TRANSLATE in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    "Translate",
+                    SharedNativeSelectionVectorIcons.Define,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.TRANSLATE) }
+                )
+            )
+        }
         if (SharedNativeReaderSelectionAction.SEARCH in enabledSelectionActions) {
             add(
                 SharedNativeSelectionMenuAction(
                     "Search",
                     SharedNativeSelectionVectorIcons.Search,
                     { onSelectionAction(SharedNativeReaderSelectionAction.SEARCH) }
+                )
+            )
+        }
+        if (SharedNativeReaderSelectionAction.NOTE in enabledSelectionActions) {
+            add(
+                SharedNativeSelectionMenuAction(
+                    "Note",
+                    SharedNativeSelectionVectorIcons.Copy,
+                    { onSelectionAction(SharedNativeReaderSelectionAction.NOTE) }
                 )
             )
         }
@@ -4999,6 +5068,7 @@ private fun ReaderSettings.renderedDefaultBlockSpacingDp(): Dp {
 private fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
     return when (this) {
         SharedReaderTextAlign.START -> TextAlign.Start
+        SharedReaderTextAlign.LEFT -> TextAlign.Left
         SharedReaderTextAlign.RIGHT -> TextAlign.Right
         SharedReaderTextAlign.JUSTIFY -> TextAlign.Justify
         SharedReaderTextAlign.CENTER -> TextAlign.Center

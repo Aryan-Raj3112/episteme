@@ -8,6 +8,12 @@ private val DefaultReaderBottomToolIds: Set<String>
         ReaderTool.SEARCH.id
     )
 
+private val DefaultReaderHiddenToolIds: Set<String>
+    get() = setOf(
+        ReaderTool.BRIGHTNESS.id,
+        ReaderTool.SCREEN_ORIENTATION.id,
+    )
+
 enum class ReaderTool(
     val id: String,
     val title: String,
@@ -16,12 +22,14 @@ enum class ReaderTool(
 ) {
     DICTIONARY("dictionary", "External Apps", "Top Bar", supportsDesktopQuickAction = true),
     THEME("theme", "Theme Settings", "Top Bar", supportsDesktopQuickAction = true),
+    BRIGHTNESS("brightness", "Brightness", "Top Bar"),
     SLIDER("slider", "Navigation Slider", "Bottom Bar"),
     TOC("toc", "Sidebar", "Bottom Bar"),
     FORMAT("format", "Text Formatting", "Bottom Bar"),
     SEARCH("search", "Search", "Bottom Bar", supportsDesktopQuickAction = true),
     AI_FEATURES("ai_features", "AI Features", "Bottom Bar"),
     TTS_CONTROLS("tts_controls", "TTS Controls", "Bottom Bar"),
+    FILE_INFO("file_info", "File Information", "Overflow Menu"),
     READING_MODE("reading_mode", "Reading Mode", "Overflow Menu"),
     BOOKMARK("bookmark", "Bookmark", "Overflow Menu", supportsDesktopQuickAction = true),
     TAP_TO_TURN("tap_to_turn", "Tap to Turn Pages", "Overflow Menu"),
@@ -29,8 +37,11 @@ enum class ReaderTool(
     PAGE_TURN_ANIM("page_turn_anim", "Realistic Page Turns", "Overflow Menu"),
     KEEP_SCREEN_ON("keep_screen_on", "Keep Screen On", "Overflow Menu"),
     VISUAL_OPTIONS("visual_options", "Visual Options", "Overflow Menu"),
+    SCREEN_ORIENTATION("screen_orientation", "Screen Orientation", "Top Bar"),
+    AUTO_SCROLL("auto_scroll", "Auto Scroll", "Overflow Menu"),
     TTS_SETTINGS("tts_settings", "TTS Voice Settings", "Overflow Menu"),
-    TTS_REPLACEMENTS("tts_replacements", "TTS Word Replacements", "Overflow Menu");
+    TTS_REPLACEMENTS("tts_replacements", "TTS Word Replacements", "Overflow Menu"),
+    BOOK_REPLACEMENTS("book_replacements", "Book Word Replacements", "Overflow Menu");
 
     companion object {
         fun fromId(id: String): ReaderTool? {
@@ -40,7 +51,7 @@ enum class ReaderTool(
 }
 
 data class ReaderToolbarPreferences(
-    val hiddenToolIds: Set<String> = emptySet(),
+    val hiddenToolIds: Set<String> = DefaultReaderHiddenToolIds,
     val toolOrder: List<ReaderTool> = ReaderTool.entries.toList(),
     val bottomToolIds: Set<String> = DefaultReaderBottomToolIds
 ) {

@@ -5,6 +5,7 @@ import androidx.compose.ui.Modifier
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.reader.SharedEpubBook
 
 internal data class SharedMobileEpubLoadState(
@@ -28,9 +29,17 @@ internal expect fun SharedMobileEpubWebView(
 )
 
 internal expect fun openSharedMobileEpubExternalLink(url: String): Boolean
+internal expect fun openSharedMobileEpubLookup(action: ReaderExternalLookupAction, text: String): Boolean
+internal expect fun shareSharedMobileEpubImage(bytes: ByteArray, fileName: String): Boolean
 
 /** iOS currently exposes device speech only; cloud TTS stays out of the shared mobile reader. */
 internal enum class SharedMobileEpubLocalTtsState { IDLE, SPEAKING, PAUSED }
+
+internal data class SharedMobileEpubVoice(
+    val identifier: String,
+    val name: String,
+    val language: String
+)
 
 internal interface SharedMobileEpubLocalTts {
     val state: SharedMobileEpubLocalTtsState
@@ -40,6 +49,8 @@ internal interface SharedMobileEpubLocalTts {
     val progress: ReaderTtsProgress
     val speechRate: Float
     val speechPitch: Float
+    val availableVoices: List<SharedMobileEpubVoice>
+    val selectedVoiceIdentifier: String?
     /** Increments only when every chunk finishes naturally; explicit stop does not increment it. */
     val completionCount: Long
     /** Starts platform audio preparation while document text is still being extracted. */
@@ -55,6 +66,8 @@ internal interface SharedMobileEpubLocalTts {
     fun skipPrevious()
     fun skipNext()
     fun setSpeechParameters(rate: Float, pitch: Float)
+    fun setVoice(identifier: String?)
+    fun previewVoice(identifier: String?)
     fun stop()
 }
 

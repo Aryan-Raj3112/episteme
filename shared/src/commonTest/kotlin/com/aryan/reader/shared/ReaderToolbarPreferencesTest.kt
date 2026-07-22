@@ -8,6 +8,27 @@ import kotlin.test.assertTrue
 class ReaderToolbarPreferencesTest {
 
     @Test
+    fun `mobile parity tools follow android default visibility`() {
+        val preferences = ReaderToolbarPreferences()
+
+        assertFalse(preferences.isVisible(ReaderTool.BRIGHTNESS))
+        assertFalse(preferences.isVisible(ReaderTool.SCREEN_ORIENTATION))
+        assertTrue(preferences.isVisible(ReaderTool.FILE_INFO))
+        assertTrue(ReaderTool.BRIGHTNESS in preferences.toolOrder)
+        assertTrue(ReaderTool.SCREEN_ORIENTATION in preferences.toolOrder)
+        assertTrue(preferences.isVisible(ReaderTool.AUTO_SCROLL))
+    }
+
+    @Test
+    fun `auto scroll follows overflow visibility customization`() {
+        val hidden = ReaderToolbarPreferences().withVisibility(ReaderTool.AUTO_SCROLL, hidden = true)
+
+        assertFalse(hidden.isVisible(ReaderTool.AUTO_SCROLL))
+        assertFalse(ReaderTool.AUTO_SCROLL in hidden.orderedVisibleTools())
+        assertTrue(ReaderTool.AUTO_SCROLL in hidden.toolOrder)
+    }
+
+    @Test
     fun `toolbar preferences sanitize unknown ids and preserve missing tools`() {
         val preferences = ReaderToolbarPreferences(
             hiddenToolIds = setOf(ReaderTool.SEARCH.id, "missing"),

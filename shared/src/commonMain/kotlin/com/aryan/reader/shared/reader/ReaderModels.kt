@@ -40,6 +40,12 @@ enum class ReaderReadingMode {
     VERTICAL
 }
 
+enum class ReaderScreenOrientationMode(val title: String) {
+    FOLLOW_SYSTEM("Follow system"),
+    PORTRAIT("Portrait"),
+    LANDSCAPE("Landscape")
+}
+
 enum class ReaderPageSpreadMode {
     SINGLE,
     TWO_PAGE
@@ -57,6 +63,7 @@ enum class ReaderSettingsUpdateMode {
 
 enum class SharedReaderTextAlign {
     START,
+    LEFT,
     RIGHT,
     JUSTIFY,
     CENTER
@@ -86,6 +93,8 @@ data class ReaderSettings(
     val pageInfoPosition: PageInfoPosition = PageInfoPosition.BOTTOM,
     val pageSpreadMode: ReaderPageSpreadMode = ReaderPageSpreadMode.SINGLE,
     val rightToLeftPagination: Boolean = false,
+    val tapToNavigateEnabled: Boolean = true,
+    val pageTurnAnimationEnabled: Boolean = false,
     val pdfVerticalPageGapVisible: Boolean = true,
     val pdfPageNumberOverlayVisible: Boolean = true,
     val pdfFirstPageStandaloneInSpread: Boolean = false,

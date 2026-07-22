@@ -210,6 +210,15 @@ enum class ReaderExternalLookupAction(val title: String) {
     SEARCH("Search")
 }
 
+fun readerExternalLookupActionForSelectionId(id: String): ReaderExternalLookupAction? {
+    return when (id.trim().lowercase()) {
+        "dictionary" -> ReaderExternalLookupAction.DICTIONARY
+        "translate" -> ReaderExternalLookupAction.TRANSLATE
+        "web-search", "search" -> ReaderExternalLookupAction.SEARCH
+        else -> null
+    }
+}
+
 fun externalLookupUrl(action: ReaderExternalLookupAction, text: String): String {
     val encoded = text.trim().urlEncoded()
     return when (action) {

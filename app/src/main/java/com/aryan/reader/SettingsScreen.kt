@@ -529,8 +529,9 @@ private fun SharedReaderTextAlign.toAndroidTextAlign(): AndroidReaderTextAlign {
     return when (this) {
         SharedReaderTextAlign.JUSTIFY -> AndroidReaderTextAlign.JUSTIFY
         SharedReaderTextAlign.RIGHT -> AndroidReaderTextAlign.RIGHT
-        SharedReaderTextAlign.CENTER,
-        SharedReaderTextAlign.START -> AndroidReaderTextAlign.LEFT
+        SharedReaderTextAlign.LEFT -> AndroidReaderTextAlign.LEFT
+        SharedReaderTextAlign.START -> AndroidReaderTextAlign.DEFAULT
+        SharedReaderTextAlign.CENTER -> AndroidReaderTextAlign.LEFT
     }
 }
 

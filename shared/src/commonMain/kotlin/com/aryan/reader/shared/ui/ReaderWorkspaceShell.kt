@@ -637,6 +637,40 @@ internal fun Modifier.readerChromeTapTogglePointerInput(
     }
 }
 
+internal fun Modifier.readerHorizontalTapPointerInput(
+    onTap: (Float) -> Unit
+): Modifier {
+    return readerChromeTapTogglePointerInputWithPosition { horizontalPosition, width ->
+        onTap((horizontalPosition / width.coerceAtLeast(1)).coerceIn(0f, 1f))
+    }
+}
+
+private fun Modifier.readerChromeTapTogglePointerInputWithPosition(
+    onTap: (horizontalPosition: Float, width: Int) -> Unit
+): Modifier {
+    return pointerInput(onTap) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Final)
+            val pointerId = down.id
+            val start = down.position
+            val touchSlop = viewConfiguration.touchSlop
+            var moved = false
+            var consumed = down.isConsumed
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Final)
+                val change = event.changes.firstOrNull { it.id == pointerId }
+                    ?: return@awaitEachGesture
+                consumed = consumed || change.isConsumed
+                if (!moved && (change.position - start).getDistance() > touchSlop) moved = true
+                if (change.changedToUp() || !change.pressed) {
+                    if (!moved && !consumed) onTap(change.position.x, size.width)
+                    return@awaitEachGesture
+                }
+            }
+        }
+    }
+}
+
 private fun logReaderChromeTap(message: () -> String) {
     logSharedReaderDiagnostic(ReaderChromeTapLogTag, message)
 }

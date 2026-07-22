@@ -241,7 +241,7 @@ class ReaderHtmlDocumentBuilderTest {
         )
 
         assertTrue(html.contains("function rangeMatchesStoredOffsets(content, range, startOffset, endOffset)"))
-        assertTrue(html.contains("rangeMatchesStoredOffsets(content, textRange, startOffset, endOffset)"))
+        assertTrue(html.contains("rangeMatchesStoredOffsets(content, textRange, segmentStart, segmentEnd)"))
         assertTrue(html.contains("highlight_expected_mismatch id="))
     }
 
@@ -470,7 +470,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("var position = pendingRestoreVisiblePosition() || currentVisiblePosition();"))
         assertTrue(html.contains("return fallback || { offset: contentStart, textNode: null };"))
         assertTrue(html.contains("EpistemeDesktopTtsStartTrace"))
-        assertTrue(html.contains("readerTtsStartTraceLog('event=web_position_report_send"))
+        assertTrue(Regex("readerTtsStartTraceLog\\(\\s*'event=web_position_report_send").containsMatchIn(html))
     }
 
     @Test
@@ -700,7 +700,7 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
-    fun `selection menu omits ai and tts actions when disabled`() {
+    fun `selection menu keeps external lookup actions when ai and tts are disabled`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),
             page = ReaderPage(
@@ -722,8 +722,12 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("""data-action="palette""""))
         assertTrue(html.contains("""aria-label="Search""""))
         assertTrue(html.contains("""<svg viewBox="0 0 960 960""""))
-        assertFalse(html.contains("""data-action="dictionary""""))
-        assertFalse(html.contains("""data-action="translate""""))
+        assertTrue(html.contains("""data-action="dictionary""""))
+        assertTrue(html.contains("""data-action="translate""""))
+        assertTrue(html.contains("sendSelectionAction('dictionary', text)"))
+        assertTrue(html.contains("sendSelectionAction('translate', text)"))
+        assertTrue(html.contains("""data-action="note""""))
+        assertTrue(html.contains("sendSelectionAction('note', text)"))
         assertFalse(html.contains("""data-action="find""""))
     }
 
@@ -917,7 +921,7 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("requestSelectionHandleUpdate(event)"))
         assertTrue(html.contains("document.addEventListener('selectstart'"))
         assertTrue(html.contains("EPUB_SELECTION_DEBUG"))
-        assertTrue(html.contains("readerSelectionDebugLog('drag_line"))
+        assertTrue(Regex("readerSelectionDebugLog\\(\\s*'drag_line").containsMatchIn(html))
         assertTrue(html.contains("rangeTouchesSelectionChrome"))
         assertTrue(html.contains("element.closest('#reader-selection-menu, .reader-selection-handle')"))
         assertFalse(html.contains("next.toString().trim().length"))

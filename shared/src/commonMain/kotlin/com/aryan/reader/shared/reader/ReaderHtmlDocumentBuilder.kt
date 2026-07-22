@@ -456,6 +456,11 @@ object ReaderHtmlDocumentBuilder {
         val customFontCss = settings.readerCustomFontFaceCss()
         val family = settings.readerFontFamilyCss()
         val highlightButtons = if (highlightActionsEnabled) highlightPalette.toSelectionPaletteButtons() else ""
+        val noteButton = if (highlightActionsEnabled) {
+            readerSelectionActionButton("note", "Note", ReaderSelectionIconNotePath)
+        } else {
+            ""
+        }
         val defineButton = if (readerAiFeaturesEnabled) {
             readerSelectionActionButton("define", "Define", ReaderSelectionIconDefinePath)
         } else {
@@ -467,7 +472,9 @@ object ReaderHtmlDocumentBuilder {
             ""
         }
         val externalLookupButtons = if (externalLookupEnabled) {
-            readerSelectionActionButton("web-search", "Search", ReaderSelectionIconSearchPath)
+            readerSelectionActionButton("dictionary", "Dictionary", ReaderSelectionIconDefinePath) +
+                readerSelectionActionButton("translate", "Translate", ReaderSelectionIconTranslatePath) +
+                readerSelectionActionButton("web-search", "Search", ReaderSelectionIconSearchPath)
         } else {
             ""
         }
@@ -528,7 +535,7 @@ object ReaderHtmlDocumentBuilder {
                   overflow-y: scroll;
                   scrollbar-width: thin;
                 }
-                html::-webkit-scrollbar,
+                html.reader-vertical-root::-webkit-scrollbar,
                 body.reader-vertical::-webkit-scrollbar {
                   width: 12px;
                   height: 12px;
@@ -938,6 +945,7 @@ object ReaderHtmlDocumentBuilder {
                   $defineButton
                   $speakButton
                   $externalLookupButtons
+                  $noteButton
                   ${readerSelectionActionButton("clear", "Clear", ReaderSelectionIconClearPath)}
                 </div>
               </div>
@@ -3985,7 +3993,10 @@ object ReaderHtmlDocumentBuilder {
                     if (action === 'palette') sendSelectionAction('palette', text);
                     if (action === 'define') sendSelectionAction('define', text);
                     if (action === 'speak') sendSelectionAction('speak', text);
+                    if (action === 'dictionary') sendSelectionAction('dictionary', text);
+                    if (action === 'translate') sendSelectionAction('translate', text);
                     if (action === 'web-search') sendSelectionAction('web-search', text);
+                    if (action === 'note') sendSelectionAction('note', text);
                     if (action === 'clear') {
                       window.getSelection().removeAllRanges();
                       hideMenu();
@@ -4710,7 +4721,8 @@ object ReaderHtmlDocumentBuilder {
 
     private fun ReaderSettings.readerTextAlignCss(): String {
         return when (textAlign) {
-            SharedReaderTextAlign.START -> "left"
+            SharedReaderTextAlign.START -> ""
+            SharedReaderTextAlign.LEFT -> "left"
             SharedReaderTextAlign.RIGHT -> "right"
             SharedReaderTextAlign.JUSTIFY -> "justify"
             SharedReaderTextAlign.CENTER -> "center"
@@ -4850,14 +4862,17 @@ object ReaderHtmlDocumentBuilder {
         val rangedHighlightIds = rangedHighlights.map { it.id }.toSet()
 
         val rangedHtml = rangedHighlights.fold(this) { html, highlight ->
-            val htmlRange = html.htmlRangeForHighlight(highlight) ?: return@fold html
-            val startIndex = htmlRange.first
-            val endIndex = htmlRange.last
-            if (startIndex >= endIndex || endIndex > html.length) return@fold html
-            val markedText = html.substring(startIndex, endIndex)
-            if (markedText.visibleHtmlText().isBlank()) return@fold html
             val markerStart = """<span class="reader-user-highlight ${highlight.color.cssClass}"${highlight.highlightAttributes()} data-reader-highlight-id="${highlight.id.escapeHtml()}" data-cfi="${highlight.cfi.escapeHtml()}" data-reader-start-offset="${highlight.absoluteStart}" data-reader-end-offset="${highlight.absoluteEnd}">"""
-            html.replaceRange(startIndex, endIndex, markedText.wrapVisibleHtmlText(markerStart, "</span>"))
+            html.htmlRangesForHighlight(highlight)
+                .sortedByDescending { it.first }
+                .fold(html) { current, htmlRange ->
+                    val startIndex = htmlRange.first
+                    val endIndex = htmlRange.last
+                    if (startIndex >= endIndex || endIndex > current.length) return@fold current
+                    val markedText = current.substring(startIndex, endIndex)
+                    if (markedText.visibleHtmlText().isBlank()) return@fold current
+                    current.replaceRange(startIndex, endIndex, markedText.wrapVisibleHtmlText(markerStart, "</span>"))
+                }
         }
 
         return highlights
@@ -4991,24 +5006,40 @@ object ReaderHtmlDocumentBuilder {
         return output.toString()
     }
 
-    private fun String.htmlRangeForHighlight(highlight: RenderedHighlight): IntRange? {
+    private fun String.htmlRangesForHighlight(highlight: RenderedHighlight): List<IntRange> {
+        val overlappingBlocks = textBlockStartPattern.findAll(this).mapNotNull { match ->
+            val tagName = match.groupValues[1]
+            val blockStart = match.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+            val blockEnd = match.groupValues[3].toIntOrNull() ?: return@mapNotNull null
+            val overlapStart = maxOf(highlight.absoluteStart, blockStart)
+            val overlapEnd = minOf(highlight.absoluteEnd, blockEnd)
+            if (overlapStart >= overlapEnd) return@mapNotNull null
+            val contentStart = match.range.last + 1
+            val contentEnd = indexOf("</$tagName>", startIndex = contentStart, ignoreCase = true)
+            if (contentEnd < contentStart) return@mapNotNull null
+            val startIndex = htmlIndexForTextOffset(overlapStart - blockStart, contentStart, contentEnd) ?: return@mapNotNull null
+            val endIndex = htmlIndexForTextOffset(overlapEnd - blockStart, contentStart, contentEnd) ?: return@mapNotNull null
+            startIndex..endIndex
+        }.toList()
+        if (overlappingBlocks.isNotEmpty()) return overlappingBlocks
+
         val block = findTextBlockRange(highlight.absoluteStart, highlight.absoluteEnd)
         if (block != null) {
             val startIndex = htmlIndexForTextOffset(
                 targetOffset = highlight.absoluteStart - block.startOffset,
                 startIndex = block.contentStartIndex,
                 endIndex = block.contentEndIndex
-            ) ?: return null
+            ) ?: return emptyList()
             val endIndex = htmlIndexForTextOffset(
                 targetOffset = highlight.absoluteEnd - block.startOffset,
                 startIndex = block.contentStartIndex,
                 endIndex = block.contentEndIndex
-            ) ?: return null
-            return startIndex..endIndex
+            ) ?: return emptyList()
+            return listOf(startIndex..endIndex)
         }
-        val startIndex = htmlIndexForTextOffset(highlight.relativeStart) ?: return null
-        val endIndex = htmlIndexForTextOffset(highlight.relativeEnd) ?: return null
-        return startIndex..endIndex
+        val startIndex = htmlIndexForTextOffset(highlight.relativeStart) ?: return emptyList()
+        val endIndex = htmlIndexForTextOffset(highlight.relativeEnd) ?: return emptyList()
+        return listOf(startIndex..endIndex)
     }
 
     private fun String.findTextBlockRange(absoluteStart: Int, absoluteEnd: Int): HtmlTextBlockRange? {
@@ -5468,6 +5499,10 @@ object ReaderHtmlDocumentBuilder {
         "M480,800Q432,762 376,741Q320,720 260,720Q218,720 177.5,731Q137,742 100,762Q79,773 59.5,761Q40,749 40,726L40,244Q40,233 45.5,223Q51,213 62,208Q108,184 158,172Q208,160 260,160Q318,160 373.5,175Q429,190 480,220Q531,190 586.5,175Q642,160 700,160Q752,160 802,172Q852,184 898,208Q909,213 914.5,223Q920,233 920,244L920,726Q920,749 900.5,761Q881,773 860,762Q823,742 782.5,731Q742,720 700,720Q640,720 584,741Q528,762 480,800ZM520,682Q564,661 608.5,650.5Q653,640 700,640Q736,640 770.5,646Q805,652 840,664L840,268Q807,254 771.5,247Q736,240 700,240Q653,240 607,252Q561,264 520,288L520,682ZM440,682L440,288Q399,264 353,252Q307,240 260,240Q224,240 188.5,247Q153,254 120,268L120,664Q155,652 189.5,646Q224,640 260,640Q307,640 351.5,650.5Q396,661 440,682Z"
     private const val ReaderSelectionIconSpeakPath =
         "M560,828L560,746Q653,719 706.5,642Q760,565 760,466Q760,367 706.5,290Q653,213 560,186L560,104Q687,133 763.5,234Q840,335 840,466Q840,597 763.5,698Q687,799 560,828ZM120,600L120,360L280,360L480,160L480,800L280,600L120,600ZM560,640L560,292Q612,317 646,364.5Q680,412 680,466Q680,520 646,567.5Q612,615 560,640Z"
+    private const val ReaderSelectionIconTranslatePath =
+        "M440,800L600,400L760,800L685,800L645,690L555,690L515,800L440,800ZM578,625L622,625L600,560L578,625ZM160,720L105,665L300,470Q263,430 235,382Q207,334 190,280L270,280Q284,318 304,350Q324,382 350,410Q390,365 419,312Q448,259 464,200L80,200L80,120L320,120L320,40L400,40L400,120L640,120L640,200L544,200Q526,276 489,344Q452,412 405,470L500,565L470,645L350,525L160,720Z"
+    private const val ReaderSelectionIconNotePath =
+        "M200,840Q167,840 143.5,816.5Q120,793 120,760L120,200Q120,167 143.5,143.5Q167,120 200,120L760,120Q793,120 816.5,143.5Q840,167 840,200L840,620L620,840L200,840ZM200,760L580,760L580,580L760,580L760,200L200,200L200,760ZM280,520L680,520L680,440L280,440L280,520ZM280,360L680,360L680,280L280,280L280,360Z"
     private const val ReaderSelectionIconSearchPath =
         "M784,840L532,588Q502,612 463,626Q424,640 380,640Q271,640 195.5,564.5Q120,489 120,380Q120,271 195.5,195.5Q271,120 380,120Q489,120 564.5,195.5Q640,271 640,380Q640,424 626,463Q612,502 588,532L840,784L784,840ZM380,560Q455,560 507.5,507.5Q560,455 560,380Q560,305 507.5,252.5Q455,200 380,200Q305,200 252.5,252.5Q200,305 200,380Q200,455 252.5,507.5Q305,560 380,560Z"
     private const val ReaderSelectionIconClearPath =

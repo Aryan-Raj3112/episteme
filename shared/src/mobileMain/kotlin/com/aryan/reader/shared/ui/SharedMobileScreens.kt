@@ -4711,6 +4711,7 @@ private fun fileTypeColor(type: FileType): Color {
         FileType.DOCX, FileType.ODT, FileType.FODT -> Color(0xFF3949AB)
         FileType.MD, FileType.TXT, FileType.HTML -> Color(0xFF00897B)
         FileType.PPTX -> Color(0xFFF4511E)
+        FileType.AUDIOBOOK -> Color(0xFF6D4C41)
         FileType.UNKNOWN -> Color(0xFF757575)
     }
 }

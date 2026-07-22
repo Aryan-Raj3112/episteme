@@ -14,9 +14,19 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ReaderExtrasModelsTest {
+
+    @Test
+    fun `selection lookup ids map to android external actions`() {
+        assertEquals(ReaderExternalLookupAction.DICTIONARY, readerExternalLookupActionForSelectionId("dictionary"))
+        assertEquals(ReaderExternalLookupAction.TRANSLATE, readerExternalLookupActionForSelectionId("translate"))
+        assertEquals(ReaderExternalLookupAction.SEARCH, readerExternalLookupActionForSelectionId("web-search"))
+        assertEquals(ReaderExternalLookupAction.SEARCH, readerExternalLookupActionForSelectionId("search"))
+        assertNull(readerExternalLookupActionForSelectionId("define"))
+    }
 
     @Test
     fun `reader ai settings require BYO key and selected model`() {

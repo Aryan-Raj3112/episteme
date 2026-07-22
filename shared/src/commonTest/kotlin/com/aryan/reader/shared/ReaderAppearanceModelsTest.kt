@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontFamily
 import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotationDefaults
@@ -17,6 +18,51 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ReaderAppearanceModelsTest {
+    @Test
+    fun `mobile native reader maps selectable font families`() {
+        assertEquals(FontFamily.Serif, ReaderSettings(fontFamily = "Merriweather").toSharedReaderFontFamily())
+        assertEquals(FontFamily.Serif, ReaderSettings(fontFamily = "Lora").toSharedReaderFontFamily())
+        assertEquals(FontFamily.SansSerif, ReaderSettings(fontFamily = "Lato").toSharedReaderFontFamily())
+        assertEquals(FontFamily.SansSerif, ReaderSettings(fontFamily = "Lexend").toSharedReaderFontFamily())
+        assertEquals(FontFamily.Monospace, ReaderSettings(fontFamily = "Roboto Mono").toSharedReaderFontFamily())
+        assertEquals(FontFamily.Default, ReaderSettings(fontFamily = "Original").toSharedReaderFontFamily())
+    }
+
+    @Test
+    fun `default and explicit left alignment remain distinct in shared settings`() {
+        assertEquals(SharedReaderTextAlign.START, ReaderTextAlign.DEFAULT.toSharedReaderTextAlign())
+        assertEquals(SharedReaderTextAlign.LEFT, ReaderTextAlign.LEFT.toSharedReaderTextAlign())
+    }
+
+    @Test
+    fun `reader format replacement preserves navigation and visual settings`() {
+        val base = ReaderSettings(
+            fontSize = 18,
+            readingMode = ReaderReadingMode.PAGINATED,
+            rightToLeftPagination = true,
+            themeId = "sepia",
+            systemUiMode = SystemUiMode.HIDDEN
+        )
+        val format = ReaderSettings(
+            fontSize = 26,
+            lineSpacing = 2f,
+            textAlign = SharedReaderTextAlign.LEFT,
+            fontFamily = "Lora",
+            readingMode = ReaderReadingMode.VERTICAL,
+            themeId = "dark"
+        )
+
+        val result = base.withReaderFormatFrom(format)
+
+        assertEquals(26, result.fontSize)
+        assertEquals(SharedReaderTextAlign.LEFT, result.textAlign)
+        assertEquals("Lora", result.fontFamily)
+        assertEquals(ReaderReadingMode.PAGINATED, result.readingMode)
+        assertTrue(result.rightToLeftPagination)
+        assertEquals("sepia", result.themeId)
+        assertEquals(SystemUiMode.HIDDEN, result.systemUiMode)
+    }
+
 
     @Test
     fun `pdf built in themes include android pdf defaults and textured presets`() {

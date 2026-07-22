@@ -8,6 +8,8 @@ import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
 import com.aryan.reader.shared.ReaderLocator
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 data class ReaderImageReference(
     val id: String,
@@ -53,6 +55,17 @@ data class ReaderImageReference(
         val safeBase = base.sanitizedReaderImageFileBase().ifBlank { "image-${index + 1}" }
         val safeExtension = extension?.takeIf { it.isNotBlank() } ?: "png"
         return "$safeBase.$safeExtension"
+    }
+
+    @OptIn(ExperimentalEncodingApi::class)
+    fun downloadBytes(): ByteArray? {
+        if (!source.startsWith("data:", ignoreCase = true)) return null
+        val comma = source.indexOf(',')
+        if (comma <= 5) return null
+        val metadata = source.substring(5, comma)
+        val payload = source.substring(comma + 1)
+        if (!metadata.contains(";base64", ignoreCase = true)) return null
+        return runCatching { Base64.Default.decode(payload) }.getOrNull()
     }
 }
 

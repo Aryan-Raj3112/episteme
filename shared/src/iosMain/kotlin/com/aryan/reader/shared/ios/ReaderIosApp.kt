@@ -24,6 +24,7 @@ import androidx.compose.ui.window.ComposeUIViewController
 import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.LibraryFilters
@@ -53,6 +54,7 @@ import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileLibraryTab
 import com.aryan.reader.shared.ui.SharedMobileMainDestination
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
+import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import kotlinx.coroutines.launch
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSDocumentDirectory
@@ -68,7 +70,10 @@ class ReaderIosBridge {
     private var systemUiHandler: ((hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit)? = null
     private var latestSystemUiState: IosSystemUiState? = null
     private var originalReaderBrightness: Double? = null
+    private var orientationHandler: ((mode: Int) -> Unit)? = null
     internal var importedFiles by mutableStateOf<List<IosImportedFile>>(loadPersistedImportedFiles())
+        private set
+    internal var importedFonts by mutableStateOf<List<CustomFontItem>>(loadIosReaderPreferences().customFonts)
         private set
 
     internal var latestNativeEvent by mutableStateOf<String?>(null)
@@ -89,6 +94,28 @@ class ReaderIosBridge {
         importedFiles = (imported + importedFiles).distinctBy { it.path }
         persistImportedFiles(importedFiles)
         latestNativeEvent = "Selected ${fileNames.size} file(s) from iOS"
+    }
+
+    fun recordImportedFonts(fileNames: List<String>, filePaths: List<String> = fileNames) {
+        if (fileNames.isEmpty()) {
+            latestNativeEvent = "Font import cancelled"
+            return
+        }
+        val imported = fileNames.mapIndexedNotNull { index, fileName ->
+            val path = filePaths.getOrNull(index) ?: return@mapIndexedNotNull null
+            val extension = fileName.substringAfterLast('.', "").lowercase()
+            if (extension !in setOf("ttf", "otf", "woff", "woff2")) return@mapIndexedNotNull null
+            CustomFontItem(
+                id = "ios-font-${path.hashCode()}",
+                displayName = fileName.substringBeforeLast('.').ifBlank { fileName },
+                fileName = fileName,
+                fileExtension = extension,
+                path = path,
+                timestamp = currentTimestamp()
+            )
+        }
+        importedFonts = (imported + importedFonts).distinctBy { it.path }
+        latestNativeEvent = if (imported.isEmpty()) "No supported font files selected" else "Imported ${imported.size} font(s)"
     }
 
     fun recordNativeEvent(message: String) {
@@ -117,6 +144,14 @@ class ReaderIosBridge {
     fun restoreReaderBrightness() {
         originalReaderBrightness?.let { UIScreen.mainScreen.brightness = it }
         originalReaderBrightness = null
+    }
+
+    fun setOrientationHandler(handler: (mode: Int) -> Unit) {
+        orientationHandler = handler
+    }
+
+    fun applyReaderOrientation(mode: ReaderScreenOrientationMode) {
+        orientationHandler?.invoke(mode.ordinal)
     }
 
     fun setSystemUiHandler(handler: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit) {
@@ -150,6 +185,40 @@ private const val IosDocumentsRelativePrefix = "Documents/"
 private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
 private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
 private const val IosReaderBrightnessDefaultsKey = "reader_ios_reader_brightness_v1"
+private const val IosReaderAutoScrollSpeedDefaultsKey = "reader_ios_auto_scroll_speed_v1"
+private const val IosReaderOrientationDefaultsKey = "reader_ios_reader_orientation_v1"
+private const val IosReaderPreferencesDefaultsKey = "reader_ios_reader_preferences_v1"
+
+private fun loadIosReaderPreferences(): SharedLibrarySnapshot {
+    val encoded = NSUserDefaults.standardUserDefaults.stringForKey(IosReaderPreferencesDefaultsKey)
+        ?: return SharedLibrarySnapshot()
+    return SharedLibrarySnapshotJson.decodeOrEmpty(encoded)
+}
+
+private fun persistIosReaderPreferences(state: SharedReaderScreenState) {
+    val encoded = SharedLibrarySnapshotJson.encode(
+        SharedLibrarySnapshot(
+            customReaderThemes = state.customReaderThemes,
+            customFonts = state.customFonts,
+            readerDefaultSettings = state.readerDefaultSettings,
+            readerToolbarPreferences = state.readerToolbarPreferences,
+            readerHighlightPalette = state.readerHighlightPalette,
+            readerTtsReplacementPreferences = state.readerTtsReplacementPreferences,
+            readerBookReplacementPreferences = state.readerBookReplacementPreferences,
+        )
+    )
+    NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = IosReaderPreferencesDefaultsKey)
+}
+
+private fun loadIosReaderOrientation(): ReaderScreenOrientationMode {
+    val name = NSUserDefaults.standardUserDefaults.stringForKey(IosReaderOrientationDefaultsKey)
+    return ReaderScreenOrientationMode.entries.firstOrNull { it.name == name }
+        ?: ReaderScreenOrientationMode.FOLLOW_SYSTEM
+}
+
+private fun persistIosReaderOrientation(mode: ReaderScreenOrientationMode) {
+    NSUserDefaults.standardUserDefaults.setObject(mode.name, forKey = IosReaderOrientationDefaultsKey)
+}
 
 private fun loadIosReaderBrightness(): Float? {
     val stored = NSUserDefaults.standardUserDefaults.stringForKey(IosReaderBrightnessDefaultsKey) ?: return null
@@ -158,6 +227,17 @@ private fun loadIosReaderBrightness(): Float? {
 
 private fun persistIosReaderBrightness(brightness: Float?) {
     NSUserDefaults.standardUserDefaults.setObject(brightness?.coerceIn(0.01f, 1f)?.toString() ?: "system", forKey = IosReaderBrightnessDefaultsKey)
+}
+
+private fun loadIosReaderAutoScrollSpeed(): Float {
+    return NSUserDefaults.standardUserDefaults.stringForKey(IosReaderAutoScrollSpeedDefaultsKey)
+        ?.toFloatOrNull()
+        ?.coerceIn(12f, 160f)
+        ?: 36f
+}
+
+private fun persistIosReaderAutoScrollSpeed(speed: Float) {
+    NSUserDefaults.standardUserDefaults.setObject(speed.coerceIn(12f, 160f).toString(), forKey = IosReaderAutoScrollSpeedDefaultsKey)
 }
 
 private fun loadPersistedImportedFiles(): List<IosImportedFile> {
@@ -342,26 +422,47 @@ private fun String.splitEscapedTab(): List<String> {
 
 fun readerComposeViewController(
     bridge: ReaderIosBridge,
-    onImportBooks: () -> Unit
+    onImportBooks: () -> Unit,
+    onImportFonts: () -> Unit
 ): UIViewController = ComposeUIViewController {
     ReaderIosApp(
         bridge = bridge,
-        onImportBooks = onImportBooks
+        onImportBooks = onImportBooks,
+        onImportFonts = onImportFonts
     )
 }
 
 @Composable
 private fun ReaderIosApp(
     bridge: ReaderIosBridge,
-    onImportBooks: () -> Unit
+    onImportBooks: () -> Unit,
+    onImportFonts: () -> Unit
 ) {
+    val persistedReaderPreferences = remember { loadIosReaderPreferences() }
     var state by remember {
-        mutableStateOf(SharedReaderScreenState())
+        mutableStateOf(
+            SharedReaderScreenState(
+                customReaderThemes = persistedReaderPreferences.customReaderThemes,
+                customFonts = persistedReaderPreferences.customFonts,
+                readerDefaultSettings = persistedReaderPreferences.readerDefaultSettings,
+                readerToolbarPreferences = persistedReaderPreferences.readerToolbarPreferences,
+                readerHighlightPalette = persistedReaderPreferences.readerHighlightPalette,
+                readerTtsReplacementPreferences = persistedReaderPreferences.readerTtsReplacementPreferences,
+                readerBookReplacementPreferences = persistedReaderPreferences.readerBookReplacementPreferences,
+            )
+        )
+    }
+    LaunchedEffect(bridge.importedFonts) {
+        if (bridge.importedFonts != state.customFonts) {
+            state = state.reduce(AppAction.CustomFontsChanged(bridge.importedFonts)).also(::persistIosReaderPreferences)
+        }
     }
     var selectedPage by remember { mutableStateOf(SharedMobileMainDestination.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(SharedMobileLibraryTab.BOOKS) }
     var activeReaderBook by remember { mutableStateOf<BookItem?>(null) }
     var readerBrightness by remember { mutableStateOf(loadIosReaderBrightness()) }
+    var readerAutoScrollSpeed by remember { mutableStateOf(loadIosReaderAutoScrollSpeed()) }
+    var readerOrientation by remember { mutableStateOf(loadIosReaderOrientation()) }
     val opdsRepository = remember { IosOpdsRepository() }
     val opdsController = remember {
         SharedOpdsController(
@@ -463,6 +564,10 @@ private fun ReaderIosApp(
                                     lastPageIndex = snapshot.pageIndex,
                                     readerPosition = snapshot.locator,
                                     readerSettings = snapshot.settings,
+                                    readerFormatIsLocal = snapshot.formatIsLocal,
+                                    readerLocalFormatSettings = snapshot.localFormatSettings,
+                                    readerAutoScrollIsLocal = snapshot.autoScrollIsLocal,
+                                    readerAutoScrollLocalSpeed = snapshot.autoScrollLocalSpeed,
                                     readerBookmarks = snapshot.bookmarks,
                                     readerHighlights = snapshot.highlights,
                                     readingPositionModifiedTimestamp = currentTimestamp()
@@ -486,14 +591,27 @@ private fun ReaderIosApp(
                             },
                             customReaderThemes = state.customReaderThemes,
                             onCustomReaderThemesChange = { themes ->
-                                state = state.reduce(AppAction.CustomReaderThemesChanged(themes))
+                                state = state.reduce(AppAction.CustomReaderThemesChanged(themes)).also(::persistIosReaderPreferences)
                             },
+                            customFonts = state.customFonts,
+                            onImportFont = onImportFonts,
                             readerDefaultSettings = state.readerDefaultSettings,
                             onReaderDefaultSettingsChange = { defaults ->
-                                state = state.reduce(AppAction.ReaderDefaultSettingsChanged(defaults))
+                                state = state.reduce(AppAction.ReaderDefaultSettingsChanged(defaults)).also(::persistIosReaderPreferences)
                             },
                             readerHighlightPalette = state.readerHighlightPalette,
                             readerToolbarPreferences = state.readerToolbarPreferences,
+                            onReaderToolbarPreferencesChange = { preferences ->
+                                state = state.reduce(AppAction.ReaderToolbarPreferencesChanged(preferences)).also(::persistIosReaderPreferences)
+                            },
+                            readerTtsReplacementPreferences = state.readerTtsReplacementPreferences,
+                            onReaderTtsReplacementPreferencesChange = { preferences ->
+                                state = state.reduce(AppAction.ReaderTtsReplacementPreferencesChanged(preferences)).also(::persistIosReaderPreferences)
+                            },
+                            readerBookReplacementPreferences = state.readerBookReplacementPreferences,
+                            onReaderBookReplacementPreferencesChange = { preferences ->
+                                state = state.reduce(AppAction.ReaderBookReplacementPreferencesChanged(preferences)).also(::persistIosReaderPreferences)
+                            },
                             readerBrightness = readerBrightness,
                             readerBrightnessSupported = true,
                             onReaderBrightnessChange = { brightness ->
@@ -501,6 +619,17 @@ private fun ReaderIosApp(
                                 persistIosReaderBrightness(brightness)
                                 bridge.setReaderBrightness(brightness)
                             },
+                            readerAutoScrollSpeed = readerAutoScrollSpeed,
+                            onReaderAutoScrollSpeedChange = { speed ->
+                                readerAutoScrollSpeed = speed.coerceIn(12f, 160f)
+                                persistIosReaderAutoScrollSpeed(readerAutoScrollSpeed)
+                            },
+                            readerScreenOrientationMode = readerOrientation,
+                            onReaderScreenOrientationModeChange = { mode ->
+                                readerOrientation = mode
+                                persistIosReaderOrientation(mode)
+                            },
+                            onApplyReaderScreenOrientation = bridge::applyReaderOrientation,
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -524,7 +653,7 @@ private fun ReaderIosApp(
                         onSyncToggle = { enabled -> state = state.reduce(AppAction.SyncEnabledChanged(enabled)) },
                         onFolderSyncToggle = { enabled -> state = state.reduce(AppAction.FolderSyncEnabledChanged(enabled)) },
                         onProClick = { runDrawerAction { showMessage("Standard iOS version is active") } },
-                        onFontsClick = { runDrawerAction { showMessage("Font importer bridge is next for iOS") } },
+                        onFontsClick = { runDrawerAction(onImportFonts) },
                         onAiSettingsClick = { runDrawerAction { showMessage("AI settings bridge is next for iOS") } },
                         onSettingsClick = { runDrawerAction { showMessage("Settings bridge is next for iOS") } },
                         onAppThemeClick = { runDrawerAction { showMessage("App theme panel is next for iOS") } },

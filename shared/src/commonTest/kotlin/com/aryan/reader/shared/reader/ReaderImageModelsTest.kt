@@ -6,9 +6,30 @@ import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.SemanticParagraph
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertContentEquals
 import kotlin.test.assertNull
 
 class ReaderImageModelsTest {
+
+    @Test
+    fun `embedded reader image exposes downloadable bytes`() {
+        val reference = ReaderImageReference(
+            id = "image",
+            index = 0,
+            source = "data:image/png;base64,SGk=",
+            altText = "Greeting",
+            chapterIndex = 0,
+            chapterTitle = "One",
+            blockIndex = 0,
+            cfi = null,
+            intrinsicWidth = null,
+            intrinsicHeight = null,
+            locator = com.aryan.reader.shared.ReaderLocator(chapterIndex = 0)
+        )
+
+        assertContentEquals("Hi".encodeToByteArray(), reference.downloadBytes())
+        assertNull(reference.copy(source = "OPS/image.png").downloadBytes())
+    }
 
     @Test
     fun `reader image references keep chapter order and page locators`() {

@@ -16,7 +16,6 @@ internal fun resolveSharedReaderTextAlign(
 
 private fun TextAlign.isExplicitSharedReaderTextAlign(): Boolean {
     return this != TextAlign.Start &&
-        this != TextAlign.Left &&
         this != TextAlign.Unspecified
 }
 

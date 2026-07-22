@@ -1,5 +1,12 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.Canvas
@@ -49,14 +56,19 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -109,6 +121,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
@@ -116,11 +130,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.BuiltInReaderThemes
+import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderFont
 import com.aryan.reader.shared.ReaderTtsPlanner
+import com.aryan.reader.shared.ReaderTtsChunk
+import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.readerExternalLookupActionForSelectionId
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderHighlightPalette
@@ -129,14 +147,23 @@ import com.aryan.reader.shared.PageInfoMode
 import com.aryan.reader.shared.PageInfoPosition
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.ReaderBookReplacementEngine
+import com.aryan.reader.shared.ReaderBookReplacementPreferences
+import com.aryan.reader.shared.ReaderWordReplacementEngine
+import com.aryan.reader.shared.ReaderWordReplacementRule
 import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.toSharedReaderFontFamily
+import com.aryan.reader.shared.withTtsReplacements
+import com.aryan.reader.shared.withReaderFormatFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderReadingMode
+import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.ReaderSearchOptions
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.reader.ReaderSpreadLayout
@@ -181,7 +208,11 @@ data class SharedMobileEpubReaderSnapshot(
     val highlights: List<UserHighlight>,
     val progressPercent: Float,
     val pageIndex: Int,
-    val pageCount: Int
+    val pageCount: Int,
+    val formatIsLocal: Boolean,
+    val localFormatSettings: ReaderSettings?,
+    val autoScrollIsLocal: Boolean,
+    val autoScrollLocalSpeed: Float?
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -195,22 +226,60 @@ fun SharedMobileEpubReaderScreen(
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _ -> },
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
+    customFonts: List<CustomFontItem> = emptyList(),
+    onImportFont: () -> Unit = {},
     readerDefaultSettings: ReaderSettings = ReaderSettings(),
     onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
     readerHighlightPalette: ReaderHighlightPalette = ReaderHighlightPalette(),
     readerToolbarPreferences: ReaderToolbarPreferences = ReaderToolbarPreferences(),
+    onReaderToolbarPreferencesChange: (ReaderToolbarPreferences) -> Unit = {},
+    readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
+    onReaderTtsReplacementPreferencesChange: (ReaderTtsReplacementPreferences) -> Unit = {},
+    readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences(),
+    onReaderBookReplacementPreferencesChange: (ReaderBookReplacementPreferences) -> Unit = {},
     readerBrightness: Float? = null,
     readerBrightnessSupported: Boolean = false,
     onReaderBrightnessChange: (Float?) -> Unit = {},
+    readerAutoScrollSpeed: Float = 36f,
+    onReaderAutoScrollSpeedChange: (Float) -> Unit = {},
+    readerScreenOrientationMode: ReaderScreenOrientationMode = ReaderScreenOrientationMode.FOLLOW_SYSTEM,
+    onReaderScreenOrientationModeChange: (ReaderScreenOrientationMode) -> Unit = {},
+    onApplyReaderScreenOrientation: (ReaderScreenOrientationMode) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val loadState = rememberSharedMobileEpubLoadState(book)
-    val loadedBook = loadState.book
+    val rawLoadedBook = loadState.book
+    val bookReplacementSignature = readerBookReplacementPreferences.signatureForFile(book.id)
+    val loadedBook = remember(rawLoadedBook, book.id, bookReplacementSignature) {
+        rawLoadedBook?.copy(
+            chapters = rawLoadedBook.chapters.map { chapter ->
+                chapter.copy(
+                    plainText = ReaderBookReplacementEngine.apply(
+                        chapter.plainText,
+                        readerBookReplacementPreferences,
+                        book.id
+                    ).text,
+                    htmlContent = ReaderBookReplacementEngine.applyToHtml(
+                        chapter.htmlContent,
+                        readerBookReplacementPreferences,
+                        book.id
+                    )
+                )
+            }
+        )
+    }
     val localTts = rememberSharedMobileEpubLocalTts()
     val activeTtsChunk = localTts.progress.currentChunk
+    val storedBookSettings = book.readerSettings ?: readerDefaultSettings
+    var isLocalFormatMode by remember(book.id) { mutableStateOf(book.readerFormatIsLocal) }
+    var localFormatSettings by remember(book.id) { mutableStateOf(book.readerLocalFormatSettings) }
     var settings by remember(book.id) {
         mutableStateOf(
-            book.readerSettings ?: readerDefaultSettings
+            if (book.readerFormatIsLocal) {
+                storedBookSettings.withReaderFormatFrom(book.readerLocalFormatSettings ?: storedBookSettings)
+            } else {
+                storedBookSettings.withReaderFormatFrom(readerDefaultSettings)
+            }
         )
     }
     var pages by remember(book.id) { mutableStateOf<List<ReaderPage>>(emptyList()) }
@@ -225,20 +294,35 @@ fun SharedMobileEpubReaderScreen(
     // Match Android's distraction-free reader entry; a reader tap reveals chrome.
     var showChrome by remember(book.id) { mutableStateOf(false) }
     var showFormatSheet by remember(book.id) { mutableStateOf(false) }
-    var isLocalFormatMode by remember(book.id) { mutableStateOf(false) }
     var showThemeSheet by remember(book.id) { mutableStateOf(false) }
     var showVisualOptionsSheet by remember(book.id) { mutableStateOf(false) }
     var showSearch by remember(book.id) { mutableStateOf(false) }
+    var showSearchResultsPanel by remember(book.id) { mutableStateOf(true) }
     var searchQuery by remember(book.id) { mutableStateOf("") }
     var searchResults by remember(book.id) { mutableStateOf<List<SharedMobileEpubSearchResult>>(emptyList()) }
+    var isSearchInProgress by remember(book.id) { mutableStateOf(false) }
     var searchResultIndex by remember(book.id) { mutableIntStateOf(-1) }
     var pullDirection by remember(book.id) { mutableStateOf<String?>(null) }
     var pullProgress by remember(book.id) { mutableStateOf(0f) }
     var showSlider by remember(book.id) { mutableStateOf(false) }
     var showMore by remember(book.id) { mutableStateOf(false) }
     var showFileInfo by remember(book.id) { mutableStateOf(false) }
+    var showCustomizeToolsSheet by remember(book.id) { mutableStateOf(false) }
+    var showScreenOrientationSheet by remember(book.id) { mutableStateOf(false) }
+    var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
+    var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
+    var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var keepScreenOn by remember(book.id) { mutableStateOf(false) }
+    var autoScrollModeActive by remember(book.id) { mutableStateOf(false) }
     var autoScroll by remember(book.id) { mutableStateOf(false) }
+    var autoScrollIsLocal by remember(book.id) { mutableStateOf(book.readerAutoScrollIsLocal) }
+    var autoScrollLocalSpeed by remember(book.id) { mutableStateOf(book.readerAutoScrollLocalSpeed) }
+    var autoScrollSpeed by remember(book.id) {
+        mutableStateOf(
+            if (book.readerAutoScrollIsLocal) book.readerAutoScrollLocalSpeed ?: readerAutoScrollSpeed
+            else readerAutoScrollSpeed
+        )
+    }
     var drawerTab by remember(book.id) { mutableStateOf(0) }
     var selectedTocIndex by remember(book.id) { mutableIntStateOf(-1) }
     var explicitNavigationLocator by remember(book.id) { mutableStateOf<ReaderLocator?>(null) }
@@ -250,10 +334,26 @@ fun SharedMobileEpubReaderScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val clipboard = LocalClipboardManager.current
     val sanitizedToolbarPreferences = readerToolbarPreferences.sanitized()
-    val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools()
-    val bottomToolbarTools = visibleToolbarTools.filter(sanitizedToolbarPreferences::isBottom)
-    val overflowToolbarTools = visibleToolbarTools.filterNot(sanitizedToolbarPreferences::isBottom)
+    val visibleToolbarTools = sanitizedToolbarPreferences.orderedVisibleTools().filter { it in SharedMobileEpubCustomizableTools }
+    val mobileBottomToolIds = if (readerToolbarPreferences.bottomToolIds == ReaderToolbarPreferences.defaultBottomToolIds) {
+        readerToolbarPreferences.bottomToolIds + ReaderTool.TTS_CONTROLS.id
+    } else {
+        readerToolbarPreferences.bottomToolIds
+    }
+    val bottomToolbarTools = visibleToolbarTools.filter { tool ->
+        tool in SharedMobileEpubToolbarTools && tool.id in mobileBottomToolIds
+    }
+    val topToolbarTools = visibleToolbarTools.filter { tool ->
+        tool in SharedMobileEpubToolbarTools && tool.id !in mobileBottomToolIds
+    }
+    val overflowMenuTools = visibleToolbarTools.filterNot { it in SharedMobileEpubToolbarTools }
+
+    DisposableEffect(readerScreenOrientationMode, onApplyReaderScreenOrientation) {
+        onApplyReaderScreenOrientation(readerScreenOrientationMode)
+        onDispose { onApplyReaderScreenOrientation(ReaderScreenOrientationMode.FOLLOW_SYSTEM) }
+    }
 
     fun openReaderDrawer(tab: Int? = null) {
         tab?.let { drawerTab = it }
@@ -308,22 +408,33 @@ fun SharedMobileEpubReaderScreen(
             onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL)
         }
     }
-    LaunchedEffect(autoScroll) {
-        commandScript = if (autoScroll) SharedMobileEpubAutoScrollStartScript else SharedMobileEpubAutoScrollStopScript
+    LaunchedEffect(autoScroll, autoScrollSpeed) {
+        commandScript = if (autoScroll) sharedMobileEpubAutoScrollStartScript(autoScrollSpeed) else SharedMobileEpubAutoScrollStopScript
         navigationRequestId++
     }
     LaunchedEffect(loadedBook, searchQuery) {
         val epub = loadedBook
         val query = searchQuery.trim()
-        searchResults = if (epub == null || query.length < 2) emptyList() else withContext(Dispatchers.Default) {
-            epub.searchMobileEpub(query)
+        if (epub == null || query.isBlank()) {
+            searchResults = emptyList()
+            searchResultIndex = -1
+            isSearchInProgress = false
+            return@LaunchedEffect
         }
-        searchResultIndex = -1
+        delay(350)
+        isSearchInProgress = true
+        try {
+            searchResults = withContext(Dispatchers.Default) { epub.searchMobileEpub(query) }
+            searchResultIndex = -1
+            showSearchResultsPanel = true
+        } finally {
+            isSearchInProgress = false
+        }
     }
 
     val pageCount = pages.size.coerceAtLeast(1)
     val progress = ((currentPageIndex + 1).toFloat() / pageCount) * 100f
-    LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount) {
+    LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalSpeed) {
         delay(220)
         currentLocator?.let { locator ->
             onReaderStateChange(
@@ -334,7 +445,11 @@ fun SharedMobileEpubReaderScreen(
                     highlights = highlights,
                     progressPercent = progress.coerceIn(0f, 100f),
                     pageIndex = currentPageIndex,
-                    pageCount = pageCount
+                    pageCount = pageCount,
+                    formatIsLocal = isLocalFormatMode,
+                    localFormatSettings = localFormatSettings,
+                    autoScrollIsLocal = autoScrollIsLocal,
+                    autoScrollLocalSpeed = autoScrollLocalSpeed
                 )
             )
         }
@@ -350,7 +465,11 @@ fun SharedMobileEpubReaderScreen(
                     highlights = highlights,
                     progressPercent = progress.coerceIn(0f, 100f),
                     pageIndex = currentPageIndex,
-                    pageCount = pageCount
+                    pageCount = pageCount,
+                    formatIsLocal = isLocalFormatMode,
+                    localFormatSettings = localFormatSettings,
+                    autoScrollIsLocal = autoScrollIsLocal,
+                    autoScrollLocalSpeed = autoScrollLocalSpeed
                 )
             )
         }
@@ -417,7 +536,7 @@ fun SharedMobileEpubReaderScreen(
                 val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, targetChapterIndex)
                 sharedMobileEpubScrollToEndScript(chunks.lastIndex, chunks.lastOrNull())
             }
-            autoScroll -> SharedMobileEpubAutoScrollStartScript
+            autoScroll -> sharedMobileEpubAutoScrollStartScript(autoScrollSpeed)
             else -> null
         }
         navigationRequestId++
@@ -475,6 +594,49 @@ fun SharedMobileEpubReaderScreen(
         showSearch = false
     }
 
+    fun speakSelectedText(text: String, locator: ReaderLocator) {
+        val epub = loadedBook ?: return
+        val chapterIndex = locator.chapterIndex ?: currentChapterIndex
+        val startOffset = locator.startOffset ?: 0
+        localTts.start(
+            chunks = listOf(
+                ReaderTtsChunk(
+                    index = 0,
+                    pageIndex = locator.pageIndex ?: currentPageIndex,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = epub.chapters.getOrNull(chapterIndex)?.title.orEmpty(),
+                    text = text,
+                    startOffset = startOffset,
+                    endOffset = locator.endOffset ?: startOffset + text.length,
+                    sourceCfi = locator.cfi
+                )
+            ).withTtsReplacements(readerTtsReplacementPreferences, book.id),
+            bookTitle = epub.title
+        )
+    }
+
+    fun createNoteForSelection(text: String, locator: ReaderLocator) {
+        val chapterIndex = locator.chapterIndex ?: currentChapterIndex
+        val startOffset = locator.startOffset ?: 0
+        val endOffset = locator.endOffset ?: (startOffset + text.length)
+        val timestamp = currentTimestamp()
+        val highlight = UserHighlight(
+            id = "ios_epub_note_$timestamp",
+            cfi = locator.cfi ?: "desktop:$chapterIndex:$startOffset:$endOffset",
+            text = text,
+            color = readerHighlightPalette.sanitized().colors.first(),
+            chapterIndex = chapterIndex,
+            locator = locator.withFallbacks(
+                chapterIndex = chapterIndex,
+                startOffset = startOffset,
+                endOffset = endOffset,
+                textQuote = text
+            )
+        )
+        highlights = highlights.filterNot { it.cfi == highlight.cfi } + highlight
+        editingHighlight = highlight
+    }
+
     fun toggleBookmark() {
         val locator = currentLocator ?: return
         val existing = bookmarks.indexOfFirst { it.locator.sameLocation(locator) }
@@ -528,6 +690,12 @@ fun SharedMobileEpubReaderScreen(
                             navigate(bookmark.locator)
                             scope.launch { drawerState.close() }
                         },
+                        onBookmarkRename = { bookmark, label ->
+                            bookmarks = bookmarks.map { existing ->
+                                if (existing.id == bookmark.id) existing.copy(label = label.trim().ifBlank { null }) else existing
+                            }
+                        },
+                        onBookmarkDelete = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } },
                         modifier = Modifier.fillMaxSize()
                     )
                 } else if (drawerTab == 2) {
@@ -568,9 +736,26 @@ fun SharedMobileEpubReaderScreen(
                                 pages.size,
                                 settings
                             ).mapNotNull(pages::getOrNull)
+                            AnimatedContent(
+                                targetState = visiblePages,
+                                transitionSpec = {
+                                    if (!settings.pageTurnAnimationEnabled) {
+                                        EnterTransition.None togetherWith ExitTransition.None
+                                    } else {
+                                        val direction = sharedPaginatedTransitionDirection(
+                                            initialState.minOfOrNull { it.pageIndex } ?: 0,
+                                            targetState.minOfOrNull { it.pageIndex } ?: 0,
+                                            settings.rightToLeftPagination
+                                        )
+                                        slideInHorizontally(tween(700)) { width -> width * direction } togetherWith
+                                            slideOutHorizontally(tween(700)) { width -> -width * direction }
+                                    }
+                                },
+                                label = "EPUB page turn"
+                            ) { animatedPages ->
                             SharedNativePaginatedReader(
                                 renderPlan = ReaderContentRenderPlan.NativePaginatedPages(
-                                    visiblePages = visiblePages,
+                                    visiblePages = animatedPages,
                                     settings = settings,
                                     searchQuery = searchQuery,
                                     searchOptions = ReaderSearchOptions(),
@@ -586,7 +771,7 @@ fun SharedMobileEpubReaderScreen(
                                         highlights + chunk.toHighlight(localTts.progress.sessionId)
                                     } ?: highlights
                                 ),
-                                readerFontFamily = FontFamily.Default,
+                                readerFontFamily = settings.toSharedReaderFontFamily(),
                                 searchHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                 onVisiblePageChanged = { pageIndex, locator ->
                                     currentPageIndex = pageIndex.coerceIn(0, pageCount - 1)
@@ -600,9 +785,40 @@ fun SharedMobileEpubReaderScreen(
                                 onHighlightSelected = { id ->
                                     editingHighlight = highlights.firstOrNull { it.id == id }
                                 },
+                                enabledSelectionActions = SharedNativeReaderSelectionAction.entries.toSet(),
+                                onCopyText = { text -> clipboard.setText(AnnotatedString(text)) },
+                                onSelectionAction = { action, text, locator ->
+                                    val selectionLocator = locator ?: currentLocator ?: return@SharedNativePaginatedReader
+                                    val lookupAction = action.externalLookupActionOrNull()
+                                    when {
+                                        lookupAction != null -> openSharedMobileEpubLookup(lookupAction, text)
+                                        action == SharedNativeReaderSelectionAction.SPEAK -> speakSelectedText(text, selectionLocator)
+                                        action == SharedNativeReaderSelectionAction.NOTE -> createNoteForSelection(text, selectionLocator)
+                                        else -> Unit
+                                    }
+                                },
+                                onLinkClicked = { link ->
+                                    if (link.href.isExternalEpubLink()) {
+                                        openSharedMobileEpubExternalLink(link.href)
+                                    } else {
+                                        val sourceChapter = link.chapterIndex ?: currentChapterIndex
+                                        val sourceHref = loadedBook.chapters.getOrNull(sourceChapter)?.baseHref
+                                        loadedBook.locatorForLink(link.href, sourceHref, pages)?.let { (locator, fragment) ->
+                                            navigate(locator, fragment)
+                                        }
+                                    }
+                                },
                                 onReaderTap = { showChrome = !showChrome },
+                                onReaderHorizontalTap = { horizontalFraction ->
+                                    when (sharedPaginatedTapAction(horizontalFraction, settings.tapToNavigateEnabled, settings.rightToLeftPagination)) {
+                                        SharedPaginatedTapAction.PREVIOUS_PAGE -> navigatePage(-1)
+                                        SharedPaginatedTapAction.NEXT_PAGE -> navigatePage(1)
+                                        SharedPaginatedTapAction.TOGGLE_CHROME -> showChrome = !showChrome
+                                    }
+                                },
                                 modifier = Modifier.fillMaxSize()
                             )
+                            }
                         } else {
                         val chapterChunks = remember(loadedBook.id, currentChapterIndex) {
                             ReaderHtmlDocumentBuilder.verticalChapterChunks(loadedBook, currentChapterIndex)
@@ -641,8 +857,10 @@ fun SharedMobileEpubReaderScreen(
                                 pages = pages,
                                 highlightActionsEnabled = true,
                                 readerAiFeaturesEnabled = false,
-                                cloudTtsEnabled = false,
-                                externalLookupEnabled = false,
+                                // This flag controls the selection-menu Speak action. iOS handles
+                                // it with local device speech rather than the paid cloud service.
+                                cloudTtsEnabled = true,
+                                externalLookupEnabled = true,
                                 renderedChapterRange = currentChapterIndex..currentChapterIndex,
                                 virtualizedChapterChunks = if (currentChapterHasHighlights) {
                                     emptyMap()
@@ -658,6 +876,7 @@ fun SharedMobileEpubReaderScreen(
                                 ReaderHtmlDocumentBuilder.pageAnchorsUpdateScript(pages) + "\n" +
                                 sharedMobileEpubActiveTocScript(loadedBook, currentChapterIndex) + "\n" +
                                 "window.readerIosPullEnabled=${settings.seamlessChapterNavigation};" +
+                                "window.readerIosSeamlessChapter=${!settings.seamlessChapterNavigation};" +
                                 "window.readerIosPullMultiplier=${settings.chapterTurnDragMultiplier.coerceIn(0.5f, 2f)};"
                         }
                         val navigationScript = buildList {
@@ -726,6 +945,20 @@ fun SharedMobileEpubReaderScreen(
                                     "readerHighlightClicked" -> payload.sharedMobileEpubHighlightIdOrNull()?.let { id ->
                                         editingHighlight = highlights.firstOrNull { it.id == id }
                                     }
+                                    "readerSelectionAction" -> payload.sharedMobileEpubSelectionActionOrNull()?.let { selection ->
+                                        val lookupAction = readerExternalLookupActionForSelectionId(selection.action)
+                                        when {
+                                            lookupAction != null -> openSharedMobileEpubLookup(lookupAction, selection.text)
+                                            selection.action == "speak" -> {
+                                                val locator = selection.locator ?: currentLocator ?: return@let
+                                                speakSelectedText(selection.text, locator)
+                                            }
+                                            selection.action == "note" -> {
+                                                val locator = selection.locator ?: return@let
+                                                createNoteForSelection(selection.text, locator)
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             modifier = Modifier.fillMaxSize()
@@ -758,26 +991,40 @@ fun SharedMobileEpubReaderScreen(
                     SharedMobileEpubTopBar(
                         title = loadedBook?.title ?: book.displayName,
                         isBookmarked = isBookmarked,
-                        overflowTools = overflowToolbarTools,
+                        topTools = topToolbarTools,
+                        overflowTools = overflowMenuTools,
                         showMore = showMore,
                         onShowMoreChange = { showMore = it },
                         onBack = ::closeReader,
                         onTheme = { showThemeSheet = true },
                         onFormat = { showFormatSheet = true },
-                        onSearch = { showSearch = true },
+                        onSearch = { showSearchResultsPanel = true; showSearch = true },
                         onBookmark = ::toggleBookmark,
                         onVisualOptions = { showVisualOptionsSheet = true },
                         onOpenToc = { openReaderDrawer(0) },
                         onOpenSlider = { showSlider = !showSlider },
                         onFileInfo = { showFileInfo = true },
+                        onCustomizeTools = { showCustomizeToolsSheet = true },
+                        onScreenOrientation = { showScreenOrientationSheet = true },
+                        onTtsReplacements = { showTtsReplacementsSheet = true },
+                        onTtsSettings = { showTtsSettingsSheet = true },
+                        onBookReplacements = { showBookReplacementsSheet = true },
                         readingMode = settings.readingMode,
-                            onReadingModeChange = { mode ->
+                        rightToLeftPagination = settings.rightToLeftPagination,
+                        tapToNavigateEnabled = settings.tapToNavigateEnabled,
+                        pageTurnAnimationEnabled = settings.pageTurnAnimationEnabled,
+                        onReadingModeChange = { mode ->
                             if (settings.readingMode != mode) {
                                 settings = settings.copy(readingMode = mode)
                                 showSlider = false
+                                autoScrollModeActive = false
                                 autoScroll = false
                             }
                         },
+                        onRightToLeftPaginationChange = { settings = settings.copy(rightToLeftPagination = it) },
+                        onTapToNavigateChange = { settings = settings.copy(tapToNavigateEnabled = it) },
+                        onPageTurnAnimationChange = { settings = settings.copy(pageTurnAnimationEnabled = it) },
+                        toolbarPreferences = sanitizedToolbarPreferences,
                         localTtsState = localTts.state,
                         onLocalTtsToggle = {
                             when (localTts.state) {
@@ -789,7 +1036,9 @@ fun SharedMobileEpubReaderScreen(
                                         initialLocator = currentLocator
                                     )
                                     localTts.start(
-                                        chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session),
+                                        chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
+                                            .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
+                                            .withTtsReplacements(readerTtsReplacementPreferences, book.id),
                                         bookTitle = epub.title
                                     )
                                 }
@@ -800,14 +1049,18 @@ fun SharedMobileEpubReaderScreen(
                         onLocalTtsStop = localTts::stop,
                         keepScreenOn = keepScreenOn,
                         onKeepScreenOnChange = { keepScreenOn = it },
-                        autoScroll = autoScroll,
-                        onAutoScrollChange = { autoScroll = it },
+                        autoScroll = autoScrollModeActive,
+                        onAutoScrollChange = { active ->
+                            autoScrollModeActive = active
+                            autoScroll = active
+                        },
                         modifier = Modifier.align(Alignment.TopCenter)
                     )
                     if (loadedBook != null && pages.isNotEmpty()) {
                         SharedMobileEpubBottomBar(
                             tools = bottomToolbarTools,
                             readingMode = settings.readingMode,
+                            isBookmarked = isBookmarked,
                             onReadingModeToggle = {
                                 settings = settings.copy(
                                     readingMode = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
@@ -817,11 +1070,12 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                 )
                                 showSlider = false
+                                autoScrollModeActive = false
                                 autoScroll = false
                             },
                             onToc = { openReaderDrawer(0) },
                             onFormat = { showFormatSheet = true },
-                            onSearch = { showSearch = true },
+                            onSearch = { showSearchResultsPanel = true; showSearch = true },
                             onTheme = { showThemeSheet = true },
                             onBookmark = ::toggleBookmark,
                             onVisualOptions = { showVisualOptionsSheet = true },
@@ -837,7 +1091,9 @@ fun SharedMobileEpubReaderScreen(
                                             initialLocator = currentLocator
                                         )
                                         localTts.start(
-                                            chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session),
+                                            chunks = ReaderTtsPlanner.chunksFromCurrentLocation(session)
+                                                .ifEmpty { ReaderTtsPlanner.chunksForCurrentChapter(session) }
+                                                .withTtsReplacements(readerTtsReplacementPreferences, book.id),
                                             bookTitle = epub.title
                                         )
                                     }
@@ -848,6 +1104,51 @@ fun SharedMobileEpubReaderScreen(
                             modifier = Modifier.align(Alignment.BottomCenter)
                         )
                     }
+                }
+                if (localTts.isSessionActive) {
+                    SharedMobileEpubTtsControls(
+                        tts = localTts,
+                        onOpenSettings = { showTtsSettingsSheet = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 12.dp)
+                            .offset(y = if (showChrome) (-52).dp else (-12).dp)
+                    )
+                }
+                if (autoScrollModeActive && settings.readingMode == ReaderReadingMode.VERTICAL) {
+                    SharedMobileEpubAutoScrollControls(
+                        isPlaying = autoScroll,
+                        speed = autoScrollSpeed,
+                        isLocalMode = autoScrollIsLocal,
+                        onPlayPause = { autoScroll = !autoScroll },
+                        onSpeedChange = { requested ->
+                            val next = requested.coerceIn(12f, 160f)
+                            autoScrollSpeed = next
+                            if (autoScrollIsLocal) {
+                                autoScrollLocalSpeed = next
+                            } else {
+                                onReaderAutoScrollSpeedChange(next)
+                            }
+                        },
+                        onLocalModeChange = { useLocal ->
+                            if (useLocal != autoScrollIsLocal) {
+                                if (useLocal) {
+                                    val local = autoScrollLocalSpeed ?: autoScrollSpeed
+                                    autoScrollLocalSpeed = local
+                                    autoScrollSpeed = local
+                                } else {
+                                    autoScrollLocalSpeed = autoScrollSpeed
+                                    autoScrollSpeed = readerAutoScrollSpeed
+                                }
+                                autoScrollIsLocal = useLocal
+                            }
+                        },
+                        onClose = { autoScroll = false; autoScrollModeActive = false },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 12.dp)
+                            .offset(y = if (showChrome) (-52).dp else (-12).dp)
+                    )
                 }
                 val canPullDirection = (pullDirection == "previous" && currentChapterIndex > 0) ||
                     (pullDirection == "next" && currentChapterIndex < (loadedBook?.chapters?.lastIndex ?: -1))
@@ -863,6 +1164,9 @@ fun SharedMobileEpubReaderScreen(
                         query = searchQuery,
                         onQueryChange = { searchQuery = it },
                         results = searchResults,
+                        isSearching = isSearchInProgress,
+                        showResults = showSearchResultsPanel,
+                        onShowResultsChange = { showSearchResultsPanel = it },
                         onResultClick = { result ->
                             searchResultIndex = searchResults.indexOf(result)
                             navigateSearchResult(result)
@@ -871,7 +1175,7 @@ fun SharedMobileEpubReaderScreen(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
-                if (!showSearch && searchResultIndex >= 0 && searchResults.isNotEmpty()) {
+                if ((!showSearch || !showSearchResultsPanel) && searchResultIndex >= 0 && searchResults.isNotEmpty()) {
                     SharedMobileEpubSearchNavigation(
                         current = searchResultIndex,
                         total = searchResults.size,
@@ -905,11 +1209,29 @@ fun SharedMobileEpubReaderScreen(
         SharedMobileEpubFormatSheet(
             settings = settings,
             isLocalMode = isLocalFormatMode,
-            onLocalModeChange = { isLocalFormatMode = it },
+            customFonts = customFonts,
+            onImportFont = onImportFont,
+            onLocalModeChange = { useLocal ->
+                if (useLocal != isLocalFormatMode) {
+                    if (useLocal) {
+                        val local = localFormatSettings ?: settings
+                        localFormatSettings = local
+                        settings = settings.withReaderFormatFrom(local)
+                    } else {
+                        localFormatSettings = settings
+                        settings = settings.withReaderFormatFrom(readerDefaultSettings)
+                    }
+                    isLocalFormatMode = useLocal
+                }
+            },
             onSettingsChange = {
                 val next = it
                 settings = next
-                if (!isLocalFormatMode) onReaderDefaultSettingsChange(next)
+                if (isLocalFormatMode) {
+                    localFormatSettings = next
+                } else {
+                    onReaderDefaultSettingsChange(next)
+                }
             },
             onDismiss = { showFormatSheet = false }
         )
@@ -932,6 +1254,58 @@ fun SharedMobileEpubReaderScreen(
             onSettingsChange = { settings = it },
             onDismiss = { showVisualOptionsSheet = false }
         )
+    }
+    if (showCustomizeToolsSheet) {
+        ModalBottomSheet(onDismissRequest = { showCustomizeToolsSheet = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text("Customize Toolbar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                SharedReaderToolbarControls(
+                    toolbarPreferences = sanitizedToolbarPreferences,
+                    onToolbarPreferencesChange = onReaderToolbarPreferencesChange,
+                    availableTools = SharedMobileEpubCustomizableTools
+                )
+            }
+        }
+    }
+    if (showScreenOrientationSheet) {
+        SharedMobileEpubScreenOrientationSheet(
+            selectedMode = readerScreenOrientationMode,
+            onModeSelected = onReaderScreenOrientationModeChange,
+            onDismiss = { showScreenOrientationSheet = false }
+        )
+    }
+    if (showTtsReplacementsSheet) {
+        ModalBottomSheet(onDismissRequest = { showTtsReplacementsSheet = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp)
+            ) {
+                SharedReaderTtsReplacementControls(
+                    preferences = readerTtsReplacementPreferences,
+                    bookId = book.id,
+                    onPreferencesChange = onReaderTtsReplacementPreferencesChange
+                )
+            }
+        }
+    }
+    if (showTtsSettingsSheet) {
+        SharedMobileEpubTtsSettingsSheet(
+            tts = localTts,
+            onDismiss = { showTtsSettingsSheet = false }
+        )
+    }
+    if (showBookReplacementsSheet) {
+        ModalBottomSheet(onDismissRequest = { showBookReplacementsSheet = false }) {
+            SharedMobileEpubBookReplacementControls(
+                preferences = readerBookReplacementPreferences,
+                bookId = book.id,
+                onPreferencesChange = onReaderBookReplacementPreferencesChange,
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp).padding(bottom = 32.dp)
+            )
+        }
     }
     if (showFileInfo) {
         ModalBottomSheet(onDismissRequest = { showFileInfo = false }) {
@@ -960,6 +1334,10 @@ fun SharedMobileEpubReaderScreen(
             onDelete = {
                 highlights = highlights.filterNot { it.id == highlight.id }
                 editingHighlight = null
+            },
+            onSpeak = { speakSelectedText(highlight.text, highlight.locator) },
+            onLookup = { action ->
+                openSharedMobileEpubLookup(action, highlight.text)
             },
             onDismiss = { editingHighlight = null }
         )
@@ -995,6 +1373,7 @@ private fun SharedMobileEpubError(message: String) {
 private fun SharedMobileEpubTopBar(
     title: String,
     isBookmarked: Boolean,
+    topTools: List<ReaderTool>,
     overflowTools: List<ReaderTool>,
     showMore: Boolean,
     onShowMoreChange: (Boolean) -> Unit,
@@ -1007,8 +1386,20 @@ private fun SharedMobileEpubTopBar(
     onOpenToc: () -> Unit,
     onOpenSlider: () -> Unit,
     onFileInfo: () -> Unit,
+    onCustomizeTools: () -> Unit,
+    onScreenOrientation: () -> Unit,
+    onTtsSettings: () -> Unit,
+    onTtsReplacements: () -> Unit,
+    onBookReplacements: () -> Unit,
     readingMode: ReaderReadingMode,
+    rightToLeftPagination: Boolean,
+    tapToNavigateEnabled: Boolean,
+    pageTurnAnimationEnabled: Boolean,
     onReadingModeChange: (ReaderReadingMode) -> Unit,
+    onRightToLeftPaginationChange: (Boolean) -> Unit,
+    onTapToNavigateChange: (Boolean) -> Unit,
+    onPageTurnAnimationChange: (Boolean) -> Unit,
+    toolbarPreferences: ReaderToolbarPreferences,
     localTtsState: SharedMobileEpubLocalTtsState,
     onLocalTtsToggle: () -> Unit,
     onLocalTtsStop: () -> Unit,
@@ -1018,6 +1409,8 @@ private fun SharedMobileEpubTopBar(
     onAutoScrollChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var showReadingModeExpanded by remember { mutableStateOf(false) }
+    var showHiddenToolsExpanded by remember { mutableStateOf(false) }
     Surface(modifier = modifier, tonalElevation = 4.dp) {
         Row(
             Modifier.fillMaxWidth().height(55.dp).padding(horizontal = 4.dp),
@@ -1025,21 +1418,128 @@ private fun SharedMobileEpubTopBar(
         ) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
             Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            if (ReaderTool.THEME in overflowTools) {
-                IconButton(onClick = onTheme) { Icon(Icons.Default.Palette, contentDescription = "Theme") }
+            topTools.forEach { tool ->
+                when (tool) {
+                    ReaderTool.THEME -> IconButton(onClick = onTheme) {
+                        Icon(Icons.Default.Palette, contentDescription = "Theme")
+                    }
+                    ReaderTool.TOC -> IconButton(onClick = onOpenToc) {
+                        Icon(Icons.Default.Menu, contentDescription = "Contents")
+                    }
+                    ReaderTool.FORMAT -> IconButton(onClick = onFormat) {
+                        Text("Tᵀ", style = MaterialTheme.typography.titleLarge)
+                    }
+                    ReaderTool.SEARCH -> IconButton(onClick = onSearch) {
+                        Icon(Icons.Default.Search, contentDescription = "Search")
+                    }
+                    ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) {
+                        Icon(Icons.Default.SwapHoriz, contentDescription = "Navigation slider")
+                    }
+                    ReaderTool.TTS_CONTROLS -> IconButton(onClick = onLocalTtsToggle) {
+                        Icon(localTtsState.icon(), contentDescription = localTtsState.menuLabel())
+                    }
+                    ReaderTool.BRIGHTNESS -> IconButton(onClick = onVisualOptions) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Brightness")
+                    }
+                    ReaderTool.SCREEN_ORIENTATION -> IconButton(onClick = onScreenOrientation) {
+                        Icon(Icons.Default.SwapHoriz, contentDescription = "Screen orientation")
+                    }
+                    else -> Unit
+                }
             }
             Box {
                 IconButton(onClick = { onShowMoreChange(true) }) { Icon(Icons.Default.MoreVert, contentDescription = "More options") }
                 DropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
+                    DropdownMenuItem(
+                        text = { Text("Customize Toolbar") },
+                        onClick = { onShowMoreChange(false); onCustomizeTools() },
+                        leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) }
+                    )
+                    val hiddenToolbarTools = toolbarPreferences.sanitized().toolOrder.filter { tool ->
+                        tool in SharedMobileEpubToolbarTools && !toolbarPreferences.isVisible(tool)
+                    }
+                    if (hiddenToolbarTools.isNotEmpty()) {
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Hidden tools") },
+                            onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
+                            trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
+                        )
+                        if (showHiddenToolsExpanded) {
+                            hiddenToolbarTools.forEach { tool ->
+                                DropdownMenuItem(
+                                    text = { Text(tool.title) },
+                                    onClick = {
+                                        when (tool) {
+                                            ReaderTool.THEME -> onTheme()
+                                            ReaderTool.TOC -> onOpenToc()
+                                            ReaderTool.FORMAT -> onFormat()
+                                            ReaderTool.SEARCH -> onSearch()
+                                            ReaderTool.SLIDER -> onOpenSlider()
+                                            ReaderTool.TTS_CONTROLS -> onLocalTtsToggle()
+                                            ReaderTool.BRIGHTNESS -> onVisualOptions()
+                                            ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
+                                            else -> Unit
+                                        }
+                                        showHiddenToolsExpanded = false
+                                        onShowMoreChange(false)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    HorizontalDivider()
                     overflowTools.forEach { tool ->
                         when (tool) {
-                            ReaderTool.READING_MODE -> DropdownMenuItem(
-                                text = { Text(if (readingMode == ReaderReadingMode.VERTICAL) "Use paginated mode" else "Use vertical mode") },
-                                onClick = {
-                                    onReadingModeChange(if (readingMode == ReaderReadingMode.VERTICAL) ReaderReadingMode.PAGINATED else ReaderReadingMode.VERTICAL)
-                                    onShowMoreChange(false)
-                                },
-                                trailingIcon = { Text(if (readingMode == ReaderReadingMode.VERTICAL) "Vertical" else "Pages") }
+                            ReaderTool.READING_MODE -> {
+                                DropdownMenuItem(
+                                    text = { Text("Change Reading Mode") },
+                                    onClick = { showReadingModeExpanded = !showReadingModeExpanded },
+                                    trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
+                                )
+                                if (showReadingModeExpanded) {
+                                    DropdownMenuItem(
+                                        text = { Text("Vertical scroll") },
+                                        onClick = {
+                                            onReadingModeChange(ReaderReadingMode.VERTICAL)
+                                            showReadingModeExpanded = false
+                                            onShowMoreChange(false)
+                                        },
+                                        trailingIcon = { if (readingMode == ReaderReadingMode.VERTICAL) Text("✓") }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Paginated") },
+                                        onClick = {
+                                            onRightToLeftPaginationChange(false)
+                                            onReadingModeChange(ReaderReadingMode.PAGINATED)
+                                            showReadingModeExpanded = false
+                                            onShowMoreChange(false)
+                                        },
+                                        trailingIcon = { if (readingMode == ReaderReadingMode.PAGINATED && !rightToLeftPagination) Text("✓") }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Right-to-left pagination") },
+                                        onClick = {
+                                            onRightToLeftPaginationChange(true)
+                                            onReadingModeChange(ReaderReadingMode.PAGINATED)
+                                            showReadingModeExpanded = false
+                                            onShowMoreChange(false)
+                                        },
+                                        trailingIcon = { if (readingMode == ReaderReadingMode.PAGINATED && rightToLeftPagination) Text("✓") }
+                                    )
+                                }
+                            }
+                            ReaderTool.TAP_TO_TURN -> SharedMobileEpubSwitchMenuItem(
+                                "Tap to Turn Pages",
+                                tapToNavigateEnabled,
+                                onTapToNavigateChange,
+                                enabled = readingMode == ReaderReadingMode.PAGINATED
+                            )
+                            ReaderTool.PAGE_TURN_ANIM -> SharedMobileEpubSwitchMenuItem(
+                                "Realistic Page Turns",
+                                pageTurnAnimationEnabled,
+                                onPageTurnAnimationChange,
+                                enabled = readingMode == ReaderReadingMode.PAGINATED
                             )
                             ReaderTool.BOOKMARK -> DropdownMenuItem(
                                 text = { Text(if (isBookmarked) "Remove Bookmark" else "Bookmark this page") },
@@ -1068,7 +1568,35 @@ private fun SharedMobileEpubTopBar(
                             ReaderTool.TTS_CONTROLS -> DropdownMenuItem(
                                 text = { Text(localTtsState.menuLabel()) }, onClick = { onLocalTtsToggle(); onShowMoreChange(false) }
                             )
+                            ReaderTool.TTS_REPLACEMENTS -> DropdownMenuItem(
+                                text = { Text("TTS Word Replacements") },
+                                onClick = { onShowMoreChange(false); onTtsReplacements() }
+                            )
+                            ReaderTool.TTS_SETTINGS -> DropdownMenuItem(
+                                text = { Text("TTS Voice Settings") },
+                                onClick = { onShowMoreChange(false); onTtsSettings() }
+                            )
+                            ReaderTool.BOOK_REPLACEMENTS -> DropdownMenuItem(
+                                text = { Text("Book Word Replacements") },
+                                onClick = { onShowMoreChange(false); onBookReplacements() }
+                            )
                             ReaderTool.KEEP_SCREEN_ON -> SharedMobileEpubSwitchMenuItem("Keep Screen On", keepScreenOn, onKeepScreenOnChange)
+                            ReaderTool.AUTO_SCROLL -> DropdownMenuItem(
+                                text = { Text(if (autoScroll) "Stop Auto Scroll" else "Auto Scroll") },
+                                enabled = readingMode == ReaderReadingMode.VERTICAL,
+                                onClick = { onAutoScrollChange(!autoScroll); onShowMoreChange(false) }
+                            )
+                            ReaderTool.BRIGHTNESS -> DropdownMenuItem(
+                                text = { Text("Brightness") }, onClick = { onVisualOptions(); onShowMoreChange(false) }
+                            )
+                            ReaderTool.SCREEN_ORIENTATION -> DropdownMenuItem(
+                                text = { Text("Screen Orientation") }, onClick = { onScreenOrientation(); onShowMoreChange(false) },
+                                leadingIcon = { Icon(Icons.Default.SwapHoriz, contentDescription = null) }
+                            )
+                            ReaderTool.FILE_INFO -> DropdownMenuItem(
+                                text = { Text("File Information") }, onClick = { onFileInfo(); onShowMoreChange(false) },
+                                leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) }
+                            )
                             ReaderTool.THEME -> Unit
                             else -> Unit
                         }
@@ -1079,12 +1607,77 @@ private fun SharedMobileEpubTopBar(
                             onClick = { onLocalTtsStop(); onShowMoreChange(false) }
                         )
                     }
-                    HorizontalDivider()
-                    SharedMobileEpubSwitchMenuItem("Auto Scroll", autoScroll, onAutoScrollChange)
-                    DropdownMenuItem(
-                        text = { Text("File Information") },
-                        onClick = { onFileInfo(); onShowMoreChange(false) },
-                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null) }
+                }
+            }
+        }
+    }
+}
+
+private val SharedMobileEpubToolbarTools = setOf(
+    ReaderTool.THEME,
+    ReaderTool.SLIDER,
+    ReaderTool.TOC,
+    ReaderTool.FORMAT,
+    ReaderTool.SEARCH,
+    ReaderTool.TTS_CONTROLS,
+    ReaderTool.BRIGHTNESS,
+    ReaderTool.SCREEN_ORIENTATION
+)
+
+private val SharedMobileEpubCustomizableTools = SharedMobileEpubToolbarTools + setOf(
+    ReaderTool.READING_MODE,
+    ReaderTool.BOOKMARK,
+    ReaderTool.TAP_TO_TURN,
+    ReaderTool.PAGE_TURN_ANIM,
+    ReaderTool.KEEP_SCREEN_ON,
+    ReaderTool.VISUAL_OPTIONS,
+    ReaderTool.AUTO_SCROLL,
+    ReaderTool.TTS_SETTINGS,
+    ReaderTool.TTS_REPLACEMENTS,
+    ReaderTool.BOOK_REPLACEMENTS,
+    ReaderTool.FILE_INFO
+)
+
+@Composable
+private fun SharedMobileEpubSwitchMenuItem(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
+) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        enabled = enabled,
+        onClick = { onCheckedChange(!checked) },
+        trailingIcon = { Switch(checked = checked, enabled = enabled, onCheckedChange = onCheckedChange) }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedMobileEpubScreenOrientationSheet(
+    selectedMode: ReaderScreenOrientationMode,
+    onModeSelected: (ReaderScreenOrientationMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("Screen Orientation", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "Choose how the reader responds when you rotate your device.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReaderScreenOrientationMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = selectedMode == mode,
+                        onClick = { onModeSelected(mode) },
+                        label = { Text(mode.title, maxLines = 1) },
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -1093,22 +1686,10 @@ private fun SharedMobileEpubTopBar(
 }
 
 @Composable
-private fun SharedMobileEpubSwitchMenuItem(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    DropdownMenuItem(
-        text = { Text(label) },
-        onClick = { onCheckedChange(!checked) },
-        trailingIcon = { Switch(checked = checked, onCheckedChange = onCheckedChange) }
-    )
-}
-
-@Composable
 private fun SharedMobileEpubBottomBar(
     tools: List<ReaderTool>,
     readingMode: ReaderReadingMode,
+    isBookmarked: Boolean,
     onReadingModeToggle: () -> Unit,
     onToc: () -> Unit,
     onFormat: () -> Unit,
@@ -1137,7 +1718,12 @@ private fun SharedMobileEpubBottomBar(
                         ReaderTool.FORMAT -> IconButton(onClick = onFormat) { Text("Tᵀ", style = MaterialTheme.typography.titleLarge) }
                         ReaderTool.SEARCH -> IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "Search") }
                         ReaderTool.THEME -> IconButton(onClick = onTheme) { Icon(Icons.Default.Palette, contentDescription = "Theme") }
-                        ReaderTool.BOOKMARK -> IconButton(onClick = onBookmark) { Icon(Icons.Default.BookmarkBorder, contentDescription = "Bookmark this page") }
+                        ReaderTool.BOOKMARK -> IconButton(onClick = onBookmark) {
+                            Icon(
+                                if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                                contentDescription = if (isBookmarked) "Remove bookmark" else "Bookmark this page"
+                            )
+                        }
                         ReaderTool.VISUAL_OPTIONS -> IconButton(onClick = onVisualOptions) { Icon(Icons.Default.Settings, contentDescription = "Visual options") }
                         ReaderTool.SLIDER -> IconButton(onClick = onOpenSlider) { Icon(Icons.Default.SwapHoriz, contentDescription = "Navigation slider") }
                         ReaderTool.TTS_CONTROLS -> IconButton(onClick = onLocalTtsToggle) {
@@ -1161,6 +1747,277 @@ private fun SharedMobileEpubLocalTtsState.icon() = when (this) {
     SharedMobileEpubLocalTtsState.IDLE -> Icons.AutoMirrored.Filled.VolumeUp
     SharedMobileEpubLocalTtsState.SPEAKING -> Icons.Default.Pause
     SharedMobileEpubLocalTtsState.PAUSED -> Icons.Default.PlayArrow
+}
+
+@Composable
+private fun SharedMobileEpubTtsControls(
+    tts: SharedMobileEpubLocalTts,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val progress = tts.progress
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                Text(
+                    progress.currentChunk?.chapterTitle?.ifBlank { "Read aloud" } ?: "Preparing read aloud…",
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    progress.currentPositionLabel ?: "Device voice",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            IconButton(onClick = tts::skipPrevious, enabled = progress.currentChunkIndex > 0) {
+                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous reading part")
+            }
+            IconButton(
+                onClick = {
+                    if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) tts.pause() else tts.resume()
+                }
+            ) {
+                Icon(
+                    if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (tts.state == SharedMobileEpubLocalTtsState.SPEAKING) "Pause reading" else "Resume reading"
+                )
+            }
+            IconButton(
+                onClick = tts::skipNext,
+                enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex
+            ) {
+                Icon(Icons.Default.SkipNext, contentDescription = "Next reading part")
+            }
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Default.Settings, contentDescription = "TTS voice settings")
+            }
+            IconButton(onClick = tts::stop) {
+                Icon(Icons.Default.Close, contentDescription = "Stop reading", tint = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SharedMobileEpubTtsSettingsSheet(
+    tts: SharedMobileEpubLocalTts,
+    onDismiss: () -> Unit
+) {
+    var rate by remember(tts.speechRate) { mutableStateOf(tts.speechRate) }
+    var pitch by remember(tts.speechPitch) { mutableStateOf(tts.speechPitch) }
+    var showVoices by remember { mutableStateOf(false) }
+    val selectedVoice = tts.availableVoices.firstOrNull { it.identifier == tts.selectedVoiceIdentifier }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Text("TTS Voice Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Box {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { showVoices = true },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(selectedVoice?.name ?: "System default", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                selectedVoice?.language ?: "Uses the voice selected by iOS",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose voice")
+                    }
+                }
+                DropdownMenu(
+                    expanded = showVoices,
+                    onDismissRequest = { showVoices = false },
+                    modifier = Modifier.heightIn(max = 360.dp)
+                ) {
+                    DropdownMenuItem(
+                        text = { Column { Text("System default"); Text("Uses iOS settings", style = MaterialTheme.typography.bodySmall) } },
+                        onClick = { tts.setVoice(null); showVoices = false },
+                        trailingIcon = {
+                            IconButton(onClick = { tts.previewVoice(null) }) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Preview system voice")
+                            }
+                        }
+                    )
+                    tts.availableVoices.forEach { voice ->
+                        DropdownMenuItem(
+                            text = { Column { Text(voice.name); Text(voice.language, style = MaterialTheme.typography.bodySmall) } },
+                            onClick = { tts.setVoice(voice.identifier); showVoices = false },
+                            trailingIcon = {
+                                IconButton(onClick = { tts.previewVoice(voice.identifier) }) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = "Preview ${voice.name}")
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+            Column {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Speech rate")
+                    Text("${(rate * 100).roundToInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Slider(value = rate, onValueChange = {
+                    rate = it
+                    tts.setSpeechParameters(rate, pitch)
+                }, valueRange = 0.5f..3f)
+            }
+            Column {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Pitch")
+                    Text("${(pitch * 100).roundToInt()}%", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Slider(value = pitch, onValueChange = {
+                    pitch = it
+                    tts.setSpeechParameters(rate, pitch)
+                }, valueRange = 0.5f..2f)
+            }
+            TextButton(onClick = {
+                rate = 1f
+                pitch = 1f
+                tts.setSpeechParameters(rate, pitch)
+            }) { Text("Reset") }
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileEpubBookReplacementControls(
+    preferences: ReaderBookReplacementPreferences,
+    bookId: String,
+    onPreferencesChange: (ReaderBookReplacementPreferences) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val rules = preferences.rulesForFile(bookId)
+    var editingRuleId by remember(bookId) { mutableStateOf<String?>(null) }
+    var isAdding by remember(bookId) { mutableStateOf(false) }
+    val editingRule = editingRuleId?.let { id -> rules.firstOrNull { it.id == id } }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Book Word Replacements", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            "Replace visible text in this book only. Locations, bookmarks, and the original EPUB remain unchanged.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        TextButton(onClick = { isAdding = true; editingRuleId = null }) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Add rule")
+        }
+        if (isAdding || editingRule != null) {
+            SharedMobileEpubBookReplacementEditor(
+                seed = editingRule,
+                newRuleId = "book_${currentTimestamp()}_${rules.size}",
+                onCancel = { isAdding = false; editingRuleId = null },
+                onSave = { saved ->
+                    val updated = if (editingRule == null) rules + saved else rules.map { if (it.id == editingRule.id) saved else it }
+                    onPreferencesChange(preferences.withFileRules(bookId, updated))
+                    isAdding = false
+                    editingRuleId = null
+                }
+            )
+        }
+        if (rules.isEmpty()) {
+            Text("No replacements for this book yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            rules.forEach { rule ->
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${rule.from} → ${rule.to.ifBlank { "(remove)" }}", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                buildList {
+                                    add(if (rule.isRegex) "Regex" else "Plain text")
+                                    if (rule.wholeWord) add("whole word")
+                                    if (rule.matchCase) add("case-sensitive")
+                                }.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = rule.enabled,
+                            onCheckedChange = { enabled ->
+                                onPreferencesChange(
+                                    preferences.withFileRules(bookId, rules.map { if (it.id == rule.id) it.copy(enabled = enabled) else it })
+                                )
+                            }
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { editingRuleId = rule.id; isAdding = false }) { Text("Edit") }
+                        TextButton(onClick = {
+                            onPreferencesChange(preferences.withFileRules(bookId, rules.filterNot { it.id == rule.id }))
+                        }) { Text("Delete") }
+                    }
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileEpubBookReplacementEditor(
+    seed: ReaderWordReplacementRule?,
+    newRuleId: String,
+    onCancel: () -> Unit,
+    onSave: (ReaderWordReplacementRule) -> Unit
+) {
+    val ruleId = seed?.id ?: newRuleId
+    var from by remember(ruleId) { mutableStateOf(seed?.from.orEmpty()) }
+    var to by remember(ruleId) { mutableStateOf(seed?.to.orEmpty()) }
+    var enabled by remember(ruleId) { mutableStateOf(seed?.enabled ?: true) }
+    var isRegex by remember(ruleId) { mutableStateOf(seed?.isRegex ?: false) }
+    var wholeWord by remember(ruleId) { mutableStateOf(seed?.wholeWord ?: true) }
+    var matchCase by remember(ruleId) { mutableStateOf(seed?.matchCase ?: false) }
+    val draft = ReaderWordReplacementRule(ruleId, from, to, enabled, isRegex, matchCase, wholeWord)
+    val validation = ReaderWordReplacementEngine.validate(draft)
+
+    Surface(shape = RoundedCornerShape(12.dp), tonalElevation = 2.dp) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(if (seed == null) "New replacement" else "Edit replacement", fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(from, { from = it }, label = { Text("Replace") }, isError = !validation.isValid, modifier = Modifier.fillMaxWidth())
+            validation.message?.takeIf { !validation.isValid }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            OutlinedTextField(to, { to = it }, label = { Text("With") }, modifier = Modifier.fillMaxWidth())
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(enabled, { enabled = !enabled }, label = { Text("Enabled") })
+                FilterChip(isRegex, { isRegex = !isRegex }, label = { Text("Regex") })
+                FilterChip(wholeWord, { wholeWord = !wholeWord }, label = { Text("Whole word") })
+                FilterChip(matchCase, { matchCase = !matchCase }, label = { Text("Match case") })
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onCancel) { Text("Cancel") }
+                TextButton(enabled = validation.isValid, onClick = { onSave(draft) }) { Text("Save") }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1291,8 +2148,13 @@ private fun SharedMobileEpubToc(
 private fun SharedMobileEpubBookmarks(
     bookmarks: List<ReaderBookmark>,
     onBookmarkClick: (ReaderBookmark) -> Unit,
+    onBookmarkRename: (ReaderBookmark, String) -> Unit,
+    onBookmarkDelete: (ReaderBookmark) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var menuBookmark by remember { mutableStateOf<ReaderBookmark?>(null) }
+    var renameBookmark by remember { mutableStateOf<ReaderBookmark?>(null) }
+    var deleteBookmark by remember { mutableStateOf<ReaderBookmark?>(null) }
     if (bookmarks.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) { Text("No bookmarks yet") }
         return
@@ -1302,15 +2164,43 @@ private fun SharedMobileEpubBookmarks(
             NavigationDrawerItem(
                 label = {
                     Column {
-                        Text(bookmark.chapterTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(bookmark.preview, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(bookmark.label?.takeIf { it.isNotBlank() } ?: bookmark.preview.ifBlank { "Bookmark" }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+                        Text(bookmark.chapterTitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 },
                 selected = false,
                 onClick = { onBookmarkClick(bookmark) },
-                icon = { Icon(Icons.Default.Bookmark, contentDescription = null) }
+                icon = { Icon(Icons.Default.Bookmark, contentDescription = null) },
+                badge = {
+                    Box {
+                        IconButton(onClick = { menuBookmark = bookmark }) { Icon(Icons.Default.MoreVert, contentDescription = "Bookmark options") }
+                        DropdownMenu(expanded = menuBookmark?.id == bookmark.id, onDismissRequest = { menuBookmark = null }) {
+                            DropdownMenuItem(text = { Text("Rename") }, onClick = { renameBookmark = bookmark; menuBookmark = null })
+                            DropdownMenuItem(text = { Text("Delete") }, onClick = { deleteBookmark = bookmark; menuBookmark = null })
+                        }
+                    }
+                }
             )
         }
+    }
+    renameBookmark?.let { bookmark ->
+        var label by remember(bookmark.id) { mutableStateOf(bookmark.label ?: bookmark.preview) }
+        AlertDialog(
+            onDismissRequest = { renameBookmark = null },
+            title = { Text("Rename Bookmark") },
+            text = { OutlinedTextField(value = label, onValueChange = { label = it }, label = { Text("New name") }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { onBookmarkRename(bookmark, label); renameBookmark = null }) { Text("Rename") } },
+            dismissButton = { TextButton(onClick = { renameBookmark = null }) { Text("Cancel") } }
+        )
+    }
+    deleteBookmark?.let { bookmark ->
+        AlertDialog(
+            onDismissRequest = { deleteBookmark = null },
+            title = { Text("Delete Bookmark?") },
+            text = { Text("This bookmark will be removed from the book.") },
+            confirmButton = { TextButton(onClick = { onBookmarkDelete(bookmark); deleteBookmark = null }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleteBookmark = null }) { Text("Cancel") } }
+        )
     }
 }
 
@@ -1321,33 +2211,48 @@ private fun SharedMobileEpubHighlights(
     onHighlightEdit: (UserHighlight) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var notesOnly by remember { mutableStateOf(false) }
     if (highlights.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) { Text("No annotations yet") }
         return
     }
-    LazyColumn(modifier = modifier, contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
-        items(highlights, key = { it.id }) { highlight ->
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onHighlightClick(highlight) },
-                shape = RoundedCornerShape(12.dp),
-                color = highlight.effectiveColor.copy(alpha = 0.16f)
-            ) {
-                Row(
-                    modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = highlight.text.ifBlank { "Highlight" },
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
-                            Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+    val filteredHighlights = if (notesOnly) highlights.filter { !it.note.isNullOrBlank() } else highlights
+    Column(modifier) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(selected = !notesOnly, onClick = { notesOnly = false }, label = { Text("All") })
+            FilterChip(selected = notesOnly, onClick = { notesOnly = true }, label = { Text("With Notes") })
+        }
+        if (filteredHighlights.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No annotations with notes") }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+                items(filteredHighlights.sortedBy { it.chapterIndex }, key = { it.id }) { highlight ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onHighlightClick(highlight) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = highlight.effectiveColor.copy(alpha = 0.16f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = highlight.text.ifBlank { "Highlight" },
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                    Text(note, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+                                }
+                            }
+                            IconButton(onClick = { onHighlightEdit(highlight) }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit annotation")
+                            }
                         }
-                    }
-                    IconButton(onClick = { onHighlightEdit(highlight) }) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit annotation")
                     }
                 }
             }
@@ -1362,9 +2267,12 @@ private fun SharedMobileEpubHighlightSheet(
     palette: ReaderHighlightPalette,
     onUpdate: (UserHighlight) -> Unit,
     onDelete: () -> Unit,
+    onSpeak: () -> Unit,
+    onLookup: (ReaderExternalLookupAction) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val clipboard = LocalClipboardManager.current
     var note by remember(highlight.id, highlight.note) { mutableStateOf(highlight.note.orEmpty()) }
     var confirmDelete by remember(highlight.id) { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -1387,6 +2295,16 @@ private fun SharedMobileEpubHighlightSheet(
                     maxLines = 5,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(highlight.text)) }) { Text("Copy") }
+                TextButton(onClick = onSpeak) { Text("Speak") }
+                TextButton(onClick = { onLookup(ReaderExternalLookupAction.DICTIONARY) }) { Text("Dictionary") }
+                TextButton(onClick = { onLookup(ReaderExternalLookupAction.TRANSLATE) }) { Text("Translate") }
+                TextButton(onClick = { onLookup(ReaderExternalLookupAction.SEARCH) }) { Text("Search") }
             }
             Text("Color", style = MaterialTheme.typography.titleSmall)
             Row(
@@ -1475,9 +2393,11 @@ private fun SharedMobileEpubImages(
     }
     LazyColumn(modifier) {
         items(images, key = { it.id }) { image ->
+            val downloadableBytes = remember(image.source) { image.downloadBytes() }
             NavigationDrawerItem(
                 label = {
-                    Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
                         Text(image.displayTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             image.chapterTitle,
@@ -1485,6 +2405,20 @@ private fun SharedMobileEpubImages(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                            listOfNotNull(image.dimensionLabel, image.sourceName()).joinToString(" · ").takeIf { it.isNotBlank() }?.let { metadata ->
+                                Text(metadata, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                downloadableBytes?.let { bytes ->
+                                    shareSharedMobileEpubImage(bytes, image.suggestedDownloadFileName())
+                                }
+                            },
+                            enabled = downloadableBytes != null
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = "Save or share image")
+                        }
                     }
                 },
                 selected = false,
@@ -1500,6 +2434,8 @@ private fun SharedMobileEpubImages(
 private fun SharedMobileEpubFormatSheet(
     settings: ReaderSettings,
     isLocalMode: Boolean,
+    customFonts: List<CustomFontItem>,
+    onImportFont: () -> Unit,
     onLocalModeChange: (Boolean) -> Unit,
     onSettingsChange: (ReaderSettings) -> Unit,
     onDismiss: () -> Unit
@@ -1510,6 +2446,7 @@ private fun SharedMobileEpubFormatSheet(
     var alignmentChoice by remember(settings.textAlign) {
         mutableStateOf(
             when (settings.textAlign) {
+                SharedReaderTextAlign.LEFT -> "Left"
                 SharedReaderTextAlign.RIGHT -> "Right"
                 SharedReaderTextAlign.JUSTIFY -> "Justify"
                 else -> "Default"
@@ -1570,7 +2507,12 @@ private fun SharedMobileEpubFormatSheet(
                         Column(
                             Modifier.fillMaxHeight().weight(1f).background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(12.dp)).clickable {
                                 alignmentChoice = label
-                                onSettingsChange(settings.copy(textAlign = when (label) { "Right" -> SharedReaderTextAlign.RIGHT; "Justify" -> SharedReaderTextAlign.JUSTIFY; else -> SharedReaderTextAlign.START }))
+                                onSettingsChange(settings.copy(textAlign = when (label) {
+                                    "Left" -> SharedReaderTextAlign.LEFT
+                                    "Right" -> SharedReaderTextAlign.RIGHT
+                                    "Justify" -> SharedReaderTextAlign.JUSTIFY
+                                    else -> SharedReaderTextAlign.START
+                                }))
                             },
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
@@ -1608,6 +2550,37 @@ private fun SharedMobileEpubFormatSheet(
                 LazyColumn {
                     items(ReaderFont.entries) { font ->
                         NavigationDrawerItem(label = { Text(font.displayName) }, selected = if (font == ReaderFont.ORIGINAL) settings.fontFamily == "Default" || settings.fontFamily == "Original" else settings.fontFamily == font.fontFamilyName, onClick = { onSettingsChange(settings.copy(fontFamily = if (font == ReaderFont.ORIGINAL) "Default" else font.fontFamilyName, customFontPath = null)); showFontSheet = false })
+                    }
+                    if (customFonts.any { !it.isDeleted }) {
+                        item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+                        item {
+                            Text(
+                                "Imported Fonts",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                            )
+                        }
+                        items(customFonts.filterNot { it.isDeleted }.sortedBy { it.displayName.lowercase() }, key = { it.id }) { font ->
+                            NavigationDrawerItem(
+                                label = { Text(font.displayName) },
+                                selected = settings.customFontPath == font.path,
+                                onClick = {
+                                    onSettingsChange(settings.copy(fontFamily = font.displayName, customFontPath = font.path))
+                                    showFontSheet = false
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        TextButton(
+                            onClick = onImportFont,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Import Font")
+                        }
                     }
                 }
             }
@@ -1928,11 +2901,47 @@ private fun SharedMobileEpubVisualOptionsSheet(
             SharedMobileEpubEnumChoices(PageInfoMode.entries, settings.pageInfoMode, { it.title }) { onSettingsChange(settings.copy(pageInfoMode = it)) }
             Text("Page info position", style = MaterialTheme.typography.titleSmall)
             SharedMobileEpubEnumChoices(PageInfoPosition.entries, settings.pageInfoPosition, { it.title }) { onSettingsChange(settings.copy(pageInfoPosition = it)) }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text("Pull to change chapter"); Text("Pull beyond the chapter edge", style = MaterialTheme.typography.bodySmall) }
-                Switch(checked = settings.seamlessChapterNavigation, onCheckedChange = { onSettingsChange(settings.copy(seamlessChapterNavigation = it)) })
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    Row(
+                        Modifier.fillMaxWidth().clickable {
+                            onSettingsChange(settings.copy(seamlessChapterNavigation = !settings.seamlessChapterNavigation))
+                        }.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Seamless Chapter Transition", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Load the next or previous chapter immediately without the pull animation.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(16.dp))
+                        Switch(
+                            checked = !settings.seamlessChapterNavigation,
+                            onCheckedChange = { seamless ->
+                                onSettingsChange(settings.copy(seamlessChapterNavigation = !seamless))
+                            }
+                        )
+                    }
+                    if (settings.seamlessChapterNavigation) {
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                        Column(Modifier.padding(16.dp)) {
+                            SharedMobileEpubSettingSlider(
+                                "Pull Distance to Change Chapter",
+                                settings.chapterTurnDragMultiplier,
+                                0.5f..2f,
+                                14
+                            ) { onSettingsChange(settings.copy(chapterTurnDragMultiplier = it)) }
+                        }
+                    }
+                }
             }
-            SharedMobileEpubSettingSlider("Pull distance", settings.chapterTurnDragMultiplier, 0.5f..2f, 14) { onSettingsChange(settings.copy(chapterTurnDragMultiplier = it)) }
         }
     }
 }
@@ -1945,24 +2954,78 @@ private fun <T> SharedMobileEpubEnumChoices(values: List<T>, selected: T, label:
 }
 
 @Composable
-private fun SharedMobileEpubSearchOverlay(query: String, onQueryChange: (String) -> Unit, results: List<SharedMobileEpubSearchResult>, onResultClick: (SharedMobileEpubSearchResult) -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, tonalElevation = 8.dp) {
-        Column {
+private fun SharedMobileEpubSearchOverlay(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    results: List<SharedMobileEpubSearchResult>,
+    isSearching: Boolean,
+    showResults: Boolean,
+    onShowResultsChange: (Boolean) -> Unit,
+    onResultClick: (SharedMobileEpubSearchResult) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier) {
+        Surface(tonalElevation = 8.dp) {
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search") }
-                OutlinedTextField(value = query, onValueChange = onQueryChange, placeholder = { Text("Search in book") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, modifier = Modifier.weight(1f))
-            }
-            Text(if (query.length < 2) "Type at least 2 characters" else "${results.size} results", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            HorizontalDivider()
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(results) { result ->
-                    Column(Modifier.fillMaxWidth().clickable { onResultClick(result) }.padding(horizontal = 20.dp, vertical = 14.dp)) {
-                        Text(result.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        Text(result.snippet, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    }
-                    HorizontalDivider()
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    placeholder = { Text("Search in book") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear search")
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { onShowResultsChange(!showResults) },
+                    enabled = results.isNotEmpty()
+                ) {
+                    Icon(
+                        if (showResults) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                        contentDescription = if (showResults) "Hide results" else "Show results"
+                    )
                 }
             }
+        }
+        if (showResults) {
+            Surface(Modifier.fillMaxWidth().weight(1f), tonalElevation = 8.dp) {
+                Column {
+                    if (isSearching) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Text("Searching…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        Text(
+                            if (query.isBlank()) "Enter a search term" else "${results.size} results",
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    HorizontalDivider()
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        items(results) { result ->
+                            Column(Modifier.fillMaxWidth().clickable { onResultClick(result) }.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                                Text(result.chapterTitle, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                Text(result.snippet, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        } else {
+            Spacer(Modifier.weight(1f))
         }
     }
 }
@@ -1982,6 +3045,7 @@ private fun SharedMobileEpubSearchNavigation(current: Int, total: Int, onPreviou
 private data class SharedMobileEpubSearchResult(val chapterIndex: Int, val chapterTitle: String, val chunkIndex: Int, val occurrenceIndex: Int, val snippet: String)
 private data class SharedMobileEpubLink(val href: String, val chapterHref: String?)
 private data class SharedMobileEpubActiveToc(val href: String, val fragmentId: String?)
+private data class SharedMobileEpubSelectionAction(val action: String, val text: String, val locator: ReaderLocator?)
 
 private val SharedMobileEpubJson = Json { ignoreUnknownKeys = true }
 
@@ -2017,6 +3081,17 @@ private fun String.sharedMobileEpubHighlightOrNull(): UserHighlight? {
         chapterIndex = chapterIndex,
         locator = normalizedLocator
     )
+}
+
+private fun String.sharedMobileEpubSelectionActionOrNull(): SharedMobileEpubSelectionAction? {
+    val objectValue = runCatching { Json.parseToJsonElement(this).jsonObject }.getOrNull() ?: return null
+    val action = objectValue["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase().orEmpty()
+    val text = objectValue["text"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+    if (action.isBlank() || text.isBlank()) return null
+    val locator = objectValue["locator"]?.let { element ->
+        runCatching { element.jsonObject.toMobileEpubLocator() }.getOrNull()
+    }
+    return SharedMobileEpubSelectionAction(action = action, text = text, locator = locator)
 }
 
 private fun String.sharedMobileEpubHighlightIdOrNull(): String? {
@@ -2387,6 +3462,56 @@ private fun ReaderSettings.readerPageInfoBackgroundColor(): Color {
 }
 
 @Composable
+private fun SharedMobileEpubAutoScrollControls(
+    isPlaying: Boolean,
+    speed: Float,
+    isLocalMode: Boolean,
+    onPlayPause: () -> Unit,
+    onSpeedChange: (Float) -> Unit,
+    onLocalModeChange: (Boolean) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showModeMenu by remember { mutableStateOf(false) }
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        tonalElevation = 8.dp,
+        shadowElevation = 8.dp
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onPlayPause) {
+                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = if (isPlaying) "Pause auto scroll" else "Resume auto scroll")
+                }
+                Box {
+                    TextButton(onClick = { showModeMenu = true }) {
+                        Text(if (isLocalMode) "Local Speed" else "Global Speed")
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Select auto-scroll mode")
+                    }
+                    DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Column { Text("Global Speed", fontWeight = FontWeight.Bold); Text("Applies to all files", style = MaterialTheme.typography.bodySmall) } },
+                            trailingIcon = { if (!isLocalMode) Text("✓") },
+                            onClick = { onLocalModeChange(false); showModeMenu = false }
+                        )
+                        DropdownMenuItem(
+                            text = { Column { Text("Local Speed", fontWeight = FontWeight.Bold); Text("Saved for this file", style = MaterialTheme.typography.bodySmall) } },
+                            trailingIcon = { if (isLocalMode) Text("✓") },
+                            onClick = { onLocalModeChange(true); showModeMenu = false }
+                        )
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                Text("${speed.roundToInt()} px/s", style = MaterialTheme.typography.labelLarge)
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Stop auto scroll") }
+            }
+            Slider(value = speed.coerceIn(12f, 160f), onValueChange = onSpeedChange, valueRange = 12f..160f)
+        }
+    }
+}
+
+@Composable
 private fun sharedMobileEpubTextureBitmap(textureId: String?): ImageBitmap? {
     val resource = when (textureId) {
         ReaderTexture.NATURAL_WHITE.id -> Res.drawable.ep_naturalwhite
@@ -2400,9 +3525,11 @@ private fun sharedMobileEpubTextureBitmap(textureId: String?): ImageBitmap? {
     return resource?.let { imageResource(it) }
 }
 
-private val SharedMobileEpubAutoScrollStartScript = """
+private fun sharedMobileEpubAutoScrollStartScript(speed: Float): String {
+    val intervalMillis = (1000f / speed.coerceIn(12f, 160f)).roundToInt().coerceAtLeast(6)
+    return """
     (function () {
-      if (window.readerIosAutoScrollTimer) return;
+      if (window.readerIosAutoScrollTimer) window.clearInterval(window.readerIosAutoScrollTimer);
       window.readerIosAutoScrollTimer = window.setInterval(function () {
         window.scrollBy(0, 1);
         var root = document.documentElement;
@@ -2413,9 +3540,10 @@ private val SharedMobileEpubAutoScrollStartScript = """
             window.kmpJsBridge.callNative('readerChapterBoundary', JSON.stringify({ direction: 'next' }));
           }
         }
-      }, 24);
+      }, $intervalMillis);
     })();
 """.trimIndent()
+}
 
 private val SharedMobileEpubAutoScrollStopScript = """
     (function () {

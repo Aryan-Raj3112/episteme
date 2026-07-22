@@ -25,6 +25,7 @@ data class ReaderBookmark(
     val pageIndex: Int,
     val chapterTitle: String,
     val preview: String,
+    val label: String? = null,
     val locator: ReaderLocator = ReaderLocator(pageIndex = pageIndex, textQuote = preview)
 )
 
@@ -331,7 +332,7 @@ class ReaderEngine(
                 val chapterPath = normalizeEpubPath(chapter.baseHref.orEmpty())
                 (chapter.fragmentId == fragment && chapterPath == targetPath) ||
                     chapter.id == pathPart ||
-                    chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/')
+                    (fragment == null && chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/'))
             }.takeIf { it >= 0 } ?: state.reader.book.chapters.indexOfFirst { chapter ->
                 val chapterPath = normalizeEpubPath(chapter.baseHref.orEmpty())
                 chapterPath == targetPath || chapterPath.substringAfterLast('/') == targetPath.substringAfterLast('/')
@@ -984,7 +985,12 @@ private fun ReaderLocator.normalizedForResolvedPage(
     val start = startOffset ?: page.startOffset
     val end = (endOffset ?: start).coerceAtLeast(start)
     val blockPosition = page.firstLocatorBlockPosition()
-    return copy(pageIndex = page.pageIndex).withFallbacks(
+    val resolvedCfi = cfi
+        ?.toStableReaderPositionCfi()
+        ?.takeUnless { it.startsWith("desktop-scroll:") || it.startsWith("desktop-scroll-page:") }
+        ?: blockPosition?.androidStyleCfi()
+        ?: "desktop:${page.chapterIndex}:$start:$end"
+    return copy(pageIndex = page.pageIndex, cfi = null).withFallbacks(
         chapterIndex = page.chapterIndex,
         chapterId = chapter?.id,
         href = chapter?.baseHref,
@@ -994,11 +1000,7 @@ private fun ReaderLocator.normalizedForResolvedPage(
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
-        cfi = cfi
-            ?.toStableReaderPositionCfi()
-            ?.takeUnless { it.startsWith("desktop-scroll:") || it.startsWith("desktop-scroll-page:") }
-            ?: blockPosition?.androidStyleCfi()
-            ?: "desktop:${page.chapterIndex}:$start:$end"
+        cfi = resolvedCfi
     )
 }
 
@@ -1074,7 +1076,12 @@ private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex
     val start = startOffset ?: page.startOffset
     val end = (endOffset ?: start).coerceAtLeast(start)
     val blockPosition = page.firstLocatorBlockPosition()
-    return copy(pageIndex = page.pageIndex).withFallbacks(
+    val resolvedCfi = cfi
+        ?.toStableReaderPositionCfi()
+        ?.takeUnless { it.startsWith("desktop-scroll:") || it.startsWith("desktop-scroll-page:") }
+        ?: blockPosition?.androidStyleCfi()
+        ?: "desktop:${page.chapterIndex}:$start:$end"
+    return copy(pageIndex = page.pageIndex, cfi = null).withFallbacks(
         chapterIndex = page.chapterIndex,
         chapterId = chapter?.id,
         href = chapter?.baseHref,
@@ -1084,11 +1091,7 @@ private fun ReaderLocator.normalizedForPage(state: ReaderSessionState, pageIndex
         blockIndex = blockPosition?.blockIndex,
         charOffset = blockPosition?.charOffset,
         textQuote = textQuote ?: page.text.preview(),
-        cfi = cfi
-            ?.toStableReaderPositionCfi()
-            ?.takeUnless { it.startsWith("desktop-scroll:") || it.startsWith("desktop-scroll-page:") }
-            ?: blockPosition?.androidStyleCfi()
-            ?: "desktop:${page.chapterIndex}:$start:$end"
+        cfi = resolvedCfi
     )
 }
 
