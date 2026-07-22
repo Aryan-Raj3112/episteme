@@ -57,11 +57,13 @@ Available across supported editions unless noted in the edition table:
 
 Future desktop platforms can use the same Standard and Offline model as support expands.
 
-## Languages
+## Translations
 
-Episteme Reader currently supports: English, Arabic, Belarusian, German, Spanish, Estonian, French, Hindi, Indonesian, Italian, Japanese, Korean, Dutch, Polish, Portuguese (Brazil), Russian, Turkish, Ukrainian, Vietnamese, and Chinese Simplified.
+Episteme Reader translations are managed through our [self-hosted Weblate instance](https://translate.epistemereader.com/). Sign in with GitHub to contribute.
 
-Want Episteme Reader in another language? Please request it through [GitHub Issues](https://github.com/Aryan-Raj3112/episteme/issues/new/choose) or start a thread in [Discussions](https://github.com/Aryan-Raj3112/episteme/discussions).
+<a href="https://translate.epistemereader.com/engage/episteme/"><img src="https://translate.epistemereader.com/widget/episteme/matrix-auto.svg" alt="Translation status"></a>
+
+Translation contributors are required to accept the Episteme Contributor License Agreement before submitting changes.
 
 ## Building from Source
 
@@ -126,6 +128,7 @@ Help make Episteme Reader better:
 * [Support on Patreon](https://www.patreon.com/c/epistemereader)
 * Star the repository to help visibility
 * Report bugs or request features via [GitHub Issues](https://github.com/Aryan-Raj3112/episteme/issues/new/choose)
+* Help translate [Episteme Reader](https://translate.epistemereader.com/engage/episteme/)
 * Share feedback in [Discussions](https://github.com/Aryan-Raj3112/episteme/discussions)
 * Leave a review on the [Google Play Store](https://play.google.com/store/apps/details?id=com.aryan.reader)
 * Tell a friend
