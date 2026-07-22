@@ -1529,10 +1529,10 @@
     <string name="error_saving_file">Error saving file: %1$s</string>
     <string name="share_file_chooser_title">Share file</string>
     <string name="search_chapters_placeholder">Search chapters</string>
-    <string name="no_chapters_matching">No chapters found for &quot;%1$s&quot;.</string>
-    <string name="banner_tag_deleted">Deleted tag &quot;%1$s&quot;.</string>
+    <string name="no_chapters_matching">No chapters found for "%1$s".</string>
+    <string name="banner_tag_deleted">Deleted tag "%1$s".</string>
     <string name="menu_delete_tag">Delete tag</string>
-    <string name="dialog_delete_tag_desc">Delete tag &quot;%1$s&quot;? It will be removed from every book.</string>
+    <string name="dialog_delete_tag_desc">Delete tag "%1$s"? It will be removed from every book.</string>
     <string name="action_export_annotations">Export annotations</string>
     <string name="dialog_export_annotations_title">Export annotations</string>
     <string name="export_annotations_markdown">Markdown (.md)</string>
@@ -1546,4 +1546,5 @@
     <string name="action_clear_selection">Clear selection</string>
     <string name="desktop_dev_tools">Dev tools</string>
     <string name="desktop_dev_tools_desc">Maintenance actions for debugging desktop reader behavior.</string>
+    <string name="action_disable">vô hiệu hóa</string>
 </resources>
