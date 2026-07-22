@@ -1073,7 +1073,7 @@
     <string name="highlight_customize_title">Passen Sie Highlights an</string>
     <string name="reflow_display_name_format">%1$s (Textansicht)</string>
     <string name="reflow_title_format">%1$s (Reflow)</string>
-    <string name="action_create_tag">Erstellen Sie \&quot;%1$s\&quot;</string>
+    <string name="action_create_tag">Erstellen Sie \"%1$s\"</string>
     <string name="setting_pull_distance_change_chapter">Ziehen Sie die Distanz, um das Kapitel zu wechseln</string>
     <string name="banner_screen_capture_protection_on">Der Bildschirmaufnahmeschutz ist aktiviert</string>
     <string name="banner_screen_capture_protection_off">Der Bildschirmaufnahmeschutz ist deaktiviert</string>
@@ -1179,7 +1179,7 @@
     <string name="desktop_custom_fonts_desc">Importierte Schriftarten für den Leser</string>
     <string name="desktop_delete_font">Schriftart löschen</string>
     <string name="desktop_delete_font_desc">%1$s löschen? Bücher, die diese Schriftart verwenden, greifen auf die Standardschriftart zurück.</string>
-    <string name="desktop_delete_shelf_desc">\&quot;%1$s\&quot; löschen? Bücher bleiben in Ihrer Bibliothek.</string>
+    <string name="desktop_delete_shelf_desc">\"%1$s\" löschen? Bücher bleiben in Ihrer Bibliothek.</string>
     <string name="desktop_delete_summary">Zusammenfassung löschen</string>
     <string name="desktop_disabled">Deaktiviert</string>
     <string name="desktop_drop_files_to_import">Legen Sie die zu importierenden Dateien ab</string>
@@ -1213,7 +1213,7 @@
     <string name="desktop_more_menu">Mehr</string>
     <string name="desktop_no_cached_summaries_book">Für dieses Buch wurden noch keine Zusammenfassungen zwischengespeichert.</string>
     <string name="desktop_no_custom_fonts_desc">Importieren Sie TTF-, OTF- oder WOFF2-Dateien, um sie in Büchern zu verwenden.</string>
-    <string name="desktop_no_fonts_matching">Keine passenden Schriftarten für \&quot;%1$s\&quot; gefunden</string>
+    <string name="desktop_no_fonts_matching">Keine passenden Schriftarten für \"%1$s\" gefunden</string>
     <string name="desktop_no_google_account_connected">Nein Google Konto ist verbunden.</string>
     <string name="desktop_no_summary_cached_section">Für diesen Abschnitt wurde keine Zusammenfassung zwischengespeichert.</string>
     <string name="desktop_offline_oss_reader">Offline-Desktop-Reader</string>
@@ -1512,4 +1512,20 @@
     <string name="tts_replacements_replace_only_spoken">Ersetzen Sie nur das Gesprochene</string>
     <string name="tts_replacements_replace_only_spoken_desc">Lesertext, Hervorhebungen und Standorte bleiben unverändert.</string>
     <string name="tts_replacements_summary_format">%1$s -&gt; %2$s</string>
+    <string name="action_disable">Deaktivieren</string>
+    <string name="nav_unified_library">Bibliothek Beta</string>
+    <string name="unified_library_beta">BETA</string>
+    <string name="unified_library_continue_reading">Weiterlesen</string>
+    <string name="unified_library_your_books">Ihre Bücher</string>
+    <string name="unified_library_all">Alle</string>
+    <string name="unified_library_reading">Begonnen</string>
+    <string name="unified_library_finished">Gelesen</string>
+    <string name="unified_library_unread">Ungelesen</string>
+    <string name="unified_library_no_books">Keine Bücher in dieser Ansicht</string>
+    <string name="unified_library_browse_all">Durchsuche alle Bücher</string>
+    <string name="unified_library_drawer_title">Ihre Bibliothek</string>
+    <string name="unified_library_home">Start</string>
+    <string name="unified_library_import">Dateien importieren</string>
+    <string name="unified_library_library_tools">Bibliothek-Tools</string>
+    <string name="unified_library_appearance">Aussehen</string>
 </resources>
