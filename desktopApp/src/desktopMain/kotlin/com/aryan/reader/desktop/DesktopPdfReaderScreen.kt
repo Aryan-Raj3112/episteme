@@ -770,6 +770,15 @@ internal fun PdfReaderScreen(
         val settleSequence = pdfZoomSettleSequence
         val activePageIndex = currentPdfPageIndex
         val activeDisplayMode = currentPdfDisplayMode
+        if (DesktopTrackpadZoomTraceActivity.isRecent()) {
+            logDesktopTrackpadZoom {
+                "event=pdf_commit_start sequence=$settleSequence mode=$activeDisplayMode " +
+                    "page=${activePageIndex + 1} old=${oldZoom.formatLogFloat()} " +
+                    "new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} " +
+                    "h=${pageHorizontalScrollState.value} v=${pageVerticalScrollState.value} " +
+                    "list=${verticalListState.firstVisibleItemIndex}:${verticalListState.firstVisibleItemScrollOffset}"
+            }
+        }
         logPdfZoomPerf {
             "commit_start mode=$activeDisplayMode page=${activePageIndex + 1} old=${oldZoom.formatLogFloat()} " +
                 "new=${newZoom.formatLogFloat()} anchor=${anchor.formatLogOffset()} " +
@@ -1117,6 +1126,14 @@ internal fun PdfReaderScreen(
             pageRootOffset = previewPageRootOffset,
             diagnosticSequence = settleSequence
         )
+        if (DesktopTrackpadZoomTraceActivity.isRecent()) {
+            logDesktopTrackpadZoom {
+                "event=pdf_preview sequence=$settleSequence mode=$activeDisplayMode " +
+                    "page=${activePageIndex + 1} previewPage=${previewPageIndex + 1} " +
+                    "base=${baseZoom.formatLogFloat()} new=${newZoom.formatLogFloat()} " +
+                    "anchor=${anchor.formatLogOffset()} existing=${existingPreview != null}"
+            }
+        }
         logPdfZoomSettle {
             "preview_update seq=$settleSequence mode=$activeDisplayMode page=${activePageIndex + 1} " +
                 "previewPage=${previewPageIndex + 1} oldEvent=${oldZoom.formatLogFloat()} " +
@@ -1144,6 +1161,43 @@ internal fun PdfReaderScreen(
             renderedPageIndex == activePageIndex
         ) {
             renderJob?.cancel()
+        }
+    }
+
+    LaunchedEffect(documentHandleId, zoomSpec) {
+        logDesktopTrackpadZoom {
+            "event=pdf_collector_start document=$documentHandleId zoom=${currentPdfScale.formatLogFloat()} " +
+                "mode=$currentPdfDisplayMode"
+        }
+        DesktopTrackpadMagnificationEvents.events.collect { event ->
+            val oldZoom = pdfZoomPreview?.zoom ?: currentPdfScale
+            val newZoom = desktopPdfZoomTarget(oldZoom, zoomSpec, event.factor)
+            if (newZoom == oldZoom) {
+                logDesktopTrackpadZoom {
+                    "event=pdf_event_ignored reason=zoom_unchanged old=${oldZoom.formatLogFloat()} factor=${event.factor}"
+                }
+                return@collect
+            }
+            val anchor = event.rootPosition
+                ?.minus(pdfZoomViewportRootOffset)
+                ?.takeIf {
+                    it.x >= 0f &&
+                        it.y >= 0f &&
+                        it.x <= pdfZoomViewportSize.width &&
+                        it.y <= pdfZoomViewportSize.height
+                }
+                ?: Offset(
+                    x = pdfZoomViewportSize.width / 2f,
+                    y = pdfZoomViewportSize.height / 2f
+                )
+            logDesktopTrackpadZoom {
+                "event=pdf_event_apply old=${oldZoom.formatLogFloat()} new=${newZoom.formatLogFloat()} " +
+                    "factor=${event.factor} root=${event.rootPosition.formatLogOffset()} " +
+                    "viewportRoot=${pdfZoomViewportRootOffset.formatLogOffset()} " +
+                    "viewport=${pdfZoomViewportSize.width}x${pdfZoomViewportSize.height} " +
+                    "anchor=${anchor.formatLogOffset()} mode=$currentPdfDisplayMode"
+            }
+            previewAnchoredPdfZoom(oldZoom, newZoom, anchor)
         }
     }
 

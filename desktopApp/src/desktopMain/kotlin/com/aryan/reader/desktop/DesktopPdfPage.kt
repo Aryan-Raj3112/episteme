@@ -1,7 +1,5 @@
 package com.aryan.reader.desktop
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -69,8 +67,6 @@ import com.aryan.reader.shared.ui.toSharedPdfPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-
-private const val DesktopVerticalPdfPageTurnAnimationMillis = 140
 
 @Composable
 internal fun DesktopVerticalPdfPage(
@@ -212,6 +208,14 @@ internal fun DesktopVerticalPdfPage(
             "item_render_scheduled page=${pageIndex + 1} safeScale=${safeScale.formatLogFloat()} " +
                 "delayMs=${if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L} hasRender=$hasPageRender"
         }
+        if (DesktopTrackpadZoomTraceActivity.isRecent()) {
+            logDesktopTrackpadZoom {
+                "event=vertical_render_scheduled page=${pageIndex + 1} " +
+                    "scale=${scale.formatLogFloat()} safeScale=${safeScale.formatLogFloat()} " +
+                    "existing=${renderedPageScale?.formatLogFloat() ?: "none"} hasRender=$hasPageRender " +
+                    "delayMs=${if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L}"
+            }
+        }
         delay(if (hasPageRender) DesktopPdfZoomRenderDebounceMillis else 45L)
         isRendering = true
         val renderStartedAt = System.currentTimeMillis()
@@ -232,6 +236,13 @@ internal fun DesktopVerticalPdfPage(
             "item_render_end page=${pageIndex + 1} safeScale=${safeScale.formatLogFloat()} " +
                 "elapsedMs=$renderElapsedMs success=${result.isSuccess} bitmap=${renderedPage?.width ?: 0}x${renderedPage?.height ?: 0} " +
                 "canvas=${pageCanvasSize.formatLogSize()} root=${pageRootOffset.formatLogOffset()}"
+        }
+        if (DesktopTrackpadZoomTraceActivity.isRecent()) {
+            logDesktopTrackpadZoom {
+                "event=vertical_render_end page=${pageIndex + 1} safeScale=${safeScale.formatLogFloat()} " +
+                    "elapsedMs=$renderElapsedMs success=${result.isSuccess} " +
+                    "bitmap=${renderedPage?.width ?: 0}x${renderedPage?.height ?: 0}"
+            }
         }
     }
 
@@ -760,12 +771,6 @@ internal fun DesktopVerticalPdfPage(
                     color = MaterialTheme.colorScheme.error
                 )
                 renderedPage != null && desktopPdfRenderBelongsToPage(renderedPageIndex, pageIndex) -> {
-                    val currentRenderedPageIndex = renderedPageIndex!!
-                    Crossfade(
-                        targetState = currentRenderedPageIndex,
-                        animationSpec = tween(DesktopVerticalPdfPageTurnAnimationMillis),
-                        label = "DesktopVerticalPdfPage"
-                    ) { pageIndex ->
                     val pageRender = renderedPage!!
                     val pageEmbeddedAnnotations = remember(document.embeddedAnnotations, pageIndex) {
                         document.embeddedAnnotations.filter { it.pageIndex == pageIndex }
@@ -976,7 +981,6 @@ internal fun DesktopVerticalPdfPage(
                         showSearch = externalLookupAvailable,
                         onClear = ::clearSelection
                     )
-                    }
                 }
                 isRendering -> CircularProgressIndicator()
                 renderError != null -> Text(

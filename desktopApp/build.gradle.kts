@@ -1779,6 +1779,10 @@ compose.desktop {
         jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
         if (desktopOsId(desktopOsName) == "macos") {
             jvmArgs("-XstartOnFirstThread")
+            jvmArgs("--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED")
+            jvmArgs("--add-exports", "java.desktop/sun.lwawt=ALL-UNNAMED")
+            jvmArgs("--add-exports", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+            jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
         }
 
         buildTypes.release.proguard {
@@ -1839,6 +1843,10 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs("-Depisteme.desktop.version=${desktopResolvedVersionName.get()}")
     if (System.getProperty("os.name").contains("Mac")) {
         jvmArgs("-XstartOnFirstThread")
+        jvmArgs("--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED")
+        jvmArgs("--add-exports", "java.desktop/sun.lwawt=ALL-UNNAMED")
+        jvmArgs("--add-exports", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+        jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
         jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
     }

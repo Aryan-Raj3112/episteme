@@ -86,6 +86,7 @@ internal fun launchEpistemeDesktopApplication(startupSplash: DesktopStartupSplas
             state = windowState,
             icon = painterResource(windowDefaults.iconResourcePath)
         ) {
+            DesktopMacTrackpadMagnificationEffect(window)
             DisposableEffect(window, windowDefaults.minimumSize) {
                 window.minimumSize = windowDefaults.minimumSize
                 onDispose {
