@@ -36,6 +36,18 @@ class DesktopPlatformPathsTest {
     }
 
     @Test
+    fun `desktop platform detects both mac pdfium resource layouts`() {
+        val appleSilicon = currentDesktopPlatform(osName = "Mac OS X", osArch = "aarch64")
+        val intel = currentDesktopPlatform(osName = "Darwin", osArch = "x86_64")
+
+        assertEquals("mac-arm64-v8", appleSilicon.pdfiumDirectoryName)
+        assertEquals("mac-x64-v8", intel.pdfiumDirectoryName)
+        assertEquals("lib", appleSilicon.pdfiumLibraryDirectoryName)
+        assertEquals("libpdfium.dylib", appleSilicon.pdfiumLibraryFileName)
+        assertEquals("libpdfium.dylib", intel.pdfiumLibraryFileName)
+    }
+
+    @Test
     fun `linux user directories follow xdg environment variables`() {
         val platform = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64)
         val env = mapOf(

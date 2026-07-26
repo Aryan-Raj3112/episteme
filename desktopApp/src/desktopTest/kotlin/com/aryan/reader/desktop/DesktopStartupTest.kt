@@ -97,7 +97,13 @@ class DesktopStartupTest {
         )
         val linuxMessage = desktopNativeWebViewUnavailableMessage(
             backend = DesktopEpubWebViewBackend.WEBKIT,
+            platform = DesktopPlatform(DesktopOperatingSystem.LINUX, DesktopArchitecture.X64),
             detail = "missing library"
+        )
+        val macMessage = desktopNativeWebViewUnavailableMessage(
+            backend = DesktopEpubWebViewBackend.WEBKIT,
+            platform = DesktopPlatform(DesktopOperatingSystem.MACOS, DesktopArchitecture.ARM64),
+            detail = "Cocoa initialization failed"
         )
 
         assertTrue(windowsMessage.contains("WebView2 Runtime"))
@@ -105,6 +111,8 @@ class DesktopStartupTest {
         assertTrue(linuxMessage.contains("WebKitGTK"))
         assertTrue(linuxMessage.contains("Linux distribution packages"))
         assertTrue(linuxMessage.contains("missing library"))
+        assertTrue(macMessage.contains("macOS system WebKit"))
+        assertTrue(macMessage.contains("Cocoa initialization failed"))
     }
 
     @Test

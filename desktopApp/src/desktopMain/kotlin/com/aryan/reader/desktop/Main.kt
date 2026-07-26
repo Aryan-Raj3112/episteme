@@ -4273,7 +4273,6 @@ internal fun EpistemeDesktopApp(
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
-                            onDeleteTag = { tagToDelete = it },
                             onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
                             onAddSelectedBooksToShelf = {
@@ -4325,7 +4324,6 @@ internal fun EpistemeDesktopApp(
                             onCreateSmartShelf = { showCreateSmartShelfDialog = true },
                             onRenameShelf = { shelfToRename = it },
                             onDeleteShelf = { shelfToDelete = it },
-                            onDeleteTag = { tagToDelete = it },
                             onRemoveFolder = { folderToRemove = it },
                             onTagSelectedBooks = { showTagSelectionDialog = true },
                             onAddSelectedBooksToShelf = {

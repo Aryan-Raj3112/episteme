@@ -619,6 +619,9 @@ internal fun DesktopReaderScreen(
                 handleDesktopSelectionAction(DesktopReaderSelectionAction.SPEAK, text, locator)
             SharedNativeReaderSelectionAction.SEARCH ->
                 handleDesktopSelectionAction(DesktopReaderSelectionAction.SEARCH, text, locator)
+            SharedNativeReaderSelectionAction.TRANSLATE ->
+                onExternalLookup(ReaderExternalLookupAction.TRANSLATE, text)
+            SharedNativeReaderSelectionAction.NOTE -> Unit
         }
     }
     val handleDesktopEpubLinkClicked: (DesktopEpubLinkClick) -> Unit = { link ->
