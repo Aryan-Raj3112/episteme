@@ -634,6 +634,11 @@ private fun ReaderIosApp(
     fun openLibraryBook(book: BookItem) {
         state = state.withMobileBookOpened(book)
         if (book.type in IOS_NATIVE_READER_FILE_TYPES) {
+            if (book.type == FileType.MOBI) {
+                iosMobiLog {
+                    "Opening reader screen id=${book.id} file=${book.displayName} pathPresent=${!book.path.isNullOrBlank()}"
+                }
+            }
             activeReaderBook = book
             return
         }
@@ -764,12 +769,21 @@ private fun ReaderIosApp(
                     FileType.HTML,
                     FileType.FB2,
                     FileType.FODT,
+                    FileType.MOBI,
                     FileType.CBZ,
+                    FileType.CBR,
+                    FileType.CB7,
+                    FileType.CBT,
                     FileType.DOCX,
                     FileType.ODT,
                     FileType.PPTX -> {
                         val readerBook = remember(book.id) { loadPersistedIosEpubBookState(book) }
                         LaunchedEffect(readerBook.id, readerBrightness) {
+                            if (book.type == FileType.MOBI) {
+                                iosMobiLog {
+                                    "Shared EPUB reader active id=${readerBook.id} persistedPosition=${readerBook.readerPosition != null}"
+                                }
+                            }
                             bridge.setReaderBrightness(readerBrightness)
                         }
                         SharedMobileEpubReaderScreen(

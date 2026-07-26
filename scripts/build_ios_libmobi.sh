@@ -10,6 +10,7 @@ sdk_name="$1"
 arch_name="$2"
 output_directory="$3"
 source_directory="$(CDPATH= cd -- "$(dirname -- "$0")/../app/src/main/cpp/libmobi/src" && pwd)"
+bridge_directory="$(CDPATH= cd -- "$(dirname -- "$0")/../shared/src/nativeInterop/cinterop" && pwd)"
 developer_directory="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 sdk_path="$(DEVELOPER_DIR="$developer_directory" xcrun --sdk "$sdk_name" --show-sdk-path)"
 
@@ -35,6 +36,20 @@ for source_name in buffer compression debug index memory meta parse_rawml read s
     -c "$source_directory/$source_name.c" \
     -o "$output_directory/objects/$source_name.o"
 done
+
+DEVELOPER_DIR="$developer_directory" xcrun --sdk "$sdk_name" clang \
+  -arch "$arch_name" \
+  -isysroot "$sdk_path" \
+  "$deployment_flag" \
+  -std=c99 \
+  -O2 \
+  -fPIC \
+  -DMOBI_INLINE=inline \
+  -DHAVE_STRDUP \
+  -I "$source_directory" \
+  -I "$bridge_directory" \
+  -c "$bridge_directory/mobi_reader_bridge.c" \
+  -o "$output_directory/objects/mobi_reader_bridge.o"
 
 DEVELOPER_DIR="$developer_directory" xcrun --sdk "$sdk_name" clang \
   -arch "$arch_name" \

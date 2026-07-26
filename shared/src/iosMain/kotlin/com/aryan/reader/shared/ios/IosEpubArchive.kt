@@ -6,12 +6,18 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.mobi.MOBI_ENCRYPTION_NONE
 import com.aryan.reader.shared.mobi.MOBI_SUCCESS
+import com.aryan.reader.shared.mobi.MOBIFiletype
 import com.aryan.reader.shared.mobi.mobi_free
 import com.aryan.reader.shared.mobi.mobi_free_rawml
 import com.aryan.reader.shared.mobi.mobi_init
 import com.aryan.reader.shared.mobi.mobi_init_rawml
 import com.aryan.reader.shared.mobi.mobi_load_file
 import com.aryan.reader.shared.mobi.mobi_parse_rawml_opt
+import com.aryan.reader.shared.mobi.mobi_meta_get_author
+import com.aryan.reader.shared.mobi.mobi_meta_get_title
+import com.aryan.reader.shared.mobi.reader_mobi_flow_type
+import com.aryan.reader.shared.mobi.reader_mobi_toc_count
+import com.aryan.reader.shared.mobi.reader_mobi_toc_entry
 import com.aryan.reader.shared.libarchive.ARCHIVE_EOF
 import com.aryan.reader.shared.libarchive.ARCHIVE_OK
 import com.aryan.reader.shared.libarchive.archive_entry_pathname_utf8
@@ -31,10 +37,16 @@ import com.aryan.reader.shared.reader.SharedEpubArchive
 import com.aryan.reader.shared.reader.SharedEpubBook
 import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.SharedEpubPackageLoader
+import com.aryan.reader.shared.reader.SharedEpubTocEntry
+import com.aryan.reader.shared.reader.SharedMobiTocPoint
+import com.aryan.reader.shared.reader.rewriteMobiResourceReferences
+import com.aryan.reader.shared.reader.splitMobiHtml
 import com.aryan.reader.shared.reader.readComicTarEntries
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
@@ -45,6 +57,7 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import kotlinx.cinterop.UIntVar
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
@@ -53,6 +66,7 @@ import platform.Foundation.NSUserDomainMask
 import platform.posix.memcpy
 import platform.posix.fclose
 import platform.posix.fopen
+import platform.posix.free
 import platform.zlib.MAX_WBITS
 import platform.zlib.Z_FINISH
 import platform.zlib.Z_OK
@@ -61,6 +75,12 @@ import platform.zlib.inflate
 import platform.zlib.inflateEnd
 import platform.zlib.inflateInit2
 import platform.zlib.z_stream
+
+internal const val IOS_MOBI_LOG_TAG = "ReaderMobiIOS"
+
+internal inline fun iosMobiLog(message: () -> String) {
+    println("[$IOS_MOBI_LOG_TAG] ${message()}")
+}
 
 internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
     if (book.type == FileType.CBZ) {
@@ -73,6 +93,7 @@ internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
         return loadIosLibarchiveComicBook(book)
     }
     if (book.type == FileType.MOBI) {
+        iosMobiLog { "Routing book to MOBI loader id=${book.id} file=${book.displayName}" }
         return loadIosMobiBook(book)
     }
     if (book.type in IOS_ZIP_DOCUMENT_READER_TYPES) {
@@ -256,91 +277,171 @@ private fun loadIosLibarchiveComicBook(book: BookItem): SharedEpubBook {
 }
 
 private fun loadIosMobiBook(book: BookItem): SharedEpubBook {
-    val path = book.path.resolveIosEpubSourcePath() ?: error("MOBI path is unavailable")
-    val file = fopen(path, "rb") ?: error("Could not open MOBI file")
-    val mobi = mobi_init() ?: run {
-        fclose(file)
-        error("Could not initialize MOBI parser")
-    }
     try {
-        val loadResult = mobi_load_file(mobi, file)
-        fclose(file)
-        require(loadResult == MOBI_SUCCESS) { "Could not parse MOBI file (error $loadResult)" }
-        require(mobi.pointed.rh?.pointed?.encryption_type?.toInt() == MOBI_ENCRYPTION_NONE) {
-            "DRM-protected MOBI files are not supported"
+        iosMobiLog {
+            "Load requested id=${book.id} file=${book.displayName} storedPathPresent=${!book.path.isNullOrBlank()}"
         }
-        val rawml = mobi_init_rawml(mobi) ?: error("Could not initialize MOBI content parser")
+        val path = book.path.resolveIosEpubSourcePath() ?: error("MOBI path is unavailable")
+        iosMobiLog {
+            "Resolved source file=${path.substringAfterLast('/')} exists=${NSFileManager.defaultManager.fileExistsAtPath(path)}"
+        }
+        val file = fopen(path, "rb") ?: error("Could not open MOBI file")
+        val mobi = mobi_init() ?: run {
+            fclose(file)
+            error("Could not initialize MOBI parser")
+        }
         try {
-            val parseResult = mobi_parse_rawml_opt(rawml, mobi, true, false, true)
-            require(parseResult == MOBI_SUCCESS) { "Could not reconstruct MOBI content (error $parseResult)" }
+            iosMobiLog { "Native parser initialized; loading records" }
+            val loadResult = mobi_load_file(mobi, file)
+            fclose(file)
+            iosMobiLog { "mobi_load_file result=$loadResult expected=$MOBI_SUCCESS" }
+            require(loadResult == MOBI_SUCCESS) { "Could not parse MOBI file (error $loadResult)" }
+            val encryptionType = mobi.pointed.rh?.pointed?.encryption_type?.toInt()
+            iosMobiLog { "Record header encryptionType=$encryptionType" }
+            require(encryptionType == MOBI_ENCRYPTION_NONE) {
+                "DRM-protected MOBI files are not supported"
+            }
+            val rawml = mobi_init_rawml(mobi) ?: error("Could not initialize MOBI content parser")
+            try {
+                val parseResult = mobi_parse_rawml_opt(rawml, mobi, true, false, true)
+                iosMobiLog { "mobi_parse_rawml_opt result=$parseResult expected=$MOBI_SUCCESS" }
+                require(parseResult == MOBI_SUCCESS) { "Could not reconstruct MOBI content (error $parseResult)" }
 
-            val flowBytes = buildList {
-                var part = rawml.pointed.flow
-                while (part != null) {
-                    val data = part.pointed.data
-                    val size = part.pointed.size.toInt()
-                    if (data != null && size > 0) add(data.readBytes(size))
-                    part = part.pointed.next
-                }
-            }.fold(ByteArray(0)) { combined, bytes -> combined + bytes }
-            require(flowBytes.isNotEmpty()) { "This MOBI file contains no readable content" }
-
-            val imageResources = buildList {
-                var part = rawml.pointed.resources
-                while (part != null) {
-                    val data = part.pointed.data
-                    val size = part.pointed.size.toInt()
-                    if (data != null && size > 0) {
-                        val bytes = data.readBytes(size)
-                        bytes.iosImageMimeType()?.let { mime -> add(mime to bytes) }
+                fun readOwnedMetadata(value: kotlinx.cinterop.CPointer<ByteVar>?): String? {
+                    if (value == null) return null
+                    return try {
+                        value.toKString().trim().takeIf { it.isNotBlank() }
+                    } finally {
+                        free(value)
                     }
-                    part = part.pointed.next
                 }
-            }
-            val imageDataUris = imageResources.map { (mime, bytes) ->
-                "data:$mime;base64,${bytes.toIosBase64()}"
-            }
+                val parsedTitle = readOwnedMetadata(mobi_meta_get_title(mobi))
+                val parsedAuthor = readOwnedMetadata(mobi_meta_get_author(mobi))
 
-            var html = flowBytes.decodeEpubText()
-            html = Regex("""kindle:embed:(\d+)(?:\?[^"' >]*)?""", RegexOption.IGNORE_CASE)
-                .replace(html) { match ->
-                    val index = match.groupValues[1].toIntOrNull()?.minus(1)
-                    imageDataUris.getOrNull(index ?: -1) ?: match.value
+                val flowParts = buildList {
+                    var part = rawml.pointed.flow
+                    while (part != null) {
+                        val data = part.pointed.data
+                        val size = part.pointed.size.toInt()
+                        if (data != null && size > 0) add(data.readBytes(size))
+                        part = part.pointed.next
+                    }
                 }
-            html = Regex("""<img\b([^>]*?)\srecindex=["']?(\d+)["']?([^>]*)>""", RegexOption.IGNORE_CASE)
-                .replace(html) { match ->
-                    val index = match.groupValues[2].toIntOrNull()?.minus(1)
-                    val source = imageDataUris.getOrNull(index ?: -1) ?: return@replace match.value
-                    "<img${match.groupValues[1]} src=\"${source.escapeIosReaderHtmlAttribute()}\"${match.groupValues[3]}>"
+                val flowBytes = flowParts.fold(ByteArray(0)) { combined, bytes -> combined + bytes }
+                iosMobiLog {
+                    "Reconstructed flows count=${flowParts.size} sizes=${flowParts.map { it.size }} totalBytes=${flowBytes.size}"
+                }
+                require(flowBytes.isNotEmpty()) { "This MOBI file contains no readable content" }
+
+                var resourceCount = 0
+                var resourceBytes = 0L
+                val imageResources = buildList {
+                    var part = rawml.pointed.resources
+                    while (part != null) {
+                        resourceCount += 1
+                        val data = part.pointed.data
+                        val size = part.pointed.size.toInt()
+                        if (data != null && size > 0) {
+                            resourceBytes += size
+                            val bytes = data.readBytes(size)
+                            bytes.iosImageMimeType()?.let { mime ->
+                                add(Triple(part.pointed.uid.toLong(), mime, bytes))
+                            }
+                        }
+                        part = part.pointed.next
+                    }
+                }.sortedBy { it.first }
+                iosMobiLog {
+                    "Resources count=$resourceCount totalBytes=$resourceBytes recognizedImages=${imageResources.size}"
+                }
+                val imageDataUris = imageResources.map { (_, mime, bytes) ->
+                    "data:$mime;base64,${bytes.toIosBase64()}"
                 }
 
-            val title = book.title?.takeIf { it.isNotBlank() }
-                ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
-            val plainText = html
-                .replace(Regex("""<script\b[^>]*>[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
-                .replace(Regex("""<style\b[^>]*>[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
-                .replace(Regex("""<[^>]+>"""), " ")
-                .replace(Regex("""\s+"""), " ")
-                .trim()
-            return SharedEpubBook(
-                id = book.id,
-                fileName = book.displayName,
-                title = title,
-                author = book.author,
-                chapters = listOf(
-                    SharedEpubChapter(
-                        id = "${book.id}-mobi",
-                        title = title,
-                        plainText = plainText,
-                        htmlContent = html,
+                val cssDataUris = flowParts.mapIndexedNotNull { index, bytes ->
+                    if (reader_mobi_flow_type(rawml, index.convert()) != MOBIFiletype.T_CSS) {
+                        return@mapIndexedNotNull null
+                    }
+                    index to "data:text/css;base64,${bytes.toIosBase64()}"
+                }.toMap()
+                val toc = memScoped {
+                    val count = reader_mobi_toc_count(rawml).toInt()
+                    (0 until count).mapNotNull { index ->
+                        val position = alloc<UIntVar>()
+                        val titleBuffer = allocArray<ByteVar>(1024)
+                        if (reader_mobi_toc_entry(
+                                rawml,
+                                index.convert(),
+                                position.ptr,
+                                titleBuffer,
+                                1024.convert(),
+                            ) == 0
+                        ) {
+                            null
+                        } else {
+                            SharedMobiTocPoint(titleBuffer.toKString(), position.value.toInt())
+                        }
+                    }
+                }
+
+                val rawHtml = flowBytes.decodeEpubText()
+                val kindleEmbedCount = Regex("""kindle:embed:(\d+)""", RegexOption.IGNORE_CASE)
+                    .findAll(rawHtml)
+                    .count()
+                val recindexCount = Regex("""\srecindex=["']?\d+""", RegexOption.IGNORE_CASE)
+                    .findAll(rawHtml)
+                    .count()
+                iosMobiLog {
+                    "Decoded HTML chars=${rawHtml.length} toc=${toc.size} cssFlows=${cssDataUris.size} kindleEmbeds=$kindleEmbedCount recindexes=$recindexCount hasHtmlTag=${rawHtml.contains("<html", ignoreCase = true)} hasBodyTag=${rawHtml.contains("<body", ignoreCase = true)}"
+                }
+
+                val title = parsedTitle
+                    ?: book.title?.takeIf { it.isNotBlank() }
+                    ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+                val sections = splitMobiHtml(rawHtml, toc, title).map { section ->
+                    section.copy(
+                        html = rewriteMobiResourceReferences(section.html, imageDataUris, cssDataUris),
                     )
-                ),
-            )
+                }
+                val chapters = sections.mapIndexed { index, section ->
+                    val chapterHref = "chapter_$index.html"
+                    SharedEpubChapter(
+                        id = "${book.id}-mobi-$index",
+                        title = section.title,
+                        plainText = section.html.iosHtmlToPlainText(),
+                        htmlContent = section.html,
+                        baseHref = chapterHref,
+                    )
+                }
+                iosMobiLog {
+                    "Reader payload ready titlePresent=${title.isNotBlank()} authorPresent=${!parsedAuthor.isNullOrBlank()} htmlChars=${rawHtml.length} chapters=${chapters.size}"
+                }
+                return SharedEpubBook(
+                    id = book.id,
+                    fileName = book.displayName,
+                    title = title,
+                    author = parsedAuthor ?: book.author,
+                    chapters = chapters,
+                    tableOfContents = sections.mapIndexed { index, section ->
+                        SharedEpubTocEntry(
+                            label = section.title,
+                            href = "chapter_$index.html",
+                        )
+                    },
+                )
+            } finally {
+                mobi_free_rawml(rawml)
+                iosMobiLog { "Released reconstructed MOBI content" }
+            }
         } finally {
-            mobi_free_rawml(rawml)
+            mobi_free(mobi)
+            iosMobiLog { "Released native MOBI parser" }
         }
-    } finally {
-        mobi_free(mobi)
+    } catch (throwable: Throwable) {
+        iosMobiLog {
+            "Load failed type=${throwable::class.simpleName} message=${throwable.message ?: "<none>"}"
+        }
+        throw throwable
     }
 }
 
@@ -352,6 +453,13 @@ private fun ByteArray.iosImageMimeType(): String? = when {
     size >= 2 && this[0] == 'B'.code.toByte() && this[1] == 'M'.code.toByte() -> "image/bmp"
     else -> null
 }
+
+private fun String.iosHtmlToPlainText(): String = this
+    .replace(Regex("""<script\b[^>]*>[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
+    .replace(Regex("""<style\b[^>]*>[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
+    .replace(Regex("""<[^>]+>"""), " ")
+    .replace(Regex("""\s+"""), " ")
+    .trim()
 
 private fun buildIosComicBook(
     book: BookItem,

@@ -1356,6 +1356,39 @@ class ReaderHtmlDocumentBuilderTest {
         assertFalse(html.contains("id=\"p160\""))
         assertTrue(html.contains("readerChunkRequested"))
         assertTrue(html.contains("rootMargin: '2500px 0px'"))
+        assertTrue(
+            html.indexOf("window.readerVirtualization") < html.indexOf("<section class=\"chapter\""),
+            "Reader bootstrap must precede potentially malformed publication markup",
+        )
+    }
+
+    @Test
+    fun `web document constrains legacy publication content to reader width`() {
+        val book = SharedEpubBook(
+            id = "legacy-width",
+            fileName = "legacy.mobi",
+            title = "Legacy",
+            chapters = listOf(
+                SharedEpubChapter(
+                    id = "chapter",
+                    title = "Chapter",
+                    plainText = "Long text",
+                    htmlContent = """<nobr>averylongtoken</nobr><pre>fixed text</pre><table width="1200"><tr><td>cell</td></tr></table>""",
+                ),
+            ),
+        )
+
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = book,
+            settings = ReaderSettings(readingMode = ReaderReadingMode.VERTICAL),
+        )
+
+        assertTrue(html.contains(".reader-content nobr"))
+        assertTrue(html.contains("white-space: normal !important"))
+        assertTrue(html.contains("white-space: pre-wrap !important"))
+        assertTrue(html.contains(".reader-content table"))
+        assertTrue(html.contains("overflow-x: auto"))
+        assertTrue(html.contains("max-width: 100% !important"))
     }
 
     private fun repeatedWordBook(text: String): SharedEpubBook {

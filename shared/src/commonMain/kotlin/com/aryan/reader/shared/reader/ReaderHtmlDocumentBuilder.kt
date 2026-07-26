@@ -106,7 +106,10 @@ object ReaderHtmlDocumentBuilder {
             title = book.title,
             settings = settings,
             bookCss = book.css.values.joinToString("\n"),
-            body = body + virtualizationScript,
+            // Keep reader-owned JavaScript ahead of publication markup. Legacy MOBI HTML can
+            // contain unclosed elements (for example textarea/xmp/plaintext) that cause WebKit
+            // to render anything appended after the chapter as literal book text.
+            body = virtualizationScript + body,
             searchQuery = searchQuery,
             searchOptions = searchOptions,
             highlightPalette = highlightPalette,
@@ -758,6 +761,49 @@ object ReaderHtmlDocumentBuilder {
                 }
                 td, th {
                   vertical-align: top;
+                }
+                /*
+                 * Publication CSS—especially legacy MOBI CSS—commonly carries fixed widths,
+                 * nowrap, and preformatted text sized for an old Kindle viewport. Keep those
+                 * declarations from expanding the WKWebView document beyond the reader page.
+                 */
+                .reader-content {
+                  box-sizing: border-box;
+                  min-width: 0;
+                  max-width: 100%;
+                  overflow-wrap: anywhere;
+                  word-wrap: break-word;
+                }
+                .reader-content :where(p, li, div, blockquote, h1, h2, h3, h4, h5, h6, a, span, font, nobr, code, pre, td, th) {
+                  min-width: 0;
+                  max-width: 100%;
+                  overflow-wrap: anywhere !important;
+                  word-wrap: break-word !important;
+                }
+                .reader-content nobr,
+                .reader-content [style*="nowrap" i] {
+                  white-space: normal !important;
+                }
+                .reader-content pre,
+                .reader-content code {
+                  white-space: pre-wrap !important;
+                  word-break: break-word !important;
+                }
+                .reader-content table {
+                  display: block;
+                  width: auto !important;
+                  max-width: 100% !important;
+                  overflow-x: auto;
+                  overflow-y: hidden;
+                  -webkit-overflow-scrolling: touch;
+                }
+                .reader-content img,
+                .reader-content svg,
+                .reader-content video,
+                .reader-content canvas {
+                  box-sizing: border-box;
+                  max-width: 100% !important;
+                  height: auto !important;
                 }
                 .reader-highlight {
                   background: var(--reader-highlight);

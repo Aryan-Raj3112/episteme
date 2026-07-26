@@ -73,7 +73,9 @@ kotlin {
             inputs.files(
                 rootProject.fileTree("app/src/main/cpp/libmobi/src") {
                     include("*.c", "*.h")
-                }
+                },
+                project.file("src/nativeInterop/cinterop/mobi_reader_bridge.c"),
+                project.file("src/nativeInterop/cinterop/mobi_reader_bridge.h")
             )
             inputs.file(rootProject.file("scripts/build_ios_libmobi.sh"))
             outputs.file(outputDirectory.resolve("libmobi.dylib"))
@@ -112,7 +114,10 @@ kotlin {
                 }
                 val mobi by creating {
                     defFile(project.file("src/nativeInterop/cinterop/mobi.def"))
-                    compilerOpts("-I${rootProject.file("app/src/main/cpp/libmobi/src").absolutePath}")
+                    compilerOpts(
+                        "-I${rootProject.file("app/src/main/cpp/libmobi/src").absolutePath}",
+                        "-I${project.file("src/nativeInterop/cinterop").absolutePath}"
+                    )
                     tasks.named(interopProcessingTaskName).configure {
                         dependsOn(buildMobiTask)
                     }
