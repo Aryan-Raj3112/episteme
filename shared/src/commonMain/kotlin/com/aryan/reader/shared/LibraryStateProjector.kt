@@ -107,7 +107,11 @@ class SharedLibraryStateProjector(
         val shelvedBookIds = mutableSetOf<String>()
         val booksById = allLibraryBooks.associateBy { it.id }
 
-        shelfRecords.forEach { shelf ->
+        shelfRecords
+            // "unshelved" is a synthetic shelf added below. Older persisted
+            // snapshots may contain a manual record with the same reserved ID.
+            .filterNot { it.id == "unshelved" }
+            .forEach { shelf ->
             if (shelf.isSmart && shelf.smartRulesJson != null) {
                 val definition = SmartCollectionEngine.fromJson(shelf.smartRulesJson)
                 if (definition != null) {
@@ -255,7 +259,7 @@ class SharedLibraryStateProjector(
 }
 
 private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>): List<SyncedFolder> {
-    val knownFolders = mapTo(linkedSetOf()) { it.uriString }
+    val knownFolders = flatMapTo(linkedSetOf()) { folder -> listOf(folder.uriString, folder.name) }
     val missingFolders = books
         .mapNotNull { it.sourceFolder?.takeIf(String::isNotBlank) }
         .filterTo(linkedSetOf()) { knownFolders.add(it) }

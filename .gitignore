@@ -21,7 +21,7 @@ google-services.json
 .idea/
 .gradle/
 .kotlin/metadata/
-third_party/pdfium/
+third_party/
 *.xcuserstate
 xcuserdata/
 *.tgz

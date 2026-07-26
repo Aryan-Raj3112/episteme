@@ -3,22 +3,56 @@
 package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.mobi.MOBI_ENCRYPTION_NONE
+import com.aryan.reader.shared.mobi.MOBI_SUCCESS
+import com.aryan.reader.shared.mobi.mobi_free
+import com.aryan.reader.shared.mobi.mobi_free_rawml
+import com.aryan.reader.shared.mobi.mobi_init
+import com.aryan.reader.shared.mobi.mobi_init_rawml
+import com.aryan.reader.shared.mobi.mobi_load_file
+import com.aryan.reader.shared.mobi.mobi_parse_rawml_opt
+import com.aryan.reader.shared.libarchive.ARCHIVE_EOF
+import com.aryan.reader.shared.libarchive.ARCHIVE_OK
+import com.aryan.reader.shared.libarchive.archive_entry_pathname_utf8
+import com.aryan.reader.shared.libarchive.archive_entry_size
+import com.aryan.reader.shared.libarchive.archive_error_string
+import com.aryan.reader.shared.libarchive.archive_read_data
+import com.aryan.reader.shared.libarchive.archive_read_free
+import com.aryan.reader.shared.libarchive.archive_read_new
+import com.aryan.reader.shared.libarchive.archive_read_next_header
+import com.aryan.reader.shared.libarchive.archive_read_open_filename
+import com.aryan.reader.shared.libarchive.archive_read_support_filter_all
+import com.aryan.reader.shared.libarchive.archive_read_support_format_7zip
+import com.aryan.reader.shared.libarchive.archive_read_support_format_rar
+import com.aryan.reader.shared.libarchive.archive_read_support_format_rar5
+import cnames.structs.archive_entry
 import com.aryan.reader.shared.reader.SharedEpubArchive
 import com.aryan.reader.shared.reader.SharedEpubBook
+import com.aryan.reader.shared.reader.SharedEpubChapter
 import com.aryan.reader.shared.reader.SharedEpubPackageLoader
+import com.aryan.reader.shared.reader.readComicTarEntries
+import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.value
 import platform.Foundation.NSApplicationSupportDirectory
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
 import platform.posix.memcpy
+import platform.posix.fclose
+import platform.posix.fopen
 import platform.zlib.MAX_WBITS
 import platform.zlib.Z_FINISH
 import platform.zlib.Z_OK
@@ -29,6 +63,24 @@ import platform.zlib.inflateInit2
 import platform.zlib.z_stream
 
 internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
+    if (book.type == FileType.CBZ) {
+        return loadIosCbzBook(book)
+    }
+    if (book.type == FileType.CBT) {
+        return loadIosCbtBook(book)
+    }
+    if (book.type == FileType.CBR || book.type == FileType.CB7) {
+        return loadIosLibarchiveComicBook(book)
+    }
+    if (book.type == FileType.MOBI) {
+        return loadIosMobiBook(book)
+    }
+    if (book.type in IOS_ZIP_DOCUMENT_READER_TYPES) {
+        return loadIosZipDocumentBook(book)
+    }
+    if (book.type in IOS_SINGLE_DOCUMENT_READER_TYPES) {
+        return loadIosSingleDocumentBook(book)
+    }
     val path = book.path.resolveIosEpubSourcePath()
         ?: error("EPUB path is unavailable")
     val archive = IosZipEpubArchive(path)
@@ -37,6 +89,395 @@ internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {
         sourceId = book.id,
         fileName = book.displayName.ifBlank { path.substringAfterLast('/') }
     )
+}
+
+private val IOS_ZIP_DOCUMENT_READER_TYPES = setOf(
+    FileType.DOCX,
+    FileType.ODT,
+    FileType.PPTX,
+)
+
+private val IOS_SINGLE_DOCUMENT_READER_TYPES = setOf(
+    FileType.TXT,
+    FileType.MD,
+    FileType.HTML,
+    FileType.FB2,
+    FileType.FODT,
+)
+
+private fun loadIosSingleDocumentBook(book: BookItem): SharedEpubBook {
+    val path = book.path.resolveIosEpubSourcePath()
+        ?: error("${book.type.name} path is unavailable")
+    val source = path.readIosFileBytes().decodeEpubText()
+    val title = book.title?.takeIf { it.isNotBlank() }
+        ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+    val html = when (book.type) {
+        FileType.HTML -> source
+        FileType.FB2 -> source
+            .replace(Regex("""<\?xml[^>]*>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""</?FictionBook[^>]*>""", RegexOption.IGNORE_CASE), "")
+        FileType.FODT -> source
+        FileType.MD -> "<pre class=\"reader-markdown\">${source.escapeIosReaderHtml()}</pre>"
+        else -> "<pre>${source.escapeIosReaderHtml()}</pre>"
+    }
+    val plainText = source
+        .replace(Regex("""<script\b[^>]*>[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""<style\b[^>]*>[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""<[^>]+>"""), " ")
+        .replace(Regex("""[ \t]+"""), " ")
+        .replace(Regex("""\n\s*\n\s*\n+"""), "\n\n")
+        .trim()
+        .ifBlank { source.trim() }
+    return SharedEpubBook(
+        id = book.id,
+        fileName = book.displayName.ifBlank { path.substringAfterLast('/') },
+        title = title,
+        author = book.author,
+        chapters = listOf(
+            SharedEpubChapter(
+                id = "${book.id}-document",
+                title = title,
+                plainText = plainText,
+                htmlContent = html,
+                baseHref = NSURL.fileURLWithPath(path).absoluteString,
+            )
+        ),
+    )
+}
+
+private fun loadIosCbzBook(book: BookItem): SharedEpubBook {
+    SharedOpdsStreamUri.parse(book.path)?.let { stream ->
+        val title = book.title?.takeIf { it.isNotBlank() }
+            ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+        return SharedEpubBook(
+            id = book.id,
+            fileName = book.displayName,
+            title = title,
+            author = book.author,
+            chapters = (0 until stream.count).map { pageIndex ->
+                val imageUrl = stream.urlTemplate.replace("{pageNumber}", pageIndex.toString())
+                SharedEpubChapter(
+                    id = "${book.id}-page-${pageIndex + 1}",
+                    title = "Page ${pageIndex + 1}",
+                    plainText = "Page ${pageIndex + 1}",
+                    htmlContent = """
+                        <div style="margin:0;padding:0;text-align:center">
+                          <img src="${imageUrl.escapeIosReaderHtmlAttribute()}"
+                               alt="Page ${pageIndex + 1}"
+                               style="display:block;width:100%;height:auto;margin:0 auto" />
+                        </div>
+                    """.trimIndent(),
+                    baseHref = imageUrl,
+                )
+            },
+        )
+    }
+    val path = book.path.resolveIosEpubSourcePath() ?: error("CBZ path is unavailable")
+    val archive = IosZipEpubArchive(path)
+    val imagePaths = archive.entryPaths
+        .filter { it.isIosComicImagePath() }
+        .sortedWith(String.CASE_INSENSITIVE_ORDER)
+    require(imagePaths.isNotEmpty()) { "This CBZ archive contains no readable images" }
+    return buildIosComicBook(book, imagePaths.mapNotNull { path ->
+        archive.readBytes(path)?.let { path to it }
+    })
+}
+
+private fun loadIosCbtBook(book: BookItem): SharedEpubBook {
+    val path = book.path.resolveIosEpubSourcePath() ?: error("CBT path is unavailable")
+    val entries = path.readIosFileBytes()
+        .readComicTarEntries()
+        .filter { it.first.isIosComicImagePath() }
+        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.first })
+    require(entries.isNotEmpty()) { "This CBT archive contains no readable images" }
+    return buildIosComicBook(book, entries)
+}
+
+private fun loadIosLibarchiveComicBook(book: BookItem): SharedEpubBook {
+    val path = book.path.resolveIosEpubSourcePath() ?: error("${book.type.name} path is unavailable")
+    val archive = archive_read_new() ?: error("Could not initialize archive reader")
+    try {
+        archive_read_support_filter_all(archive)
+        when (book.type) {
+            FileType.CBR -> {
+                archive_read_support_format_rar(archive)
+                archive_read_support_format_rar5(archive)
+            }
+            FileType.CB7 -> archive_read_support_format_7zip(archive)
+            else -> error("Unsupported comic archive type")
+        }
+        val openResult = archive_read_open_filename(archive, path, 64uL * 1024uL)
+        require(openResult == ARCHIVE_OK) {
+            archive_error_string(archive)?.toKString() ?: "Could not open ${book.type.name} archive"
+        }
+        val images = memScoped {
+            val entry = alloc<CPointerVar<archive_entry>>()
+            buildList {
+                while (true) {
+                    val result = archive_read_next_header(archive, entry.ptr)
+                    if (result == ARCHIVE_EOF) break
+                    require(result == ARCHIVE_OK) {
+                        archive_error_string(archive)?.toKString() ?: "Could not read archive entry"
+                    }
+                    val current = entry.value ?: continue
+                    val entryPath = archive_entry_pathname_utf8(current)?.toKString().orEmpty()
+                    val entrySize = archive_entry_size(current)
+                    if (!entryPath.isIosComicImagePath() || entrySize <= 0L) continue
+                    require(entrySize <= IosMaximumComicImageBytes) {
+                        "Comic image is too large: $entryPath"
+                    }
+                    val bytes = ByteArray(entrySize.toInt())
+                    var offset = 0
+                    bytes.usePinned { pinned ->
+                        while (offset < bytes.size) {
+                            val read = archive_read_data(
+                                archive,
+                                pinned.addressOf(offset),
+                                (bytes.size - offset).convert()
+                            )
+                            require(read >= 0) {
+                                archive_error_string(archive)?.toKString() ?: "Could not decompress $entryPath"
+                            }
+                            if (read == 0L) break
+                            offset += read.toInt()
+                        }
+                    }
+                    if (offset > 0) add(entryPath to bytes.copyOf(offset))
+                }
+            }
+        }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.first })
+        require(images.isNotEmpty()) {
+            "This ${book.type.name} archive contains no readable images"
+        }
+        return buildIosComicBook(book, images)
+    } finally {
+        archive_read_free(archive)
+    }
+}
+
+private fun loadIosMobiBook(book: BookItem): SharedEpubBook {
+    val path = book.path.resolveIosEpubSourcePath() ?: error("MOBI path is unavailable")
+    val file = fopen(path, "rb") ?: error("Could not open MOBI file")
+    val mobi = mobi_init() ?: run {
+        fclose(file)
+        error("Could not initialize MOBI parser")
+    }
+    try {
+        val loadResult = mobi_load_file(mobi, file)
+        fclose(file)
+        require(loadResult == MOBI_SUCCESS) { "Could not parse MOBI file (error $loadResult)" }
+        require(mobi.pointed.rh?.pointed?.encryption_type?.toInt() == MOBI_ENCRYPTION_NONE) {
+            "DRM-protected MOBI files are not supported"
+        }
+        val rawml = mobi_init_rawml(mobi) ?: error("Could not initialize MOBI content parser")
+        try {
+            val parseResult = mobi_parse_rawml_opt(rawml, mobi, true, false, true)
+            require(parseResult == MOBI_SUCCESS) { "Could not reconstruct MOBI content (error $parseResult)" }
+
+            val flowBytes = buildList {
+                var part = rawml.pointed.flow
+                while (part != null) {
+                    val data = part.pointed.data
+                    val size = part.pointed.size.toInt()
+                    if (data != null && size > 0) add(data.readBytes(size))
+                    part = part.pointed.next
+                }
+            }.fold(ByteArray(0)) { combined, bytes -> combined + bytes }
+            require(flowBytes.isNotEmpty()) { "This MOBI file contains no readable content" }
+
+            val imageResources = buildList {
+                var part = rawml.pointed.resources
+                while (part != null) {
+                    val data = part.pointed.data
+                    val size = part.pointed.size.toInt()
+                    if (data != null && size > 0) {
+                        val bytes = data.readBytes(size)
+                        bytes.iosImageMimeType()?.let { mime -> add(mime to bytes) }
+                    }
+                    part = part.pointed.next
+                }
+            }
+            val imageDataUris = imageResources.map { (mime, bytes) ->
+                "data:$mime;base64,${bytes.toIosBase64()}"
+            }
+
+            var html = flowBytes.decodeEpubText()
+            html = Regex("""kindle:embed:(\d+)(?:\?[^"' >]*)?""", RegexOption.IGNORE_CASE)
+                .replace(html) { match ->
+                    val index = match.groupValues[1].toIntOrNull()?.minus(1)
+                    imageDataUris.getOrNull(index ?: -1) ?: match.value
+                }
+            html = Regex("""<img\b([^>]*?)\srecindex=["']?(\d+)["']?([^>]*)>""", RegexOption.IGNORE_CASE)
+                .replace(html) { match ->
+                    val index = match.groupValues[2].toIntOrNull()?.minus(1)
+                    val source = imageDataUris.getOrNull(index ?: -1) ?: return@replace match.value
+                    "<img${match.groupValues[1]} src=\"${source.escapeIosReaderHtmlAttribute()}\"${match.groupValues[3]}>"
+                }
+
+            val title = book.title?.takeIf { it.isNotBlank() }
+                ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+            val plainText = html
+                .replace(Regex("""<script\b[^>]*>[\s\S]*?</script>""", RegexOption.IGNORE_CASE), " ")
+                .replace(Regex("""<style\b[^>]*>[\s\S]*?</style>""", RegexOption.IGNORE_CASE), " ")
+                .replace(Regex("""<[^>]+>"""), " ")
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+            return SharedEpubBook(
+                id = book.id,
+                fileName = book.displayName,
+                title = title,
+                author = book.author,
+                chapters = listOf(
+                    SharedEpubChapter(
+                        id = "${book.id}-mobi",
+                        title = title,
+                        plainText = plainText,
+                        htmlContent = html,
+                    )
+                ),
+            )
+        } finally {
+            mobi_free_rawml(rawml)
+        }
+    } finally {
+        mobi_free(mobi)
+    }
+}
+
+private fun ByteArray.iosImageMimeType(): String? = when {
+    size >= 3 && this[0] == 0xFF.toByte() && this[1] == 0xD8.toByte() && this[2] == 0xFF.toByte() -> "image/jpeg"
+    size >= 8 && copyOfRange(0, 8).contentEquals(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)) -> "image/png"
+    size >= 6 && decodeToString(0, 6) in setOf("GIF87a", "GIF89a") -> "image/gif"
+    size >= 12 && decodeToString(0, 4) == "RIFF" && decodeToString(8, 12) == "WEBP" -> "image/webp"
+    size >= 2 && this[0] == 'B'.code.toByte() && this[1] == 'M'.code.toByte() -> "image/bmp"
+    else -> null
+}
+
+private fun buildIosComicBook(
+    book: BookItem,
+    images: List<Pair<String, ByteArray>>,
+): SharedEpubBook {
+    val title = book.title?.takeIf { it.isNotBlank() }
+        ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+    return SharedEpubBook(
+        id = book.id,
+        fileName = book.displayName,
+        title = title,
+        author = book.author,
+        chapters = images.mapIndexed { index, (imagePath, bytes) ->
+            val extension = imagePath.substringAfterLast('.', "").lowercase()
+            val mime = when (extension) {
+                "jpg", "jpeg" -> "image/jpeg"
+                "png" -> "image/png"
+                "gif" -> "image/gif"
+                "webp" -> "image/webp"
+                "bmp" -> "image/bmp"
+                else -> "application/octet-stream"
+            }
+            SharedEpubChapter(
+                id = "${book.id}-page-${index + 1}",
+                title = "Page ${index + 1}",
+                plainText = "Page ${index + 1}",
+                htmlContent = """
+                    <div style="margin:0;padding:0;text-align:center">
+                      <img src="data:$mime;base64,${bytes.toIosBase64()}"
+                           alt="Page ${index + 1}"
+                           style="display:block;width:100%;height:auto;margin:0 auto" />
+                    </div>
+                """.trimIndent(),
+            )
+        }
+    )
+}
+
+private fun String.isIosComicImagePath(): Boolean =
+    substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
+
+private fun String.escapeIosReaderHtmlAttribute(): String = buildString(length) {
+    for (char in this@escapeIosReaderHtmlAttribute) {
+        append(
+            when (char) {
+                '&' -> "&amp;"
+                '"' -> "&quot;"
+                '<' -> "&lt;"
+                '>' -> "&gt;"
+                else -> char
+            }
+        )
+    }
+}
+
+private fun loadIosZipDocumentBook(book: BookItem): SharedEpubBook {
+    val path = book.path.resolveIosEpubSourcePath() ?: error("${book.type.name} path is unavailable")
+    val archive = IosZipEpubArchive(path)
+    val contentPaths = when (book.type) {
+        FileType.DOCX -> listOf("word/document.xml")
+        FileType.ODT -> listOf("content.xml")
+        FileType.PPTX -> archive.entryPaths
+            .filter { it.matches(Regex("""ppt/slides/slide\d+\.xml""", RegexOption.IGNORE_CASE)) }
+            .sorted()
+        else -> emptyList()
+    }
+    val title = book.title?.takeIf { it.isNotBlank() }
+        ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+    val chapters = contentPaths.mapIndexedNotNull { index, contentPath ->
+        val source = archive.readText(contentPath) ?: return@mapIndexedNotNull null
+        val text = source
+            .replace(Regex("""</(?:w:p|text:p|text:h|a:p)>""", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("""<w:tab[^>]*/>""", RegexOption.IGNORE_CASE), "\t")
+            .replace(Regex("""<[^>]+>"""), "")
+            .decodeIosXmlEntities()
+            .replace(Regex("""[ \t]+\n"""), "\n")
+            .replace(Regex("""\n{3,}"""), "\n\n")
+            .trim()
+        if (text.isBlank()) return@mapIndexedNotNull null
+        SharedEpubChapter(
+            id = "${book.id}-part-${index + 1}",
+            title = if (contentPaths.size == 1) title else "Slide ${index + 1}",
+            plainText = text,
+            htmlContent = "<pre>${text.escapeIosReaderHtml()}</pre>",
+        )
+    }
+    require(chapters.isNotEmpty()) { "No readable text was found in this ${book.type.name} file" }
+    return SharedEpubBook(
+        id = book.id,
+        fileName = book.displayName,
+        title = title,
+        author = book.author,
+        chapters = chapters,
+    )
+}
+
+private fun String.decodeIosXmlEntities(): String {
+    return replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+private fun ByteArray.toIosBase64(): String {
+    if (isEmpty()) return ""
+    val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    return buildString(((size + 2) / 3) * 4) {
+        var index = 0
+        while (index < this@toIosBase64.size) {
+            val first = this@toIosBase64[index++].toInt() and 0xFF
+            val second = if (index < this@toIosBase64.size) this@toIosBase64[index++].toInt() and 0xFF else -1
+            val third = if (index < this@toIosBase64.size) this@toIosBase64[index++].toInt() and 0xFF else -1
+            append(alphabet[first shr 2])
+            append(alphabet[((first and 0x03) shl 4) or if (second >= 0) second shr 4 else 0])
+            append(if (second >= 0) alphabet[((second and 0x0F) shl 2) or if (third >= 0) third shr 6 else 0] else '=')
+            append(if (third >= 0) alphabet[third and 0x3F] else '=')
+        }
+    }
+}
+
+private fun String.escapeIosReaderHtml(): String {
+    return replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
 }
 
 private class IosZipEpubArchive(path: String) : SharedEpubArchive {
@@ -378,3 +819,4 @@ private const val ZipMaximumCentralDirectoryBytes = 128L * 1024L * 1024L
 private const val ZipMaximumEntryBytes = 512L * 1024L * 1024L
 private const val ZipMaximumTotalUncompressedBytes = 1L * 1024L * 1024L * 1024L
 private const val ZipMaximumArchiveBytes = 1L * 1024L * 1024L * 1024L
+private const val IosMaximumComicImageBytes = 128L * 1024L * 1024L

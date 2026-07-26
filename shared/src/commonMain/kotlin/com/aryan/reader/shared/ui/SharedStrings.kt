@@ -9,7 +9,8 @@ import com.aryan.reader.shared.SharedText
 @Immutable
 class SharedStringResolver(
     private val resolve: (name: String) -> String? = { null },
-    private val resolveQuantity: (name: String, quantity: Int) -> String? = { _, _ -> null }
+    private val resolveQuantity: (name: String, quantity: Int) -> String? = { _, _ -> null },
+    private val resolveLiteral: (text: String) -> String? = { null },
 ) {
     fun string(name: String, fallback: String, vararg args: Any?): String {
         val template = resolve(name).takeUnless { it.isNullOrBlank() } ?: fallback
@@ -36,6 +37,8 @@ class SharedStringResolver(
             quantityString(text.name, quantity, text.fallback, text.fallbackOther, *text.args.toTypedArray())
         }
     }
+
+    fun literal(text: String): String = resolveLiteral(text).takeUnless { it.isNullOrBlank() } ?: text
 }
 
 val LocalSharedStringResolver = staticCompositionLocalOf { SharedStringResolver() }
@@ -60,6 +63,9 @@ fun readerQuantityString(
 fun readerSharedText(text: SharedText): String {
     return LocalSharedStringResolver.current.sharedText(text)
 }
+
+@Composable
+fun readerLiteral(text: String): String = LocalSharedStringResolver.current.literal(text)
 
 @Composable
 fun readerBannerMessage(message: BannerMessage?): String {

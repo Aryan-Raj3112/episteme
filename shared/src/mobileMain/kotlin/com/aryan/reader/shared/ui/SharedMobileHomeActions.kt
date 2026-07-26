@@ -23,6 +23,12 @@ interface SharedMobileHomeActions {
     fun togglePinned(book: BookItem)
     fun deleteSelectedBooks() {}
     fun createShelfFromSelectedBooks(name: String) {}
+    fun showBookInfo(book: BookItem) {}
+    fun updateBook(book: BookItem) {}
+    fun shareBook(book: BookItem) {}
+    fun exportAnnotations(book: BookItem) {}
+    fun importCover() {}
+    fun tagSelectedBooks(tags: String) {}
     fun openSettings()
     fun openMoreActions()
 }

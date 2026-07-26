@@ -10,12 +10,14 @@ import ReaderShared
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    private enum ImportKind { case books, fonts }
+    private enum ImportKind { case books, folder, fonts, cover }
 
     private let bridge = ReaderIosBridge()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isImportPickerPresented = false
     @State private var importKind: ImportKind = .books
     @State private var isReaderSystemUiHidden = false
+    @State private var pendingExternalURL: URL?
 
     var body: some View {
         ReaderComposeHost(
@@ -25,9 +27,23 @@ struct ContentView: View {
                 importKind = .books
                 isImportPickerPresented = true
             },
+            onImportFolder: {
+                importKind = .folder
+                isImportPickerPresented = true
+            },
+            onRefreshFolders: {
+                refreshImportedFolders(bridge: bridge)
+            },
             onImportFonts: {
                 importKind = .fonts
                 isImportPickerPresented = true
+            },
+            onImportCover: {
+                importKind = .cover
+                isImportPickerPresented = true
+            },
+            onRemoveFolder: { folderName in
+                removeImportedFolder(named: folderName)
             }
         )
         .ignoresSafeArea()
@@ -35,28 +51,237 @@ struct ContentView: View {
         .persistentSystemOverlays(isReaderSystemUiHidden ? .hidden : .visible)
         .fileImporter(
             isPresented: $isImportPickerPresented,
-            allowedContentTypes: importKind == .fonts ? [.font] : [.item],
-            allowsMultipleSelection: true
+            allowedContentTypes: importKind == .fonts
+                ? [.font]
+                : (importKind == .folder ? [.folder] : (importKind == .cover ? [.image] : [.item])),
+            allowsMultipleSelection: importKind != .folder && importKind != .cover
         ) { result in
             switch result {
             case .success(let urls):
+                if importKind == .folder, let folderURL = urls.first {
+                    rememberImportedFolder(folderURL)
+                    let importedFiles = copyImportedFolderToAppSupport(folderURL)
+                    bridge.recordImportedFolder(
+                        folderName: folderURL.lastPathComponent,
+                        fileNames: importedFiles.map(\.name),
+                        filePaths: importedFiles.map(\.path)
+                    )
+                    return
+                }
                 let importedFiles = urls.compactMap { url in
-                    copyImportedFileToAppSupport(url, directoryName: importKind == .fonts ? "Fonts" : "Imports")
+                    copyImportedFileToAppSupport(
+                        url,
+                        directoryName: importKind == .fonts ? "Fonts" : (importKind == .cover ? "Covers" : "Imports")
+                    )
                 }
                 if importKind == .fonts {
                     bridge.recordImportedFonts(fileNames: importedFiles.map(\.name), filePaths: importedFiles.map(\.path))
+                } else if importKind == .cover {
+                    bridge.recordImportedCover(filePath: importedFiles.first?.path)
                 } else {
                     bridge.recordImportedFiles(fileNames: importedFiles.map(\.name), filePaths: importedFiles.map(\.path))
                 }
             case .failure:
                 if importKind == .fonts {
                     bridge.recordImportedFonts(fileNames: [], filePaths: [])
+                } else if importKind == .cover {
+                    bridge.recordImportedCover(filePath: nil)
+                } else if importKind == .folder {
+                    bridge.recordImportedFolder(folderName: "folder", fileNames: [], filePaths: [])
                 } else {
                     bridge.recordImportedFiles(fileNames: [], filePaths: [])
                 }
             }
         }
+        .onOpenURL { url in
+            handleExternalURL(url)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                refreshImportedFolders(bridge: bridge)
+            }
+        }
+        .confirmationDialog(
+            "Open external file",
+            isPresented: Binding(
+                get: { pendingExternalURL != nil },
+                set: { if !$0 { pendingExternalURL = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Copy to Library") {
+                if let url = pendingExternalURL {
+                    openExternalURL(url, addToLibrary: true)
+                }
+                pendingExternalURL = nil
+            }
+            Button("Open Temporarily") {
+                if let url = pendingExternalURL {
+                    openExternalURL(url, addToLibrary: false)
+                }
+                pendingExternalURL = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingExternalURL = nil
+            }
+        } message: {
+            Text("Choose whether to keep a managed copy in your library.")
+        }
     }
+
+    private func handleExternalURL(_ url: URL) {
+        switch bridge.externalFileBehavior().uppercased() {
+        case "COPY":
+            openExternalURL(url, addToLibrary: true)
+        case "TEMPORARY":
+            openExternalURL(url, addToLibrary: false)
+        default:
+            pendingExternalURL = url
+        }
+    }
+
+    private func openExternalURL(_ url: URL, addToLibrary: Bool) {
+        let imported = addToLibrary
+            ? copyImportedFileToAppSupport(url, directoryName: "Imports")
+            : copyExternalFileToTemporaryStorage(url)
+        guard let imported else {
+            bridge.recordNativeEvent(message: "Could not open the external file")
+            return
+        }
+        bridge.openExternalFile(
+            fileName: imported.name,
+            filePath: imported.path,
+            addToLibrary: addToLibrary
+        )
+    }
+}
+
+private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
+
+private func rememberImportedFolder(_ url: URL) {
+    do {
+        let bookmark = try url.bookmarkData(
+            options: [.minimalBookmark],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+        bookmarks[url.lastPathComponent] = bookmark
+        UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+    } catch {
+        // The managed copy remains usable if a document provider cannot issue a bookmark.
+    }
+}
+
+private func refreshImportedFolders(bridge: ReaderIosBridge) {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    for (folderName, bookmark) in bookmarks {
+        var isStale = false
+        guard let folderURL = try? URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else {
+            continue
+        }
+        if isStale {
+            rememberImportedFolder(folderURL)
+        }
+        let importedFiles = copyImportedFolderToAppSupport(folderURL)
+        bridge.recordImportedFolder(
+            folderName: folderName,
+            fileNames: importedFiles.map(\.name),
+            filePaths: importedFiles.map(\.path)
+        )
+    }
+}
+
+private func removeImportedFolder(named folderName: String) {
+    var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    bookmarks.removeValue(forKey: folderName)
+    UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
+    guard let appSupport = try? FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    ) else {
+        return
+    }
+    let managedFolder = appSupport
+        .appendingPathComponent("LocalFolders", isDirectory: true)
+        .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
+    if FileManager.default.fileExists(atPath: managedFolder.path) {
+        try? FileManager.default.removeItem(at: managedFolder)
+    }
+}
+
+private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> [ImportedReaderFile] {
+    let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceURL.stopAccessingSecurityScopedResource()
+        }
+    }
+
+    do {
+        let fileManager = FileManager.default
+        let appSupport = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let folderRoot = appSupport
+            .appendingPathComponent("LocalFolders", isDirectory: true)
+            .appendingPathComponent(safeLocalFolderName(sourceURL.lastPathComponent), isDirectory: true)
+        if fileManager.fileExists(atPath: folderRoot.path) {
+            try fileManager.removeItem(at: folderRoot)
+        }
+        try fileManager.createDirectory(at: folderRoot, withIntermediateDirectories: true)
+
+        let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey]
+        guard let enumerator = fileManager.enumerator(
+            at: sourceURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return []
+        }
+
+        var imported: [ImportedReaderFile] = []
+        for case let itemURL as URL in enumerator {
+            let values = try itemURL.resourceValues(forKeys: Set(resourceKeys))
+            let relativePath = itemURL.path.replacingOccurrences(
+                of: sourceURL.path + "/",
+                with: "",
+                options: [.anchored]
+            )
+            let destinationURL = folderRoot.appendingPathComponent(relativePath)
+            if values.isDirectory == true {
+                try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+            } else if values.isRegularFile == true {
+                try fileManager.createDirectory(
+                    at: destinationURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.copyItem(at: itemURL, to: destinationURL)
+                imported.append(ImportedReaderFile(name: itemURL.lastPathComponent, path: destinationURL.path))
+            }
+        }
+        return imported
+    } catch {
+        return []
+    }
+}
+
+private func safeLocalFolderName(_ name: String) -> String {
+    let cleaned = name.replacingOccurrences(of: "/", with: "_").trimmingCharacters(in: .whitespacesAndNewlines)
+    return cleaned.isEmpty ? "Imported Folder" : cleaned
 }
 
 private struct ImportedReaderFile {
@@ -95,6 +320,25 @@ private func copyImportedFileToAppSupport(_ sourceURL: URL, directoryName: Strin
     }
 }
 
+private func copyExternalFileToTemporaryStorage(_ sourceURL: URL) -> ImportedReaderFile? {
+    let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceURL.stopAccessingSecurityScopedResource()
+        }
+    }
+    do {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory.appendingPathComponent("ExternalOpen", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent(uniqueImportedFileName(sourceURL.lastPathComponent))
+        try fileManager.copyItem(at: sourceURL, to: destination)
+        return ImportedReaderFile(name: sourceURL.lastPathComponent, path: destination.path)
+    } catch {
+        return nil
+    }
+}
+
 private func uniqueImportedFileName(_ fileName: String) -> String {
     let source = URL(fileURLWithPath: fileName)
     let baseName = source.deletingPathExtension().lastPathComponent
@@ -110,13 +354,21 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
     let bridge: ReaderIosBridge
     @Binding var isSystemUiHidden: Bool
     let onImportBooks: () -> Void
+    let onImportFolder: () -> Void
+    let onRefreshFolders: () -> Void
     let onImportFonts: () -> Void
+    let onImportCover: () -> Void
+    let onRemoveFolder: (String) -> Void
 
     func makeUIViewController(context: Context) -> UIViewController {
         let composeController = ReaderIosAppKt.readerComposeViewController(
             bridge: bridge,
             onImportBooks: onImportBooks,
-            onImportFonts: onImportFonts
+            onImportFolder: onImportFolder,
+            onRefreshFolders: onRefreshFolders,
+            onImportFonts: onImportFonts,
+            onImportCover: onImportCover,
+            onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
         bridge.setSystemUiHandler { hidden, lightContent, backgroundArgb, edgeToEdge in

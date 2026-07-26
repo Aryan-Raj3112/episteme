@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 enum class SharedSettingsPlatform {
     ANDROID,
+    IOS,
     DESKTOP
 }
 

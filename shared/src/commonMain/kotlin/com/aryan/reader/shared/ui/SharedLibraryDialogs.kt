@@ -45,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -327,6 +328,8 @@ fun SharedBookInfoDialog(
     canRenameDisplayName: Boolean = true,
     canRestoreEmbeddedMetadata: Boolean = canEditEmbeddedMetadata,
     onChooseCover: (() -> String?)? = null,
+    onRequestCover: (() -> Unit)? = null,
+    externallySelectedCoverPath: String? = null,
     onDismiss: () -> Unit,
     onSave: (BookItem) -> Unit,
     onRestore: (BookItem) -> Unit
@@ -343,6 +346,11 @@ fun SharedBookInfoDialog(
     var displayNameInput by remember(book.id, book.displayName) { mutableStateOf(book.displayName) }
     var tagInput by remember(book.id, book.tags) { mutableStateOf(book.tags.joinToString(", ") { it.name }) }
     var selectedCoverPath by remember(book.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(externallySelectedCoverPath) {
+        if (!externallySelectedCoverPath.isNullOrBlank()) {
+            selectedCoverPath = externallySelectedCoverPath
+        }
+    }
     var showRestoreConfirmation by remember(book.id) { mutableStateOf(false) }
 
     val hasOriginalMetadata = book.hasOriginalMetadata()
@@ -409,10 +417,12 @@ fun SharedBookInfoDialog(
                                 onTagChange = { tagInput = it },
                                 knownTags = knownTags,
                                 selectedCoverPath = selectedCoverPath,
-                                onChooseCover = onChooseCover?.let { choose ->
-                                    {
-                                        selectedCoverPath = choose()
+                                onChooseCover = when {
+                                    onRequestCover != null -> onRequestCover
+                                    onChooseCover != null -> {
+                                        { selectedCoverPath = onChooseCover() }
                                     }
+                                    else -> null
                                 },
                                 onClearCover = { selectedCoverPath = null }
                             )

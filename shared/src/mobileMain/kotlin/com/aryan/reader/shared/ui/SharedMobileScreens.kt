@@ -3527,12 +3527,15 @@ private fun Offset.toSharedMobilePdfPoint(size: IntSize): PdfPagePoint {
 fun SharedMobileHomeScreen(
     state: SharedReaderScreenState,
     actions: SharedMobileHomeActions,
+    importedCoverPath: String? = null,
     showTopBar: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val selectedIds = state.selectedBookIds
     val isContextualMode = selectedIds.isNotEmpty()
     var showCreateShelf by remember { mutableStateOf(false) }
+    var showTagDialog by remember { mutableStateOf(false) }
+    var infoBook by remember { mutableStateOf<BookItem?>(null) }
     val model = remember(
         state.recentBooks,
         state.openTabs,
@@ -3559,6 +3562,17 @@ fun SharedMobileHomeScreen(
                             state.recentBooks.filter { it.id in selectedIds }.forEach(actions::togglePinned)
                         },
                         onAddToShelf = { showCreateShelf = true },
+                        onTag = { showTagDialog = true },
+                        onShare = selectedIds.singleOrNull()?.let { id ->
+                            state.recentBooks.firstOrNull { it.id == id }?.let { book ->
+                                { actions.shareBook(book) }
+                            }
+                        },
+                        onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
+                            state.recentBooks.firstOrNull { it.id == id }?.let { book ->
+                                { actions.exportAnnotations(book) }
+                            }
+                        },
                         onDelete = actions::deleteSelectedBooks
                     )
                 } else {
@@ -3581,15 +3595,19 @@ fun SharedMobileHomeScreen(
         ) {
             if (model.isEmpty) {
                 SharedMobileEmptyLibrary(
-                    title = if (model.isLibraryEmpty) "Your library is empty" else "No recent files",
-                    message = if (model.isLibraryEmpty) {
-                        "Select a PDF, EPUB, comic, or document to start reading."
+                    title = if (model.isLibraryEmpty) {
+                        readerString("library_empty_title", "Your library is empty")
                     } else {
-                        "Open books from the library and they will appear here."
+                        readerString("recent_empty_title", "No recent files")
                     },
-                    actionLabel = "Select file",
+                    message = if (model.isLibraryEmpty) {
+                        readerString("library_empty_desc", "Select a PDF, EPUB, comic, or document to start reading.")
+                    } else {
+                        readerString("recent_empty_desc", "Open books from the library and they will appear here.")
+                    },
+                    actionLabel = readerString("select_file", "Select file"),
                     onAction = actions::importBooks,
-                    secondaryActionLabel = if (model.isLibraryEmpty) "Sync folder" else null,
+                    secondaryActionLabel = if (model.isLibraryEmpty) readerString("sync_folder", "Sync folder") else null,
                     onSecondaryAction = actions::navigateToFolderSync,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -3614,26 +3632,28 @@ fun SharedMobileHomeScreen(
                     if (model.pinnedBooks.isNotEmpty()) {
                         item(key = "pinned") {
                             SharedMobileBookGridSection(
-                                title = "Pinned",
+                                title = readerString("pinned", "Pinned"),
                                 books = model.pinnedBooks,
                                 selectedBookIds = selectedIds,
                                 pinnedBookIds = state.pinnedHomeBookIds,
                                 onOpenBook = actions::openBook,
                                 onLongPressBook = actions::longPressBook,
-                                onTogglePinned = actions::togglePinned
+                                onTogglePinned = actions::togglePinned,
+                                onShowBookInfo = { infoBook = it }
                             )
                         }
                     }
 
                     item(key = "recent") {
                         SharedMobileBookGridSection(
-                            title = "Recent files",
+                            title = readerString("recent_files", "Recent files"),
                             books = model.recentBooks,
                             selectedBookIds = selectedIds,
                             pinnedBookIds = state.pinnedHomeBookIds,
                             onOpenBook = actions::openBook,
                             onLongPressBook = actions::longPressBook,
-                            onTogglePinned = actions::togglePinned
+                            onTogglePinned = actions::togglePinned,
+                            onShowBookInfo = { infoBook = it }
                         )
                     }
                 }
@@ -3647,19 +3667,48 @@ fun SharedMobileHomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(onClick = actions::importBooks) { Text("Select file") }
-                    Button(onClick = actions::navigateToFolderSync) { Text("Sync folder") }
+                    Button(onClick = actions::importBooks) { Text(readerString("select_file", "Select file")) }
+                    Button(onClick = actions::navigateToFolderSync) { Text(readerString("sync_folder", "Sync folder")) }
                 }
             }
         }
     }
     if (showCreateShelf) {
         SharedMobileCreateShelfDialog(
-            title = "Add selected books to shelf",
+            title = readerString("desktop_add_to_shelf", "Add selected books to shelf"),
             onDismiss = { showCreateShelf = false },
             onCreate = { name ->
                 actions.createShelfFromSelectedBooks(name)
                 showCreateShelf = false
+            }
+        )
+    }
+    if (showTagDialog) {
+        SharedMobileCreateShelfDialog(
+            title = readerString("dialog_set_tags", "Set tags for selected books"),
+            fieldLabel = readerString("desktop_tags_comma_separated", "Comma-separated tags"),
+            confirmLabel = readerString("action_apply", "Apply"),
+            onDismiss = { showTagDialog = false },
+            onCreate = {
+                actions.tagSelectedBooks(it)
+                showTagDialog = false
+            }
+        )
+    }
+    infoBook?.let { book ->
+        SharedBookInfoDialog(
+            book = book,
+            knownTags = state.allTags,
+            onRequestCover = actions::importCover,
+            externallySelectedCoverPath = importedCoverPath,
+            onDismiss = { infoBook = null },
+            onSave = {
+                actions.updateBook(it)
+                infoBook = null
+            },
+            onRestore = {
+                actions.updateBook(it)
+                infoBook = null
             }
         )
     }
@@ -3687,9 +3736,16 @@ fun SharedMobileLibraryScreen(
     onOpenShelf: (Shelf) -> Unit = {},
     onLongPressShelf: (Shelf) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
+    onUpdateBook: (BookItem) -> Unit = {},
+    onShareBook: (BookItem) -> Unit = {},
+    onExportAnnotations: (BookItem) -> Unit = {},
+    onImportCover: () -> Unit = {},
+    importedCoverPath: String? = null,
+    onTagBooks: (Set<String>, String) -> Unit = { _, _ -> },
     onCreateShelf: (String, Set<String>) -> Unit = { _, _ -> },
     onDeleteBooks: (Set<String>) -> Unit = {},
     onDeleteShelves: (Set<String>) -> Unit = {},
+    onRenameShelf: (Shelf, String) -> Unit = { _, _ -> },
     onNavigateShelfBack: () -> Unit = {},
     onOpenCatalog: (OpdsCatalog) -> Unit = {},
     onOpenFeedUrl: (String) -> Unit = {},
@@ -3707,11 +3763,15 @@ fun SharedMobileLibraryScreen(
     val selectedIds = state.selectedBookIds
     val selectedShelves = state.selectedShelfIds
     val isBookContextualMode = selectedIds.isNotEmpty()
-    val isShelfContextualMode = selectedShelves.isNotEmpty() && selectedTab == SharedMobileLibraryTab.SHELVES
+    val isShelfContextualMode = selectedShelves.isNotEmpty() &&
+        selectedTab in setOf(SharedMobileLibraryTab.SHELVES, SharedMobileLibraryTab.FOLDERS)
     var showFilters by remember { mutableStateOf(false) }
     var showCreateShelf by remember { mutableStateOf(false) }
     var showDeleteBooks by remember { mutableStateOf(false) }
     var showDeleteShelves by remember { mutableStateOf(false) }
+    var infoBook by remember { mutableStateOf<BookItem?>(null) }
+    var renameShelf by remember { mutableStateOf<Shelf?>(null) }
+    var showTagDialog by remember { mutableStateOf(false) }
     val viewedShelf = state.viewingShelfId?.let { id -> state.shelves.firstOrNull { it.id == id } }
     val searchedBooks = remember(state.libraryBooks, state.searchQuery, state.libraryFilters) {
         applyLibraryFilters(
@@ -3748,6 +3808,17 @@ fun SharedMobileLibraryScreen(
                             state.libraryBooks.filter { it.id in selectedIds }.forEach(onTogglePinned)
                         },
                         onAddToShelf = { showCreateShelf = true },
+                        onTag = { showTagDialog = true },
+                        onShare = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
+                                { onShareBook(book) }
+                            }
+                        },
+                        onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
+                                { onExportAnnotations(book) }
+                            }
+                        },
                         onDelete = { showDeleteBooks = true }
                     )
 
@@ -3756,6 +3827,10 @@ fun SharedMobileLibraryScreen(
                         onClose = onClearSelection,
                         onSelectAll = {},
                         onPin = {},
+                        onRename = selectedShelves.singleOrNull()
+                            ?.let { id -> state.shelves.firstOrNull { it.id == id } }
+                            ?.takeIf { it.type == ShelfType.MANUAL }
+                            ?.let { shelf -> { renameShelf = shelf } },
                         onDelete = { showDeleteShelves = true }
                     )
 
@@ -3800,14 +3875,14 @@ fun SharedMobileLibraryScreen(
                 when (selectedTab) {
                     SharedMobileLibraryTab.BOOKS -> if (state.libraryBooks.isNotEmpty()) {
                         ExtendedFloatingActionButton(
-                            text = { Text("Add file") },
+                            text = { Text(readerString("select_file", "Add file")) },
                             icon = { Icon(Icons.Default.Add, contentDescription = null) },
                             onClick = onImportBooks
                         )
                     }
 
                     SharedMobileLibraryTab.SHELVES -> ExtendedFloatingActionButton(
-                        text = { Text("New shelf") },
+                        text = { Text(readerString("fab_new_shelf", "New shelf")) },
                         icon = { Icon(Icons.Default.Add, contentDescription = null) },
                         onClick = { showCreateShelf = true; onNewShelfClick() }
                     )
@@ -3825,11 +3900,12 @@ fun SharedMobileLibraryScreen(
                 onOpenBook = onOpenBook,
                 onLongPressBook = onLongPressBook,
                 onTogglePinned = onTogglePinned,
+                onShowBookInfo = { infoBook = it },
                 empty = {
                     SharedMobileEmptyLibrary(
-                        title = "Your library is empty",
-                        message = "Select a PDF, EPUB, comic, or document to start reading.",
-                        actionLabel = "Select file",
+                        title = readerString("library_empty_title", "Your library is empty"),
+                        message = readerString("library_empty_desc", "Select a PDF, EPUB, comic, or document to start reading."),
+                        actionLabel = readerString("select_file", "Select file"),
                         onAction = onImportBooks,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -3850,11 +3926,11 @@ fun SharedMobileLibraryScreen(
             )
 
             SharedMobileLibraryTab.FOLDERS -> SharedMobileShelfList(
-                shelves = state.shelves.filter { it.type == ShelfType.FOLDER },
+                shelves = state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null },
                 onOpenShelf = onOpenShelf,
                 onLongPressShelf = onLongPressShelf,
-                emptyTitle = "No folders yet",
-                emptyMessage = "Folder sync is not connected on iOS yet.",
+                emptyTitle = readerString("desktop_no_folders_yet", "No folders yet"),
+                emptyMessage = readerString("sync_folders_desc", "Choose a local folder to keep its supported books in this library."),
                 selectedShelfIds = state.selectedShelfIds,
                 modifier = Modifier
                     .fillMaxSize()
@@ -3893,7 +3969,11 @@ fun SharedMobileLibraryScreen(
     }
     if (showCreateShelf) {
         SharedMobileCreateShelfDialog(
-            title = if (selectedIds.isEmpty()) "New shelf" else "Add selected books to shelf",
+            title = if (selectedIds.isEmpty()) {
+                readerString("fab_new_shelf", "New shelf")
+            } else {
+                readerString("desktop_add_to_shelf", "Add selected books to shelf")
+            },
             onDismiss = { showCreateShelf = false },
             onCreate = { name ->
                 onCreateShelf(name, selectedIds)
@@ -3903,7 +3983,7 @@ fun SharedMobileLibraryScreen(
     }
     if (showDeleteBooks) {
         SharedMobileDeleteConfirmationDialog(
-            title = "Remove books?",
+            title = readerString("dialog_remove_books_title", "Remove books?"),
             body = "Remove ${selectedIds.size} selected book(s) from this iOS library?",
             onDismiss = { showDeleteBooks = false },
             onConfirm = {
@@ -3914,12 +3994,53 @@ fun SharedMobileLibraryScreen(
     }
     if (showDeleteShelves) {
         SharedMobileDeleteConfirmationDialog(
-            title = "Delete shelves?",
+            title = readerString("dialog_delete_shelves_title", "Delete shelves?"),
             body = "Delete ${selectedShelves.size} selected shelf/shelves? Books will remain in the library.",
             onDismiss = { showDeleteShelves = false },
             onConfirm = {
                 onDeleteShelves(selectedShelves)
                 showDeleteShelves = false
+            }
+        )
+    }
+    infoBook?.let { book ->
+        SharedBookInfoDialog(
+            book = book,
+            knownTags = state.allTags,
+            onRequestCover = onImportCover,
+            externallySelectedCoverPath = importedCoverPath,
+            onDismiss = { infoBook = null },
+            onSave = {
+                onUpdateBook(it)
+                infoBook = null
+            },
+            onRestore = {
+                onUpdateBook(it)
+                infoBook = null
+            }
+        )
+    }
+    renameShelf?.let { shelf ->
+        SharedMobileCreateShelfDialog(
+            title = readerString("menu_rename_shelf", "Rename shelf"),
+            initialName = shelf.name,
+            confirmLabel = readerString("action_rename", "Rename"),
+            onDismiss = { renameShelf = null },
+            onCreate = { name ->
+                onRenameShelf(shelf, name)
+                renameShelf = null
+            }
+        )
+    }
+    if (showTagDialog) {
+        SharedMobileCreateShelfDialog(
+            title = readerString("dialog_set_tags", "Set tags for selected books"),
+            fieldLabel = readerString("desktop_tags_comma_separated", "Comma-separated tags"),
+            confirmLabel = readerString("action_apply", "Apply"),
+            onDismiss = { showTagDialog = false },
+            onCreate = {
+                onTagBooks(selectedIds, it)
+                showTagDialog = false
             }
         )
     }
@@ -3959,8 +4080,8 @@ private fun SharedMobileShelfDetail(
             onTogglePinned = onTogglePinned,
             empty = {
                 SharedMobileEmptyLibrary(
-                    title = "No books in ${shelf.name}",
-                    message = "Add books from the Library selection menu.",
+                    title = readerString("desktop_no_books_in_shelf", "No books in %1\$s", shelf.name),
+                    message = readerString("desktop_add_books_from_library", "Add books from the Library selection menu."),
                     actionLabel = null,
                     onAction = {},
                     modifier = Modifier.fillMaxSize()
@@ -3979,11 +4100,11 @@ private fun SharedMobileLibraryFilterDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Filter library") },
+        title = { Text(readerString("filter_library", "Filter library")) },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
-                    Text("File type", style = MaterialTheme.typography.labelLarge)
+                    Text(readerString("filter_file_type", "File type"), style = MaterialTheme.typography.labelLarge)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(FileType.entries) { type ->
                             FilterChip(
@@ -4000,7 +4121,7 @@ private fun SharedMobileLibraryFilterDialog(
                     }
                 }
                 item {
-                    Text("Reading status", style = MaterialTheme.typography.labelLarge)
+                    Text(readerString("filter_read_status", "Reading status"), style = MaterialTheme.typography.labelLarge)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(ReadStatusFilter.entries) { status ->
                             FilterChip(
@@ -4013,7 +4134,7 @@ private fun SharedMobileLibraryFilterDialog(
                 }
                 if (state.allTags.isNotEmpty()) {
                     item {
-                        Text("Tags", style = MaterialTheme.typography.labelLarge)
+                        Text(readerString("section_tags", "Tags"), style = MaterialTheme.typography.labelLarge)
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(state.allTags, key = { it.id }) { tag ->
                                 FilterChip(
@@ -4033,10 +4154,12 @@ private fun SharedMobileLibraryFilterDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
+            TextButton(onClick = onDismiss) { Text(readerString("action_done", "Done")) }
         },
         dismissButton = {
-            TextButton(onClick = { onFiltersChange(LibraryFilters()); onDismiss() }) { Text("Clear") }
+            TextButton(onClick = { onFiltersChange(LibraryFilters()); onDismiss() }) {
+                Text(readerString("action_clear", "Clear"))
+            }
         }
     )
 }
@@ -4044,10 +4167,13 @@ private fun SharedMobileLibraryFilterDialog(
 @Composable
 private fun SharedMobileCreateShelfDialog(
     title: String,
+    initialName: String = "",
+    fieldLabel: String = "Shelf name",
+    confirmLabel: String = "Create",
     onDismiss: () -> Unit,
     onCreate: (String) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
+    var name by remember(initialName) { mutableStateOf(initialName) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -4055,14 +4181,14 @@ private fun SharedMobileCreateShelfDialog(
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Shelf name") },
+                label = { Text(fieldLabel) },
                 singleLine = true
             )
         },
         confirmButton = {
-            TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) { Text("Create") }
+            TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank()) { Text(confirmLabel) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(readerString("action_cancel", "Cancel")) } }
     )
 }
 
@@ -4077,8 +4203,8 @@ private fun SharedMobileDeleteConfirmationDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { Text(body) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Remove") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = { TextButton(onClick = onConfirm) { Text(readerString("action_remove", "Remove")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(readerString("action_cancel", "Cancel")) } }
     )
 }
 
@@ -4100,7 +4226,7 @@ private fun SharedMobileHomeTopBar(
     onMoreClick: () -> Unit
 ) {
     CenterAlignedTopAppBar(
-        title = { Text("Reader") },
+        title = { Text(readerString("desktop_reader", "Reader")) },
         navigationIcon = {
             IconButton(onClick = onDrawerClick) {
                 Icon(Icons.Default.Menu, contentDescription = "Menu")
@@ -4138,7 +4264,7 @@ private fun SharedMobileLibraryTopBar(
 ) {
     var showSortMenu by remember { mutableStateOf(false) }
     TopAppBar(
-        title = { Text("Library") },
+        title = { Text(readerString("library_title", "Library")) },
         actions = {
             if (selectedTab == SharedMobileLibraryTab.BOOKS) {
                 IconButton(onClick = onFilterClick) {
@@ -4197,7 +4323,7 @@ private fun SharedMobileSearchTopBar(
             OutlinedTextField(
                 value = query,
                 onValueChange = onQueryChange,
-                placeholder = { Text("Search") },
+                placeholder = { Text(readerString("action_search", "Search")) },
                 singleLine = true,
                 trailingIcon = {
                     if (query.isNotEmpty()) {
@@ -4225,10 +4351,15 @@ private fun SharedMobileContextualTopBar(
     onSelectAll: () -> Unit,
     onPin: () -> Unit,
     onAddToShelf: (() -> Unit)? = null,
+    onTag: (() -> Unit)? = null,
+    onRename: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
+    onExportAnnotations: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null
 ) {
+    var showMoreMenu by remember { mutableStateOf(false) }
     CenterAlignedTopAppBar(
-        title = { Text("$selectedCount selected") },
+        title = { Text(readerString("selected_count", "%1\$d selected", selectedCount)) },
         navigationIcon = {
             IconButton(onClick = onClose) {
                 Icon(Icons.Default.Close, contentDescription = "Clear selection")
@@ -4246,9 +4377,46 @@ private fun SharedMobileContextualTopBar(
                     Icon(Icons.Default.Add, contentDescription = "Add to shelf")
                 }
             }
+            if (onTag != null) {
+                TextButton(onClick = onTag) { Text(readerString("section_tags", "Tags")) }
+            }
+            if (onRename != null) {
+                TextButton(onClick = onRename) { Text(readerString("action_rename", "Rename")) }
+            }
             if (onDelete != null) {
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "Remove selected")
+                }
+            }
+            if (onShare != null || onExportAnnotations != null) {
+                Box {
+                    IconButton(onClick = { showMoreMenu = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More actions")
+                    }
+                    DropdownMenu(
+                        expanded = showMoreMenu,
+                        onDismissRequest = { showMoreMenu = false }
+                    ) {
+                        onShare?.let { share ->
+                            DropdownMenuItem(
+                                text = { Text(readerString("action_share_original_file", "Share original file")) },
+                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    share()
+                                }
+                            )
+                        }
+                        onExportAnnotations?.let { export ->
+                            DropdownMenuItem(
+                                text = { Text(readerString("action_export_annotations", "Export annotations")) },
+                                onClick = {
+                                    showMoreMenu = false
+                                    export()
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -4375,7 +4543,8 @@ private fun SharedMobileBookGridSection(
     pinnedBookIds: Set<String>,
     onOpenBook: (BookItem) -> Unit,
     onLongPressBook: (BookItem) -> Unit,
-    onTogglePinned: (BookItem) -> Unit
+    onTogglePinned: (BookItem) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge)
@@ -4393,7 +4562,8 @@ private fun SharedMobileBookGridSection(
                     pinned = book.id in pinnedBookIds,
                     onClick = { onOpenBook(book) },
                     onLongClick = { onLongPressBook(book) },
-                    onTogglePinned = { onTogglePinned(book) }
+                    onTogglePinned = { onTogglePinned(book) },
+                    onShowBookInfo = { onShowBookInfo(book) }
                 )
             }
         }
@@ -4408,6 +4578,7 @@ private fun SharedMobileBookList(
     onOpenBook: (BookItem) -> Unit,
     onLongPressBook: (BookItem) -> Unit,
     onTogglePinned: (BookItem) -> Unit,
+    onShowBookInfo: (BookItem) -> Unit = {},
     empty: @Composable () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -4428,7 +4599,8 @@ private fun SharedMobileBookList(
                 pinned = book.id in pinnedBookIds,
                 onClick = { onOpenBook(book) },
                 onLongClick = { onLongPressBook(book) },
-                onTogglePinned = { onTogglePinned(book) }
+                onTogglePinned = { onTogglePinned(book) },
+                onShowBookInfo = { onShowBookInfo(book) }
             )
         }
     }
@@ -4443,6 +4615,7 @@ private fun SharedMobileBookCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onTogglePinned: () -> Unit,
+    onShowBookInfo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     ElevatedCard(
@@ -4455,15 +4628,30 @@ private fun SharedMobileBookCard(
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 6.dp else 2.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            SharedMobileBookCover(
-                book = book,
-                selected = selected,
-                pinned = pinned,
-                onTogglePinned = onTogglePinned,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.74f)
-            )
+            Box {
+                SharedMobileBookCover(
+                    book = book,
+                    selected = selected,
+                    pinned = pinned,
+                    onTogglePinned = onTogglePinned,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.74f)
+                )
+                IconButton(
+                    onClick = onShowBookInfo,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                ) {
+                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = 0.48f)) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "Book details",
+                            tint = Color.White,
+                            modifier = Modifier.padding(6.dp).size(18.dp)
+                        )
+                    }
+                }
+            }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -4501,7 +4689,8 @@ private fun SharedMobileLibraryListItem(
     pinned: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onTogglePinned: () -> Unit
+    onTogglePinned: () -> Unit,
+    onShowBookInfo: () -> Unit
 ) {
     Surface(
         modifier = Modifier
@@ -4534,6 +4723,9 @@ private fun SharedMobileLibraryListItem(
             book.progressPercentage?.takeIf { it > 0f }?.coerceIn(0f, 100f)?.toInt()?.let { progress ->
                 Text("$progress%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            IconButton(onClick = onShowBookInfo) {
+                Icon(Icons.Default.MoreVert, contentDescription = "Book details")
+            }
         }
     }
 }
@@ -4556,7 +4748,15 @@ private fun SharedMobileBookCover(
         tonalElevation = 2.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(if (compact) 24.dp else 38.dp))
+            if (!book.coverImagePath.isNullOrBlank()) {
+                LocalBookCoverImage(
+                    path = book.coverImagePath,
+                    contentDescription = book.cardTitle(),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(if (compact) 24.dp else 38.dp))
+            }
             Text(
                 text = book.type.name,
                 style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),

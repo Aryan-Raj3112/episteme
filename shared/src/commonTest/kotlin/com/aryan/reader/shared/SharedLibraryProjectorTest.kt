@@ -231,6 +231,25 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
+    fun `SharedLibraryStateProjector ignores persisted shelf using reserved unshelved id`() {
+        val loose = book("loose")
+
+        val result = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = SharedReaderScreenState(),
+                booksFromStore = listOf(loose),
+                shelfRecords = listOf(ShelfRecord("unshelved", "Legacy shelf")),
+                shelfRefs = listOf(BookShelfRef(bookId = loose.id, shelfId = "unshelved", addedAt = 1L)),
+                tags = emptyList()
+            )
+        )
+
+        assertEquals(1, result.shelves.count { it.id == "unshelved" })
+        assertEquals("Unshelved", result.shelves.first { it.id == "unshelved" }.name)
+        assertEquals(listOf("loose"), result.shelves.first { it.id == "unshelved" }.books.ids())
+    }
+
+    @Test
     fun `SharedLibraryStateProjector auto creates synced folder fallback shelves from source folders`() {
         val folderBook = book(
             id = "folder_book",

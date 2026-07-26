@@ -1,0 +1,3 @@
+headers = mobi.h
+headerFilter = mobi.h
+package = com.aryan.reader.shared.mobi

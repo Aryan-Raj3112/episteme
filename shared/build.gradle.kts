@@ -1,5 +1,6 @@
 import com.android.build.api.dsl.KotlinMultiplatformAndroidLibraryTarget
 import org.gradle.api.plugins.ExtensionAware
+import org.gradle.api.tasks.Exec
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -64,6 +65,44 @@ kotlin {
             "ios-device-arm64"
         }
         val pdfiumRoot = rootProject.layout.projectDirectory.dir("third_party/pdfium/$pdfiumVariant")
+        val mobiSdk = if (name.contains("Simulator", ignoreCase = true)) "iphonesimulator" else "iphoneos"
+        val mobiRoot = layout.buildDirectory.dir("native/libmobi/$name")
+        val libarchiveRoot = layout.buildDirectory.dir("native/libarchive/$name")
+        val buildMobiTask = tasks.register<Exec>("buildMobi${name.replaceFirstChar(Char::uppercaseChar)}") {
+            val outputDirectory = mobiRoot.get().asFile
+            inputs.files(
+                rootProject.fileTree("app/src/main/cpp/libmobi/src") {
+                    include("*.c", "*.h")
+                }
+            )
+            inputs.file(rootProject.file("scripts/build_ios_libmobi.sh"))
+            outputs.file(outputDirectory.resolve("libmobi.dylib"))
+            commandLine(
+                "sh",
+                rootProject.file("scripts/build_ios_libmobi.sh").absolutePath,
+                mobiSdk,
+                "arm64",
+                outputDirectory.absolutePath
+            )
+            environment("DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
+        }
+        val buildLibarchiveTask = tasks.register<Exec>("buildLibarchive${name.replaceFirstChar(Char::uppercaseChar)}") {
+            val outputDirectory = libarchiveRoot.get().asFile
+            inputs.files(
+                rootProject.fileTree("third_party/libarchive"),
+                rootProject.fileTree("third_party/xz")
+            )
+            inputs.file(rootProject.file("scripts/build_ios_libarchive.sh"))
+            outputs.file(outputDirectory.resolve("libreaderarchive.a"))
+            commandLine(
+                "sh",
+                rootProject.file("scripts/build_ios_libarchive.sh").absolutePath,
+                mobiSdk,
+                "arm64",
+                outputDirectory.absolutePath
+            )
+            environment("DEVELOPER_DIR", "/Applications/Xcode.app/Contents/Developer")
+        }
 
         compilations.getByName("main") {
             cinterops {
@@ -71,13 +110,36 @@ kotlin {
                     defFile(project.file("src/nativeInterop/cinterop/pdfium.def"))
                     compilerOpts("-I${pdfiumRoot.dir("include").asFile.absolutePath}")
                 }
+                val mobi by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/mobi.def"))
+                    compilerOpts("-I${rootProject.file("app/src/main/cpp/libmobi/src").absolutePath}")
+                    tasks.named(interopProcessingTaskName).configure {
+                        dependsOn(buildMobiTask)
+                    }
+                }
+                val libarchive by creating {
+                    defFile(project.file("src/nativeInterop/cinterop/libarchive.def"))
+                    compilerOpts("-I${rootProject.file("third_party/libarchive/libarchive").absolutePath}")
+                    extraOpts(
+                        "-libraryPath", libarchiveRoot.get().asFile.absolutePath,
+                        "-staticLibrary", "libreaderarchive.a"
+                    )
+                    tasks.named(interopProcessingTaskName).configure {
+                        dependsOn(buildLibarchiveTask)
+                    }
+                }
             }
         }
 
         binaries.framework {
             baseName = "ReaderShared"
             binaryOption("bundleId", "com.aryan.reader.shared")
-            linkerOpts("-L${pdfiumRoot.dir("lib").asFile.absolutePath}", "-lpdfium")
+            linkerOpts(
+                "-L${pdfiumRoot.dir("lib").asFile.absolutePath}",
+                "-lpdfium",
+                "-L${mobiRoot.get().asFile.absolutePath}",
+                "-lmobi"
+            )
             isStatic = true
         }
     }

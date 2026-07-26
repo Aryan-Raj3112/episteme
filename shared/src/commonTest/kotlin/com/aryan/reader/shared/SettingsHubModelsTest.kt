@@ -87,6 +87,29 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `ios standard settings omit auth and cloud while retaining local folders`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                accountAvailable = false,
+                includeAccountAuthActions = false,
+                syncAvailable = false,
+                folderSyncAvailable = true,
+                aiSettingsAvailable = false,
+            )
+        )
+        val actions = model.visibleNestedActions()
+
+        assertFalse(SharedSettingsAction.SIGN_IN in actions)
+        assertFalse(SharedSettingsAction.SIGN_OUT in actions)
+        assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
+        assertFalse(SharedSettingsAction.AI_SETTINGS in actions)
+        assertTrue(SharedSettingsAction.FOLDER_SYNC in actions)
+        assertTrue(SharedSettingsAction.CUSTOM_FONTS in actions)
+        assertTrue(SharedSettingsAction.APP_THEME in actions)
+    }
+
+    @Test
     fun `desktop can hide account auth rows while preserving sync controls`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(
