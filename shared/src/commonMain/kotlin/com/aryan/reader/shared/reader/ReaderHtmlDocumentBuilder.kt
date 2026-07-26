@@ -534,7 +534,9 @@ object ReaderHtmlDocumentBuilder {
                 }
                 html.reader-vertical-root {
                   width: 100%;
+                  max-width: 100%;
                   min-width: 0;
+                  overflow-x: hidden;
                   overflow-y: scroll;
                   scrollbar-width: thin;
                 }
@@ -769,19 +771,29 @@ object ReaderHtmlDocumentBuilder {
                  */
                 .reader-content {
                   box-sizing: border-box;
+                  width: 100%;
                   min-width: 0;
                   max-width: 100%;
                   overflow-wrap: anywhere;
                   word-wrap: break-word;
                 }
-                .reader-content :where(p, li, div, blockquote, h1, h2, h3, h4, h5, h6, a, span, font, nobr, code, pre, td, th) {
+                .reader-virtual-chunk {
+                  box-sizing: border-box;
+                  width: 100%;
                   min-width: 0;
                   max-width: 100%;
+                  contain: inline-size;
+                }
+                .reader-content :where(*) {
+                  box-sizing: border-box;
+                  min-width: 0 !important;
+                  max-width: 100% !important;
                   overflow-wrap: anywhere !important;
                   word-wrap: break-word !important;
                 }
                 .reader-content nobr,
-                .reader-content [style*="nowrap" i] {
+                .reader-content [style*="nowrap" i],
+                .reader-content :where(p, li, div, blockquote, h1, h2, h3, h4, h5, h6, a, span, font, code, pre, td, th) {
                   white-space: normal !important;
                 }
                 .reader-content pre,

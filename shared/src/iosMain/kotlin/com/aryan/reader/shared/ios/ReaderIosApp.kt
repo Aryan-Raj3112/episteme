@@ -313,7 +313,7 @@ private enum class IosUtilityScreen {
 data class IosImportedFile(
     val name: String,
     val path: String,
-    val sourceFolder: String = "iOS import",
+    val sourceFolder: String = "",
 )
 
 internal data class IosExternalOpen(
@@ -384,7 +384,10 @@ private fun loadPersistedImportedFiles(): List<IosImportedFile> {
             if (parts.size !in 2..3) return@mapNotNull null
             val name = parts[0].unescapePersistedValue()
             val resolvedPath = parts[1].unescapePersistedValue().resolvedIosImportedFilePath()
-            val sourceFolder = parts.getOrNull(2)?.unescapePersistedValue()?.ifBlank { null } ?: "iOS import"
+            val sourceFolder = parts.getOrNull(2)
+                ?.unescapePersistedValue()
+                ?.takeUnless { it == "iOS import" }
+                .orEmpty()
             IosImportedFile(name = name, path = resolvedPath, sourceFolder = sourceFolder)
         }
         .distinctBy { it.path }
@@ -587,7 +590,9 @@ private fun ReaderIosApp(
     onRemoveFolder: (String) -> Unit,
 ) {
     val persistedLibrary = remember { loadIosLibrarySnapshot() }
-    var state by remember { mutableStateOf(persistedLibrary.toSharedMobileReaderState()) }
+    var state by remember {
+        mutableStateOf(persistedLibrary.toSharedMobileReaderState().withoutLegacyIosImportsFolder())
+    }
     LaunchedEffect(state) {
         persistIosLibrarySnapshot(state)
     }
@@ -633,13 +638,14 @@ private fun ReaderIosApp(
 
     fun openLibraryBook(book: BookItem) {
         state = state.withMobileBookOpened(book)
+        val openedBook = state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: book
         if (book.type in IOS_NATIVE_READER_FILE_TYPES) {
             if (book.type == FileType.MOBI) {
                 iosMobiLog {
                     "Opening reader screen id=${book.id} file=${book.displayName} pathPresent=${!book.path.isNullOrBlank()}"
                 }
             }
-            activeReaderBook = book
+            activeReaderBook = openedBook
             return
         }
         state = state.copy(
@@ -701,6 +707,30 @@ private fun ReaderIosApp(
                 .count { book -> state.rawLibraryBooks.none { it.id == book.id } }
             if (importedCount > 0) {
                 addBooksToLibrary(importedBooks, "Added $importedCount import(s)")
+            }
+        }
+        val presentationCandidates = state.rawLibraryBooks.filter { book ->
+            book.path != null &&
+                book.type in setOf(FileType.PDF, FileType.EPUB, FileType.MOBI, FileType.CBZ) &&
+                (
+                    book.coverImagePath.isNullOrBlank() ||
+                        book.title.isNullOrBlank() ||
+                        book.title == book.displayName.substringBeforeLast('.', book.displayName)
+                )
+        }
+        presentationCandidates.forEach { book ->
+            val presentation = extractIosBookPresentation(book)
+            val coverPath = presentation.coverBytes
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { bytes -> persistIosGeneratedCover(book, bytes) }
+            if (presentation.title != null || presentation.author != null || coverPath != null) {
+                state = state.withUpdatedIosBook(
+                    book.copy(
+                        title = presentation.title ?: book.title,
+                        author = presentation.author ?: book.author,
+                        coverImagePath = coverPath ?: book.coverImagePath,
+                    ),
+                )
             }
         }
     }
@@ -1129,7 +1159,7 @@ private fun ReaderIosApp(
                                         state = state.closeTab(book.id)
                                     }
                                     override fun closeAllTabs() {
-                                        state = state.copy(openTabIds = emptyList(), activeTabBookId = null)
+                                        state = state.reduce(AppAction.AllTabsClosed).copy(openTabs = emptyList())
                                     }
                                     override fun togglePinned(book: BookItem) {
                                         state = state.toggleHomePinned(book.id)
@@ -1149,6 +1179,11 @@ private fun ReaderIosApp(
                                     override fun updateBook(book: BookItem) {
                                         state = state.withUpdatedIosBook(book)
                                         bridge.consumeImportedCover()
+                                    }
+                                    override fun saveBook(book: BookItem) {
+                                        if (!bridge.shareFile(book.path.orEmpty())) {
+                                            showMessage("The original file is not available to save")
+                                        }
                                     }
                                     override fun shareBook(book: BookItem) {
                                         if (!bridge.shareFile(book.path.orEmpty())) {
@@ -1215,6 +1250,11 @@ private fun ReaderIosApp(
                                     state = state.withUpdatedIosBook(book)
                                     bridge.consumeImportedCover()
                                 },
+                                onSaveBook = { book ->
+                                    if (!bridge.shareFile(book.path.orEmpty())) {
+                                        showMessage("The original file is not available to save")
+                                    }
+                                },
                                 onShareBook = { book ->
                                     if (!bridge.shareFile(book.path.orEmpty())) {
                                         showMessage("The original file is not available to share")
@@ -1238,6 +1278,33 @@ private fun ReaderIosApp(
                                 },
                                 onCreateShelf = { name, bookIds ->
                                     state = state.createIosShelf(name, bookIds)
+                                },
+                                onAddFolder = onImportFolder,
+                                onScanFolders = onRefreshFolders,
+                                onSyncFolderMetadata = onRefreshFolders,
+                                onFolderLocalSyncChange = { folder, enabled ->
+                                    state = state.copy(
+                                        syncedFolders = state.syncedFolders.map {
+                                            if (it.uriString == folder.uriString) it.copy(localSyncEnabled = enabled) else it
+                                        },
+                                    )
+                                },
+                                onFolderFileTypesChange = { folder, types ->
+                                    state = state.copy(
+                                        syncedFolders = state.syncedFolders.map {
+                                            if (it.uriString == folder.uriString) it.copy(allowedFileTypes = types) else it
+                                        },
+                                    )
+                                    onRefreshFolders()
+                                },
+                                onRemoveFolder = { folder ->
+                                    onRemoveFolder(folder.name)
+                                    val folderBookIds = state.rawLibraryBooks
+                                        .filter { it.sourceFolder == folder.name || it.sourceFolder == folder.uriString }
+                                        .mapTo(mutableSetOf()) { it.id }
+                                    state = state.copy(
+                                        syncedFolders = state.syncedFolders.filterNot { it.uriString == folder.uriString },
+                                    ).removeIosBooks(folderBookIds)
                                 },
                                 onDeleteBooks = { bookIds ->
                                     bridge.removeImportedFiles(
@@ -1413,19 +1480,39 @@ private fun SharedReaderScreenState.closeTab(bookId: String): SharedReaderScreen
 }
 
 private fun SharedReaderScreenState.withIosImportsFolder(importedBooks: List<BookItem>): SharedReaderScreenState {
-    val sourceNames = importedBooks.mapNotNullTo(mutableSetOf()) { it.sourceFolder }
+    val sourceNames = importedBooks.mapNotNullTo(mutableSetOf()) {
+        it.sourceFolder?.takeUnless { source -> source == "iOS import" }
+    }
     val folderIds = sourceNames.associateWith { name -> "ios_folder_${name.normalizedId()}" }
     val folders = sourceNames.map { sourceName ->
         val books = rawLibraryBooks.filter { it.sourceFolder == sourceName }
         Shelf(
             id = folderIds.getValue(sourceName),
-            name = if (sourceName == "iOS import") "iOS Imports" else sourceName,
+            name = sourceName,
             type = ShelfType.FOLDER,
             books = books,
             directBooks = books,
         )
     }
     return copy(shelves = shelves.filterNot { it.id in folderIds.values } + folders)
+}
+
+private fun SharedReaderScreenState.withoutLegacyIosImportsFolder(): SharedReaderScreenState {
+    fun BookItem.migrated() = if (sourceFolder == "iOS import") copy(sourceFolder = null) else this
+    val migratedRaw = rawLibraryBooks.map { it.migrated() }
+    val legacyIds = shelves
+        .filter { it.type == ShelfType.FOLDER && (it.name == "iOS Imports" || it.name == "iOS import") }
+        .mapTo(mutableSetOf()) { it.id }
+    return copy(
+        rawLibraryBooks = migratedRaw,
+        libraryBooks = libraryBooks.map { it.migrated() },
+        recentBooks = recentBooks.map { it.migrated() },
+        openTabs = openTabs.map { it.migrated() },
+        shelves = shelves.filterNot { it.id in legacyIds },
+        syncedFolders = syncedFolders.filterNot {
+            it.name == "iOS import" || it.name == "iOS Imports" || it.uriString == "iOS import"
+        },
+    )
 }
 
 private fun SharedReaderScreenState.createIosShelf(
@@ -1529,6 +1616,44 @@ private fun writeIosUtf8File(path: String, content: String): Boolean {
     return written == bytes.size.toULong()
 }
 
+private fun persistIosGeneratedCover(book: BookItem, bytes: ByteArray): String? {
+    val appSupport = (NSFileManager.defaultManager.URLsForDirectory(
+        directory = NSApplicationSupportDirectory,
+        inDomains = NSUserDomainMask,
+    ).firstOrNull() as? NSURL) ?: return null
+    val directory = appSupport.URLByAppendingPathComponent("Covers", isDirectory = true) ?: return null
+    val directoryPath = directory.path ?: return null
+    NSFileManager.defaultManager.createDirectoryAtPath(
+        path = directoryPath,
+        withIntermediateDirectories = true,
+        attributes = null,
+        error = null,
+    )
+    val extension = when {
+        bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() &&
+            bytes[1] == 0xD8.toByte() &&
+            bytes[2] == 0xFF.toByte() -> "jpg"
+        bytes.size >= 8 &&
+            bytes[0] == 0x89.toByte() &&
+            bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() &&
+            bytes[3] == 0x47.toByte() -> "png"
+        bytes.size >= 6 && bytes.decodeToString(0, 6) in setOf("GIF87a", "GIF89a") -> "gif"
+        else -> "img"
+    }
+    val outputPath = "$directoryPath/${book.id.normalizedId()}.$extension"
+    val file = fopen(outputPath, "wb") ?: return null
+    val written = try {
+        bytes.usePinned { pinned ->
+            fwrite(pinned.addressOf(0), 1u, bytes.size.toULong(), file)
+        }
+    } finally {
+        fclose(file)
+    }
+    return outputPath.takeIf { written == bytes.size.toULong() }
+}
+
 private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>): List<BookItem> {
     if (isEmpty()) return emptyList()
     val existingIds = existingBooks.mapTo(mutableSetOf()) { it.id }
@@ -1551,7 +1676,7 @@ private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>)
                 displayName = file.name,
                 timestamp = now - index,
                 title = file.name.substringBeforeLast('.', file.name),
-                sourceFolder = file.sourceFolder,
+                sourceFolder = file.sourceFolder.takeIf { it.isNotBlank() },
                 progressPercentage = 0f
             )
         }

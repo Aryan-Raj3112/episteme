@@ -25,6 +25,7 @@ interface SharedMobileHomeActions {
     fun createShelfFromSelectedBooks(name: String) {}
     fun showBookInfo(book: BookItem) {}
     fun updateBook(book: BookItem) {}
+    fun saveBook(book: BookItem) {}
     fun shareBook(book: BookItem) {}
     fun exportAnnotations(book: BookItem) {}
     fun importCover() {}

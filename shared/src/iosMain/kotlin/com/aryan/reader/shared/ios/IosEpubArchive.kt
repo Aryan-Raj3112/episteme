@@ -16,6 +16,8 @@ import com.aryan.reader.shared.mobi.mobi_parse_rawml_opt
 import com.aryan.reader.shared.mobi.mobi_meta_get_author
 import com.aryan.reader.shared.mobi.mobi_meta_get_title
 import com.aryan.reader.shared.mobi.reader_mobi_flow_type
+import com.aryan.reader.shared.mobi.reader_mobi_cover_size
+import com.aryan.reader.shared.mobi.reader_mobi_copy_cover
 import com.aryan.reader.shared.mobi.reader_mobi_toc_count
 import com.aryan.reader.shared.mobi.reader_mobi_toc_entry
 import com.aryan.reader.shared.libarchive.ARCHIVE_EOF
@@ -42,6 +44,19 @@ import com.aryan.reader.shared.reader.SharedMobiTocPoint
 import com.aryan.reader.shared.reader.rewriteMobiResourceReferences
 import com.aryan.reader.shared.reader.splitMobiHtml
 import com.aryan.reader.shared.reader.readComicTarEntries
+import com.aryan.reader.shared.pdf.IosPdfiumRuntime
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Create
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_Destroy
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_FillRect
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_GetBuffer
+import com.aryan.reader.shared.pdfium.c.FPDFBitmap_GetStride
+import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
+import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
+import com.aryan.reader.shared.pdfium.c.FPDF_GetPageHeightF
+import com.aryan.reader.shared.pdfium.c.FPDF_GetPageWidthF
+import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
+import com.aryan.reader.shared.pdfium.c.FPDF_LoadPage
+import com.aryan.reader.shared.pdfium.c.FPDF_RenderPageBitmap
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
@@ -67,6 +82,11 @@ import platform.posix.memcpy
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.free
+import org.jetbrains.skia.ColorAlphaType
+import org.jetbrains.skia.ColorType
+import org.jetbrains.skia.Image
+import org.jetbrains.skia.ImageInfo
+import kotlin.math.roundToInt
 import platform.zlib.MAX_WBITS
 import platform.zlib.Z_FINISH
 import platform.zlib.Z_OK
@@ -80,6 +100,171 @@ internal const val IOS_MOBI_LOG_TAG = "ReaderMobiIOS"
 
 internal inline fun iosMobiLog(message: () -> String) {
     println("[$IOS_MOBI_LOG_TAG] ${message()}")
+}
+
+internal data class IosBookPresentation(
+    val title: String? = null,
+    val author: String? = null,
+    val coverBytes: ByteArray? = null,
+)
+
+internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = runCatching {
+    when (book.type) {
+        FileType.EPUB -> extractIosEpubPresentation(book)
+        FileType.MOBI -> extractIosMobiPresentation(book)
+        FileType.PDF -> extractIosPdfPresentation(book)
+        FileType.CBZ -> {
+            val path = book.path.resolveIosEpubSourcePath() ?: return@runCatching IosBookPresentation()
+            val archive = IosZipEpubArchive(path)
+            val firstImage = archive.entryPaths
+                .filter { it.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp") }
+                .sortedWith(String.CASE_INSENSITIVE_ORDER)
+                .firstOrNull()
+            IosBookPresentation(coverBytes = firstImage?.let(archive::readBytes))
+        }
+        else -> IosBookPresentation()
+    }
+}.getOrElse { throwable ->
+    println("[ReaderLibraryIOS] Presentation extraction failed id=${book.id} type=${book.type} message=${throwable.message}")
+    IosBookPresentation()
+}
+
+private fun extractIosPdfPresentation(book: BookItem): IosBookPresentation {
+    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
+    IosPdfiumRuntime.ensureInitialized()
+    val document = FPDF_LoadDocument(path, null) ?: return IosBookPresentation()
+    try {
+        val page = FPDF_LoadPage(document, 0) ?: return IosBookPresentation()
+        try {
+            val pageWidth = FPDF_GetPageWidthF(page).toDouble().coerceAtLeast(1.0)
+            val pageHeight = FPDF_GetPageHeightF(page).toDouble().coerceAtLeast(1.0)
+            val width = 480
+            val height = (width * pageHeight / pageWidth).roundToInt().coerceIn(1, 960)
+            val bitmap = FPDFBitmap_Create(width, height, 1) ?: return IosBookPresentation()
+            try {
+                FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0xFFFFFFFFu)
+                FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, 0, 0)
+                val buffer = FPDFBitmap_GetBuffer(bitmap) ?: return IosBookPresentation()
+                val stride = FPDFBitmap_GetStride(bitmap).coerceAtLeast(width * 4)
+                val pixels = ByteArray(stride * height)
+                pixels.usePinned { pinned ->
+                    memcpy(pinned.addressOf(0), buffer, pixels.size.convert())
+                }
+                val encoded = Image.makeRaster(
+                    ImageInfo(width, height, ColorType.BGRA_8888, ColorAlphaType.OPAQUE),
+                    pixels,
+                    stride,
+                ).encodeToData()
+                return IosBookPresentation(coverBytes = encoded?.bytes)
+            } finally {
+                FPDFBitmap_Destroy(bitmap)
+            }
+        } finally {
+            FPDF_ClosePage(page)
+        }
+    } finally {
+        FPDF_CloseDocument(document)
+    }
+}
+
+private fun extractIosEpubPresentation(book: BookItem): IosBookPresentation {
+    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
+    val archive = IosZipEpubArchive(path)
+    val container = archive.readText("META-INF/container.xml").orEmpty()
+    val opfPath = Regex("""<rootfile\b[^>]*\bfull-path\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        .find(container)?.groupValues?.getOrNull(1)
+        ?: archive.entryPaths.firstOrNull { it.endsWith(".opf", ignoreCase = true) }
+        ?: return IosBookPresentation()
+    val opf = archive.readText(opfPath).orEmpty()
+    val title = opf.iosXmlElementText("title")
+    val author = opf.iosXmlElementText("creator")
+    val coverId = Regex(
+        """<meta\b[^>]*\bname\s*=\s*["']cover["'][^>]*\bcontent\s*=\s*["']([^"']+)["']""",
+        RegexOption.IGNORE_CASE,
+    ).find(opf)?.groupValues?.getOrNull(1)
+    val itemTags = Regex("""<item\b[^>]*>""", RegexOption.IGNORE_CASE).findAll(opf).map { it.value }.toList()
+    val coverItem = itemTags.firstOrNull { tag ->
+        Regex("""\bproperties\s*=\s*["'][^"']*\bcover-image\b[^"']*["']""", RegexOption.IGNORE_CASE).containsMatchIn(tag)
+    } ?: coverId?.let { id ->
+        itemTags.firstOrNull { tag ->
+            tag.iosXmlAttribute("id")?.equals(id, ignoreCase = true) == true
+        }
+    }
+    val coverPath = coverItem?.iosXmlAttribute("href")?.let { href ->
+        val parent = opfPath.substringBeforeLast('/', "")
+        (if (parent.isBlank()) href else "$parent/$href").normalizeIosZipPathSegments()
+    }
+    return IosBookPresentation(
+        title = title,
+        author = author,
+        coverBytes = coverPath?.let(archive::readBytes),
+    )
+}
+
+private fun extractIosMobiPresentation(book: BookItem): IosBookPresentation {
+    val path = book.path.resolveIosEpubSourcePath() ?: return IosBookPresentation()
+    val file = fopen(path, "rb") ?: return IosBookPresentation()
+    val mobi = mobi_init() ?: run {
+        fclose(file)
+        return IosBookPresentation()
+    }
+    try {
+        if (mobi_load_file(mobi, file) != MOBI_SUCCESS) return IosBookPresentation()
+        fun ownedText(value: kotlinx.cinterop.CPointer<ByteVar>?): String? {
+            if (value == null) return null
+            return try {
+                value.toKString().trim().takeIf(String::isNotBlank)
+            } finally {
+                free(value)
+            }
+        }
+        val coverSize = reader_mobi_cover_size(mobi).toInt()
+        val cover = if (coverSize > 0) {
+            ByteArray(coverSize).also { bytes ->
+                val copied = bytes.usePinned { pinned ->
+                    reader_mobi_copy_cover(mobi, pinned.addressOf(0).reinterpret(), coverSize.convert())
+                }
+                if (copied.toInt() != coverSize) return@also
+            }
+        } else {
+            null
+        }
+        return IosBookPresentation(
+            title = ownedText(mobi_meta_get_title(mobi)),
+            author = ownedText(mobi_meta_get_author(mobi)),
+            coverBytes = cover,
+        )
+    } finally {
+        fclose(file)
+        mobi_free(mobi)
+    }
+}
+
+private fun String.iosXmlElementText(localName: String): String? =
+    Regex(
+        """<(?:[\w.-]+:)?$localName\b[^>]*>([\s\S]*?)</(?:[\w.-]+:)?$localName\s*>""",
+        RegexOption.IGNORE_CASE,
+    ).find(this)?.groupValues?.getOrNull(1)
+        ?.replace(Regex("""<[^>]+>"""), " ")
+        ?.decodeIosXmlEntities()
+        ?.replace(Regex("""\s+"""), " ")
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+
+private fun String.iosXmlAttribute(name: String): String? =
+    Regex("""\b$name\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        .find(this)?.groupValues?.getOrNull(1)
+
+private fun String.normalizeIosZipPathSegments(): String {
+    val output = mutableListOf<String>()
+    replace('\\', '/').split('/').forEach { segment ->
+        when (segment) {
+            "", "." -> Unit
+            ".." -> if (output.isNotEmpty()) output.removeAt(output.lastIndex)
+            else -> output += segment
+        }
+    }
+    return output.joinToString("/")
 }
 
 internal fun loadIosEpubBook(book: BookItem): SharedEpubBook {

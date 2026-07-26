@@ -105,6 +105,7 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -125,6 +126,7 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -132,12 +134,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -213,6 +217,8 @@ import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SortOrder
+import com.aryan.reader.shared.SyncedFolder
+import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.cardAuthor
 import com.aryan.reader.shared.cardTitle
@@ -3563,6 +3569,16 @@ fun SharedMobileHomeScreen(
                         },
                         onAddToShelf = { showCreateShelf = true },
                         onTag = { showTagDialog = true },
+                        onInfo = selectedIds.singleOrNull()?.let { id ->
+                            state.recentBooks.firstOrNull { it.id == id }?.let { book ->
+                                { infoBook = book }
+                            }
+                        },
+                        onSave = selectedIds.singleOrNull()?.let { id ->
+                            state.recentBooks.firstOrNull { it.id == id }?.let { book ->
+                                { actions.saveBook(book) }
+                            }
+                        },
                         onShare = selectedIds.singleOrNull()?.let { id ->
                             state.recentBooks.firstOrNull { it.id == id }?.let { book ->
                                 { actions.shareBook(book) }
@@ -3578,7 +3594,6 @@ fun SharedMobileHomeScreen(
                 } else {
                     SharedMobileHomeTopBar(
                         onDrawerClick = actions::openDrawer,
-                        onSearchClick = actions::openSearch,
                         isSyncEnabled = state.isSyncEnabled || state.syncedFolders.any { it.localSyncEnabled },
                         onRefresh = actions::refresh,
                         onSettingsClick = actions::openSettings,
@@ -3629,28 +3644,18 @@ fun SharedMobileHomeScreen(
                         }
                     }
 
-                    if (model.pinnedBooks.isNotEmpty()) {
-                        item(key = "pinned") {
-                            SharedMobileBookGridSection(
-                                title = readerString("pinned", "Pinned"),
-                                books = model.pinnedBooks,
-                                selectedBookIds = selectedIds,
-                                pinnedBookIds = state.pinnedHomeBookIds,
-                                onOpenBook = actions::openBook,
-                                onLongPressBook = actions::longPressBook,
-                                onTogglePinned = actions::togglePinned,
-                                onShowBookInfo = { infoBook = it }
-                            )
-                        }
-                    }
-
                     item(key = "recent") {
                         SharedMobileBookGridSection(
                             title = readerString("recent_files", "Recent files"),
-                            books = model.recentBooks,
+                            books = state.mobileRecentBooks(),
                             selectedBookIds = selectedIds,
                             pinnedBookIds = state.pinnedHomeBookIds,
-                            onOpenBook = actions::openBook,
+                            onOpenBook = { book ->
+                                when (mobileBookTapIntent(selectedIds)) {
+                                    SharedMobileBookTapIntent.OPEN -> actions.openBook(book)
+                                    SharedMobileBookTapIntent.TOGGLE_SELECTION -> actions.longPressBook(book)
+                                }
+                            },
                             onLongPressBook = actions::longPressBook,
                             onTogglePinned = actions::togglePinned,
                             onShowBookInfo = { infoBook = it }
@@ -3737,6 +3742,7 @@ fun SharedMobileLibraryScreen(
     onLongPressShelf: (Shelf) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
     onUpdateBook: (BookItem) -> Unit = {},
+    onSaveBook: (BookItem) -> Unit = {},
     onShareBook: (BookItem) -> Unit = {},
     onExportAnnotations: (BookItem) -> Unit = {},
     onImportCover: () -> Unit = {},
@@ -3745,6 +3751,12 @@ fun SharedMobileLibraryScreen(
     onCreateShelf: (String, Set<String>) -> Unit = { _, _ -> },
     onDeleteBooks: (Set<String>) -> Unit = {},
     onDeleteShelves: (Set<String>) -> Unit = {},
+    onAddFolder: () -> Unit = {},
+    onScanFolders: () -> Unit = {},
+    onSyncFolderMetadata: () -> Unit = {},
+    onFolderLocalSyncChange: (SyncedFolder, Boolean) -> Unit = { _, _ -> },
+    onFolderFileTypesChange: (SyncedFolder, Set<FileType>) -> Unit = { _, _ -> },
+    onRemoveFolder: (SyncedFolder) -> Unit = {},
     onRenameShelf: (Shelf, String) -> Unit = { _, _ -> },
     onNavigateShelfBack: () -> Unit = {},
     onOpenCatalog: (OpdsCatalog) -> Unit = {},
@@ -3817,6 +3829,16 @@ fun SharedMobileLibraryScreen(
                         onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
                             state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
                                 { onExportAnnotations(book) }
+                            }
+                        },
+                        onInfo = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
+                                { infoBook = book }
+                            }
+                        },
+                        onSave = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
+                                { onSaveBook(book) }
                             }
                         },
                         onDelete = { showDeleteBooks = true }
@@ -3897,7 +3919,12 @@ fun SharedMobileLibraryScreen(
                 books = sortedSearchedBooks,
                 selectedBookIds = state.selectedBookIds,
                 pinnedBookIds = state.pinnedLibraryBookIds,
-                onOpenBook = onOpenBook,
+                onOpenBook = { book ->
+                    when (mobileBookTapIntent(selectedIds)) {
+                        SharedMobileBookTapIntent.OPEN -> onOpenBook(book)
+                        SharedMobileBookTapIntent.TOGGLE_SELECTION -> onLongPressBook(book)
+                    }
+                },
                 onLongPressBook = onLongPressBook,
                 onTogglePinned = onTogglePinned,
                 onShowBookInfo = { infoBook = it },
@@ -3925,13 +3952,15 @@ fun SharedMobileLibraryScreen(
                     .padding(padding)
             )
 
-            SharedMobileLibraryTab.FOLDERS -> SharedMobileShelfList(
-                shelves = state.shelves.filter { it.type == ShelfType.FOLDER && it.parentShelfId == null },
-                onOpenShelf = onOpenShelf,
-                onLongPressShelf = onLongPressShelf,
-                emptyTitle = readerString("desktop_no_folders_yet", "No folders yet"),
-                emptyMessage = readerString("sync_folders_desc", "Choose a local folder to keep its supported books in this library."),
-                selectedShelfIds = state.selectedShelfIds,
+            SharedMobileLibraryTab.FOLDERS -> SharedMobileFolderSyncScreen(
+                folders = state.syncedFolders,
+                books = state.rawLibraryBooks,
+                onAddFolder = onAddFolder,
+                onScanAll = onScanFolders,
+                onSyncMetadata = onSyncFolderMetadata,
+                onLocalSyncChange = onFolderLocalSyncChange,
+                onFileTypesChange = onFolderFileTypesChange,
+                onRemoveFolder = onRemoveFolder,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
@@ -4219,23 +4248,19 @@ enum class SharedMobileLibraryTab(val label: String) {
 @Composable
 private fun SharedMobileHomeTopBar(
     onDrawerClick: () -> Unit,
-    onSearchClick: () -> Unit,
     isSyncEnabled: Boolean,
     onRefresh: () -> Unit,
     onSettingsClick: () -> Unit,
     onMoreClick: () -> Unit
 ) {
     CenterAlignedTopAppBar(
-        title = { Text(readerString("desktop_reader", "Reader")) },
+        title = {},
         navigationIcon = {
             IconButton(onClick = onDrawerClick) {
                 Icon(Icons.Default.Menu, contentDescription = "Menu")
             }
         },
         actions = {
-            IconButton(onClick = onSearchClick) {
-                Icon(Icons.Default.Search, contentDescription = "Search")
-            }
             if (isSyncEnabled) {
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Sync, contentDescription = "Refresh")
@@ -4353,6 +4378,8 @@ private fun SharedMobileContextualTopBar(
     onAddToShelf: (() -> Unit)? = null,
     onTag: (() -> Unit)? = null,
     onRename: (() -> Unit)? = null,
+    onInfo: (() -> Unit)? = null,
+    onSave: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
     onExportAnnotations: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null
@@ -4366,57 +4393,77 @@ private fun SharedMobileContextualTopBar(
             }
         },
         actions = {
+            if (onInfo != null && selectedCount == 1) {
+                IconButton(onClick = onInfo) {
+                    Icon(Icons.Default.Info, contentDescription = "Book info")
+                }
+            }
             IconButton(onClick = onPin) {
                 Icon(Icons.Default.PushPin, contentDescription = "Pin")
             }
             IconButton(onClick = onSelectAll) {
                 Icon(Icons.Default.SelectAll, contentDescription = "Select all")
             }
-            if (onAddToShelf != null) {
-                IconButton(onClick = onAddToShelf) {
-                    Icon(Icons.Default.Add, contentDescription = "Add to shelf")
-                }
-            }
-            if (onTag != null) {
-                TextButton(onClick = onTag) { Text(readerString("section_tags", "Tags")) }
-            }
-            if (onRename != null) {
-                TextButton(onClick = onRename) { Text(readerString("action_rename", "Rename")) }
-            }
             if (onDelete != null) {
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "Remove selected")
                 }
             }
-            if (onShare != null || onExportAnnotations != null) {
-                Box {
-                    IconButton(onClick = { showMoreMenu = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More actions")
+            Box {
+                IconButton(onClick = { showMoreMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "More actions")
+                }
+                DropdownMenu(
+                    expanded = showMoreMenu,
+                    onDismissRequest = { showMoreMenu = false }
+                ) {
+                    onTag?.let { tag ->
+                        DropdownMenuItem(
+                            text = { Text(readerString("section_tags", "Tags")) },
+                            onClick = { showMoreMenu = false; tag() }
+                        )
                     }
-                    DropdownMenu(
-                        expanded = showMoreMenu,
-                        onDismissRequest = { showMoreMenu = false }
-                    ) {
+                    onAddToShelf?.let { addToShelf ->
+                        DropdownMenuItem(
+                            text = { Text(readerString("desktop_add_to_shelf", "Add to shelf")) },
+                            leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
+                            onClick = { showMoreMenu = false; addToShelf() }
+                        )
+                    }
+                    onRename?.let { rename ->
+                        DropdownMenuItem(
+                            text = { Text(readerString("action_rename", "Rename")) },
+                            onClick = { showMoreMenu = false; rename() }
+                        )
+                    }
+                    if (selectedCount == 1) {
+                        onSave?.let { save ->
+                            DropdownMenuItem(
+                                text = { Text(readerString("action_save_copy_to_device", "Save copy to device")) },
+                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
+                                onClick = { showMoreMenu = false; save() }
+                            )
+                        }
                         onShare?.let { share ->
                             DropdownMenuItem(
                                 text = { Text(readerString("action_share_original_file", "Share original file")) },
                                 leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    share()
-                                }
+                                onClick = { showMoreMenu = false; share() }
                             )
                         }
                         onExportAnnotations?.let { export ->
                             DropdownMenuItem(
                                 text = { Text(readerString("action_export_annotations", "Export annotations")) },
-                                onClick = {
-                                    showMoreMenu = false
-                                    export()
-                                }
+                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
+                                onClick = { showMoreMenu = false; export() }
                             )
                         }
                     }
+                    DropdownMenuItem(
+                        text = { Text(readerString("action_clear", "Clear")) },
+                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                        onClick = { showMoreMenu = false; onClose() }
+                    )
                 }
             }
         }
@@ -4692,39 +4739,90 @@ private fun SharedMobileLibraryListItem(
     onTogglePinned: () -> Unit,
     onShowBookInfo: () -> Unit
 ) {
-    Surface(
+    ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.medium) else Modifier)
-            .clip(MaterialTheme.shapes.medium)
+            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
+            .clip(MaterialTheme.shapes.large)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 1.dp
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 6.dp else 2.dp),
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .height(132.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             SharedMobileBookCover(
                 book = book,
                 selected = selected,
                 pinned = pinned,
                 onTogglePinned = onTogglePinned,
-                modifier = Modifier.size(width = 52.dp, height = 76.dp),
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(0.7f),
                 compact = true
             )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(book.cardTitle(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(book.cardAuthor(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(book.type.name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            }
-            book.progressPercentage?.takeIf { it > 0f }?.coerceIn(0f, 100f)?.toInt()?.let { progress ->
-                Text("$progress%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = onShowBookInfo) {
-                Icon(Icons.Default.MoreVert, contentDescription = "Book details")
+            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Text(
+                        book.cardTitle(),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        minLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 20.sp,
+                    )
+                    if (pinned) {
+                        Icon(
+                            Icons.Default.PushPin,
+                            contentDescription = "Pinned",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    book.cardAuthor(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    minLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ) {
+                    Text(
+                        book.type.name,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                book.progressPercentage?.takeIf { it > 0f }?.coerceIn(0f, 100f)?.let { progress ->
+                    LinearProgressIndicator(
+                        progress = { progress / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "${progress.toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -4757,13 +4855,15 @@ private fun SharedMobileBookCover(
             } else {
                 Icon(Icons.Default.Book, contentDescription = null, modifier = Modifier.size(if (compact) 24.dp else 38.dp))
             }
-            Text(
-                text = book.type.name,
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
-            )
-            if (pinned) {
+            if (!compact) {
+                Text(
+                    text = book.type.name,
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                )
+            }
+            if (pinned && !compact) {
                 IconButton(
                     onClick = onTogglePinned,
                     modifier = Modifier.align(Alignment.TopStart).size(if (compact) 28.dp else 36.dp)
@@ -4793,6 +4893,252 @@ private fun SharedMobileBookCover(
             }
         }
     }
+}
+
+@Composable
+private fun SharedMobileFolderSyncScreen(
+    folders: List<SyncedFolder>,
+    books: List<BookItem>,
+    onAddFolder: () -> Unit,
+    onScanAll: () -> Unit,
+    onSyncMetadata: () -> Unit,
+    onLocalSyncChange: (SyncedFolder, Boolean) -> Unit,
+    onFileTypesChange: (SyncedFolder, Set<FileType>) -> Unit,
+    onRemoveFolder: (SyncedFolder) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var editingFolder by remember { mutableStateOf<SyncedFolder?>(null) }
+    if (folders.isEmpty()) {
+        SharedMobileEmptyLibrary(
+            title = readerString("sync_local_folders", "Sync Local Folders"),
+            message = readerString(
+                "sync_folders_desc",
+                "Connect local folders to create a live library. Reader will monitor supported files.",
+            ),
+            actionLabel = readerString("action_select_folder", "Select Folder"),
+            onAction = onAddFolder,
+            modifier = modifier,
+        )
+    } else {
+        Box(modifier = modifier) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                FilledTonalButton(
+                    onClick = onScanAll,
+                    enabled = folders.any { it.localSyncEnabled },
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(readerString("scan_all", "Scan All"))
+                }
+                OutlinedButton(
+                    onClick = onSyncMetadata,
+                    enabled = folders.any { it.localSyncEnabled },
+                    modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(readerString("sync_meta", "Sync Meta"))
+                }
+            }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 88.dp),
+                ) {
+                    items(folders, key = { it.uriString }) { folder ->
+                        val folderBooks = books.filter {
+                            it.sourceFolder == folder.name || it.sourceFolder == folder.uriString
+                        }
+                        SharedMobileFolderCard(
+                            folder = folder,
+                            books = folderBooks,
+                            onEditFilters = { editingFolder = folder },
+                            onLocalSyncChange = { onLocalSyncChange(folder, it) },
+                            onRemove = { onRemoveFolder(folder) },
+                        )
+                    }
+                }
+            }
+            ExtendedFloatingActionButton(
+                text = { Text(readerString("fab_add_folder", "Add Folder")) },
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                onClick = onAddFolder,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            )
+        }
+    }
+
+    editingFolder?.let { folder ->
+        SharedMobileFolderFiltersDialog(
+            folder = folder,
+            onDismiss = { editingFolder = null },
+            onSave = {
+                onFileTypesChange(folder, it)
+                editingFolder = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun SharedMobileFolderCard(
+    folder: SyncedFolder,
+    books: List<BookItem>,
+    onEditFilters: () -> Unit,
+    onLocalSyncChange: (Boolean) -> Unit,
+    onRemove: () -> Unit,
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.FolderSpecial,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        folder.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (!folder.localSyncEnabled) {
+                        Text(
+                            readerString("folder_local_sync_disabled", "Local sync disabled"),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                Box {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Folder options")
+                    }
+                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(readerString("menu_edit_filters", "Edit Filters")) },
+                            onClick = { showMenu = false; onEditFilters() },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (folder.localSyncEnabled) {
+                                        readerString("menu_disable_folder_local_sync", "Disable local sync")
+                                    } else {
+                                        readerString("menu_enable_folder_local_sync", "Enable local sync")
+                                    },
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onLocalSyncChange(!folder.localSyncEnabled)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(readerString("menu_remove_folder", "Remove Folder")) },
+                            onClick = { showMenu = false; onRemove() },
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            Row(Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        readerString("last_sync", "LAST SYNC"),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        if (folder.lastScanTime == 0L) readerString("never", "Never") else "Updated",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                    Text(
+                        readerString("books_count", "BOOKS"),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(books.size.toString(), style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            val counts = books.groupingBy { it.type }.eachCount()
+            if (counts.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(counts.entries.toList(), key = { it.key.name }) { (type, count) ->
+                        InputChip(
+                            selected = false,
+                            onClick = {},
+                            label = { Text("${type.name}: $count") },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedMobileFolderFiltersDialog(
+    folder: SyncedFolder,
+    onDismiss: () -> Unit,
+    onSave: (Set<FileType>) -> Unit,
+) {
+    val availableTypes = remember {
+        SharedFileCapabilities.all
+            .filter { it.syncEligible && it.isReadableOnIos }
+            .map { it.type }
+    }
+    var selectedTypes by remember(folder.uriString, folder.allowedFileTypes) {
+        mutableStateOf(folder.allowedFileTypes.intersect(availableTypes.toSet()))
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(readerString("filter_file_types", "Filter File Types")) },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(availableTypes, key = { it.name }) { type ->
+                    FilterChip(
+                        selected = type in selectedTypes,
+                        onClick = {
+                            selectedTypes = if (type in selectedTypes) selectedTypes - type else selectedTypes + type
+                        },
+                        label = { Text(type.name) },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(selectedTypes) },
+                enabled = selectedTypes.isNotEmpty(),
+            ) { Text(readerString("action_save", "Save")) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(readerString("action_cancel", "Cancel")) }
+        },
+    )
 }
 
 @Composable

@@ -32,16 +32,62 @@ class SharedMobileLibraryMutationsTest {
             .withMobileBookOpened(second)
 
         assertEquals(listOf("first", "second"), state.openTabIds)
+        assertEquals(listOf("first", "second"), state.openTabs.map { it.id })
         assertEquals("second", state.activeTabBookId)
         assertEquals("second", state.selectedBookId)
 
         val closed = state.withMobileBookClosed("second")
 
         assertEquals(listOf("first"), closed.openTabIds)
+        assertEquals(listOf("first"), closed.openTabs.map { it.id })
         assertEquals("first", closed.activeTabBookId)
         assertEquals("first", closed.selectedBookId)
         assertEquals(first.path, closed.selectedUriString)
         assertEquals(first.type, closed.selectedFileType)
+    }
+
+    @Test
+    fun `opening a book restores it to recents and moves it to the front`() {
+        val first = book(id = "first", timestamp = 1L)
+        val second = book(id = "second", timestamp = 2L)
+        val hidden = first.copy(isRecent = false)
+
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(hidden, second),
+            libraryBooks = listOf(hidden, second),
+            recentBooks = listOf(second),
+        ).withMobileBookOpened(hidden, openedAt = 99L)
+
+        assertEquals(listOf("first", "second"), state.recentBooks.map { it.id })
+        assertEquals(99L, state.recentBooks.first().timestamp)
+        assertEquals(true, state.recentBooks.first().isRecent)
+        assertEquals(99L, state.rawLibraryBooks.first { it.id == "first" }.timestamp)
+    }
+
+    @Test
+    fun `opening non pdf books does not create an active tab like android`() {
+        val mobi = book(id = "mobi").copy(type = FileType.MOBI, path = "/books/mobi.mobi")
+
+        val state = SharedReaderScreenState(rawLibraryBooks = listOf(mobi))
+            .withMobileBookOpened(mobi)
+
+        assertEquals(emptyList(), state.openTabIds)
+        assertEquals(emptyList(), state.openTabs)
+        assertEquals("mobi", state.selectedBookId)
+    }
+
+    @Test
+    fun `opening a pdf while tabs are disabled does not enable or create tabs`() {
+        val pdf = book(id = "pdf")
+
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(pdf),
+            isTabsEnabled = false,
+        ).withMobileBookOpened(pdf)
+
+        assertEquals(false, state.isTabsEnabled)
+        assertEquals(emptyList(), state.openTabIds)
+        assertEquals(emptyList(), state.openTabs)
     }
 
     @Test

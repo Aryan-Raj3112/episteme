@@ -517,7 +517,17 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains("--reader-scrollbar-track: color-mix(in srgb, var(--reader-bg)"))
         assertTrue(html.contains("--reader-scrollbar-thumb: color-mix(in srgb, var(--reader-fg)"))
         assertTrue(html.contains("""<html class="reader-vertical-root">"""))
-        assertTrue(Regex("html\\.reader-vertical-root \\{\\s*width: 100%;\\s*min-width: 0;\\s*overflow-y: scroll;\\s*scrollbar-width: thin;").containsMatchIn(html))
+        assertTrue(
+            Regex(
+                "html\\.reader-vertical-root \\{\\s*" +
+                    "width: 100%;\\s*" +
+                    "max-width: 100%;\\s*" +
+                    "min-width: 0;\\s*" +
+                    "overflow-x: hidden;\\s*" +
+                    "overflow-y: scroll;\\s*" +
+                    "scrollbar-width: thin;",
+            ).containsMatchIn(html),
+        )
         assertTrue(html.contains("html.reader-vertical-root::-webkit-scrollbar"))
         assertFalse(html.contains("html.reader-vertical-root::-webkit-scrollbar,\n                body.reader-vertical::-webkit-scrollbar {\n                  width: 0;"))
         assertTrue(html.contains("scrollbar-gutter: stable;"))
@@ -1389,6 +1399,11 @@ class ReaderHtmlDocumentBuilderTest {
         assertTrue(html.contains(".reader-content table"))
         assertTrue(html.contains("overflow-x: auto"))
         assertTrue(html.contains("max-width: 100% !important"))
+        assertTrue(html.contains("html.reader-vertical-root"))
+        assertTrue(html.contains("overflow-x: hidden"))
+        assertTrue(html.contains(".reader-virtual-chunk"))
+        assertTrue(html.contains("contain: inline-size"))
+        assertTrue(html.contains(".reader-content :where(*)"))
     }
 
     private fun repeatedWordBook(text: String): SharedEpubBook {

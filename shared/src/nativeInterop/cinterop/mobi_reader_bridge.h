@@ -26,6 +26,9 @@ int reader_mobi_cover_resource(
     MOBIFiletype *type
 );
 
+size_t reader_mobi_cover_size(const MOBIData *mobi);
+size_t reader_mobi_copy_cover(const MOBIData *mobi, unsigned char *output, size_t capacity);
+
 #ifdef __cplusplus
 }
 #endif

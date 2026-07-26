@@ -20,6 +20,15 @@ import kotlin.test.assertTrue
 class NonReaderLayoutModelsTest {
 
     @Test
+    fun `book taps toggle selection instead of opening while contextual mode is active`() {
+        assertEquals(SharedMobileBookTapIntent.OPEN, mobileBookTapIntent(emptySet()))
+        assertEquals(
+            SharedMobileBookTapIntent.TOGGLE_SELECTION,
+            mobileBookTapIntent(setOf("selected-book")),
+        )
+    }
+
+    @Test
     fun `android library keeps the simple top level organization tabs`() {
         val visibleTabs = visibleNonReaderLibraryTabs(ReaderPlatform.ANDROID)
 
@@ -162,10 +171,10 @@ class NonReaderLayoutModelsTest {
 
     @Test
     fun `home layout separates active tab pinned and recent books`() {
-        val activeTab = book("tab", title = "Open Tab", progress = 12f)
-        val inProgress = book("continue", title = "Continue", progress = 40f)
-        val pinned = book("pinned", title = "Pinned")
-        val recent = book("recent", title = "Recent")
+        val activeTab = book("tab", title = "Open Tab", progress = 12f).copy(timestamp = 40L)
+        val inProgress = book("continue", title = "Continue", progress = 40f).copy(timestamp = 30L)
+        val pinned = book("pinned", title = "Pinned").copy(timestamp = 20L)
+        val recent = book("recent", title = "Recent").copy(timestamp = 10L)
 
         val layout = SharedReaderScreenState(
             rawLibraryBooks = listOf(activeTab, inProgress, pinned, recent),
@@ -182,6 +191,13 @@ class NonReaderLayoutModelsTest {
         assertEquals(listOf(activeTab.id), layout.activeTabs.map { it.id })
         assertEquals(listOf(pinned.id), layout.pinnedBooks.map { it.id })
         assertEquals(listOf(inProgress.id, recent.id), layout.recentBooks.map { it.id })
+        assertEquals(
+            listOf(pinned.id, inProgress.id, recent.id),
+            SharedReaderScreenState(
+                rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
+                pinnedHomeBookIds = setOf(pinned.id),
+            ).mobileRecentBooks().map { it.id },
+        )
         assertEquals(listOf(recent.id), layout.selectedBooks.map { it.id })
         assertTrue(layout.isContextualModeActive)
         assertFalse(layout.isEmpty)

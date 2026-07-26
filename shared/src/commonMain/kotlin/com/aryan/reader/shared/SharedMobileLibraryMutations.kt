@@ -36,18 +36,48 @@ fun SharedReaderScreenState.withMobileImportedBooks(
     )
 }
 
-fun SharedReaderScreenState.withMobileBookOpened(book: BookItem): SharedReaderScreenState {
-    val tabState = withMobileBookTabOpened(book.id)
+fun SharedReaderScreenState.withMobileBookOpened(
+    book: BookItem,
+    openedAt: Long = currentTimestamp(),
+): SharedReaderScreenState {
+    val storedBook = rawLibraryBooks.firstOrNull { it.id == book.id } ?: book
+    val openedBook = storedBook.copy(timestamp = openedAt, isRecent = true)
+    fun List<BookItem>.withOpenedBook(): List<BookItem> =
+        listOf(openedBook) + filterNot { it.id == openedBook.id }
+
+    val openedState = copy(
+        rawLibraryBooks = rawLibraryBooks.map { if (it.id == openedBook.id) openedBook else it },
+        libraryBooks = libraryBooks.map { if (it.id == openedBook.id) openedBook else it },
+        recentBooks = recentBooks.withOpenedBook(),
+        shelves = shelves.map { shelf ->
+            shelf.copy(
+                books = shelf.books.map { if (it.id == openedBook.id) openedBook else it },
+                directBooks = shelf.directBooks.map { if (it.id == openedBook.id) openedBook else it },
+            )
+        },
+    )
+    // Match Android: active tabs are a PDF-only affordance and opening a book must
+    // not turn the feature back on after the user disabled it.
+    val tabState = if (openedBook.type == FileType.PDF && openedState.isTabsEnabled) {
+        openedState.withMobileBookTabOpened(openedBook.id)
+    } else {
+        openedState
+    }
     return tabState.copy(
-        selectedBookId = book.id,
-        selectedUriString = book.path,
-        selectedFileType = book.type,
+        selectedBookId = openedBook.id,
+        selectedUriString = openedBook.path,
+        selectedFileType = openedBook.type,
         bannerMessage = null
     )
 }
 
 fun SharedReaderScreenState.withMobileBookTabOpened(bookId: String): SharedReaderScreenState {
-    return reduce(AppAction.BookTabOpened(bookId))
+    val updated = reduce(AppAction.BookTabOpened(bookId))
+    return updated.copy(
+        openTabs = updated.openTabIds.mapNotNull { id ->
+            updated.rawLibraryBooks.firstOrNull { it.id == id }
+        },
+    )
 }
 
 fun SharedReaderScreenState.withMobileBookClosed(bookId: String): SharedReaderScreenState {
@@ -64,5 +94,10 @@ fun SharedReaderScreenState.withMobileBookClosed(bookId: String): SharedReaderSc
 }
 
 fun SharedReaderScreenState.withMobileBookTabClosed(bookId: String): SharedReaderScreenState {
-    return reduce(AppAction.BookTabClosed(bookId))
+    val updated = reduce(AppAction.BookTabClosed(bookId))
+    return updated.copy(
+        openTabs = updated.openTabIds.mapNotNull { id ->
+            updated.rawLibraryBooks.firstOrNull { it.id == id }
+        },
+    )
 }

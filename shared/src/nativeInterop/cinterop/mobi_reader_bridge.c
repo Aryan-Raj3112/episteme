@@ -116,3 +116,25 @@ int reader_mobi_cover_resource(
     *type = mobi_determine_resource_type(record);
     return 1;
 }
+
+size_t reader_mobi_cover_size(const MOBIData *mobi) {
+    uint32_t uid = 0;
+    const unsigned char *data = NULL;
+    size_t size = 0;
+    MOBIFiletype type = T_UNKNOWN;
+    return reader_mobi_cover_resource(mobi, &uid, &data, &size, &type) ? size : 0;
+}
+
+size_t reader_mobi_copy_cover(const MOBIData *mobi, unsigned char *output, size_t capacity) {
+    uint32_t uid = 0;
+    const unsigned char *data = NULL;
+    size_t size = 0;
+    MOBIFiletype type = T_UNKNOWN;
+    if (!output ||
+        !reader_mobi_cover_resource(mobi, &uid, &data, &size, &type) ||
+        size > capacity) {
+        return 0;
+    }
+    memcpy(output, data, size);
+    return size;
+}

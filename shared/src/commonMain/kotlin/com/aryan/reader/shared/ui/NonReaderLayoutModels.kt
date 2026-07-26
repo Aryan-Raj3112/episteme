@@ -9,8 +9,10 @@ import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.ShelfType
+import com.aryan.reader.shared.SortOrder
 import com.aryan.reader.shared.isOpdsStream
 import com.aryan.reader.shared.progressPercentValue
+import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.toHomeScreenModel
 
 enum class SharedAppToolAction {
@@ -28,6 +30,14 @@ enum class SharedAppToolAction {
     ABOUT,
     TABS_TOGGLE
 }
+
+internal enum class SharedMobileBookTapIntent {
+    OPEN,
+    TOGGLE_SELECTION,
+}
+
+internal fun mobileBookTapIntent(selectedBookIds: Set<String>): SharedMobileBookTapIntent =
+    if (selectedBookIds.isEmpty()) SharedMobileBookTapIntent.OPEN else SharedMobileBookTapIntent.TOGGLE_SELECTION
 
 enum class SharedAppMoreGroup {
     LIBRARY,
@@ -159,6 +169,14 @@ data class NonReaderHomeLayoutModel(
     val isEmpty: Boolean,
     val isLibraryEmpty: Boolean
 )
+
+internal fun SharedReaderScreenState.mobileRecentBooks(): List<BookItem> {
+    val sorted = sortBooks(rawLibraryBooks.filter { it.isRecent }, SortOrder.RECENT)
+    val pinned = sorted.filter { it.id in pinnedHomeBookIds }
+    val unpinned = sorted.filterNot { it.id in pinnedHomeBookIds }
+    return (pinned + unpinned)
+        .take(if (recentFilesLimit > 0) recentFilesLimit else Int.MAX_VALUE)
+}
 
 fun SharedReaderScreenState.toNonReaderHomeLayoutModel(): NonReaderHomeLayoutModel {
     val model = toHomeScreenModel()
