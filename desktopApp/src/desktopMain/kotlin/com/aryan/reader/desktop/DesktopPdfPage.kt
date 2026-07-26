@@ -142,6 +142,10 @@ internal fun DesktopVerticalPdfPage(
     var eraserPosition by remember(documentHandleId, pageIndex, selectedTool) { mutableStateOf<Offset?>(null) }
     val currentTextSelection by rememberUpdatedState(textSelection)
     val currentAnnotations by rememberUpdatedState(annotations)
+    val textSelectionGesturesEnabled = desktopPdfTextSelectionGestureEnabled(
+        isTextSelectionMode = isTextSelectionMode,
+        selectedTool = selectedTool
+    )
 
     fun clearSelection() {
         selectionStartIndex = null
@@ -360,7 +364,10 @@ internal fun DesktopVerticalPdfPage(
                                     event.changes.forEach { it.consume() }
                                     continue
                                 }
-                                if (selectedTool != PdfInkTool.TEXT) {
+                                if (
+                                    selectedTool != PdfInkTool.TEXT &&
+                                    !textSelectionGesturesEnabled
+                                ) {
                                     val linkTarget = document.linkAt(pageIndex, point, pageCanvasSize)
                                     if (linkTarget != null) {
                                         logPdfChromeTap {
@@ -393,7 +400,8 @@ internal fun DesktopVerticalPdfPage(
                                     event.changes.forEach { it.consume() }
                                 } else if (
                                     currentTextSelection != null &&
-                                    selectionMenuOffset == null
+                                    event.changes.none { it.isConsumed } &&
+                                    currentTextSelection?.handleAt(point, pageCanvasSize) == null
                                 ) {
                                     logPdfChromeTap {
                                         "page_press_passthrough source=vertical_page page=${pageIndex + 1} " +
@@ -424,7 +432,7 @@ internal fun DesktopVerticalPdfPage(
                     }
                 }
                 .pointerInput(pageIndex, displayPageIsCurrent, pageCanvasSize, isTextSelectionMode, isRichTextMode) {
-                    if (!displayPageIsCurrent || isRichTextMode || !isTextSelectionMode) return@pointerInput
+                    if (!displayPageIsCurrent || isRichTextMode || !textSelectionGesturesEnabled) return@pointerInput
                     detectDesktopPdfTextSelectionLongPress(
                         source = "vertical_page",
                         pageIndex = pageIndex
@@ -455,7 +463,7 @@ internal fun DesktopVerticalPdfPage(
                     }
                 }
                 .pointerInput(pageIndex, displayPageIsCurrent, selectedTool, isTextSelectionMode, isRichTextMode) {
-                    if (!displayPageIsCurrent || isRichTextMode || isTextSelectionMode || selectedTool != PdfInkTool.NONE) {
+                    if (!displayPageIsCurrent || isRichTextMode || textSelectionGesturesEnabled || selectedTool != PdfInkTool.NONE) {
                         return@pointerInput
                     }
                     awaitEachGesture {
@@ -503,7 +511,7 @@ internal fun DesktopVerticalPdfPage(
                 ) {
                     if (displayPageIsCurrent && renderedPageWidth > 0 && renderedPageHeight > 0) {
                         if (isRichTextMode) return@pointerInput
-                        if (isTextSelectionMode) {
+                        if (textSelectionGesturesEnabled) {
                             var latestSelectionDragPoint: Offset? = null
                             var lastSelectionPreviewAt = 0L
                             detectDragGestures(
@@ -557,7 +565,7 @@ internal fun DesktopVerticalPdfPage(
                                         val previousEndIndex = selectionEndIndex
                                         selectionEndIndex = endIndex
                                         if (endIndex != previousEndIndex || textSelection == null) {
-                                            textSelection = if (startIndex != null && endIndex != null) {
+                                            val previewSelection = if (startIndex != null && endIndex != null) {
                                                 document.selectionPreviewBetweenIndexes(
                                                     pageIndex = pageIndex,
                                                     startIndex = startIndex,
@@ -566,6 +574,9 @@ internal fun DesktopVerticalPdfPage(
                                                 )
                                             } else {
                                                 null
+                                            }
+                                            if (previewSelection != null) {
+                                                textSelection = previewSelection
                                             }
                                         }
                                     }
@@ -933,21 +944,6 @@ internal fun DesktopVerticalPdfPage(
                         SharedPdfPageNumberOverlay(
                             pageIndex = pageIndex,
                             pageCount = document.pageCount
-                        )
-                    }
-                    if (textSelection != null && selectionMenuOffset != null) {
-                        Box(
-                            modifier = Modifier
-                                .matchParentSize()
-                                .pointerInput(pageIndex, selectionMenuOffset) {
-                                    detectTapGestures {
-                                        logPdfChromeTap {
-                                            "selection_menu_scrim_tap source=vertical_page page=${pageIndex + 1} " +
-                                                "consumedByScrim=true"
-                                        }
-                                        clearSelection()
-                                    }
-                                }
                         )
                     }
                     PdfSelectionMenu(

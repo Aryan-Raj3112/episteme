@@ -332,11 +332,10 @@ internal fun PdfSelectionMenu(
         editingHighlighterSlot = slotIndex
     }
 
-    val actionRowCount = ((actions.size + 2) / 3).coerceAtLeast(1)
     val popupWidthPx = with(density) { PdfSelectionMenuWidth.toPx() }
     val estimatedHeightPx = with(density) {
         PdfSelectionMenuPaletteHeight.toPx() +
-            (actionRowCount * PdfSelectionMenuActionRowHeight.toPx())
+            PdfSelectionMenuActionRowHeight.toPx()
     }
     val placement = sharedSelectionMenuPlacement(
         viewport = SharedSelectionMenuViewport(canvasSize.width, canvasSize.height),
@@ -381,8 +380,7 @@ internal fun PdfSelectionMenu(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -390,8 +388,8 @@ internal fun PdfSelectionMenu(
                         val selected = selectedHighlightStyle == style
                         Surface(
                             modifier = Modifier
-                                .padding(horizontal = 3.dp)
-                                .size(width = 30.dp, height = 28.dp)
+                                .padding(horizontal = 2.dp)
+                                .size(width = 24.dp, height = 24.dp)
                                 .clickable { selectedHighlightStyle = style },
                             color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent,
                             contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
@@ -412,11 +410,20 @@ internal fun PdfSelectionMenu(
                             }
                         }
                     }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     paletteColors.forEach { colorArgb ->
                         Surface(
                             modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .size(28.dp)
+                                .padding(horizontal = 2.dp)
+                                .size(22.dp)
                                 .clickable { onHighlight(colorArgb, selectedHighlightStyle) },
                             color = Color(colorArgb),
                             shape = RoundedCornerShape(16.dp),
@@ -426,8 +433,8 @@ internal fun PdfSelectionMenu(
                     }
                     Box(
                         modifier = Modifier
-                            .padding(horizontal = 4.dp)
-                            .size(28.dp)
+                            .padding(horizontal = 2.dp)
+                            .size(22.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.sweepGradient(
@@ -447,15 +454,15 @@ internal fun PdfSelectionMenu(
                     )
                 }
                 HorizontalDivider()
-                actions.chunked(3).forEach { rowActions ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 3.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        rowActions.forEach { action ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    actions.forEach { action ->
                             val tint = if (action.isDestructive) {
                                 MaterialTheme.colorScheme.error
                             } else {
@@ -463,18 +470,18 @@ internal fun PdfSelectionMenu(
                             }
                             Column(
                                 modifier = Modifier
-                                    .width(58.dp)
+                                    .width(50.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable { action.onClick() }
-                                    .padding(vertical = 6.dp),
+                                    .padding(vertical = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 Icon(
                                     imageVector = action.icon,
                                     contentDescription = action.label,
                                     tint = tint,
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                                 Text(
                                     action.label,
@@ -485,10 +492,6 @@ internal fun PdfSelectionMenu(
                                 )
                             }
                         }
-                        repeat(3 - rowActions.size) {
-                            Spacer(modifier = Modifier.width(58.dp))
-                        }
-                    }
                 }
             }
         }
@@ -564,7 +567,7 @@ private data class PdfSelectionMenuAction(
 )
 
 private val PdfSelectionMenuWidth = 220.dp
-private val PdfSelectionMenuPaletteHeight = 54.dp
+private val PdfSelectionMenuPaletteHeight = 74.dp
 private val PdfSelectionMenuActionRowHeight = 66.dp
 private val PdfSelectionMenuAnchorGap = 16.dp
 private val PdfSelectionMenuMargin = 6.dp

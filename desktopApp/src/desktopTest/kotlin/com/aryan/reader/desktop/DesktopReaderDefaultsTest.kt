@@ -9,6 +9,7 @@ import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedLibrarySnapshot
+import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfZoomSpec
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
@@ -19,6 +20,38 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DesktopReaderDefaultsTest {
+
+    @Test
+    fun `macOS neutral pointer drag selects PDF text`() {
+        assertTrue(
+            desktopPdfTextSelectionGestureEnabled(
+                isTextSelectionMode = false,
+                selectedTool = PdfInkTool.NONE,
+                operatingSystem = DesktopOperatingSystem.MACOS
+            )
+        )
+        assertFalse(
+            desktopPdfTextSelectionGestureEnabled(
+                isTextSelectionMode = false,
+                selectedTool = PdfInkTool.NONE,
+                operatingSystem = DesktopOperatingSystem.WINDOWS
+            )
+        )
+        assertFalse(
+            desktopPdfTextSelectionGestureEnabled(
+                isTextSelectionMode = false,
+                selectedTool = PdfInkTool.PEN,
+                operatingSystem = DesktopOperatingSystem.MACOS
+            )
+        )
+        assertTrue(
+            desktopPdfTextSelectionGestureEnabled(
+                isTextSelectionMode = true,
+                selectedTool = PdfInkTool.NONE,
+                operatingSystem = DesktopOperatingSystem.LINUX
+            )
+        )
+    }
 
     @Test
     fun `desktop open book dialog accepts every shared desktop readable format`() {
