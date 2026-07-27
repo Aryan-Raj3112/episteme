@@ -3770,6 +3770,7 @@ fun SharedMobileLibraryScreen(
     onDownloadOpdsBook: (OpdsEntry, OpdsAcquisition) -> Unit = { _, _ -> },
     onStreamOpdsBook: (OpdsEntry, OpdsCatalog?) -> Unit = { _, _ -> },
     onClearOpdsError: () -> Unit = {},
+    opdsCoverContent: (@Composable (OpdsEntry, Modifier) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val selectedIds = state.selectedBookIds
@@ -3966,26 +3967,32 @@ fun SharedMobileLibraryScreen(
                     .padding(padding)
             )
 
-            SharedMobileLibraryTab.CATALOGS -> SharedOpdsScreen(
-                state = opdsState,
-                localLibraryBooks = state.rawLibraryBooks,
-                onOpenCatalog = onOpenCatalog,
-                onOpenFeedUrl = onOpenFeedUrl,
-                onNavigateBack = onOpdsNavigateBack,
-                onSearch = onOpdsSearch,
-                onLoadNextPage = onOpdsLoadNextPage,
-                onAddCatalog = onAddCatalog,
-                onUpdateCatalog = onUpdateCatalog,
-                onRemoveCatalog = onRemoveCatalog,
-                onDownloadBook = onDownloadOpdsBook,
-                onReadBook = onOpenBook,
-                onStreamBook = onStreamOpdsBook,
-                onClearError = onClearOpdsError,
-                mobileLayout = true,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            )
+            SharedMobileLibraryTab.CATALOGS -> {
+                val catalogModifier = Modifier.fillMaxSize().padding(padding)
+                if (opdsCoverContent == null) {
+                    SharedOpdsScreen(
+                        state = opdsState, localLibraryBooks = state.rawLibraryBooks,
+                        onOpenCatalog = onOpenCatalog, onOpenFeedUrl = onOpenFeedUrl,
+                        onNavigateBack = onOpdsNavigateBack, onSearch = onOpdsSearch,
+                        onLoadNextPage = onOpdsLoadNextPage, onAddCatalog = onAddCatalog,
+                        onUpdateCatalog = onUpdateCatalog, onRemoveCatalog = onRemoveCatalog,
+                        onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
+                        onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
+                        mobileLayout = true, modifier = catalogModifier,
+                    )
+                } else {
+                    SharedOpdsScreen(
+                        state = opdsState, localLibraryBooks = state.rawLibraryBooks,
+                        onOpenCatalog = onOpenCatalog, onOpenFeedUrl = onOpenFeedUrl,
+                        onNavigateBack = onOpdsNavigateBack, onSearch = onOpdsSearch,
+                        onLoadNextPage = onOpdsLoadNextPage, onAddCatalog = onAddCatalog,
+                        onUpdateCatalog = onUpdateCatalog, onRemoveCatalog = onRemoveCatalog,
+                        onDownloadBook = onDownloadOpdsBook, onReadBook = onOpenBook,
+                        onStreamBook = onStreamOpdsBook, onClearError = onClearOpdsError,
+                        coverContent = opdsCoverContent, mobileLayout = true, modifier = catalogModifier,
+                    )
+                }
+            }
         }
     }
 

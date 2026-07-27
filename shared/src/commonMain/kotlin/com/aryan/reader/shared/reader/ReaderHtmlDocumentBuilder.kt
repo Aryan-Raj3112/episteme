@@ -2225,11 +2225,11 @@ object ReaderHtmlDocumentBuilder {
                       reportTimer = null;
                       return;
                     }
-                    if (reportTimer !== null) window.clearTimeout(reportTimer);
+                    if (reportTimer !== null) return;
                     reportTimer = window.setTimeout(function () {
                       reportTimer = null;
                       reportVisiblePage();
-                    }, 140);
+                    }, 80);
                   }
                   function selectionText() {
                     var selection = window.getSelection();

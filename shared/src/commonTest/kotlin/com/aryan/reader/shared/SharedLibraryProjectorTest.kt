@@ -9,6 +9,29 @@ import kotlin.test.assertTrue
 class SharedLibraryProjectorTest {
 
     @Test
+    fun `SharedLibraryStateProjector removes persisted duplicates for the same file path`() {
+        val original = book(id = "original", title = "Book").copy(path = "/var/mobile/imports/book.epub")
+        val duplicate = original.copy(
+            id = "original_1",
+            path = "/private/var/mobile/imports/book.epub",
+            timestamp = original.timestamp - 1,
+        )
+
+        val result = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = SharedReaderScreenState(),
+                booksFromStore = listOf(original, duplicate),
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                tags = emptyList(),
+            )
+        )
+
+        assertEquals(listOf("original"), result.rawLibraryBooks.ids())
+        assertEquals(listOf("original"), result.libraryBooks.ids())
+    }
+
+    @Test
     fun `LibraryProjector searches filters sorts and builds selected library model`() {
         val tag = Tag("favorite", "Favorite")
         val matching = book(

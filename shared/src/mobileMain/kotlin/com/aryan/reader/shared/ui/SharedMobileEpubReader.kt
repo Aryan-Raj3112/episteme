@@ -29,6 +29,11 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -162,6 +167,8 @@ import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderImageReference
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
+import com.aryan.reader.shared.reader.ReaderPageInfo
+import com.aryan.reader.shared.reader.sharedReaderPageInfo
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
 import com.aryan.reader.shared.reader.ReaderSearchOptions
@@ -186,6 +193,7 @@ import com.aryan.reader.shared.generated.resources.retro_intro
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.pow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -223,7 +231,7 @@ fun SharedMobileEpubReaderScreen(
     onReaderStateChange: (SharedMobileEpubReaderSnapshot) -> Unit = {},
     onMetadataLoaded: (title: String, author: String?) -> Unit = { _, _ -> },
     onKeepScreenOnChange: (Boolean) -> Unit = {},
-    onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _ -> },
+    onSystemUiAppearanceChange: (statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _, _ -> },
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
     customFonts: List<CustomFontItem> = emptyList(),
@@ -349,6 +357,12 @@ fun SharedMobileEpubReaderScreen(
         tool in SharedMobileEpubToolbarTools && tool.id !in mobileBottomToolIds
     }
     val overflowMenuTools = visibleToolbarTools.filterNot { it in SharedMobileEpubToolbarTools }
+    val systemUiHidden = when (settings.systemUiMode) {
+        SystemUiMode.DEFAULT -> false
+        SystemUiMode.SYNC -> !showChrome
+        SystemUiMode.HIDDEN -> true
+    }
+    val navigationUiHidden = settings.systemUiMode == SystemUiMode.HIDDEN || !showChrome
 
     DisposableEffect(readerScreenOrientationMode, onApplyReaderScreenOrientation) {
         onApplyReaderScreenOrientation(readerScreenOrientationMode)
@@ -393,19 +407,19 @@ fun SharedMobileEpubReaderScreen(
     }
 
     LaunchedEffect(keepScreenOn) { onKeepScreenOnChange(keepScreenOn) }
-    LaunchedEffect(settings.systemUiMode, settings.darkMode, showChrome) {
-        val hidden = when (settings.systemUiMode) {
-            SystemUiMode.DEFAULT -> false
-            SystemUiMode.SYNC -> !showChrome
-            SystemUiMode.HIDDEN -> true
-        }
+    LaunchedEffect(settings.systemUiMode, settings.darkMode, settings.backgroundColorArgb, showChrome) {
         val backgroundArgb = settings.backgroundColorArgb ?: if (settings.darkMode) 0xFF121212L else 0xFFFFFFFFL
-        onSystemUiAppearanceChange(hidden, settings.darkMode, backgroundArgb)
+        onSystemUiAppearanceChange(
+            systemUiHidden,
+            navigationUiHidden,
+            backgroundArgb.hasDarkReaderBackground(),
+            backgroundArgb
+        )
     }
     DisposableEffect(book.id) {
         onDispose {
             onKeepScreenOnChange(false)
-            onSystemUiAppearanceChange(false, false, 0xFFFFFFFFL)
+            onSystemUiAppearanceChange(false, false, false, 0xFFFFFFFFL)
         }
     }
     LaunchedEffect(autoScroll, autoScrollSpeed) {
@@ -433,7 +447,12 @@ fun SharedMobileEpubReaderScreen(
     }
 
     val pageCount = pages.size.coerceAtLeast(1)
-    val progress = ((currentPageIndex + 1).toFloat() / pageCount) * 100f
+    val liveVerticalLocator = currentLocator.takeIf { settings.readingMode == ReaderReadingMode.VERTICAL }
+    val pageInfo = remember(loadedBook, pages, currentPageIndex, liveVerticalLocator) {
+        loadedBook?.let { sharedReaderPageInfo(it, pages, currentPageIndex, liveVerticalLocator) }
+    }
+    val progress = pageInfo?.progressPercent?.toFloat()
+        ?: ((currentPageIndex + 1).toFloat() / pageCount) * 100f
     LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalSpeed) {
         delay(220)
         currentLocator?.let { locator ->
@@ -725,6 +744,17 @@ fun SharedMobileEpubReaderScreen(
         modifier = modifier
     ) {
         Box(Modifier.fillMaxSize().background(settings.readerBackgroundColor())) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (!systemUiHidden) {
+                            Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                        } else {
+                            Modifier
+                        }
+                    )
+            ) {
                 when {
                     loadState.isLoading -> SharedMobileEpubLoading("Opening EPUB…")
                     loadState.errorMessage != null -> SharedMobileEpubError(loadState.errorMessage)
@@ -966,6 +996,7 @@ fun SharedMobileEpubReaderScreen(
                         }
                     }
                 }
+            }
 
                 val chapterTitle = loadedBook?.tableOfContents?.getOrNull(selectedTocIndex)?.label
                     ?: loadedBook?.chapters?.getOrNull(currentChapterIndex)?.title
@@ -979,11 +1010,28 @@ fun SharedMobileEpubReaderScreen(
                 if (pageInfoVisible) {
                     SharedMobileEpubPageInfo(
                         chapterTitle = chapterTitle,
-                        chapterIndex = currentChapterIndex,
-                        chapterCount = loadedBook?.chapters?.size ?: 0,
+                        pageInfo = pageInfo,
                         progressPercent = progress,
                         settings = settings,
                         modifier = Modifier.align(if (settings.pageInfoPosition == PageInfoPosition.TOP) Alignment.TopCenter else Alignment.BottomCenter)
+                            .then(
+                                if (
+                                    settings.pageInfoPosition == PageInfoPosition.TOP && !systemUiHidden ||
+                                    settings.pageInfoPosition == PageInfoPosition.BOTTOM && !navigationUiHidden
+                                ) {
+                                    Modifier.windowInsetsPadding(
+                                        WindowInsets.safeDrawing.only(
+                                            if (settings.pageInfoPosition == PageInfoPosition.TOP) {
+                                                WindowInsetsSides.Top
+                                            } else {
+                                                WindowInsetsSides.Bottom
+                                            }
+                                        )
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .offset(y = if (settings.pageInfoPosition == PageInfoPosition.TOP && showChrome) 55.dp else if (settings.pageInfoPosition == PageInfoPosition.BOTTOM && showChrome) (-45).dp else 0.dp)
                     )
                 }
@@ -1054,7 +1102,15 @@ fun SharedMobileEpubReaderScreen(
                             autoScrollModeActive = active
                             autoScroll = active
                         },
-                        modifier = Modifier.align(Alignment.TopCenter)
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .then(
+                                if (!systemUiHidden) {
+                                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                                } else {
+                                    Modifier
+                                }
+                            )
                     )
                     if (loadedBook != null && pages.isNotEmpty()) {
                         SharedMobileEpubBottomBar(
@@ -1101,7 +1157,15 @@ fun SharedMobileEpubReaderScreen(
                                     SharedMobileEpubLocalTtsState.PAUSED -> localTts.resume()
                                 }
                             },
-                            modifier = Modifier.align(Alignment.BottomCenter)
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .then(
+                                    if (!navigationUiHidden) {
+                                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                                    } else {
+                                        Modifier
+                                    }
+                                )
                         )
                     }
                 }
@@ -1660,7 +1724,13 @@ private fun SharedMobileEpubScreenOrientationSheet(
     onModeSelected: (ReaderScreenOrientationMode) -> Unit,
     onDismiss: () -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom) }
+    ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -2799,8 +2869,7 @@ private fun SharedMobileEpubThemeGridItem(
 @Composable
 private fun SharedMobileEpubPageInfo(
     chapterTitle: String,
-    chapterIndex: Int,
-    chapterCount: Int,
+    pageInfo: ReaderPageInfo?,
     progressPercent: Float,
     settings: ReaderSettings,
     modifier: Modifier = Modifier
@@ -2815,7 +2884,9 @@ private fun SharedMobileEpubPageInfo(
         contentAlignment = Alignment.Center
     ) {
             Text(
-                "$chapterTitle (${chapterIndex + 1}/${chapterCount.coerceAtLeast(1)})",
+                pageInfo?.let {
+                    "$chapterTitle (${it.currentPageInChapter}/${it.totalPagesInChapter})"
+                } ?: chapterTitle,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall,
@@ -2824,12 +2895,25 @@ private fun SharedMobileEpubPageInfo(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp)
             )
             Text(
-                "${progressPercent.coerceIn(0f, 100f).roundToInt()}%",
+                "${formatReaderProgress(progressPercent)}%",
                 style = MaterialTheme.typography.bodySmall,
                 color = foreground,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
     }
+}
+
+internal fun formatReaderProgress(progressPercent: Float): String {
+    val tenths = kotlin.math.floor(progressPercent.coerceIn(0f, 100f) * 10f).toInt()
+    return "${tenths / 10}.${tenths % 10}"
+}
+
+private fun Long.hasDarkReaderBackground(): Boolean {
+    fun channel(shift: Int): Double {
+        val value = ((this ushr shift) and 0xFF).toDouble() / 255.0
+        return if (value <= 0.04045) value / 12.92 else ((value + 0.055) / 1.055).pow(2.4)
+    }
+    return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0) < 0.5
 }
 
 @Composable
@@ -2871,36 +2955,31 @@ private fun SharedMobileEpubVisualOptionsSheet(
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            if (readerBrightnessSupported) {
-                Text("Screen brightness", style = MaterialTheme.typography.titleSmall)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Use system brightness")
-                        Text("Only while reading", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(
-                        checked = readerBrightness == null,
-                        onCheckedChange = { useSystem -> onReaderBrightnessChange(if (useSystem) null else (readerBrightness ?: 0.75f)) }
-                    )
-                }
-                readerBrightness?.let { brightness ->
-                    SharedMobileEpubSettingSlider(
-                        label = "Brightness",
-                        value = brightness,
-                        range = 0.01f..1f,
-                        steps = 98,
-                        onValueChange = onReaderBrightnessChange
-                    )
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Visual Options", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
                 }
             }
-            Text("System bars", style = MaterialTheme.typography.titleSmall)
+            Text("System UI", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Choose when the status and navigation bars are visible.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             SharedMobileEpubEnumChoices(SystemUiMode.entries, settings.systemUiMode, { it.title }) { onSettingsChange(settings.copy(systemUiMode = it)) }
-            Text("Page info", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+            Text("Progress Bar", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Show the current chapter page and reading percentage.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             SharedMobileEpubEnumChoices(PageInfoMode.entries, settings.pageInfoMode, { it.title }) { onSettingsChange(settings.copy(pageInfoMode = it)) }
-            Text("Page info position", style = MaterialTheme.typography.titleSmall)
+            Text("Progress Bar Position", style = MaterialTheme.typography.titleSmall)
             SharedMobileEpubEnumChoices(PageInfoPosition.entries, settings.pageInfoPosition, { it.title }) { onSettingsChange(settings.copy(pageInfoPosition = it)) }
+            Spacer(Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -2916,7 +2995,7 @@ private fun SharedMobileEpubVisualOptionsSheet(
                         Column(Modifier.weight(1f)) {
                             Text("Seamless Chapter Transition", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "Load the next or previous chapter immediately without the pull animation.",
+                                "Turn this off to pull past the edge before changing chapters.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2924,9 +3003,7 @@ private fun SharedMobileEpubVisualOptionsSheet(
                         Spacer(Modifier.width(16.dp))
                         Switch(
                             checked = !settings.seamlessChapterNavigation,
-                            onCheckedChange = { seamless ->
-                                onSettingsChange(settings.copy(seamlessChapterNavigation = !seamless))
-                            }
+                            onCheckedChange = { seamless -> onSettingsChange(settings.copy(seamlessChapterNavigation = !seamless)) }
                         )
                     }
                     if (settings.seamlessChapterNavigation) {

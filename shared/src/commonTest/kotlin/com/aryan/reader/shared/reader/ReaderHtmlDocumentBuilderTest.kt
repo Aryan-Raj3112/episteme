@@ -29,6 +29,17 @@ import kotlin.test.assertTrue
 class ReaderHtmlDocumentBuilderTest {
 
     @Test
+    fun `vertical position reports are throttled during scrolling instead of deferred until scroll stops`() {
+        val html = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(),
+        )
+
+        assertTrue(html.contains("if (reportTimer !== null) return;"))
+        assertTrue(html.contains("}, 80);"))
+    }
+
+    @Test
     fun `page document writes right alignment reader css variable`() {
         val html = ReaderHtmlDocumentBuilder.pageDocument(
             book = repeatedWordBook("alpha beta"),

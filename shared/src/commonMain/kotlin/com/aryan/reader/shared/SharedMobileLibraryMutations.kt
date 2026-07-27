@@ -18,10 +18,10 @@ fun SharedReaderScreenState.withMobileImportedBooks(
 ): SharedMobileImportResult {
     if (books.isEmpty()) return SharedMobileImportResult(this, emptyList())
 
-    val existingIds = rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+    val existingIdentities = rawLibraryBooks.mapTo(mutableSetOf()) { it.sharedLibraryIdentity() }
     val addedBooks = books
-        .distinctBy { it.id }
-        .filterNot { it.id in existingIds }
+        .distinctBy { it.sharedLibraryIdentity() }
+        .filterNot { it.sharedLibraryIdentity() in existingIdentities }
     if (addedBooks.isEmpty()) return SharedMobileImportResult(this, emptyList())
 
     val nextRawBooks = addedBooks + rawLibraryBooks

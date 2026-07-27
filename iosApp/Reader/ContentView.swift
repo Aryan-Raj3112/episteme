@@ -371,12 +371,13 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
-        bridge.setSystemUiHandler { hidden, lightContent, backgroundArgb, edgeToEdge in
+        bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge in
             DispatchQueue.main.async {
-                isSystemUiHidden = hidden.boolValue
+                isSystemUiHidden = statusHidden.boolValue
             }
             hostController.updateSystemUi(
-                hidden: hidden.boolValue,
+                statusHidden: statusHidden.boolValue,
+                navigationHidden: navigationHidden.boolValue,
                 lightContent: lightContent.boolValue,
                 backgroundArgb: backgroundArgb.int64Value,
                 edgeToEdge: edgeToEdge.boolValue
@@ -394,7 +395,8 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
 
 private final class ReaderStatusBarHostController: UIViewController {
     private let contentController: UIViewController
-    private var hidesSystemUi = false
+    private var hidesStatusBar = false
+    private var hidesHomeIndicator = false
     private var usesLightStatusBarContent = false
     private var contentInterfaceStyle: UIUserInterfaceStyle = .unspecified
     private var readerOrientationMode: Int32 = 0
@@ -456,8 +458,8 @@ private final class ReaderStatusBarHostController: UIViewController {
         ])
     }
 
-    override var prefersStatusBarHidden: Bool { hidesSystemUi }
-    override var prefersHomeIndicatorAutoHidden: Bool { hidesSystemUi }
+    override var prefersStatusBarHidden: Bool { hidesStatusBar }
+    override var prefersHomeIndicatorAutoHidden: Bool { hidesHomeIndicator }
     override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation { .fade }
     override var preferredStatusBarStyle: UIStatusBarStyle {
         usesLightStatusBarContent ? .lightContent : .darkContent
@@ -490,10 +492,11 @@ private final class ReaderStatusBarHostController: UIViewController {
         view.setNeedsLayout()
     }
 
-    func updateSystemUi(hidden: Bool, lightContent: Bool, backgroundArgb: Int64, edgeToEdge: Bool) {
+    func updateSystemUi(statusHidden: Bool, navigationHidden: Bool, lightContent: Bool, backgroundArgb: Int64, edgeToEdge: Bool) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            hidesSystemUi = hidden
+            hidesStatusBar = statusHidden
+            hidesHomeIndicator = navigationHidden
             usesLightStatusBarContent = lightContent
             overrideUserInterfaceStyle = lightContent ? .dark : .light
             contentController.overrideUserInterfaceStyle = contentInterfaceStyle

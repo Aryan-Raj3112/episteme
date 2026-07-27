@@ -3,6 +3,7 @@ package com.aryan.reader.shared
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SharedMobileLibraryMutationsTest {
 
@@ -21,6 +22,21 @@ class SharedMobileLibraryMutationsTest {
         assertEquals(listOf("added", "existing"), result.state.recentBooks.map { it.id })
         assertEquals(listOf("added", "existing"), result.state.libraryBooks.map { it.id })
         assertEquals("Added 1 book(s)", result.state.bannerMessage?.message)
+    }
+
+    @Test
+    fun `mobile imports reject the same file even when its generated id differs`() {
+        val existing = book(id = "ios_import_book", timestamp = 1L).copy(path = "/imports/book.epub")
+        val duplicate = existing.copy(id = "ios_import_book_1", timestamp = 2L)
+
+        val result = SharedReaderScreenState(
+            rawLibraryBooks = listOf(existing),
+            recentBooks = listOf(existing),
+            libraryBooks = listOf(existing),
+        ).withMobileImportedBooks(listOf(duplicate))
+
+        assertTrue(result.addedBooks.isEmpty())
+        assertEquals(listOf("ios_import_book"), result.state.rawLibraryBooks.map { it.id })
     }
 
     @Test

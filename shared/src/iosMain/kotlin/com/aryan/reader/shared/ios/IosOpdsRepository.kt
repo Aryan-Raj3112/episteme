@@ -128,6 +128,15 @@ internal class IosOpdsRepository : SharedOpdsRepository {
         }
     }
 
+    internal suspend fun fetchCoverData(
+        url: String,
+        username: String?,
+        password: String?,
+    ): NSData? {
+        val response = fetch(url, username, password)
+        return response.data.takeIf { response.statusCode in 200..299 }
+    }
+
     private suspend fun fetch(url: String, username: String?, password: String?): IosHttpResponse {
         val response = httpClient.fetch(url = url, username = username, password = password)
         return toResponse(response.data, response.response, response.error)

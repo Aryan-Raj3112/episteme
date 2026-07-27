@@ -120,7 +120,7 @@ private val IOS_NATIVE_READER_FILE_TYPES = setOf(
 )
 
 class ReaderIosBridge {
-    private var systemUiHandler: ((hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit)? = null
+    private var systemUiHandler: ((statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit)? = null
     private var latestSystemUiState: IosSystemUiState? = null
     private var originalReaderBrightness: Double? = null
     private var orientationHandler: ((mode: Int) -> Unit)? = null
@@ -281,21 +281,32 @@ class ReaderIosBridge {
         orientationHandler?.invoke(mode.ordinal)
     }
 
-    fun setSystemUiHandler(handler: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit) {
+    fun setSystemUiHandler(handler: (statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit) {
         systemUiHandler = handler
         latestSystemUiState?.let { state ->
-            handler(state.hidden, state.lightContent, state.backgroundArgb, state.edgeToEdge)
+            handler(state.statusHidden, state.navigationHidden, state.lightContent, state.backgroundArgb, state.edgeToEdge)
         }
     }
 
     fun updateSystemUi(hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) {
-        latestSystemUiState = IosSystemUiState(hidden, lightContent, backgroundArgb, edgeToEdge)
-        systemUiHandler?.invoke(hidden, lightContent, backgroundArgb, edgeToEdge)
+        updateReaderSystemUi(hidden, hidden, lightContent, backgroundArgb, edgeToEdge)
+    }
+
+    fun updateReaderSystemUi(
+        statusHidden: Boolean,
+        navigationHidden: Boolean,
+        lightContent: Boolean,
+        backgroundArgb: Long,
+        edgeToEdge: Boolean
+    ) {
+        latestSystemUiState = IosSystemUiState(statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge)
+        systemUiHandler?.invoke(statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge)
     }
 }
 
 private data class IosSystemUiState(
-    val hidden: Boolean,
+    val statusHidden: Boolean,
+    val navigationHidden: Boolean,
     val lightContent: Boolean,
     val backgroundArgb: Long,
     val edgeToEdge: Boolean
@@ -324,6 +335,7 @@ internal data class IosExternalOpen(
 private const val IosImportedFilesDefaultsKey = "reader_ios_imported_files_v1"
 private const val IosImportsRelativePrefix = "Imports/"
 private const val IosDocumentsRelativePrefix = "Documents/"
+private const val IosCoversRelativePrefix = "Covers/"
 private const val IosPdfReaderStateDefaultsPrefix = "reader_ios_pdf_state_v1_"
 private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
 private const val IosReaderBrightnessDefaultsKey = "reader_ios_reader_brightness_v1"
@@ -337,12 +349,38 @@ private fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
     val encoded = defaults.stringForKey(IosLibrarySnapshotDefaultsKey)
         ?: defaults.stringForKey(IosReaderPreferencesDefaultsKey)
         ?: return SharedLibrarySnapshot()
-    return SharedLibrarySnapshotJson.decodeOrEmpty(encoded)
+    return SharedLibrarySnapshotJson.decodeOrEmpty(encoded).withResolvedIosBookPaths()
 }
 
 private fun persistIosLibrarySnapshot(state: SharedReaderScreenState) {
-    val encoded = SharedLibrarySnapshotJson.encode(state.toSharedMobileLibrarySnapshot())
+    val encoded = SharedLibrarySnapshotJson.encode(
+        state.toSharedMobileLibrarySnapshot().withStableIosBookPaths()
+    )
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = IosLibrarySnapshotDefaultsKey)
+}
+
+private fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnapshot {
+    val resolvedBooks = books
+        .map { book ->
+            book.copy(
+                path = book.path?.resolvedIosImportedFilePath(),
+                coverImagePath = book.coverImagePath?.resolvedIosCoverPath(),
+            )
+        }
+        .distinctBy { book -> book.path?.takeIf(String::isNotBlank)?.let { "path:$it" } ?: "id:${book.id}" }
+    return copy(books = resolvedBooks)
+}
+
+private fun SharedLibrarySnapshot.withStableIosBookPaths(): SharedLibrarySnapshot {
+    val stableBooks = books
+        .map { book ->
+            book.copy(
+                path = book.path?.stableIosImportedFilePath(),
+                coverImagePath = book.coverImagePath?.stableIosCoverPath(),
+            )
+        }
+        .distinctBy { book -> book.path?.takeIf(String::isNotBlank)?.let { "path:$it" } ?: "id:${book.id}" }
+    return copy(books = stableBooks)
 }
 
 private fun loadIosReaderOrientation(): ReaderScreenOrientationMode {
@@ -412,7 +450,8 @@ private fun String.resolvedIosImportedFilePath(): String {
             "$documentsPath/${substringAfter(IosDocumentsRelativePrefix)}"
         } ?: this
     }
-    if (NSFileManager.defaultManager.fileExistsAtPath(this)) return this
+    val canonicalPath = canonicalIosFilePath()
+    if (NSFileManager.defaultManager.fileExistsAtPath(canonicalPath)) return canonicalPath
     val importedFileName = substringAfterLast('/').takeIf { it.isNotBlank() } ?: return this
     return listOfNotNull(
         iosImportsDirectoryPath()?.let { "$it/$importedFileName" },
@@ -421,17 +460,50 @@ private fun String.resolvedIosImportedFilePath(): String {
 }
 
 private fun String.stableIosImportedFilePath(): String {
-    val importedFileName = substringAfterLast('/').takeIf { it.isNotBlank() } ?: return this
-    val importsPath = iosImportsDirectoryPath() ?: return this
-    return if (startsWith("$importsPath/")) {
-        IosImportsRelativePrefix + importedFileName
+    if (substringAfterLast('/').isBlank()) return this
+    val canonicalPath = canonicalIosFilePath()
+    val importsPath = iosImportsDirectoryPath()?.canonicalIosFilePath() ?: return canonicalPath
+    return if (canonicalPath.startsWith("$importsPath/")) {
+        IosImportsRelativePrefix + canonicalPath.removePrefix("$importsPath/")
     } else {
-        val documentsPath = iosDocumentsDirectoryPath()
-        if (documentsPath != null && startsWith("$documentsPath/")) {
-            IosDocumentsRelativePrefix + importedFileName
+        val documentsPath = iosDocumentsDirectoryPath()?.canonicalIosFilePath()
+        if (documentsPath != null && canonicalPath.startsWith("$documentsPath/")) {
+            IosDocumentsRelativePrefix + canonicalPath.removePrefix("$documentsPath/")
         } else {
-            this
+            canonicalPath
         }
+    }
+}
+
+private fun String.canonicalIosFilePath(): String =
+    when {
+        startsWith("/private/var/") -> removePrefix("/private")
+        startsWith("/private/tmp/") -> removePrefix("/private")
+        else -> this
+    }
+
+private fun String.resolvedIosCoverPath(): String {
+    if (startsWith(IosCoversRelativePrefix)) {
+        return iosCoversDirectoryPath()?.let { coversPath ->
+            "$coversPath/${substringAfter(IosCoversRelativePrefix)}"
+        } ?: this
+    }
+    val canonicalPath = canonicalIosFilePath()
+    if (NSFileManager.defaultManager.fileExistsAtPath(canonicalPath)) return canonicalPath
+    val fileName = substringAfterLast('/').takeIf { it.isNotBlank() } ?: return this
+    return iosCoversDirectoryPath()
+        ?.let { "$it/$fileName" }
+        ?.takeIf(NSFileManager.defaultManager::fileExistsAtPath)
+        ?: this
+}
+
+private fun String.stableIosCoverPath(): String {
+    val canonicalPath = canonicalIosFilePath()
+    val coversPath = iosCoversDirectoryPath()?.canonicalIosFilePath() ?: return canonicalPath
+    return if (canonicalPath.startsWith("$coversPath/")) {
+        IosCoversRelativePrefix + canonicalPath.removePrefix("$coversPath/")
+    } else {
+        canonicalPath
     }
 }
 
@@ -440,6 +512,14 @@ private fun iosDocumentsDirectoryPath(): String? {
         directory = NSDocumentDirectory,
         inDomains = NSUserDomainMask
     ).firstOrNull() as? NSURL)?.path
+}
+
+private fun iosCoversDirectoryPath(): String? {
+    val appSupport = (NSFileManager.defaultManager.URLsForDirectory(
+        directory = NSApplicationSupportDirectory,
+        inDomains = NSUserDomainMask,
+    ).firstOrNull() as? NSURL) ?: return null
+    return appSupport.URLByAppendingPathComponent("Covers", isDirectory = true)?.path?.canonicalIosFilePath()
 }
 
 private fun iosImportsDirectoryPath(): String? {
@@ -847,8 +927,16 @@ private fun ReaderIosApp(
                                 state = state.withUpdatedIosBook(updatedBook)
                             },
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
-                            onSystemUiAppearanceChange = { hidden, lightContent, backgroundArgb ->
-                                bridge.updateSystemUi(hidden, lightContent, backgroundArgb, edgeToEdge = hidden)
+                            onSystemUiAppearanceChange = { statusHidden, navigationHidden, lightContent, backgroundArgb ->
+                                // Android keeps the reader edge-to-edge at all times with
+                                // transparent system bars, letting the page theme paint below.
+                                bridge.updateReaderSystemUi(
+                                    statusHidden,
+                                    navigationHidden,
+                                    lightContent,
+                                    backgroundArgb,
+                                    edgeToEdge = true
+                                )
                             },
                             customReaderThemes = state.customReaderThemes,
                             onCustomReaderThemesChange = { themes ->
@@ -1414,6 +1502,16 @@ private fun ReaderIosApp(
                                     }
                                 },
                                 onClearOpdsError = { opdsState = opdsController.clearError() },
+                                opdsCoverContent = { entry, coverModifier ->
+                                    IosOpdsCoverImage(
+                                        url = entry.coverUrl,
+                                        contentDescription = entry.title,
+                                        repository = opdsRepository,
+                                        username = opdsState.currentCatalog?.username,
+                                        password = opdsState.currentCatalog?.password,
+                                        modifier = coverModifier,
+                                    )
+                                },
                                 modifier = Modifier.fillMaxSize()
                             )
                         }

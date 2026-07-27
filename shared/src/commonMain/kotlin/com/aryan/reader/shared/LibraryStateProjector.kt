@@ -34,7 +34,7 @@ class SharedLibraryStateProjector(
 ) {
     fun project(input: SharedLibraryProjectionInput): SharedReaderScreenState {
         val current = input.state
-        val allLibraryBooks = input.booksFromStore
+        val allLibraryBooks = input.booksFromStore.distinctBy { it.sharedLibraryIdentity() }
         val syncedFolders = current.syncedFolders.withSourceFolderFallbacks(allLibraryBooks)
         val queried = filterBySearch(allLibraryBooks, current.searchQuery)
         val filtered = applyLibraryFilters(queried, current.libraryFilters)
@@ -290,6 +290,13 @@ fun filterBySearch(books: List<BookItem>, searchQuery: String): List<BookItem> {
         }
     }
 }
+
+internal fun BookItem.sharedLibraryIdentity(): String =
+    path
+        ?.takeIf { it.isNotBlank() }
+        ?.let { if (it.startsWith("/private/")) it.removePrefix("/private") else it }
+        ?.let { "path:$it" }
+        ?: "id:$id"
 
 fun applyLibraryFilters(books: List<BookItem>, filters: LibraryFilters): List<BookItem> {
     return books.filter { book ->

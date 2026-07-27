@@ -174,6 +174,69 @@ data class ReaderPage(
     val semanticBlocks: List<SemanticBlock> = emptyList()
 )
 
+data class ReaderPageInfo(
+    val currentPageInChapter: Int,
+    val totalPagesInChapter: Int,
+    val progressPercent: Double
+)
+
+/**
+ * Builds the same page label and character-based progress used by Android's EPUB reader.
+ *
+ * Page-count progress is noticeably inaccurate when chapters have very different amounts of
+ * text, so progress is based on completed chapter text plus the current page's start offset.
+ */
+fun sharedReaderPageInfo(
+    book: SharedEpubBook,
+    pages: List<ReaderPage>,
+    currentPageIndex: Int,
+    locator: ReaderLocator? = null
+): ReaderPageInfo? {
+    if (pages.isEmpty()) return null
+    val locatorChapterIndex = locator?.chapterIndex
+    val locatorOffset = locator?.startOffset
+    val locatorPage = if (locatorChapterIndex != null && locatorOffset != null) {
+        pages.lastOrNull { candidate ->
+            candidate.chapterIndex == locatorChapterIndex &&
+                candidate.startOffset <= locatorOffset
+        }?.takeIf { candidate ->
+            candidate.chapterIndex == locatorChapterIndex &&
+                (locatorOffset < candidate.endOffset || candidate == pages.lastOrNull { it.chapterIndex == locatorChapterIndex })
+        }
+    } else {
+        null
+    }
+    val page = locatorPage ?: pages[currentPageIndex.coerceIn(0, pages.lastIndex)]
+    val safePageIndex = pages.indexOf(page).coerceAtLeast(0)
+    val chapterPages = pages.filter { it.chapterIndex == page.chapterIndex }
+    val pageInChapterIndex = chapterPages.indexOfFirst { it.pageIndex == page.pageIndex }
+        .takeIf { it >= 0 }
+        ?: 0
+    val totalCharacters = book.chapters.sumOf { it.plainText.length.toLong() }
+    val completedCharacters = book.chapters
+        .take(page.chapterIndex.coerceIn(0, book.chapters.size))
+        .sumOf { it.plainText.length.toLong() }
+    val currentChapterOffset = locatorOffset
+        ?.takeIf { locatorChapterIndex == page.chapterIndex }
+        ?: page.startOffset
+    val calculatedProgress = if (totalCharacters > 0L) {
+        ((completedCharacters + currentChapterOffset.coerceAtLeast(0)).toDouble() /
+            totalCharacters.toDouble()) * 100.0
+    } else {
+        ((safePageIndex + 1).toDouble() / pages.size.toDouble()) * 100.0
+    }
+    val displayProgress = if (safePageIndex == pages.lastIndex) {
+        100.0
+    } else {
+        kotlin.math.floor(calculatedProgress.coerceIn(0.0, 100.0) * 10.0) / 10.0
+    }
+    return ReaderPageInfo(
+        currentPageInChapter = pageInChapterIndex + 1,
+        totalPagesInChapter = chapterPages.size.coerceAtLeast(1),
+        progressPercent = displayProgress
+    )
+}
+
 data class PaginatedReaderState(
     val book: SharedEpubBook,
     val pages: List<ReaderPage>,
