@@ -13,6 +13,8 @@ struct ContentView: View {
     private enum ImportKind { case books, folder, fonts, cover }
 
     private let bridge = ReaderIosBridge()
+    @StateObject private var localStoreKit = LocalStoreKitController()
+    @StateObject private var localAccount = LocalAccountController()
     @Environment(\.scenePhase) private var scenePhase
     @State private var isImportPickerPresented = false
     @State private var importKind: ImportKind = .books
@@ -94,7 +96,13 @@ struct ContentView: View {
             }
         }
         .onOpenURL { url in
-            handleExternalURL(url)
+            if !localAccount.handleOpenURL(url) {
+                handleExternalURL(url)
+            }
+        }
+        .task {
+            localStoreKit.attach(to: bridge)
+            localAccount.attach(to: bridge)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {

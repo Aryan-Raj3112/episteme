@@ -29,6 +29,7 @@ import androidx.compose.ui.window.ComposeUIViewController
 import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
+import com.aryan.reader.shared.AccountAuthProvider
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.CustomFontItem
@@ -45,7 +46,9 @@ import com.aryan.reader.shared.SharedSettingsPlatform
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SyncedFolder
+import com.aryan.reader.shared.UserData
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.canEnableGoogleDriveSync
 import com.aryan.reader.shared.parseTagList
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.withMobileBookOpened
@@ -132,6 +135,14 @@ class ReaderIosBridge {
         private set
     internal var importedCoverPath by mutableStateOf<String?>(null)
         private set
+    internal var localStoreKitState by mutableStateOf(IosLocalStoreKitState())
+        private set
+    internal var accountState by mutableStateOf(IosAccountState())
+        private set
+    private var purchaseHandler: ((String) -> Unit)? = null
+    private var restorePurchasesHandler: (() -> Unit)? = null
+    private var authHandler: ((String) -> Unit)? = null
+    private var signOutHandler: (() -> Unit)? = null
 
     internal var latestNativeEvent by mutableStateOf<String?>(null)
         private set
@@ -302,6 +313,112 @@ class ReaderIosBridge {
         latestSystemUiState = IosSystemUiState(statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge)
         systemUiHandler?.invoke(statusHidden, navigationHidden, lightContent, backgroundArgb, edgeToEdge)
     }
+
+    fun setLocalStoreKitHandlers(
+        purchase: (String) -> Unit,
+        restore: () -> Unit,
+    ) {
+        purchaseHandler = purchase
+        restorePurchasesHandler = restore
+    }
+
+    fun requestLocalStoreKitPurchase(productId: String) {
+        purchaseHandler?.invoke(productId)
+    }
+
+    fun requestLocalStoreKitRestore() {
+        restorePurchasesHandler?.invoke()
+    }
+
+    fun updateLocalStoreKitState(
+        available: Boolean,
+        proUnlocked: Boolean,
+        credits: Int,
+        proPrice: String?,
+        credits100Price: String?,
+        credits300Price: String?,
+        credits750Price: String?,
+        status: String?,
+    ) {
+        localStoreKitState = IosLocalStoreKitState(
+            available = available,
+            proUnlocked = proUnlocked,
+            credits = credits.coerceAtLeast(0),
+            proPrice = proPrice,
+            creditPrices = mapOf(
+                IosStoreKitProductIds.CREDITS_100 to credits100Price,
+                IosStoreKitProductIds.CREDITS_300 to credits300Price,
+                IosStoreKitProductIds.CREDITS_750 to credits750Price,
+            ).filterValues { it != null }.mapValues { it.value!! },
+            status = status,
+        )
+    }
+
+    fun setAuthHandlers(
+        authenticate: (String) -> Unit,
+        signOut: () -> Unit,
+    ) {
+        authHandler = authenticate
+        signOutHandler = signOut
+    }
+
+    fun requestAuthentication(provider: String) {
+        authHandler?.invoke(provider)
+    }
+
+    fun requestSignOut() {
+        signOutHandler?.invoke()
+    }
+
+    fun updateAccountState(
+        uid: String?,
+        displayName: String?,
+        email: String?,
+        appleLinked: Boolean,
+        googleLinked: Boolean,
+        googleDriveAuthorized: Boolean,
+        status: String?,
+    ) {
+        accountState = IosAccountState(
+            uid = uid,
+            displayName = displayName,
+            email = email,
+            providers = buildSet {
+                if (appleLinked) add(AccountAuthProvider.APPLE)
+                if (googleLinked) add(AccountAuthProvider.GOOGLE)
+            },
+            googleDriveAuthorized = googleDriveAuthorized,
+            status = status,
+        )
+    }
+}
+
+internal object IosStoreKitProductIds {
+    const val PRO_LIFETIME = "episteme_pro_lifetime"
+    const val CREDITS_100 = "credits_100"
+    const val CREDITS_300 = "credits_300"
+    const val CREDITS_750 = "credits_750"
+}
+
+internal data class IosLocalStoreKitState(
+    val available: Boolean = false,
+    val proUnlocked: Boolean = false,
+    val credits: Int = 0,
+    val proPrice: String? = null,
+    val creditPrices: Map<String, String> = emptyMap(),
+    val status: String? = null,
+)
+
+internal data class IosAccountState(
+    val uid: String? = null,
+    val displayName: String? = null,
+    val email: String? = null,
+    val providers: Set<AccountAuthProvider> = emptySet(),
+    val googleDriveAuthorized: Boolean = false,
+    val status: String? = null,
+) {
+    val canSync: Boolean
+        get() = canEnableGoogleDriveSync(providers, googleDriveAuthorized)
 }
 
 private data class IosSystemUiState(
@@ -313,6 +430,8 @@ private data class IosSystemUiState(
 )
 
 private enum class IosUtilityScreen {
+    ACCOUNT,
+    PRO,
     SETTINGS,
     LANGUAGE,
     FONTS,
@@ -681,6 +800,26 @@ private fun ReaderIosApp(
             state = state.reduce(AppAction.CustomFontsChanged(bridge.importedFonts))
         }
     }
+    LaunchedEffect(bridge.localStoreKitState) {
+        val store = bridge.localStoreKitState
+        if (store.available && (state.isProUser != store.proUnlocked || state.credits != store.credits)) {
+            state = state.copy(isProUser = store.proUnlocked, credits = store.credits)
+        }
+    }
+    LaunchedEffect(bridge.accountState) {
+        val account = bridge.accountState
+        state = state.copy(
+            currentUser = account.uid?.let {
+                UserData(
+                    uid = it,
+                    displayName = account.displayName,
+                    photoUrl = null,
+                    email = account.email,
+                )
+            },
+            isSyncEnabled = state.isSyncEnabled && account.canSync,
+        )
+    }
     var selectedPage by remember { mutableStateOf(SharedMobileMainDestination.HOME) }
     var selectedLibraryTab by remember { mutableStateOf(SharedMobileLibraryTab.BOOKS) }
     var utilityScreen by remember { mutableStateOf<IosUtilityScreen?>(null) }
@@ -989,6 +1128,19 @@ private fun ReaderIosApp(
 
             utilityScreen?.let { screen ->
                 when (screen) {
+                    IosUtilityScreen.ACCOUNT -> IosAccountScreen(
+                        account = bridge.accountState,
+                        onBack = { utilityScreen = null },
+                        onAuthenticate = bridge::requestAuthentication,
+                        onSignOut = bridge::requestSignOut,
+                    )
+                    IosUtilityScreen.PRO -> IosLocalStoreKitScreen(
+                        store = bridge.localStoreKitState,
+                        account = bridge.accountState,
+                        onBack = { utilityScreen = null },
+                        onPurchase = bridge::requestLocalStoreKitPurchase,
+                        onRestore = bridge::requestLocalStoreKitRestore,
+                    )
                     IosUtilityScreen.SETTINGS -> {
                         val settingsModel = sharedSettingsHubModel(
                             SharedSettingsHubInput(
@@ -1179,19 +1331,25 @@ private fun ReaderIosApp(
                 drawerContent = {
                     SharedMobileAppDrawerContent(
                         currentUser = state.currentUser,
-                        isProUser = false,
-                        isStandardEdition = true,
+                        isProUser = state.isProUser,
+                        isStandardEdition = !bridge.localStoreKitState.available,
                         credits = state.credits,
                         isSyncEnabled = state.isSyncEnabled,
                         isFolderSyncEnabled = state.isFolderSyncEnabled,
-                        onSignInClick = { runDrawerAction { showMessage("Sign-in bridge is next for iOS") } },
-                        onSignOutClick = { runDrawerAction { showMessage("Sign-out bridge is next for iOS") } },
-                        onSyncToggle = { enabled -> state = state.reduce(AppAction.SyncEnabledChanged(enabled)) },
+                        onSignInClick = { runDrawerAction { utilityScreen = IosUtilityScreen.ACCOUNT } },
+                        onSignOutClick = { runDrawerAction { bridge.requestSignOut() } },
+                        onSyncToggle = { enabled ->
+                            if (!enabled || bridge.accountState.canSync) {
+                                state = state.reduce(AppAction.SyncEnabledChanged(enabled))
+                            } else {
+                                showMessage("Sync requires a linked Google account and Google Drive permission")
+                            }
+                        },
                         onFolderSyncToggle = { enabled ->
                             state = state.reduce(AppAction.FolderSyncEnabledChanged(enabled))
                             if (enabled && state.syncedFolders.isEmpty()) onImportFolder()
                         },
-                        onProClick = { runDrawerAction { showMessage("Standard iOS version is active") } },
+                        onProClick = { runDrawerAction { utilityScreen = IosUtilityScreen.PRO } },
                         onFontsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.FONTS } },
                         onAiSettingsClick = { runDrawerAction { showMessage("AI settings bridge is next for iOS") } },
                         onSettingsClick = { runDrawerAction { utilityScreen = IosUtilityScreen.SETTINGS } },
@@ -1520,6 +1678,99 @@ private fun ReaderIosApp(
             }
         }
     }
+    }
+}
+
+@Composable
+private fun IosAccountScreen(
+    account: IosAccountState,
+    onBack: () -> Unit,
+    onAuthenticate: (String) -> Unit,
+    onSignOut: () -> Unit,
+) {
+    IosUtilityPage(onBack = onBack) {
+        Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+            Text("Episteme Account")
+            Text(
+                account.displayName ?: account.email ?: if (account.uid == null) "Not signed in" else "Signed in",
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+            TextButton(onClick = { onAuthenticate("APPLE") }) {
+                Text(if (AccountAuthProvider.APPLE in account.providers) "Apple linked" else "Continue with Apple")
+            }
+            TextButton(onClick = { onAuthenticate("GOOGLE") }) {
+                Text(if (AccountAuthProvider.GOOGLE in account.providers) "Google linked" else "Continue with Google")
+            }
+            Text(
+                when {
+                    account.canSync -> "Google Drive sync is available."
+                    AccountAuthProvider.GOOGLE in account.providers ->
+                        "Authorize Google Drive to enable full library sync."
+                    else ->
+                        "Sync requires Google. Apple-only accounts can use Pro and credits but cannot sync."
+                },
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+            if (account.uid != null) {
+                TextButton(onClick = onSignOut) { Text("Sign out") }
+            }
+            account.status?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun IosLocalStoreKitScreen(
+    store: IosLocalStoreKitState,
+    account: IosAccountState,
+    onBack: () -> Unit,
+    onPurchase: (String) -> Unit,
+    onRestore: () -> Unit,
+) {
+    IosUtilityPage(onBack = onBack) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+        ) {
+            Text("Pro and Credits")
+            Text(
+                if (store.available) {
+                    "Local StoreKit testing is active. These DEBUG purchases do not grant production entitlements."
+                } else {
+                    "StoreKit local testing is unavailable in this build."
+                },
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+            Text(if (store.proUnlocked) "Pro unlocked" else "Pro not unlocked")
+            Text("${store.credits} credits", modifier = Modifier.padding(bottom = 12.dp))
+            if (account.uid == null) {
+                Text(
+                    "Sign in with Apple or Google before purchasing or restoring.",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
+            TextButton(
+                enabled = store.available && account.uid != null && !store.proUnlocked,
+                onClick = { onPurchase(IosStoreKitProductIds.PRO_LIFETIME) },
+            ) {
+                Text("Buy Pro lifetime${store.proPrice?.let { " — $it" }.orEmpty()}")
+            }
+            listOf(
+                IosStoreKitProductIds.CREDITS_100 to 100,
+                IosStoreKitProductIds.CREDITS_300 to 300,
+                IosStoreKitProductIds.CREDITS_750 to 750,
+            ).forEach { (productId, amount) ->
+                TextButton(
+                    enabled = store.available && account.uid != null,
+                    onClick = { onPurchase(productId) },
+                ) {
+                    Text("Add $amount credits${store.creditPrices[productId]?.let { " — $it" }.orEmpty()}")
+                }
+            }
+            TextButton(enabled = store.available && account.uid != null, onClick = onRestore) {
+                Text("Restore purchases")
+            }
+            store.status?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
+        }
     }
 }
 
