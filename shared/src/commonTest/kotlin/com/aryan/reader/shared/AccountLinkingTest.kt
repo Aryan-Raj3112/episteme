@@ -62,4 +62,24 @@ class AccountLinkingTest {
         assertFalse(canEnableGoogleDriveSync(setOf(AccountAuthProvider.GOOGLE), false))
         assertTrue(canEnableGoogleDriveSync(setOf(AccountAuthProvider.APPLE, AccountAuthProvider.GOOGLE), true))
     }
+
+    @Test
+    fun `cloud sync additionally requires pro while other pro features accept apple`() {
+        assertFalse(
+            canUseCloudSync(
+                providers = setOf(AccountAuthProvider.GOOGLE),
+                hasGoogleDrivePermission = true,
+                isProUser = false,
+            )
+        )
+        assertTrue(
+            canUseCloudSync(
+                providers = setOf(AccountAuthProvider.GOOGLE),
+                hasGoogleDrivePermission = true,
+                isProUser = true,
+            )
+        )
+        assertTrue(canUseProFeature(isSignedIn = true, isProUser = true))
+        assertFalse(canUseProFeature(isSignedIn = false, isProUser = true))
+    }
 }

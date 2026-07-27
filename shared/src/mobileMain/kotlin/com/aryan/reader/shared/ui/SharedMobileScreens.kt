@@ -161,6 +161,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
@@ -233,6 +234,8 @@ import com.aryan.reader.shared.pdf.PdfInkTool
 import com.aryan.reader.shared.pdf.PdfTtsSessionPlanner
 import com.aryan.reader.shared.pdf.PdfPageBounds
 import com.aryan.reader.shared.pdf.PdfPagePoint
+import com.aryan.reader.shared.pdf.pdfPaginationEdgeTarget
+import com.aryan.reader.shared.pdf.initialSharedPdfReaderState
 import com.aryan.reader.shared.pdf.PdfNavigationReason
 import com.aryan.reader.shared.pdf.PdfChromeMotionDurationMillis
 import com.aryan.reader.shared.pdf.centeredPdfPageScrollOffset
@@ -255,6 +258,7 @@ import com.aryan.reader.shared.pdf.SharedPdfSearchResult
 import com.aryan.reader.shared.pdf.reduce
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.generated.resources.Res
 import com.aryan.reader.shared.generated.resources.classy_fabric
@@ -291,6 +295,7 @@ fun SharedMobileAppDrawerContent(
     onAppThemeClick: () -> Unit,
     onFeedbackClick: () -> Unit,
     isStandardEdition: Boolean = false,
+    aiSettingsAvailable: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     ModalDrawerSheet(modifier = modifier) {
@@ -426,13 +431,15 @@ fun SharedMobileAppDrawerContent(
                 onClick = onFontsClick,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
             )
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Ai, contentDescription = null) },
-                label = { Text("AI settings") },
-                selected = false,
-                onClick = onAiSettingsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
+            if (aiSettingsAvailable) {
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Default.Ai, contentDescription = null) },
+                    label = { Text("AI settings") },
+                    selected = false,
+                    onClick = onAiSettingsClick,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
             NavigationDrawerItem(
                 icon = { Icon(Icons.Default.Feedback, contentDescription = null) },
                 label = { Text("Help & Feedback") },
@@ -470,30 +477,53 @@ fun SharedMobilePdfReaderScreen(
     onBack: () -> Unit,
     onNativePdfBridgeNeeded: (BookItem) -> Unit,
     initialReaderState: SharedPdfReaderState? = null,
+    readerDefaultSettings: ReaderSettings = ReaderSettings(themeId = "no_theme"),
+    onReaderDefaultSettingsChange: (ReaderSettings) -> Unit = {},
+    initialKeepScreenOn: Boolean = false,
+    onKeepScreenOnPreferenceChange: (Boolean) -> Unit = {},
     onReaderStateChange: (SharedPdfReaderState) -> Unit = {},
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (hidden: Boolean, lightContent: Boolean, backgroundArgb: Long, edgeToEdge: Boolean) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val pdfCardTitle = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current)
     val initialPage = book.lastPageIndex?.coerceAtLeast(0) ?: 0
     var readerState by remember(book.id, initialReaderState) {
         mutableStateOf(
-            initialReaderState?.coerced()
-                ?: SharedPdfReaderState.initial(pageCount = 1, initialPageIndex = initialPage)
-                    .copy(displayMode = PdfDisplayMode.VERTICAL_SCROLL)
+            initialSharedPdfReaderState(
+                persistedState = initialReaderState,
+                defaults = readerDefaultSettings,
+                initialPageIndex = initialPage,
+            )
         )
     }
-    var showChrome by remember(book.id) { mutableStateOf(true) }
+    // Android intentionally starts every PDF session distraction-free.
+    var showChrome by remember(book.id) { mutableStateOf(false) }
     var showReaderOptions by remember(book.id) { mutableStateOf(false) }
     var showThemePanel by remember(book.id) { mutableStateOf(false) }
     var showPageSlider by remember(book.id) { mutableStateOf(false) }
-    var showVerticalPageGap by remember(book.id) { mutableStateOf(true) }
-    var showPageNumberOverlay by remember(book.id) { mutableStateOf(true) }
-    var systemUiMode by remember(book.id) { mutableStateOf(SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS) }
-    var useTwoPageSpread by remember(book.id) { mutableStateOf(false) }
-    var firstPageStandaloneInSpread by remember(book.id) { mutableStateOf(false) }
-    var globalTextureTransparency by remember { mutableStateOf(0f) }
-    var keepScreenOn by remember(book.id) { mutableStateOf(false) }
+    var showVerticalPageGap by remember(book.id) {
+        mutableStateOf(readerDefaultSettings.pdfVerticalPageGapVisible)
+    }
+    var showPageNumberOverlay by remember(book.id) {
+        mutableStateOf(readerDefaultSettings.pdfPageNumberOverlayVisible)
+    }
+    var systemUiMode by remember(book.id) {
+        mutableStateOf(readerDefaultSettings.systemUiMode.toSharedMobilePdfSystemUiMode())
+    }
+    var rightToLeftPagination by remember(book.id) {
+        mutableStateOf(readerDefaultSettings.rightToLeftPagination)
+    }
+    var useTwoPageSpread by remember(book.id) {
+        mutableStateOf(readerDefaultSettings.pageSpreadMode == ReaderPageSpreadMode.TWO_PAGE)
+    }
+    var firstPageStandaloneInSpread by remember(book.id) {
+        mutableStateOf(readerDefaultSettings.pdfFirstPageStandaloneInSpread)
+    }
+    var globalTextureTransparency by remember(book.id) {
+        mutableStateOf(1f - readerDefaultSettings.textureAlpha.coerceIn(0f, 1f))
+    }
+    var keepScreenOn by remember(book.id) { mutableStateOf(initialKeepScreenOn) }
     var autoScrollEnabled by remember(book.id) { mutableStateOf(false) }
     var tapToTurnPages by remember(book.id) { mutableStateOf(true) }
     var pdfZoomCamera by remember(book.id, initialReaderState) {
@@ -767,7 +797,7 @@ fun SharedMobilePdfReaderScreen(
             pendingTtsStart = null
             pdfTts.start(
                 chunks = planned.chunks,
-                bookTitle = book.cardTitle(),
+                bookTitle = pdfCardTitle,
                 startChunkIndex = if (pendingTtsStartAtLastChunk) planned.chunks.lastIndex else 0,
                 playWhenReady = pendingTtsPlayWhenReady
             )
@@ -800,7 +830,7 @@ fun SharedMobilePdfReaderScreen(
             val planned = PdfTtsSessionPlanner.page(next, source)
             if (planned.chunks.isNotEmpty()) {
                 pendingTtsStart = null
-                pdfTts.start(planned.chunks, book.cardTitle())
+                pdfTts.start(planned.chunks, pdfCardTitle)
             } else {
                 pendingTtsStart = 0
             }
@@ -847,7 +877,7 @@ fun SharedMobilePdfReaderScreen(
                     exit = slideOutVertically(tween(PdfChromeMotionDurationMillis)) { -it } + fadeOut(tween(PdfChromeMotionDurationMillis))
                 ) {
                     SharedMobilePdfReaderTopBar(
-                        title = book.cardTitle(),
+                        title = pdfCardTitle,
                         pageIndex = readerState.pageIndex,
                         pageLabel = sharedMobilePdfPageLabel(
                             readerState.pageIndex,
@@ -887,7 +917,10 @@ fun SharedMobilePdfReaderScreen(
                             )
                         },
                         keepScreenOn = keepScreenOn,
-                        onToggleKeepScreenOn = { keepScreenOn = !keepScreenOn },
+                        onToggleKeepScreenOn = {
+                            keepScreenOn = !keepScreenOn
+                            onKeepScreenOnPreferenceChange(keepScreenOn)
+                        },
                         autoScrollEnabled = autoScrollEnabled,
                         onToggleAutoScroll = { autoScrollEnabled = !autoScrollEnabled },
                         onTextSelection = { dispatch(SharedPdfReaderAction.TextSelectionModeChanged(!readerState.isTextSelectionMode)) },
@@ -977,6 +1010,7 @@ fun SharedMobilePdfReaderScreen(
                         animateNavigation = navigationReason.animatesPagination(),
                         useTwoPageSpread = useTwoPageSpread,
                         firstPageStandaloneInSpread = firstPageStandaloneInSpread,
+                        rightToLeftPagination = rightToLeftPagination,
                         showPageNumberOverlay = showPageNumberOverlay,
                         searchResults = searchResults,
                         ttsPageIndex = ttsPageIndex.takeIf { pdfTts.isSessionActive || pendingTtsStart != null },
@@ -1131,9 +1165,15 @@ fun SharedMobilePdfReaderScreen(
             SharedMobilePdfThemePanel(
                 currentThemeId = readerState.themeId,
                 textureTransparency = globalTextureTransparency,
-                onTextureTransparencyChange = { globalTextureTransparency = it },
+                onTextureTransparencyChange = {
+                    globalTextureTransparency = it
+                    onReaderDefaultSettingsChange(
+                        readerDefaultSettings.copy(textureAlpha = 1f - it.coerceIn(0f, 1f))
+                    )
+                },
                 onThemeSelected = { themeId ->
                     dispatch(SharedPdfReaderAction.ThemeChanged(themeId))
+                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(themeId = themeId))
                     showThemePanel = false
                 },
                 onDismiss = { showThemePanel = false }
@@ -1145,15 +1185,45 @@ fun SharedMobilePdfReaderScreen(
                 systemUiMode = systemUiMode,
                 useTwoPageSpread = useTwoPageSpread,
                 firstPageStandaloneInSpread = firstPageStandaloneInSpread,
+                rightToLeftPagination = rightToLeftPagination,
                 showVerticalPageGap = showVerticalPageGap,
                 showPageNumberOverlay = showPageNumberOverlay,
                 onSystemUiModeChange = { mode ->
                     systemUiMode = mode
+                    onReaderDefaultSettingsChange(
+                        readerDefaultSettings.copy(systemUiMode = mode.toReaderSystemUiMode())
+                    )
                 },
-                onTwoPageSpreadChange = { useTwoPageSpread = it },
-                onFirstPageStandaloneChange = { firstPageStandaloneInSpread = it },
-                onShowVerticalPageGapChange = { showVerticalPageGap = it },
-                onShowPageNumberOverlayChange = { showPageNumberOverlay = it },
+                onTwoPageSpreadChange = {
+                    useTwoPageSpread = it
+                    onReaderDefaultSettingsChange(
+                        readerDefaultSettings.copy(
+                            pageSpreadMode = if (it) {
+                                ReaderPageSpreadMode.TWO_PAGE
+                            } else {
+                                ReaderPageSpreadMode.SINGLE
+                            }
+                        )
+                    )
+                },
+                onFirstPageStandaloneChange = {
+                    firstPageStandaloneInSpread = it
+                    onReaderDefaultSettingsChange(
+                        readerDefaultSettings.copy(pdfFirstPageStandaloneInSpread = it)
+                    )
+                },
+                onRightToLeftPaginationChange = {
+                    rightToLeftPagination = it
+                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(rightToLeftPagination = it))
+                },
+                onShowVerticalPageGapChange = {
+                    showVerticalPageGap = it
+                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(pdfVerticalPageGapVisible = it))
+                },
+                onShowPageNumberOverlayChange = {
+                    showPageNumberOverlay = it
+                    onReaderDefaultSettingsChange(readerDefaultSettings.copy(pdfPageNumberOverlayVisible = it))
+                },
                 onDismiss = { showReaderOptions = false }
             )
         }
@@ -1468,6 +1538,18 @@ private enum class SharedMobilePdfSystemUiMode(val label: String) {
     ALWAYS_HIDE("Always Hide")
 }
 
+private fun SystemUiMode.toSharedMobilePdfSystemUiMode(): SharedMobilePdfSystemUiMode = when (this) {
+    SystemUiMode.DEFAULT -> SharedMobilePdfSystemUiMode.ALWAYS_SHOW
+    SystemUiMode.SYNC -> SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS
+    SystemUiMode.HIDDEN -> SharedMobilePdfSystemUiMode.ALWAYS_HIDE
+}
+
+private fun SharedMobilePdfSystemUiMode.toReaderSystemUiMode(): SystemUiMode = when (this) {
+    SharedMobilePdfSystemUiMode.ALWAYS_SHOW -> SystemUiMode.DEFAULT
+    SharedMobilePdfSystemUiMode.SYNC_WITH_MENUS -> SystemUiMode.SYNC
+    SharedMobilePdfSystemUiMode.ALWAYS_HIDE -> SystemUiMode.HIDDEN
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SharedMobilePdfVisualOptionsSheet(
@@ -1475,11 +1557,13 @@ private fun SharedMobilePdfVisualOptionsSheet(
     systemUiMode: SharedMobilePdfSystemUiMode,
     useTwoPageSpread: Boolean,
     firstPageStandaloneInSpread: Boolean,
+    rightToLeftPagination: Boolean,
     showVerticalPageGap: Boolean,
     showPageNumberOverlay: Boolean,
     onSystemUiModeChange: (SharedMobilePdfSystemUiMode) -> Unit,
     onTwoPageSpreadChange: (Boolean) -> Unit,
     onFirstPageStandaloneChange: (Boolean) -> Unit,
+    onRightToLeftPaginationChange: (Boolean) -> Unit,
     onShowVerticalPageGapChange: (Boolean) -> Unit,
     onShowPageNumberOverlayChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
@@ -1544,6 +1628,12 @@ private fun SharedMobilePdfVisualOptionsSheet(
                         onCheckedChange = onFirstPageStandaloneChange
                     )
                 }
+                SharedMobilePdfVisualOptionSwitchRow(
+                    title = "Paginated (right-to-left)",
+                    description = "Use right-to-left page order and edge navigation.",
+                    checked = rightToLeftPagination,
+                    onCheckedChange = onRightToLeftPaginationChange,
+                )
                 Spacer(Modifier.height(12.dp))
             }
             SharedMobilePdfVisualOptionSwitchRow(
@@ -1558,10 +1648,9 @@ private fun SharedMobilePdfVisualOptionsSheet(
                 checked = !showPageNumberOverlay,
                 onCheckedChange = { onShowPageNumberOverlayChange(!it) }
             )
+            }
         }
     }
-}
-
 @Composable
 private fun <T> SharedMobilePdfSegmentedControl(
     options: List<T>,
@@ -2788,6 +2877,7 @@ private fun SharedMobilePdfPaginatedPages(
     animateNavigation: Boolean,
     useTwoPageSpread: Boolean,
     firstPageStandaloneInSpread: Boolean,
+    rightToLeftPagination: Boolean,
     showPageNumberOverlay: Boolean,
     searchResults: List<SharedPdfSearchResult>,
     ttsPageIndex: Int?,
@@ -2846,6 +2936,7 @@ private fun SharedMobilePdfPaginatedPages(
     HorizontalPager(
         state = pagerState,
         userScrollEnabled = userScrollEnabled && state.selectedTool == PdfInkTool.NONE && !zoomCamera.isZoomed(),
+        reverseLayout = rightToLeftPagination,
         beyondViewportPageCount = 1,
         modifier = modifier
     ) { pagerPage ->
@@ -2867,10 +2958,20 @@ private fun SharedMobilePdfPaginatedPages(
                 val viewportWidthForTap = paginationViewportSize.width.toFloat()
                 val edge = viewportWidthForTap * 0.25f
                 when {
-                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x < edge && pagerPage > 0 ->
-                        scope.launch { pagerState.animateScrollToPage(pagerPage - 1) }
-                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x > viewportWidthForTap - edge && pagerPage < spreadStarts.lastIndex ->
-                        scope.launch { pagerState.animateScrollToPage(pagerPage + 1) }
+                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x < edge ->
+                        pdfPaginationEdgeTarget(
+                            currentPage = pagerPage,
+                            lastPage = spreadStarts.lastIndex,
+                            tappedLeftEdge = true,
+                            rightToLeft = rightToLeftPagination,
+                        )?.let { target -> scope.launch { pagerState.animateScrollToPage(target) } }
+                    tapToTurnPages && !zoomCamera.isZoomed() && offset.x > viewportWidthForTap - edge ->
+                        pdfPaginationEdgeTarget(
+                            currentPage = pagerPage,
+                            lastPage = spreadStarts.lastIndex,
+                            tappedLeftEdge = false,
+                            rightToLeft = rightToLeftPagination,
+                        )?.let { target -> scope.launch { pagerState.animateScrollToPage(target) } }
                     else -> onToggleChrome()
                 }
             },
@@ -4018,9 +4119,16 @@ fun SharedMobileLibraryScreen(
         )
     }
     if (showDeleteBooks) {
+        val containsFolderBooks = state.rawLibraryBooks.any {
+            it.id in selectedIds && it.sourceFolder != null
+        }
         SharedMobileDeleteConfirmationDialog(
             title = readerString("dialog_remove_books_title", "Remove books?"),
-            body = "Remove ${selectedIds.size} selected book(s) from this iOS library?",
+            body = if (containsFolderBooks) {
+                "Warning: Some selected items are synced from a local folder. Proceeding will delete the actual files from your device storage.\n\nThis action cannot be undone."
+            } else {
+                "Remove ${selectedIds.size} selected book(s) from this iOS library?"
+            },
             onDismiss = { showDeleteBooks = false },
             onConfirm = {
                 onDeleteBooks(selectedIds)
@@ -4569,7 +4677,7 @@ private fun SharedMobileActiveTabs(
                     onClick = { onOpenTab(tab) },
                     label = {
                         Text(
-                            text = tab.cardTitle(),
+                            text = tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.widthIn(max = 150.dp)
@@ -4674,6 +4782,7 @@ private fun SharedMobileBookCard(
 ) {
     ElevatedCard(
         modifier = modifier
+            .graphicsLayer { alpha = if (book.isAvailable) 1f else 0.8f }
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
             .clip(MaterialTheme.shapes.large)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
@@ -4713,7 +4822,7 @@ private fun SharedMobileBookCard(
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 Text(
-                    text = book.cardTitle(),
+                    text = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
@@ -4749,6 +4858,7 @@ private fun SharedMobileLibraryListItem(
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer { alpha = if (book.isAvailable) 1f else 0.8f }
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
             .clip(MaterialTheme.shapes.large)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
@@ -4777,7 +4887,7 @@ private fun SharedMobileLibraryListItem(
             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 Row(verticalAlignment = Alignment.Top) {
                     Text(
-                        book.cardTitle(),
+                        book.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
@@ -4856,7 +4966,7 @@ private fun SharedMobileBookCover(
             if (!book.coverImagePath.isNullOrBlank()) {
                 LocalBookCoverImage(
                     path = book.coverImagePath,
-                    contentDescription = book.cardTitle(),
+                    contentDescription = book.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -4895,6 +5005,21 @@ private fun SharedMobileBookCover(
                             .background(MaterialTheme.colorScheme.primary, CircleShape)
                             .padding(8.dp),
                         tint = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+            }
+            if (!book.isAvailable) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = "Not available locally",
+                        modifier = Modifier.size(if (compact) 32.dp else 48.dp),
+                        tint = Color.White,
                     )
                 }
             }
@@ -5303,3 +5428,4 @@ private fun ReadStatusFilter.sharedMobileLabel(): String {
         ReadStatusFilter.COMPLETED -> "Completed"
     }
 }
+val LocalUsePdfFileNameAsDisplayName = staticCompositionLocalOf { false }

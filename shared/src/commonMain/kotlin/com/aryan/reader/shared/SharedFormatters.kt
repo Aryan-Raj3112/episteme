@@ -19,7 +19,8 @@ fun progressFraction(progressPercentage: Float?): Float {
     return progressPercentValue(progressPercentage) / 100f
 }
 
-fun BookItem.cardTitle(): String {
+fun BookItem.cardTitle(usePdfFileNameAsDisplayName: Boolean = false): String {
+    if (usePdfFileNameAsDisplayName && type == FileType.PDF) return displayName
     return title?.takeIf { it.isNotBlank() } ?: displayName
 }
 

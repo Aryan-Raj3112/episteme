@@ -13,6 +13,23 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SharedLibrarySnapshotJsonTest {
+    @Test
+    fun `cloud book tombstones survive snapshot round trip`() {
+        val tombstone = CloudBookTombstone(
+            bookId = "deleted-book",
+            type = FileType.PDF.name,
+            deletedAt = 1234L,
+        )
+
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
+            SharedLibrarySnapshotJson.encode(
+                SharedLibrarySnapshot(bookTombstones = listOf(tombstone))
+            )
+        )
+
+        assertEquals(listOf(tombstone), decoded.bookTombstones)
+    }
+
 
     @Test
     fun `snapshot json round trips library records used by desktop persistence`() {
@@ -37,6 +54,8 @@ class SharedLibrarySnapshotJsonTest {
                     progressPercentage = 42f,
                     fileSize = 99L,
                     fileContentModifiedTimestamp = 123_456L,
+                    metadataModifiedTimestamp = 8_500L,
+                    isAvailable = false,
                     sourceFolder = "C:/Books",
                     folderTextMetadataParsed = true,
                     seriesName = "Series",

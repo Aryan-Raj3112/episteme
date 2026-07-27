@@ -59,8 +59,10 @@ private fun RecentFileItem.toSharedBookItem(
         originalDescription = originalDescription,
         progressPercentage = progressPercentage,
         isRecent = isRecent,
+        isAvailable = isAvailable,
         fileSize = fileSize,
         fileContentModifiedTimestamp = fileContentModifiedTimestamp,
+        metadataModifiedTimestamp = lastModifiedTimestamp,
         sourceFolder = sourceFolderUri,
         folderTextMetadataParsed = folderTextMetadataParsed,
         seriesName = seriesName,
@@ -142,9 +144,11 @@ fun SharedBookItem.toRecentFileItem(
             existing.lastPage == lastPageIndex &&
             existing.progressPercentage == progressPercentage &&
             existing.isRecent == isRecent &&
+            existing.isAvailable == isAvailable &&
             existing.sourceFolderUri == sourceFolder &&
             existing.fileSize == fileSize &&
             existing.fileContentModifiedTimestamp == fileContentModifiedTimestamp &&
+            existing.lastModifiedTimestamp == metadataModifiedTimestamp &&
             existing.seriesName == seriesName &&
             existing.seriesIndex == seriesIndex &&
             existing.folderTextMetadataParsed == folderTextMetadataParsed &&
@@ -175,9 +179,11 @@ fun SharedBookItem.toRecentFileItem(
             lastPage = lastPageIndex,
             progressPercentage = progressPercentage,
             isRecent = isRecent,
+            isAvailable = isAvailable,
             sourceFolderUri = sourceFolder,
             fileSize = fileSize,
             fileContentModifiedTimestamp = fileContentModifiedTimestamp,
+            lastModifiedTimestamp = metadataModifiedTimestamp,
             seriesName = seriesName,
             seriesIndex = seriesIndex,
             folderTextMetadataParsed = folderTextMetadataParsed,
@@ -208,9 +214,11 @@ fun SharedBookItem.toRecentFileItem(
         lastPage = lastPageIndex,
         progressPercentage = progressPercentage,
         isRecent = isRecent,
+        isAvailable = isAvailable,
         sourceFolderUri = sourceFolder,
         fileSize = fileSize,
         fileContentModifiedTimestamp = fileContentModifiedTimestamp,
+        lastModifiedTimestamp = metadataModifiedTimestamp,
         seriesName = seriesName,
         seriesIndex = seriesIndex,
         folderTextMetadataParsed = folderTextMetadataParsed,

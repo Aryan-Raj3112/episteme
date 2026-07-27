@@ -28,11 +28,45 @@ fun SharedReaderScreenState.withMobileImportedBooks(
     return SharedMobileImportResult(
         state = copy(
             rawLibraryBooks = nextRawBooks,
+            cloudBookTombstones = cloudBookTombstones.filterNot { tombstone ->
+                val replacement = addedBooks.firstOrNull { it.id == tombstone.bookId }
+                replacement != null && replacement.timestamp > tombstone.deletedAt
+            },
             recentBooks = (addedBooks + recentBooks).distinctBy { it.id },
             libraryBooks = nextRawBooks,
             bannerMessage = BannerMessage(message ?: "Added ${addedBooks.size} book(s)")
         ),
         addedBooks = addedBooks
+    )
+}
+
+fun SharedReaderScreenState.withMigratedMobileBookIdentity(
+    oldId: String,
+    newId: String,
+): SharedReaderScreenState {
+    if (oldId.isBlank() || newId.isBlank() || oldId == newId) return this
+    if (rawLibraryBooks.none { it.id == oldId } || rawLibraryBooks.any { it.id == newId }) return this
+
+    fun BookItem.migrated() = if (id == oldId) copy(id = newId) else this
+    fun List<BookItem>.migrated() = map(BookItem::migrated)
+    fun Set<String>.migrated() = mapTo(mutableSetOf()) { if (it == oldId) newId else it }
+    return copy(
+        rawLibraryBooks = rawLibraryBooks.migrated(),
+        libraryBooks = libraryBooks.migrated(),
+        recentBooks = recentBooks.migrated(),
+        openTabs = openTabs.migrated(),
+        selectedBookIds = selectedBookIds.migrated(),
+        pinnedHomeBookIds = pinnedHomeBookIds.migrated(),
+        pinnedLibraryBookIds = pinnedLibraryBookIds.migrated(),
+        openTabIds = openTabIds.map { if (it == oldId) newId else it }.distinct(),
+        activeTabBookId = if (activeTabBookId == oldId) newId else activeTabBookId,
+        shelves = shelves.map { shelf ->
+            shelf.copy(
+                books = shelf.books.migrated(),
+                directBooks = shelf.directBooks.migrated(),
+            )
+        },
+        cloudBookTombstones = cloudBookTombstones.filterNot { it.bookId == oldId },
     )
 }
 
@@ -68,6 +102,31 @@ fun SharedReaderScreenState.withMobileBookOpened(
         selectedUriString = openedBook.path,
         selectedFileType = openedBook.type,
         bannerMessage = null
+    )
+}
+
+/**
+ * Opens a session-only external book without adding it to the durable library,
+ * recents, shelves, or PDF tabs.
+ */
+fun SharedReaderScreenState.withMobileTemporaryBookOpened(book: BookItem): SharedReaderScreenState {
+    return copy(
+        selectedBookId = book.id,
+        selectedUriString = book.path,
+        selectedFileType = book.type,
+        bannerMessage = null,
+    )
+}
+
+fun SharedReaderScreenState.withMobileTemporaryBookClosed(bookId: String): SharedReaderScreenState {
+    return copy(
+        recentBooks = recentBooks.filterNot { it.id == bookId },
+        openTabs = openTabs.filterNot { it.id == bookId },
+        openTabIds = openTabIds.filterNot { it == bookId },
+        activeTabBookId = activeTabBookId?.takeUnless { it == bookId },
+        selectedBookId = selectedBookId?.takeUnless { it == bookId },
+        selectedUriString = selectedUriString?.takeUnless { selectedBookId == bookId },
+        selectedFileType = selectedFileType.takeUnless { selectedBookId == bookId },
     )
 }
 

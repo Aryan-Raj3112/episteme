@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1052FFE500000000001 /* FirebaseAuth */; };
 		A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1062FFE500000000001 /* GoogleSignIn */; };
+		A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = A11CE1082FFE500000000001 /* FirebaseFirestore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
 			files = (
 				A11CE1012FFE500000000001 /* FirebaseAuth in Frameworks */,
 				A11CE1022FFE500000000001 /* GoogleSignIn in Frameworks */,
+				A11CE1072FFE500000000001 /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,6 +79,7 @@
 			packageProductDependencies = (
 				A11CE1052FFE500000000001 /* FirebaseAuth */,
 				A11CE1062FFE500000000001 /* GoogleSignIn */,
+				A11CE1082FFE500000000001 /* FirebaseFirestore */,
 			);
 			productName = Reader;
 			productReference = 9284F59D2FFE342F0088D5CA /* Reader.app */;
@@ -466,6 +469,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A11CE1042FFE500000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
 			productName = GoogleSignIn;
+		};
+		A11CE1082FFE500000000001 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A11CE1032FFE500000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

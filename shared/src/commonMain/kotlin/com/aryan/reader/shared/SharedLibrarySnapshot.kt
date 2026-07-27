@@ -26,6 +26,7 @@ import com.aryan.reader.shared.reader.SharedReaderTextAlign
 
 data class SharedLibrarySnapshot(
     val books: List<BookItem> = emptyList(),
+    val bookTombstones: List<CloudBookTombstone> = emptyList(),
     val shelfRecords: List<ShelfRecord> = emptyList(),
     val shelfRefs: List<BookShelfRef> = emptyList(),
     val tags: List<Tag> = emptyList(),
@@ -82,6 +83,7 @@ object SharedLibrarySnapshotJson {
             books = root.array("books")
                 .mapNotNull { it.asBookItemOrNull() }
                 .migrateLegacyRecentState(schemaVersion, openTabIds),
+            bookTombstones = root.array("bookTombstones").mapNotNull { it.asCloudBookTombstoneOrNull() },
             shelfRecords = root.array("shelves").mapNotNull { it.asShelfRecordOrNull() },
             shelfRefs = root.array("bookShelfRefs").mapNotNull { it.asBookShelfRefOrNull() },
             tags = root.array("tags").mapNotNull { it.asTagOrNull() },
@@ -152,6 +154,7 @@ object SharedLibrarySnapshotJson {
             mapOf(
                 "schemaVersion" to JsonPrimitive(SCHEMA_VERSION),
                 "books" to JsonArray(snapshot.books.map { it.toJsonObject() }),
+                "bookTombstones" to JsonArray(snapshot.bookTombstones.map { it.toJsonObject() }),
                 "shelves" to JsonArray(snapshot.shelfRecords.map { it.toJsonObject() }),
                 "bookShelfRefs" to JsonArray(snapshot.shelfRefs.map { it.toJsonObject() }),
                 "tags" to JsonArray(snapshot.tags.map { it.toJsonObject() }),
@@ -294,8 +297,10 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         originalDescription = obj.string("originalDescription"),
         progressPercentage = obj.float("progressPercentage"),
         isRecent = obj.boolean("isRecent", true),
+        isAvailable = obj.boolean("isAvailable", true),
         fileSize = obj.long("fileSize"),
         fileContentModifiedTimestamp = obj.long("fileContentModifiedTimestamp"),
+        metadataModifiedTimestamp = obj.long("metadataModifiedTimestamp"),
         sourceFolder = obj.string("sourceFolder"),
         folderTextMetadataParsed = obj.boolean("folderTextMetadataParsed", false),
         seriesName = obj.string("seriesName"),
@@ -322,6 +327,15 @@ private fun JsonElement.asShelfRecordOrNull(): ShelfRecord? {
         name = obj.string("name") ?: return null,
         isSmart = obj.boolean("isSmart", false),
         smartRulesJson = obj.string("smartRulesJson")
+    )
+}
+
+private fun JsonElement.asCloudBookTombstoneOrNull(): CloudBookTombstone? {
+    val obj = runCatching { jsonObject }.getOrNull() ?: return null
+    return CloudBookTombstone(
+        bookId = obj.string("bookId") ?: return null,
+        type = obj.string("type"),
+        deletedAt = obj.long("deletedAt"),
     )
 }
 
@@ -425,8 +439,10 @@ private fun BookItem.toJsonObject(): JsonObject {
             "originalDescription" to originalDescription.asJson(),
             "progressPercentage" to progressPercentage.asJson(),
             "isRecent" to JsonPrimitive(isRecent),
+            "isAvailable" to JsonPrimitive(isAvailable),
             "fileSize" to JsonPrimitive(fileSize),
             "fileContentModifiedTimestamp" to JsonPrimitive(fileContentModifiedTimestamp),
+            "metadataModifiedTimestamp" to JsonPrimitive(metadataModifiedTimestamp),
             "sourceFolder" to sourceFolder.asJson(),
             "folderTextMetadataParsed" to JsonPrimitive(folderTextMetadataParsed),
             "seriesName" to seriesName.asJson(),
@@ -454,6 +470,16 @@ private fun ShelfRecord.toJsonObject(): JsonObject {
             "name" to JsonPrimitive(name),
             "isSmart" to JsonPrimitive(isSmart),
             "smartRulesJson" to smartRulesJson.asJson()
+        )
+    )
+}
+
+private fun CloudBookTombstone.toJsonObject(): JsonObject {
+    return JsonObject(
+        mapOf(
+            "bookId" to JsonPrimitive(bookId),
+            "type" to type.asJson(),
+            "deletedAt" to JsonPrimitive(deletedAt),
         )
     )
 }

@@ -32,12 +32,18 @@ import com.aryan.reader.shared.AnnotationExportFormatter
 import com.aryan.reader.shared.AccountAuthProvider
 import com.aryan.reader.shared.BannerMessage
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.LibraryFilters
+import com.aryan.reader.shared.LocalFolderSyncEngine
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
+import com.aryan.reader.shared.SharedImportPlanner
+import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.SharedFolderScannedFile
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.SharedSettingsDestination
@@ -47,12 +53,23 @@ import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SyncedFolder
 import com.aryan.reader.shared.UserData
+import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.canEnableGoogleDriveSync
+import com.aryan.reader.shared.canUseCloudSync
+import com.aryan.reader.shared.mergeCloudLibrarySnapshotWithDownloadedBooks
 import com.aryan.reader.shared.parseTagList
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.withMobileBookOpened
+import com.aryan.reader.shared.withMobileTemporaryBookClosed
+import com.aryan.reader.shared.withMobileTemporaryBookOpened
 import com.aryan.reader.shared.withMobileImportedBooks
+import com.aryan.reader.shared.withMigratedMobileBookIdentity
+import com.aryan.reader.shared.withLoadedMetadata
+import com.aryan.reader.shared.withUserEditedMetadata
+import com.aryan.reader.shared.withNewerReaderSession
+import com.aryan.reader.shared.withPdfReadingProgress
+import com.aryan.reader.shared.withReaderSessionState
 import com.aryan.reader.shared.toSharedMobileLibrarySnapshot
 import com.aryan.reader.shared.toSharedMobileReaderState
 import com.aryan.reader.shared.sharedSettingsHubModel
@@ -76,6 +93,7 @@ import com.aryan.reader.shared.ui.SharedMobilePdfReaderScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
+import com.aryan.reader.shared.ui.LocalUsePdfFileNameAsDisplayName
 import com.aryan.reader.shared.ui.SharedMobileLibraryTab
 import com.aryan.reader.shared.ui.SharedMobileMainDestination
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
@@ -85,7 +103,9 @@ import com.aryan.reader.shared.ui.SharedStringResolver
 import com.aryan.reader.shared.ui.SharedSupportProjectScreen
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSApplicationSupportDirectory
@@ -95,6 +115,8 @@ import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.NSURL
+import platform.Foundation.NSFileSize
+import platform.Foundation.NSNumber
 import platform.UIKit.UIViewController
 import platform.UIKit.UIApplication
 import platform.UIKit.UIActivityViewController
@@ -103,6 +125,7 @@ import platform.UIKit.UIScreen
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
+import platform.posix.rename
 
 private val IOS_NATIVE_READER_FILE_TYPES = setOf(
     FileType.PDF,
@@ -133,21 +156,37 @@ class ReaderIosBridge {
         private set
     internal var pendingExternalOpen by mutableStateOf<IosExternalOpen?>(null)
         private set
+    internal var pendingFolderScan by mutableStateOf<IosPendingFolderScan?>(null)
+        private set
     internal var importedCoverPath by mutableStateOf<String?>(null)
         private set
     internal var localStoreKitState by mutableStateOf(IosLocalStoreKitState())
         private set
     internal var accountState by mutableStateOf(IosAccountState())
         private set
+    internal var appLifecycleState by mutableStateOf(IosAppLifecycleState())
+        private set
     private var purchaseHandler: ((String) -> Unit)? = null
     private var restorePurchasesHandler: (() -> Unit)? = null
     private var authHandler: ((String) -> Unit)? = null
     private var signOutHandler: (() -> Unit)? = null
+    private var cloudSyncHandler: ((String) -> Unit)? = null
+    private var cloudUploadHandler: ((String) -> Unit)? = null
+    private var folderFileDeletionHandler: ((String, List<String>) -> Unit)? = null
+    private var folderFileReplacementHandler: ((String, String) -> String?)? = null
+    internal var pendingCloudSync by mutableStateOf<IosPendingCloudSync?>(null)
+        private set
+    internal var cloudSyncStatus by mutableStateOf<String?>(null)
+        private set
 
     internal var latestNativeEvent by mutableStateOf<String?>(null)
         private set
 
-    fun recordImportedFiles(fileNames: List<String>, filePaths: List<String> = fileNames) {
+    fun recordImportedFiles(
+        fileNames: List<String>,
+        filePaths: List<String> = fileNames,
+        contentIds: List<String> = emptyList(),
+    ) {
         if (fileNames.isEmpty()) {
             latestNativeEvent = "Import cancelled"
             return
@@ -157,6 +196,7 @@ class ReaderIosBridge {
             IosImportedFile(
                 name = fileName,
                 path = filePaths.getOrNull(index) ?: fileName,
+                contentId = contentIds.getOrNull(index).orEmpty(),
             )
         }
         importedFiles = (imported + importedFiles).distinctBy { it.path }
@@ -164,16 +204,34 @@ class ReaderIosBridge {
         latestNativeEvent = "Selected ${fileNames.size} file(s) from iOS"
     }
 
-    fun recordImportedFolder(folderName: String, fileNames: List<String>, filePaths: List<String>) {
+    fun recordImportedFolder(
+        folderName: String,
+        fileNames: List<String>,
+        filePaths: List<String>,
+        contentIds: List<String> = emptyList(),
+        relativePaths: List<String> = emptyList(),
+        fileSizes: List<String> = emptyList(),
+        lastModifiedTimestamps: List<String> = emptyList(),
+        scanSucceeded: Boolean = true,
+    ) {
+        if (!scanSucceeded) {
+            latestNativeEvent = "Could not refresh $folderName; keeping the previous scan"
+            return
+        }
         val imported = fileNames.mapIndexed { index, fileName ->
             IosImportedFile(
                 name = fileName,
                 path = filePaths.getOrNull(index) ?: fileName,
                 sourceFolder = folderName,
+                contentId = contentIds.getOrNull(index).orEmpty(),
+                relativePath = relativePaths.getOrNull(index).orEmpty().ifBlank { fileName },
+                fileSize = fileSizes.getOrNull(index)?.toLongOrNull() ?: 0L,
+                lastModifiedTimestamp = lastModifiedTimestamps.getOrNull(index)?.toLongOrNull() ?: 0L,
             )
         }
         importedFiles = (imported + importedFiles.filterNot { it.sourceFolder == folderName }).distinctBy { it.path }
         persistImportedFiles(importedFiles)
+        pendingFolderScan = IosPendingFolderScan(folderName = folderName, files = imported)
         latestNativeEvent = if (imported.isEmpty()) {
             "No supported files found in $folderName"
         } else {
@@ -215,13 +273,38 @@ class ReaderIosBridge {
 
     fun externalFileBehavior(): String = loadIosLibrarySnapshot().externalFileBehavior
 
-    fun openExternalFile(fileName: String, filePath: String, addToLibrary: Boolean) {
+    fun usesStrictFileFilter(): Boolean = loadIosLibrarySnapshot().useStrictFileFilter
+
+    fun readableFileExtensions(): List<String> {
+        return SharedFileCapabilities.all
+            .filter { it.surfaceFor(ReaderPlatform.IOS) != null }
+            .flatMap { it.extensions }
+            .distinct()
+            .sorted()
+    }
+
+    fun importedFilePathsMissingContentId(): List<String> {
+        return importedFiles.filter { it.contentId.isBlank() }.map { it.path }
+    }
+
+    fun backfillImportedContentIds(filePaths: List<String>, contentIds: List<String>) {
+        val identities = filePaths.mapIndexedNotNull { index, path ->
+            contentIds.getOrNull(index)?.takeIf { it.isNotBlank() }?.let { path to it }
+        }.toMap()
+        if (identities.isEmpty()) return
+        importedFiles = importedFiles.map { file ->
+            identities[file.path]?.let { file.copy(contentId = it) } ?: file
+        }
+        persistImportedFiles(importedFiles)
+    }
+
+    fun openExternalFile(fileName: String, filePath: String, contentId: String, addToLibrary: Boolean) {
         if (fileName.isBlank() || filePath.isBlank()) return
         if (addToLibrary) {
-            recordImportedFiles(listOf(fileName), listOf(filePath))
+            recordImportedFiles(listOf(fileName), listOf(filePath), listOf(contentId))
         }
         pendingExternalOpen = IosExternalOpen(
-            file = IosImportedFile(name = fileName, path = filePath),
+            file = IosImportedFile(name = fileName, path = filePath, contentId = contentId),
             addToLibrary = addToLibrary,
         )
     }
@@ -239,11 +322,56 @@ class ReaderIosBridge {
         pendingExternalOpen = null
     }
 
+    internal fun consumeFolderScan() {
+        pendingFolderScan = null
+    }
+
     fun removeImportedFiles(filePaths: List<String>) {
         if (filePaths.isEmpty()) return
+        val importsRoot = iosImportsDirectoryPath()?.canonicalIosFilePath()
+        filePaths.forEach { path ->
+            val canonicalPath = path.canonicalIosFilePath()
+            if (importsRoot != null && canonicalPath.startsWith("$importsRoot/")) {
+                runCatching {
+                    NSFileManager.defaultManager.removeItemAtPath(canonicalPath, error = null)
+                }
+            }
+        }
         importedFiles = importedFiles.filterNot { it.path in filePaths }
         persistImportedFiles(importedFiles)
         latestNativeEvent = "Removed ${filePaths.size} file(s) from iOS library"
+    }
+
+    fun setFolderFileDeletionHandler(handler: (String, List<String>) -> Unit) {
+        folderFileDeletionHandler = handler
+    }
+
+    fun setFolderFileReplacementHandler(handler: (String, String) -> String?) {
+        folderFileReplacementHandler = handler
+    }
+
+    internal fun replaceFolderManagedFile(folderName: String, managedPath: String): IosFolderReplacement? {
+        val fields = folderFileReplacementHandler?.invoke(folderName, managedPath)
+            ?.split('\t') ?: return null
+        val fileSize = fields.getOrNull(0)?.toLongOrNull() ?: return null
+        val modifiedAt = fields.getOrNull(1)?.toLongOrNull() ?: return null
+        importedFiles = importedFiles.map { file ->
+            if (file.path == managedPath) {
+                file.copy(fileSize = fileSize, lastModifiedTimestamp = modifiedAt)
+            } else {
+                file
+            }
+        }
+        persistImportedFiles(importedFiles)
+        return IosFolderReplacement(fileSize = fileSize, lastModifiedTimestamp = modifiedAt)
+    }
+
+    fun removeFolderManagedFiles(folderName: String, filePaths: List<String>) {
+        if (folderName.isBlank() || filePaths.isEmpty()) return
+        folderFileDeletionHandler?.invoke(folderName, filePaths)
+        importedFiles = importedFiles.filterNot { it.path in filePaths }
+        persistImportedFiles(importedFiles)
+        latestNativeEvent = "Deleted ${filePaths.size} file(s) from $folderName"
     }
 
     fun shareFile(path: String): Boolean {
@@ -269,6 +397,13 @@ class ReaderIosBridge {
 
     fun setKeepScreenOn(enabled: Boolean) {
         UIApplication.sharedApplication.idleTimerDisabled = enabled
+    }
+
+    fun updateAppActive(active: Boolean) {
+        appLifecycleState = IosAppLifecycleState(
+            isActive = active,
+            eventId = appLifecycleState.eventId + 1,
+        )
     }
 
     fun setReaderBrightness(brightness: Float?) {
@@ -370,6 +505,47 @@ class ReaderIosBridge {
         signOutHandler?.invoke()
     }
 
+    fun setCloudSyncHandlers(
+        sync: (String) -> Unit,
+        upload: (String) -> Unit,
+    ) {
+        cloudSyncHandler = sync
+        cloudUploadHandler = upload
+    }
+
+    fun requestCloudSync(snapshotJson: String) {
+        cloudSyncStatus = "Checking Google Drive…"
+        cloudSyncHandler?.invoke(snapshotJson)
+    }
+
+    fun uploadCloudSnapshot(snapshotJson: String) {
+        cloudUploadHandler?.invoke(snapshotJson)
+    }
+
+    fun completeCloudSync(
+        remoteSnapshotJson: String?,
+        downloadedBookIds: List<String>,
+        downloadedBookPaths: List<String>,
+        status: String,
+    ) {
+        pendingCloudSync = remoteSnapshotJson
+            ?.takeIf(String::isNotBlank)
+            ?.let { json ->
+                IosPendingCloudSync(
+                    remoteSnapshotJson = json,
+                    downloadedBookPaths = downloadedBookIds.mapIndexedNotNull { index, id ->
+                        downloadedBookPaths.getOrNull(index)?.let { id to it }
+                    }.toMap(),
+                )
+            }
+        cloudSyncStatus = status
+        latestNativeEvent = status
+    }
+
+    internal fun consumeCloudSnapshot() {
+        pendingCloudSync = null
+    }
+
     fun updateAccountState(
         uid: String?,
         displayName: String?,
@@ -429,6 +605,11 @@ private data class IosSystemUiState(
     val edgeToEdge: Boolean
 )
 
+internal data class IosAppLifecycleState(
+    val isActive: Boolean = true,
+    val eventId: Long = 0L,
+)
+
 private enum class IosUtilityScreen {
     ACCOUNT,
     PRO,
@@ -444,11 +625,30 @@ data class IosImportedFile(
     val name: String,
     val path: String,
     val sourceFolder: String = "",
+    val contentId: String = "",
+    val relativePath: String = "",
+    val fileSize: Long = 0L,
+    val lastModifiedTimestamp: Long = 0L,
 )
 
 internal data class IosExternalOpen(
     val file: IosImportedFile,
     val addToLibrary: Boolean,
+)
+
+internal data class IosPendingCloudSync(
+    val remoteSnapshotJson: String,
+    val downloadedBookPaths: Map<String, String>,
+)
+
+internal data class IosPendingFolderScan(
+    val folderName: String,
+    val files: List<IosImportedFile>,
+)
+
+internal data class IosFolderReplacement(
+    val fileSize: Long,
+    val lastModifiedTimestamp: Long,
 )
 
 private const val IosImportedFilesDefaultsKey = "reader_ios_imported_files_v1"
@@ -460,6 +660,7 @@ private const val IosEpubReaderStateDefaultsPrefix = "reader_ios_epub_state_v1_"
 private const val IosReaderBrightnessDefaultsKey = "reader_ios_reader_brightness_v1"
 private const val IosReaderAutoScrollSpeedDefaultsKey = "reader_ios_auto_scroll_speed_v1"
 private const val IosReaderOrientationDefaultsKey = "reader_ios_reader_orientation_v1"
+private const val IosKeepScreenOnDefaultsKey = "reader_ios_keep_screen_on_v1"
 private const val IosReaderPreferencesDefaultsKey = "reader_ios_reader_preferences_v1"
 private const val IosLibrarySnapshotDefaultsKey = "reader_ios_library_snapshot_v1"
 
@@ -481,9 +682,13 @@ private fun persistIosLibrarySnapshot(state: SharedReaderScreenState) {
 private fun SharedLibrarySnapshot.withResolvedIosBookPaths(): SharedLibrarySnapshot {
     val resolvedBooks = books
         .map { book ->
+            val resolvedPath = book.path?.resolvedIosImportedFilePath()
             book.copy(
-                path = book.path?.resolvedIosImportedFilePath(),
+                path = resolvedPath,
                 coverImagePath = book.coverImagePath?.resolvedIosCoverPath(),
+                isAvailable = resolvedPath?.startsWith("opds-pse://") == true ||
+                    (!resolvedPath.isNullOrBlank() &&
+                        NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)),
             )
         }
         .distinctBy { book -> book.path?.takeIf(String::isNotBlank)?.let { "path:$it" } ?: "id:${book.id}" }
@@ -532,20 +737,40 @@ private fun persistIosReaderAutoScrollSpeed(speed: Float) {
     NSUserDefaults.standardUserDefaults.setObject(speed.coerceIn(12f, 160f).toString(), forKey = IosReaderAutoScrollSpeedDefaultsKey)
 }
 
+private fun loadIosKeepScreenOn(): Boolean {
+    return NSUserDefaults.standardUserDefaults.boolForKey(IosKeepScreenOnDefaultsKey)
+}
+
+private fun persistIosKeepScreenOn(enabled: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosKeepScreenOnDefaultsKey)
+}
+
 private fun loadPersistedImportedFiles(): List<IosImportedFile> {
     val encoded = NSUserDefaults.standardUserDefaults.stringForKey(IosImportedFilesDefaultsKey) ?: return emptyList()
     return encoded
         .lineSequence()
         .mapNotNull { line ->
             val parts = line.splitEscapedTab()
-            if (parts.size !in 2..3) return@mapNotNull null
+            if (parts.size !in 2..7) return@mapNotNull null
             val name = parts[0].unescapePersistedValue()
             val resolvedPath = parts[1].unescapePersistedValue().resolvedIosImportedFilePath()
             val sourceFolder = parts.getOrNull(2)
                 ?.unescapePersistedValue()
                 ?.takeUnless { it == "iOS import" }
                 .orEmpty()
-            IosImportedFile(name = name, path = resolvedPath, sourceFolder = sourceFolder)
+            val contentId = parts.getOrNull(3)?.unescapePersistedValue().orEmpty()
+            val relativePath = parts.getOrNull(4)?.unescapePersistedValue().orEmpty()
+            val fileSize = parts.getOrNull(5)?.unescapePersistedValue()?.toLongOrNull() ?: 0L
+            val lastModifiedTimestamp = parts.getOrNull(6)?.unescapePersistedValue()?.toLongOrNull() ?: 0L
+            IosImportedFile(
+                name = name,
+                path = resolvedPath,
+                sourceFolder = sourceFolder,
+                contentId = contentId,
+                relativePath = relativePath,
+                fileSize = fileSize,
+                lastModifiedTimestamp = lastModifiedTimestamp,
+            )
         }
         .distinctBy { it.path }
         .toList()
@@ -553,7 +778,15 @@ private fun loadPersistedImportedFiles(): List<IosImportedFile> {
 
 private fun persistImportedFiles(files: List<IosImportedFile>) {
     val encoded = files.joinToString("\n") { file ->
-        "${file.name.escapePersistedValue()}\t${file.path.stableIosImportedFilePath().escapePersistedValue()}\t${file.sourceFolder.escapePersistedValue()}"
+        listOf(
+            file.name,
+            file.path.stableIosImportedFilePath(),
+            file.sourceFolder,
+            file.contentId,
+            file.relativePath,
+            file.fileSize.toString(),
+            file.lastModifiedTimestamp.toString(),
+        ).joinToString("\t") { it.escapePersistedValue() }
     }
     NSUserDefaults.standardUserDefaults.setObject(encoded, forKey = IosImportedFilesDefaultsKey)
 }
@@ -679,17 +912,7 @@ private fun BookItem.iosPdfReaderStateKey(): String {
 private fun loadPersistedIosEpubBookState(book: BookItem): BookItem {
     val encoded = NSUserDefaults.standardUserDefaults.stringForKey(book.iosEpubReaderStateKey()) ?: return book
     val stored = SharedLibrarySnapshotJson.decodeOrEmpty(encoded).books.firstOrNull() ?: return book
-    return book.copy(
-        title = stored.title ?: book.title,
-        author = stored.author ?: book.author,
-        progressPercentage = stored.progressPercentage ?: book.progressPercentage,
-        lastPageIndex = stored.lastPageIndex ?: book.lastPageIndex,
-        readerPosition = stored.readerPosition ?: book.readerPosition,
-        readerSettings = stored.readerSettings ?: book.readerSettings,
-        readerBookmarks = stored.readerBookmarks,
-        readerHighlights = stored.readerHighlights,
-        readingPositionModifiedTimestamp = stored.readingPositionModifiedTimestamp
-    )
+    return book.withNewerReaderSession(stored)
 }
 
 private fun persistIosEpubBookState(book: BookItem) {
@@ -827,6 +1050,9 @@ private fun ReaderIosApp(
     var settingsQuery by remember { mutableStateOf("") }
     var showAppThemePanel by remember { mutableStateOf(false) }
     var activeReaderBook by remember { mutableStateOf<BookItem?>(null) }
+    var activeTemporaryBookId by remember { mutableStateOf<String?>(null) }
+    var activeTemporaryBookPath by remember { mutableStateOf<String?>(null) }
+    var pendingUnavailableBookId by remember { mutableStateOf<String?>(null) }
     var readerBrightness by remember { mutableStateOf(loadIosReaderBrightness()) }
     var readerAutoScrollSpeed by remember { mutableStateOf(loadIosReaderAutoScrollSpeed()) }
     var readerOrientation by remember { mutableStateOf(loadIosReaderOrientation()) }
@@ -855,21 +1081,54 @@ private fun ReaderIosApp(
         scope.launch { drawerState.close() }
     }
 
-    fun openLibraryBook(book: BookItem) {
-        state = state.withMobileBookOpened(book)
-        val openedBook = state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: book
-        if (book.type in IOS_NATIVE_READER_FILE_TYPES) {
-            if (book.type == FileType.MOBI) {
-                iosMobiLog {
-                    "Opening reader screen id=${book.id} file=${book.displayName} pathPresent=${!book.path.isNullOrBlank()}"
-                }
+    fun cloudSyncEligible(): Boolean = state.isSyncEnabled && canUseCloudSync(
+        providers = bridge.accountState.providers,
+        hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+        isProUser = state.isProUser,
+    )
+
+    fun openLibraryBook(book: BookItem, temporary: Boolean = false) {
+        if (!book.isAvailable) {
+            if (cloudSyncEligible()) {
+                pendingUnavailableBookId = book.id
+                bridge.requestCloudSync(
+                    SharedLibrarySnapshotJson.encode(
+                        state.toSharedMobileLibrarySnapshot().withStableIosBookPaths()
+                    )
+                )
+                showMessage("Downloading ${book.displayName}")
+            } else {
+                showMessage("This book is not available on this device")
             }
-            activeReaderBook = openedBook
             return
         }
-        state = state.copy(
-            bannerMessage = BannerMessage("${book.type.name} is not supported by the iOS reader yet")
-        )
+        if (book.type !in IOS_NATIVE_READER_FILE_TYPES) {
+            if (temporary) {
+                book.path?.let { NSFileManager.defaultManager.removeItemAtPath(it, error = null) }
+            }
+            state = state.copy(
+                bannerMessage = BannerMessage("${book.type.name} is not supported by the iOS reader yet")
+            )
+            return
+        }
+        state = if (temporary) {
+            state.withMobileTemporaryBookOpened(book)
+        } else {
+            state.withMobileBookOpened(book)
+        }
+        val openedBook = if (temporary) {
+            book
+        } else {
+            state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: book
+        }
+        activeTemporaryBookId = book.id.takeIf { temporary }
+        activeTemporaryBookPath = book.path.takeIf { temporary }
+        if (book.type == FileType.MOBI) {
+            iosMobiLog {
+                "Opening reader screen id=${book.id} file=${book.displayName} pathPresent=${!book.path.isNullOrBlank()}"
+            }
+        }
+        activeReaderBook = openedBook
     }
 
     fun addBooksToLibrary(books: List<BookItem>, message: String? = null) {
@@ -894,32 +1153,189 @@ private fun ReaderIosApp(
         selectedLibraryTab = SharedMobileLibraryTab.BOOKS
     }
 
+    fun requestCloudSyncIfEligible() {
+        if (!cloudSyncEligible()) return
+        bridge.requestCloudSync(
+            SharedLibrarySnapshotJson.encode(
+                state.toSharedMobileLibrarySnapshot().withStableIosBookPaths()
+            )
+        )
+    }
+
+    fun closeActiveReader(book: BookItem) {
+        bridge.restoreReaderBrightness()
+        bridge.setKeepScreenOn(false)
+        activeReaderBook = null
+        if (activeTemporaryBookId == book.id) {
+            activeTemporaryBookPath?.let {
+                NSFileManager.defaultManager.removeItemAtPath(it, error = null)
+            }
+            state = state.withMobileTemporaryBookClosed(book.id)
+            activeTemporaryBookId = null
+            activeTemporaryBookPath = null
+        } else {
+            requestCloudSyncIfEligible()
+        }
+    }
+
+    fun updateIosBookMetadata(book: BookItem) {
+        val current = state.rawLibraryBooks.firstOrNull { it.id == book.id } ?: return
+        scope.launch {
+            withContext(Dispatchers.Default) {
+                persistIosEpubMetadataEdit(current, book)
+            }.onSuccess { persisted ->
+                val folderName = current.sourceFolder
+                if (!folderName.isNullOrBlank() && !persisted.path.isNullOrBlank()) {
+                    val replacement = bridge.replaceFolderManagedFile(folderName, persisted.path)
+                    if (replacement == null) {
+                        showMessage("Could not write the edited EPUB back to $folderName")
+                        onRefreshFolders()
+                    } else {
+                        state = state.withUpdatedIosBook(
+                            persisted.copy(
+                                fileSize = replacement.fileSize,
+                                fileContentModifiedTimestamp = replacement.lastModifiedTimestamp,
+                            )
+                        )
+                        showMessage("EPUB metadata updated")
+                    }
+                } else {
+                    state = state.withUpdatedIosBook(persisted)
+                    showMessage("EPUB metadata updated")
+                }
+            }.onFailure {
+                showMessage(it.message ?: "Could not update EPUB metadata")
+            }
+        }
+    }
+
+    LaunchedEffect(bridge.pendingCloudSync) {
+        val pending = bridge.pendingCloudSync ?: return@LaunchedEffect
+        val localSnapshot = state.toSharedMobileLibrarySnapshot()
+        val remoteSnapshot = SharedLibrarySnapshotJson.decodeOrEmpty(pending.remoteSnapshotJson)
+        val mergedSnapshot = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = localSnapshot,
+            remote = remoteSnapshot,
+            downloadedBookPaths = pending.downloadedBookPaths,
+        )
+        state = mergedSnapshot
+            .withResolvedIosBookPaths()
+            .toSharedMobileReaderState()
+        pendingUnavailableBookId?.let { bookId ->
+            val downloaded = state.rawLibraryBooks.firstOrNull { it.id == bookId && it.isAvailable }
+            pendingUnavailableBookId = null
+            if (downloaded != null) {
+                openLibraryBook(downloaded)
+            } else {
+                showMessage("The book could not be downloaded")
+            }
+        }
+        bridge.uploadCloudSnapshot(
+            SharedLibrarySnapshotJson.encode(mergedSnapshot.withStableIosBookPaths())
+        )
+        bridge.consumeCloudSnapshot()
+    }
+
     LaunchedEffect(bridge.pendingExternalOpen) {
         val request = bridge.pendingExternalOpen ?: return@LaunchedEffect
-        val existing = state.rawLibraryBooks.firstOrNull { it.path == request.file.path }
+        val existing = state.rawLibraryBooks.firstOrNull {
+            request.addToLibrary && (
+                it.path == request.file.path ||
+                    (request.file.contentId.isNotBlank() && it.id == request.file.contentId)
+                )
+        }
         val externalBook = existing
             ?: listOf(request.file).toImportedBooks(existingBooks = state.rawLibraryBooks).firstOrNull()
+                ?.let { imported ->
+                    if (request.addToLibrary) imported else imported.copy(
+                        id = "ios_temporary_${currentTimestamp()}_${request.file.path.hashCode()}"
+                    )
+                }
         if (externalBook != null) {
             if (request.addToLibrary && existing == null) {
                 addBooksToLibrary(listOf(externalBook), "Added ${externalBook.displayName}")
             }
-            openLibraryBook(externalBook)
+            openLibraryBook(externalBook, temporary = !request.addToLibrary)
         } else {
             showMessage("This file type is not supported")
         }
         bridge.consumeExternalOpen()
     }
 
-    LaunchedEffect(bridge.importedFiles) {
-        val importedPaths = bridge.importedFiles.mapTo(mutableSetOf()) { it.path }
-        val managedFolderNames = state.syncedFolders.mapTo(mutableSetOf()) { it.name }
-        val staleBookIds = state.rawLibraryBooks
-            .filter { it.sourceFolder in managedFolderNames && it.path !in importedPaths }
-            .mapTo(mutableSetOf()) { it.id }
-        if (staleBookIds.isNotEmpty()) {
-            state = state.removeIosBooks(staleBookIds)
+    LaunchedEffect(bridge.importedFiles, bridge.pendingFolderScan) {
+        bridge.pendingFolderScan?.let { scan ->
+            val now = currentTimestamp()
+            val configuredFolder = state.syncedFolders.firstOrNull { it.name == scan.folderName }
+                ?: SyncedFolder(
+                    uriString = "ios-local-folder://${scan.folderName.normalizedId()}",
+                    name = scan.folderName,
+                    lastScanTime = 0L,
+                )
+            val scannedFiles = scan.files.map { file ->
+                SharedFolderScannedFile(
+                    name = file.name,
+                    path = file.path,
+                    sourceFolder = scan.folderName,
+                    relativePath = file.relativePath.ifBlank { file.name },
+                    type = file.name.fileTypeFromExtension(),
+                    size = file.fileSize,
+                    lastModified = file.lastModifiedTimestamp,
+                )
+            }
+            val syncResult = LocalFolderSyncEngine.syncFolder(
+                state = state,
+                folder = configuredFolder.copy(uriString = scan.folderName),
+                files = scannedFiles,
+                remoteMetadata = emptyMap(),
+                nowMillis = now,
+            )
+            val syncedFolder = configuredFolder.copy(lastScanTime = now)
+            state = syncResult.state.copy(
+                syncedFolders = (
+                    state.syncedFolders.filterNot { it.name == scan.folderName } + syncedFolder
+                ).sortedBy { it.name.lowercase() },
+            )
+            if (syncResult.stats.newBooks > 0) {
+                selectedPage = SharedMobileMainDestination.LIBRARY
+                selectedLibraryTab = SharedMobileLibraryTab.BOOKS
+                showMessage("Added ${syncResult.stats.newBooks} book(s) from ${scan.folderName}")
+            } else if (
+                syncResult.stats.updatedBooks > 0 ||
+                syncResult.stats.removedBooks > 0 ||
+                syncResult.stats.migratedBooks > 0
+            ) {
+                showMessage("Refreshed ${scan.folderName}")
+            }
+            bridge.consumeFolderScan()
         }
-        val importedBooks = bridge.importedFiles.toImportedBooks(existingBooks = state.rawLibraryBooks)
+
+        bridge.importedFiles
+            .filter { it.sourceFolder.isBlank() && it.contentId.isNotBlank() }
+            .forEach { imported ->
+                val legacyBook = state.rawLibraryBooks.firstOrNull {
+                    it.path == imported.path && it.id != imported.contentId
+                } ?: return@forEach
+                state = if (state.rawLibraryBooks.none { it.id == imported.contentId }) {
+                    state.withMigratedMobileBookIdentity(legacyBook.id, imported.contentId)
+                } else {
+                    state.removeIosBooks(setOf(legacyBook.id))
+                }
+            }
+        val duplicateManagedPaths = bridge.importedFiles
+            .filter { it.sourceFolder.isBlank() && it.contentId.isNotBlank() }
+            .filter { imported ->
+                state.rawLibraryBooks.any { book ->
+                    book.id == imported.contentId && book.path != imported.path
+                }
+            }
+            .map { it.path }
+        if (duplicateManagedPaths.isNotEmpty()) {
+            bridge.removeImportedFiles(duplicateManagedPaths)
+            showMessage("This book is already in the library")
+        }
+        val importedBooks = bridge.importedFiles
+            .filter { it.sourceFolder.isBlank() }
+            .toImportedBooks(existingBooks = state.rawLibraryBooks)
         if (importedBooks.isNotEmpty()) {
             val importedCount = importedBooks
                 .distinctBy { it.id }
@@ -961,7 +1377,10 @@ private fun ReaderIosApp(
         appTextDimFactorDark = state.appTextDimFactorDark,
         appSeedColor = state.appSeedColor
     ) {
-        CompositionLocalProvider(LocalSharedStringResolver provides stringResolver) {
+        CompositionLocalProvider(
+            LocalSharedStringResolver provides stringResolver,
+            LocalUsePdfFileNameAsDisplayName provides state.usePdfFileNameAsDisplayName,
+        ) {
         Surface(modifier = Modifier.fillMaxSize()) {
             if (showAppThemePanel) {
                 SharedAppThemeSettingsDialog(
@@ -992,13 +1411,18 @@ private fun ReaderIosApp(
                         SharedMobilePdfReaderScreen(
                             book = book,
                             onBack = {
-                                bridge.restoreReaderBrightness()
-                                activeReaderBook = null
+                                closeActiveReader(book)
                             },
                             onNativePdfBridgeNeeded = { pdfBook ->
                                 showMessage("${pdfBook.displayName}: page ${book.lastPageIndex?.plus(1) ?: 1}")
                             },
                             initialReaderState = initialPdfReaderState,
+                            readerDefaultSettings = state.pdfReaderDefaultSettings,
+                            onReaderDefaultSettingsChange = { defaults ->
+                                state = state.reduce(AppAction.PdfReaderDefaultSettingsChanged(defaults))
+                            },
+                            initialKeepScreenOn = loadIosKeepScreenOn(),
+                            onKeepScreenOnPreferenceChange = ::persistIosKeepScreenOn,
                             onReaderStateChange = { pdfState ->
                                 persistIosPdfReaderState(book, pdfState)
                                 val updatedBook = book.withIosPdfReaderProgress(pdfState)
@@ -1037,9 +1461,12 @@ private fun ReaderIosApp(
                         }
                         SharedMobileEpubReaderScreen(
                             book = readerBook,
-                            onBack = { activeReaderBook = null },
+                            onBack = {
+                                closeActiveReader(book)
+                            },
                             onReaderStateChange = { snapshot ->
-                                val updatedBook = book.copy(
+                                val currentBook = activeReaderBook?.takeIf { it.id == book.id } ?: readerBook
+                                val sessionBook = currentBook.copy(
                                     progressPercentage = snapshot.progressPercent,
                                     lastPageIndex = snapshot.pageIndex,
                                     readerPosition = snapshot.locator,
@@ -1050,22 +1477,28 @@ private fun ReaderIosApp(
                                     readerAutoScrollLocalSpeed = snapshot.autoScrollLocalSpeed,
                                     readerBookmarks = snapshot.bookmarks,
                                     readerHighlights = snapshot.highlights,
-                                    readingPositionModifiedTimestamp = currentTimestamp()
                                 )
-                                persistIosEpubBookState(updatedBook)
-                                activeReaderBook = updatedBook
-                                state = state.withUpdatedIosBook(updatedBook)
+                                val updatedBook = currentBook.withReaderSessionState(sessionBook)
+                                if (updatedBook !== currentBook) {
+                                    persistIosEpubBookState(updatedBook)
+                                    activeReaderBook = updatedBook
+                                    state = state.withUpdatedIosBook(updatedBook)
+                                }
                             },
                             onMetadataLoaded = { title, author ->
-                                val updatedBook = readerBook.copy(
-                                    title = title.ifBlank { readerBook.title },
-                                    author = author ?: readerBook.author
-                                )
-                                persistIosEpubBookState(updatedBook)
-                                activeReaderBook = updatedBook
-                                state = state.withUpdatedIosBook(updatedBook)
+                                val currentBook = activeReaderBook?.takeIf { it.id == book.id } ?: readerBook
+                                val updatedBook = currentBook.withLoadedMetadata(title, author)
+                                if (updatedBook !== currentBook) {
+                                    persistIosEpubBookState(updatedBook)
+                                    activeReaderBook = updatedBook
+                                    state = state.withUpdatedIosBook(updatedBook)
+                                }
                             },
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
+                            appIsActive = bridge.appLifecycleState.isActive,
+                            appLifecycleEventId = bridge.appLifecycleState.eventId,
+                            initialKeepScreenOn = loadIosKeepScreenOn(),
+                            onKeepScreenOnPreferenceChange = ::persistIosKeepScreenOn,
                             onSystemUiAppearanceChange = { statusHidden, navigationHidden, lightContent, backgroundArgb ->
                                 // Android keeps the reader edge-to-edge at all times with
                                 // transparent system bars, letting the page theme paint below.
@@ -1145,12 +1578,17 @@ private fun ReaderIosApp(
                         val settingsModel = sharedSettingsHubModel(
                             SharedSettingsHubInput(
                                 platform = SharedSettingsPlatform.IOS,
-                                accountAvailable = false,
-                                includeAccountAuthActions = false,
-                                syncAvailable = false,
+                                isSignedIn = bridge.accountState.uid != null,
+                                isProUser = state.isProUser,
+                                accountAvailable = true,
+                                includeAccountAuthActions = true,
+                                syncAvailable = true,
+                                cloudSyncEligible = bridge.accountState.canSync,
                                 folderSyncAvailable = true,
                                 aiSettingsAvailable = false,
-                                ttsSettingsAvailable = true,
+                                ttsSettingsAvailable = false,
+                                bookCacheMaintenanceAvailable = false,
+                                reflowCacheMaintenanceAvailable = false,
                                 includeLanguage = true,
                                 includeScreenCaptureProtection = false,
                                 includeCloudLocalDataClear = false,
@@ -1206,6 +1644,20 @@ private fun ReaderIosApp(
                                         state = state.copy(useStrictFileFilter = !state.useStrictFileFilter)
                                     }
                                     SharedSettingsAction.CUSTOM_FONTS -> utilityScreen = IosUtilityScreen.FONTS
+                                    SharedSettingsAction.SIGN_IN -> utilityScreen = IosUtilityScreen.ACCOUNT
+                                    SharedSettingsAction.SIGN_OUT -> bridge.requestSignOut()
+                                    SharedSettingsAction.CLOUD_SYNC -> {
+                                        val enabled = !state.isSyncEnabled
+                                        if (!enabled || canUseCloudSync(
+                                                providers = bridge.accountState.providers,
+                                                hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+                                                isProUser = state.isProUser,
+                                            )
+                                        ) {
+                                            state = state.reduce(AppAction.SyncEnabledChanged(enabled))
+                                            if (enabled) requestCloudSyncIfEligible()
+                                        }
+                                    }
                                     SharedSettingsAction.FOLDER_SYNC -> {
                                         val enabled = !state.isFolderSyncEnabled
                                         state = state.reduce(AppAction.FolderSyncEnabledChanged(enabled))
@@ -1333,14 +1785,23 @@ private fun ReaderIosApp(
                         currentUser = state.currentUser,
                         isProUser = state.isProUser,
                         isStandardEdition = !bridge.localStoreKitState.available,
+                        aiSettingsAvailable = false,
                         credits = state.credits,
                         isSyncEnabled = state.isSyncEnabled,
                         isFolderSyncEnabled = state.isFolderSyncEnabled,
                         onSignInClick = { runDrawerAction { utilityScreen = IosUtilityScreen.ACCOUNT } },
                         onSignOutClick = { runDrawerAction { bridge.requestSignOut() } },
                         onSyncToggle = { enabled ->
-                            if (!enabled || bridge.accountState.canSync) {
+                            if (!enabled || canUseCloudSync(
+                                    providers = bridge.accountState.providers,
+                                    hasGoogleDrivePermission = bridge.accountState.googleDriveAuthorized,
+                                    isProUser = state.isProUser,
+                                )
+                            ) {
                                 state = state.reduce(AppAction.SyncEnabledChanged(enabled))
+                                if (enabled) requestCloudSyncIfEligible()
+                            } else if (!state.isProUser) {
+                                showMessage("Cloud sync requires Pro")
                             } else {
                                 showMessage("Sync requires a linked Google account and Google Drive permission")
                             }
@@ -1393,7 +1854,11 @@ private fun ReaderIosApp(
                                     }
                                     override fun refresh() {
                                         onRefreshFolders()
-                                        showMessage("Refreshing local folders")
+                                        if (state.isSyncEnabled) {
+                                            requestCloudSyncIfEligible()
+                                        } else {
+                                            showMessage("Refreshing local folders")
+                                        }
                                     }
                                     override fun clearSelection() {
                                         state = state.copy(selectedBookIds = emptySet())
@@ -1412,10 +1877,16 @@ private fun ReaderIosApp(
                                     }
                                     override fun deleteSelectedBooks() {
                                         val removed = state.selectedBookIds
-                                        bridge.removeImportedFiles(
-                                            state.rawLibraryBooks.filter { it.id in removed }.mapNotNull { it.path }
-                                        )
-                                        state = state.removeIosBooks(removed)
+                                        val removedBooks = state.rawLibraryBooks.filter { it.id in removed }
+                                        removedBooks.filter { it.sourceFolder == null }
+                                            .mapNotNull { it.path }
+                                            .let(bridge::removeImportedFiles)
+                                        removedBooks.filter { it.sourceFolder != null }
+                                            .groupBy { it.sourceFolder.orEmpty() }
+                                            .forEach { (folder, books) ->
+                                                bridge.removeFolderManagedFiles(folder, books.mapNotNull { it.path })
+                                            }
+                                        state = state.removeIosBooks(removed, recordCloudDeletion = true)
                                     }
                                     override fun createShelfFromSelectedBooks(name: String) {
                                         state = state.createIosShelf(name, state.selectedBookIds)
@@ -1423,7 +1894,7 @@ private fun ReaderIosApp(
                                         selectedLibraryTab = SharedMobileLibraryTab.SHELVES
                                     }
                                     override fun updateBook(book: BookItem) {
-                                        state = state.withUpdatedIosBook(book)
+                                        updateIosBookMetadata(book)
                                         bridge.consumeImportedCover()
                                     }
                                     override fun saveBook(book: BookItem) {
@@ -1446,7 +1917,7 @@ private fun ReaderIosApp(
                                         val parsed = parseTagList(tags, state.allTags)
                                         state.selectedBookIds.forEach { id ->
                                             state.rawLibraryBooks.firstOrNull { it.id == id }?.let { book ->
-                                                state = state.withUpdatedIosBook(book.copy(tags = parsed))
+                                                state = state.withUpdatedIosMetadata(book.copy(tags = parsed))
                                             }
                                         }
                                         state = state.copy(selectedBookIds = emptySet())
@@ -1493,7 +1964,7 @@ private fun ReaderIosApp(
                                 onLongPressShelf = { shelf -> state = state.reduce(LibraryAction.ShelfSelectionToggled(shelf.id)) },
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
                                 onUpdateBook = { book ->
-                                    state = state.withUpdatedIosBook(book)
+                                    updateIosBookMetadata(book)
                                     bridge.consumeImportedCover()
                                 },
                                 onSaveBook = { book ->
@@ -1517,7 +1988,7 @@ private fun ReaderIosApp(
                                     val parsed = parseTagList(tags, state.allTags)
                                     bookIds.forEach { id ->
                                         state.rawLibraryBooks.firstOrNull { it.id == id }?.let { book ->
-                                            state = state.withUpdatedIosBook(book.copy(tags = parsed))
+                                            state = state.withUpdatedIosMetadata(book.copy(tags = parsed))
                                         }
                                     }
                                     state = state.copy(selectedBookIds = emptySet())
@@ -1553,10 +2024,16 @@ private fun ReaderIosApp(
                                     ).removeIosBooks(folderBookIds)
                                 },
                                 onDeleteBooks = { bookIds ->
-                                    bridge.removeImportedFiles(
-                                        state.rawLibraryBooks.filter { it.id in bookIds }.mapNotNull { it.path }
-                                    )
-                                    state = state.removeIosBooks(bookIds)
+                                    val removedBooks = state.rawLibraryBooks.filter { it.id in bookIds }
+                                    removedBooks.filter { it.sourceFolder == null }
+                                        .mapNotNull { it.path }
+                                        .let(bridge::removeImportedFiles)
+                                    removedBooks.filter { it.sourceFolder != null }
+                                        .groupBy { it.sourceFolder.orEmpty() }
+                                        .forEach { (folder, books) ->
+                                            bridge.removeFolderManagedFiles(folder, books.mapNotNull { it.path })
+                                        }
+                                    state = state.removeIosBooks(bookIds, recordCloudDeletion = true)
                                 },
                                 onDeleteShelves = { shelfIds ->
                                     val removedShelves = state.shelves.filter { it.id in shelfIds }
@@ -1885,8 +2362,31 @@ private fun SharedReaderScreenState.createIosShelf(
     )
 }
 
-private fun SharedReaderScreenState.removeIosBooks(bookIds: Set<String>): SharedReaderScreenState {
+private fun SharedReaderScreenState.removeIosBooks(
+    bookIds: Set<String>,
+    recordCloudDeletion: Boolean = false,
+): SharedReaderScreenState {
     if (bookIds.isEmpty()) return this
+    val deletedAt = currentTimestamp()
+    val newTombstones = if (recordCloudDeletion) {
+        val deletedBooks = rawLibraryBooks.filter { book ->
+            book.id in bookIds &&
+                book.sourceFolder == null &&
+                book.path?.startsWith("opds-pse://") != true &&
+                SharedFileCapabilities.capabilityFor(book.type)?.syncEligible == true &&
+                !SharedFileCapabilities.isManualOnlyReaderFileName(book.displayName)
+        }
+        (cloudBookTombstones + deletedBooks.map { book ->
+            CloudBookTombstone(
+                bookId = book.id,
+                type = book.type.name,
+                deletedAt = deletedAt,
+            )
+        }).groupBy(CloudBookTombstone::bookId)
+            .map { (_, tombstones) -> tombstones.maxBy(CloudBookTombstone::deletedAt) }
+    } else {
+        cloudBookTombstones
+    }
     fun List<BookItem>.withoutRemoved() = filterNot { it.id in bookIds }
     return copy(
         rawLibraryBooks = rawLibraryBooks.withoutRemoved(),
@@ -1897,6 +2397,7 @@ private fun SharedReaderScreenState.removeIosBooks(bookIds: Set<String>): Shared
         activeTabBookId = activeTabBookId?.takeUnless { it in bookIds },
         pinnedHomeBookIds = pinnedHomeBookIds - bookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds - bookIds,
+        cloudBookTombstones = newTombstones,
         selectedBookIds = emptySet(),
         shelves = shelves.map { shelf ->
             shelf.copy(
@@ -1913,9 +2414,9 @@ private fun SharedReaderScreenState.withMessage(message: String): SharedReaderSc
 }
 
 private fun BookItem.withIosPdfReaderProgress(state: SharedPdfReaderState): BookItem {
-    return copy(
-        lastPageIndex = state.pageIndex,
-        progressPercentage = state.progressPercent.coerceIn(0f, 100f)
+    return withPdfReadingProgress(
+        pageIndex = state.pageIndex,
+        progressPercentage = state.progressPercent,
     )
 }
 
@@ -1936,6 +2437,87 @@ private fun SharedReaderScreenState.withUpdatedIosBook(book: BookItem): SharedRe
         allTags = (allTags + book.tags).distinctBy { it.id }.sortedBy { it.name.lowercase() },
     )
 }
+
+private fun SharedReaderScreenState.withUpdatedIosMetadata(edited: BookItem): SharedReaderScreenState {
+    val current = rawLibraryBooks.firstOrNull { it.id == edited.id } ?: return this
+    return withUpdatedIosBook(current.withUserEditedMetadata(edited))
+}
+
+private fun persistIosEpubMetadataEdit(current: BookItem, edited: BookItem): Result<BookItem> = runCatching {
+    val updated = current.withUserEditedMetadata(edited)
+    if (current.type != FileType.EPUB || updated === current) return@runCatching updated
+    val sourcePath = current.path?.takeIf(String::isNotBlank)
+        ?: error("Book file is not available.")
+    require(NSFileManager.defaultManager.fileExistsAtPath(sourcePath)) {
+        "Book file is not available."
+    }
+    val appSupport = NSFileManager.defaultManager.URLsForDirectory(
+        directory = NSApplicationSupportDirectory,
+        inDomains = NSUserDomainMask,
+    ).firstOrNull() as? NSURL ?: error("Application Support is unavailable.")
+    val backupDirectory = appSupport.URLByAppendingPathComponent("MetadataBackups", isDirectory = true)
+        ?.path ?: error("Metadata backup directory is unavailable.")
+    NSFileManager.defaultManager.createDirectoryAtPath(
+        path = backupDirectory,
+        withIntermediateDirectories = true,
+        attributes = null,
+        error = null,
+    )
+    val backupPath = "$backupDirectory/${current.id.normalizedId()}.epub"
+    if (!NSFileManager.defaultManager.fileExistsAtPath(backupPath)) {
+        require(NSFileManager.defaultManager.copyItemAtPath(sourcePath, backupPath, error = null)) {
+            "Could not preserve the original EPUB."
+        }
+    }
+    val temporaryPath = "${NSTemporaryDirectory().trimEnd('/')}/${current.id.normalizedId()}-metadata.epub"
+    NSFileManager.defaultManager.removeItemAtPath(temporaryPath, error = null)
+    try {
+        val restoringOriginalMetadata =
+            updated.title == (current.originalTitle?.takeIf(String::isNotBlank)
+                ?: current.displayName.substringBeforeLast('.', current.displayName)) &&
+                updated.author == current.originalAuthor &&
+                updated.description == current.originalDescription &&
+                updated.seriesName == current.originalSeriesName &&
+                updated.seriesIndex == current.originalSeriesIndex &&
+                current.originalMetadataExists()
+        val result = rewriteIosEpubMetadata(
+            sourcePath = sourcePath,
+            destinationPath = temporaryPath,
+            title = updated.title,
+            author = updated.author,
+            description = updated.description,
+            seriesName = updated.seriesName,
+            seriesIndex = updated.seriesIndex,
+            coverPath = updated.coverImagePath?.takeIf { it != current.coverImagePath },
+            restoreCoverFromPath = backupPath.takeIf { restoringOriginalMetadata },
+        )
+        require(rename(temporaryPath, sourcePath) == 0) {
+            "Could not replace the EPUB with the edited copy."
+        }
+        val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(sourcePath, error = null)
+        val fileSize = (attributes?.get(NSFileSize) as? NSNumber)?.longLongValue ?: updated.fileSize
+        val modifiedAt = currentTimestamp()
+        val generatedCoverPath = result.coverBytes
+            ?.takeIf(ByteArray::isNotEmpty)
+            ?.let { persistIosGeneratedCover(updated, it) }
+        updated.copy(
+            title = result.title,
+            author = result.author,
+            description = result.description,
+            seriesName = result.seriesName,
+            seriesIndex = result.seriesIndex,
+            coverImagePath = generatedCoverPath ?: updated.coverImagePath,
+            fileSize = fileSize,
+            fileContentModifiedTimestamp = modifiedAt,
+        )
+    } finally {
+        NSFileManager.defaultManager.removeItemAtPath(temporaryPath, error = null)
+    }
+}
+
+private fun BookItem.originalMetadataExists(): Boolean =
+    listOf(originalTitle, originalAuthor, originalSeriesName, originalDescription)
+        .any { !it.isNullOrBlank() } || originalSeriesIndex != null
 
 private fun presentIosShareSheet(url: NSURL): Boolean {
     val presenter = UIApplication.sharedApplication.keyWindow?.rootViewController ?: return false
@@ -2005,30 +2587,29 @@ private fun persistIosGeneratedCover(book: BookItem, bytes: ByteArray): String? 
 
 private fun List<IosImportedFile>.toImportedBooks(existingBooks: List<BookItem>): List<BookItem> {
     if (isEmpty()) return emptyList()
-    val existingIds = existingBooks.mapTo(mutableSetOf()) { it.id }
     val existingPaths = existingBooks.mapNotNullTo(mutableSetOf()) { it.path }
-    val now = currentTimestamp()
-    return distinctBy { it.path }
+    val candidates = distinctBy { it.contentId.takeIf(String::isNotBlank) ?: it.path }
         .filterNot { it.path in existingPaths }
-        .mapIndexed { index, file ->
-            val baseId = "ios_import_${file.path.stableIosImportedFilePath().normalizedId()}"
-            var id = baseId
-            var suffix = 1
-            while (id in existingIds) {
-                id = "${baseId}_${suffix++}"
-            }
-            existingIds += id
-            BookItem(
-                id = id,
-                path = file.path,
-                type = file.name.fileTypeFromExtension(),
-                displayName = file.name,
-                timestamp = now - index,
-                title = file.name.substringBeforeLast('.', file.name),
+    return SharedImportPlanner.plan(
+        files = candidates.map { file ->
+            ImportedBookFile(
+                name = file.name,
+                uriString = null,
+                localPath = file.path,
+                size = 0L,
                 sourceFolder = file.sourceFolder.takeIf { it.isNotBlank() },
-                progressPercentage = 0f
+                id = file.contentId.takeIf { it.isNotBlank() }
+                    ?: "ios_import_${file.path.stableIosImportedFilePath().normalizedId()}",
             )
-        }
+        },
+        existingBookIds = existingBooks.mapTo(mutableSetOf()) { it.id },
+        platform = ReaderPlatform.IOS,
+    ).importedBooks.mapIndexed { index, book ->
+        book.copy(
+            timestamp = currentTimestamp() - index,
+            progressPercentage = 0f,
+        )
+    }
 }
 
 private fun OpdsEntry.toIosStreamBook(catalogId: String?): BookItem {

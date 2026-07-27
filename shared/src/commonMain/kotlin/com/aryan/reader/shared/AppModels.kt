@@ -253,6 +253,7 @@ data class SharedReaderScreenState(
     val recentBooks: List<BookItem> = emptyList(),
     val libraryBooks: List<BookItem> = emptyList(),
     val rawLibraryBooks: List<BookItem> = emptyList(),
+    val cloudBookTombstones: List<CloudBookTombstone> = emptyList(),
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),

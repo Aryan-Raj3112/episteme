@@ -67,3 +67,21 @@ fun canEnableGoogleDriveSync(
     providers: Set<AccountAuthProvider>,
     hasGoogleDrivePermission: Boolean,
 ): Boolean = AccountAuthProvider.GOOGLE in providers && hasGoogleDrivePermission
+
+/**
+ * Cloud sync follows Android's paid-feature gate and additionally requires the
+ * Google identity that owns the Drive app-data permission.
+ *
+ * Other Pro features are intentionally provider agnostic: an Apple-authenticated
+ * Pro account remains eligible for them.
+ */
+fun canUseCloudSync(
+    providers: Set<AccountAuthProvider>,
+    hasGoogleDrivePermission: Boolean,
+    isProUser: Boolean,
+): Boolean = isProUser && canEnableGoogleDriveSync(providers, hasGoogleDrivePermission)
+
+fun canUseProFeature(
+    isSignedIn: Boolean,
+    isProUser: Boolean,
+): Boolean = isSignedIn && isProUser

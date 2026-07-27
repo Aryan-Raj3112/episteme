@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.pdf
 
+import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.PdfDisplayMode
 import com.aryan.reader.shared.SearchHighlightMode
 import kotlinx.serialization.Serializable
@@ -328,6 +329,36 @@ data class SharedPdfReaderState(
             )
         }
     }
+}
+
+fun pdfPaginationEdgeTarget(
+    currentPage: Int,
+    lastPage: Int,
+    tappedLeftEdge: Boolean,
+    rightToLeft: Boolean,
+): Int? {
+    val delta = when {
+        tappedLeftEdge && rightToLeft -> 1
+        tappedLeftEdge -> -1
+        rightToLeft -> -1
+        else -> 1
+    }
+    return (currentPage + delta).takeIf { it in 0..lastPage }
+}
+
+fun initialSharedPdfReaderState(
+    persistedState: SharedPdfReaderState?,
+    defaults: ReaderSettings,
+    initialPageIndex: Int,
+): SharedPdfReaderState {
+    return persistedState
+        ?.copy(themeId = defaults.themeId ?: persistedState.themeId)
+        ?.coerced()
+        ?: SharedPdfReaderState.initial(pageCount = 1, initialPageIndex = initialPageIndex)
+            .copy(
+                displayMode = PdfDisplayMode.VERTICAL_SCROLL,
+                themeId = defaults.themeId ?: "no_theme",
+            )
 }
 
 sealed interface SharedPdfAnnotationHistoryAction {

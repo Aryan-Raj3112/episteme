@@ -90,8 +90,11 @@ data class BookItem(
     val originalDescription: String? = null,
     val progressPercentage: Float? = null,
     val isRecent: Boolean = true,
+    val isAvailable: Boolean = true,
     val fileSize: Long = 0L,
     val fileContentModifiedTimestamp: Long = 0L,
+    /** Metadata/annotation modification clock, distinct from recency and reading position. */
+    val metadataModifiedTimestamp: Long = 0L,
     val sourceFolder: String? = null,
     val folderTextMetadataParsed: Boolean = false,
     val seriesName: String? = null,

@@ -8,6 +8,7 @@
 import SwiftUI
 import ReaderShared
 import UniformTypeIdentifiers
+import CryptoKit
 
 struct ContentView: View {
     private enum ImportKind { case books, folder, fonts, cover }
@@ -55,18 +56,25 @@ struct ContentView: View {
             isPresented: $isImportPickerPresented,
             allowedContentTypes: importKind == .fonts
                 ? [.font]
-                : (importKind == .folder ? [.folder] : (importKind == .cover ? [.image] : [.item])),
+                : (
+                    importKind == .folder
+                        ? [.folder]
+                        : (
+                            importKind == .cover
+                                ? [.image]
+                                : allowedReaderImportTypes
+                        )
+                ),
             allowsMultipleSelection: importKind != .folder && importKind != .cover
         ) { result in
             switch result {
             case .success(let urls):
                 if importKind == .folder, let folderURL = urls.first {
                     rememberImportedFolder(folderURL)
-                    let importedFiles = copyImportedFolderToAppSupport(folderURL)
-                    bridge.recordImportedFolder(
+                    recordImportedFolderScan(
+                        bridge: bridge,
                         folderName: folderURL.lastPathComponent,
-                        fileNames: importedFiles.map(\.name),
-                        filePaths: importedFiles.map(\.path)
+                        scan: copyImportedFolderToAppSupport(folderURL)
                     )
                     return
                 }
@@ -81,7 +89,11 @@ struct ContentView: View {
                 } else if importKind == .cover {
                     bridge.recordImportedCover(filePath: importedFiles.first?.path)
                 } else {
-                    bridge.recordImportedFiles(fileNames: importedFiles.map(\.name), filePaths: importedFiles.map(\.path))
+                    bridge.recordImportedFiles(
+                        fileNames: importedFiles.map(\.name),
+                        filePaths: importedFiles.map(\.path),
+                        contentIds: importedFiles.map(\.contentId)
+                    )
                 }
             case .failure:
                 if importKind == .fonts {
@@ -89,9 +101,18 @@ struct ContentView: View {
                 } else if importKind == .cover {
                     bridge.recordImportedCover(filePath: nil)
                 } else if importKind == .folder {
-                    bridge.recordImportedFolder(folderName: "folder", fileNames: [], filePaths: [])
+                    bridge.recordImportedFolder(
+                        folderName: "folder",
+                        fileNames: [],
+                        filePaths: [],
+                        contentIds: [],
+                        relativePaths: [],
+                        fileSizes: [],
+                        lastModifiedTimestamps: [],
+                        scanSucceeded: false
+                    )
                 } else {
-                    bridge.recordImportedFiles(fileNames: [], filePaths: [])
+                    bridge.recordImportedFiles(fileNames: [], filePaths: [], contentIds: [])
                 }
             }
         }
@@ -103,10 +124,27 @@ struct ContentView: View {
         .task {
             localStoreKit.attach(to: bridge)
             localAccount.attach(to: bridge)
+            let legacyPaths = bridge.importedFilePathsMissingContentId()
+            let legacyContentIds = legacyPaths.map {
+                sha256FileId(URL(fileURLWithPath: $0)) ?? ""
+            }
+            bridge.backfillImportedContentIds(
+                filePaths: legacyPaths,
+                contentIds: legacyContentIds
+            )
+            bridge.setFolderFileDeletionHandler { folderName, managedPaths in
+                deleteImportedFolderFiles(folderName: folderName, managedPaths: managedPaths)
+            }
+            bridge.setFolderFileReplacementHandler { folderName, managedPath in
+                replaceImportedFolderFile(folderName: folderName, managedPath: managedPath)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                bridge.updateAppActive(active: true)
                 refreshImportedFolders(bridge: bridge)
+            } else {
+                bridge.updateAppActive(active: false)
             }
         }
         .confirmationDialog(
@@ -137,6 +175,14 @@ struct ContentView: View {
         }
     }
 
+    private var allowedReaderImportTypes: [UTType] {
+        guard bridge.usesStrictFileFilter() else { return [.item] }
+        let types = bridge.readableFileExtensions().compactMap {
+            UTType(filenameExtension: $0)
+        }
+        return types.isEmpty ? [.item] : types
+    }
+
     private func handleExternalURL(_ url: URL) {
         switch bridge.externalFileBehavior().uppercased() {
         case "COPY":
@@ -159,6 +205,7 @@ struct ContentView: View {
         bridge.openExternalFile(
             fileName: imported.name,
             filePath: imported.path,
+            contentId: imported.contentId,
             addToLibrary: addToLibrary
         )
     }
@@ -196,11 +243,10 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
         if isStale {
             rememberImportedFolder(folderURL)
         }
-        let importedFiles = copyImportedFolderToAppSupport(folderURL)
-        bridge.recordImportedFolder(
+        recordImportedFolderScan(
+            bridge: bridge,
             folderName: folderName,
-            fileNames: importedFiles.map(\.name),
-            filePaths: importedFiles.map(\.path)
+            scan: copyImportedFolderToAppSupport(folderURL)
         )
     }
 }
@@ -225,7 +271,127 @@ private func removeImportedFolder(named folderName: String) {
     }
 }
 
-private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> [ImportedReaderFile] {
+private func deleteImportedFolderFiles(folderName: String, managedPaths: [String]) {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    guard let bookmark = bookmarks[folderName] else { return }
+    var isStale = false
+    guard let sourceRoot = try? URL(
+        resolvingBookmarkData: bookmark,
+        options: [.withoutUI],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+    ), let appSupport = try? FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    ) else {
+        return
+    }
+    if isStale {
+        rememberImportedFolder(sourceRoot)
+    }
+
+    let managedRoot = appSupport
+        .appendingPathComponent("LocalFolders", isDirectory: true)
+        .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
+        .standardizedFileURL
+    let sourceRootPath = sourceRoot.standardizedFileURL.path
+    let managedRootPath = managedRoot.path
+    let didStartAccessing = sourceRoot.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceRoot.stopAccessingSecurityScopedResource()
+        }
+    }
+
+    for managedPath in managedPaths {
+        let managedURL = URL(fileURLWithPath: managedPath).standardizedFileURL
+        guard managedURL.path.hasPrefix(managedRootPath + "/") else { continue }
+        let relativePath = String(managedURL.path.dropFirst(managedRootPath.count + 1))
+        let sourceURL = sourceRoot.appendingPathComponent(relativePath).standardizedFileURL
+        guard sourceURL.path.hasPrefix(sourceRootPath + "/") else { continue }
+        try? FileManager.default.removeItem(at: sourceURL)
+        try? FileManager.default.removeItem(at: managedURL)
+    }
+}
+
+private func replaceImportedFolderFile(folderName: String, managedPath: String) -> String? {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    guard let bookmark = bookmarks[folderName] else { return nil }
+    var isStale = false
+    guard let sourceRoot = try? URL(
+        resolvingBookmarkData: bookmark,
+        options: [.withoutUI],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+    ), let appSupport = try? FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: true
+    ) else {
+        return nil
+    }
+    if isStale {
+        rememberImportedFolder(sourceRoot)
+    }
+
+    let managedRoot = appSupport
+        .appendingPathComponent("LocalFolders", isDirectory: true)
+        .appendingPathComponent(safeLocalFolderName(folderName), isDirectory: true)
+        .standardizedFileURL
+    let managedURL = URL(fileURLWithPath: managedPath).standardizedFileURL
+    guard managedURL.path.hasPrefix(managedRoot.path + "/") else { return nil }
+    let relativePath = String(managedURL.path.dropFirst(managedRoot.path.count + 1))
+    let sourceURL = sourceRoot.appendingPathComponent(relativePath).standardizedFileURL
+    guard sourceURL.path.hasPrefix(sourceRoot.standardizedFileURL.path + "/") else { return nil }
+
+    let didStartAccessing = sourceRoot.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            sourceRoot.stopAccessingSecurityScopedResource()
+        }
+    }
+    let temporaryURL = sourceURL.deletingLastPathComponent()
+        .appendingPathComponent(".reader-\(UUID().uuidString).tmp")
+    do {
+        let fileManager = FileManager.default
+        try fileManager.copyItem(at: managedURL, to: temporaryURL)
+        _ = try fileManager.replaceItemAt(sourceURL, withItemAt: temporaryURL)
+        let values = try sourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let fileSize = Int64(values.fileSize ?? 0)
+        let modifiedAt = Int64((values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000)
+        return "\(fileSize)\t\(modifiedAt)"
+    } catch {
+        try? FileManager.default.removeItem(at: temporaryURL)
+        return nil
+    }
+}
+
+private struct ImportedFolderScan {
+    let files: [ImportedReaderFile]
+    let succeeded: Bool
+}
+
+private func recordImportedFolderScan(
+    bridge: ReaderIosBridge,
+    folderName: String,
+    scan: ImportedFolderScan
+) {
+    bridge.recordImportedFolder(
+        folderName: folderName,
+        fileNames: scan.files.map(\.name),
+        filePaths: scan.files.map(\.path),
+        contentIds: scan.files.map(\.contentId),
+        relativePaths: scan.files.map(\.relativePath),
+        fileSizes: scan.files.map { String($0.fileSize) },
+        lastModifiedTimestamps: scan.files.map { String($0.lastModifiedTimestamp) },
+        scanSucceeded: scan.succeeded
+    )
+}
+
+private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> ImportedFolderScan {
     let didStartAccessing = sourceURL.startAccessingSecurityScopedResource()
     defer {
         if didStartAccessing {
@@ -233,6 +399,7 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> [ImportedReader
         }
     }
 
+    var pendingStagingRoot: URL?
     do {
         let fileManager = FileManager.default
         let appSupport = try fileManager.url(
@@ -244,18 +411,24 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> [ImportedReader
         let folderRoot = appSupport
             .appendingPathComponent("LocalFolders", isDirectory: true)
             .appendingPathComponent(safeLocalFolderName(sourceURL.lastPathComponent), isDirectory: true)
-        if fileManager.fileExists(atPath: folderRoot.path) {
-            try fileManager.removeItem(at: folderRoot)
-        }
-        try fileManager.createDirectory(at: folderRoot, withIntermediateDirectories: true)
+        let stagingRoot = folderRoot.deletingLastPathComponent()
+            .appendingPathComponent(".\(folderRoot.lastPathComponent)-\(UUID().uuidString).staging", isDirectory: true)
+        pendingStagingRoot = stagingRoot
+        try fileManager.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
 
-        let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey]
+        let resourceKeys: [URLResourceKey] = [
+            .isRegularFileKey,
+            .isDirectoryKey,
+            .fileSizeKey,
+            .contentModificationDateKey
+        ]
         guard let enumerator = fileManager.enumerator(
             at: sourceURL,
             includingPropertiesForKeys: resourceKeys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else {
-            return []
+            try? fileManager.removeItem(at: stagingRoot)
+            return ImportedFolderScan(files: [], succeeded: false)
         }
 
         var imported: [ImportedReaderFile] = []
@@ -266,24 +439,46 @@ private func copyImportedFolderToAppSupport(_ sourceURL: URL) -> [ImportedReader
                 with: "",
                 options: [.anchored]
             )
+            let stagingURL = stagingRoot.appendingPathComponent(relativePath)
             let destinationURL = folderRoot.appendingPathComponent(relativePath)
             if values.isDirectory == true {
-                try fileManager.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
             } else if values.isRegularFile == true {
                 try fileManager.createDirectory(
-                    at: destinationURL.deletingLastPathComponent(),
+                    at: stagingURL.deletingLastPathComponent(),
                     withIntermediateDirectories: true
                 )
-                if fileManager.fileExists(atPath: destinationURL.path) {
-                    try fileManager.removeItem(at: destinationURL)
+                try fileManager.copyItem(at: itemURL, to: stagingURL)
+                guard let contentId = sha256FileId(stagingURL) else {
+                    try? fileManager.removeItem(at: stagingURL)
+                    continue
                 }
-                try fileManager.copyItem(at: itemURL, to: destinationURL)
-                imported.append(ImportedReaderFile(name: itemURL.lastPathComponent, path: destinationURL.path))
+                imported.append(
+                    ImportedReaderFile(
+                        name: itemURL.lastPathComponent,
+                        path: destinationURL.path,
+                        contentId: contentId,
+                        relativePath: relativePath,
+                        fileSize: Int64(values.fileSize ?? 0),
+                        lastModifiedTimestamp: Int64(
+                            (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+                        )
+                    )
+                )
             }
         }
-        return imported
+        if fileManager.fileExists(atPath: folderRoot.path) {
+            _ = try fileManager.replaceItemAt(folderRoot, withItemAt: stagingRoot)
+        } else {
+            try fileManager.moveItem(at: stagingRoot, to: folderRoot)
+        }
+        pendingStagingRoot = nil
+        return ImportedFolderScan(files: imported, succeeded: true)
     } catch {
-        return []
+        if let pendingStagingRoot {
+            try? FileManager.default.removeItem(at: pendingStagingRoot)
+        }
+        return ImportedFolderScan(files: [], succeeded: false)
     }
 }
 
@@ -295,6 +490,26 @@ private func safeLocalFolderName(_ name: String) -> String {
 private struct ImportedReaderFile {
     let name: String
     let path: String
+    let contentId: String
+    let relativePath: String
+    let fileSize: Int64
+    let lastModifiedTimestamp: Int64
+}
+
+private func sha256FileId(_ url: URL) -> String? {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    do {
+        while true {
+            let data = try handle.read(upToCount: 1024 * 1024) ?? Data()
+            if data.isEmpty { break }
+            hasher.update(data: data)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    } catch {
+        return nil
+    }
 }
 
 private func copyImportedFileToAppSupport(_ sourceURL: URL, directoryName: String) -> ImportedReaderFile? {
@@ -322,7 +537,21 @@ private func copyImportedFileToAppSupport(_ sourceURL: URL, directoryName: Strin
             try fileManager.removeItem(at: destinationURL)
         }
         try fileManager.copyItem(at: sourceURL, to: destinationURL)
-        return ImportedReaderFile(name: fileName, path: destinationURL.path)
+        guard let contentId = sha256FileId(destinationURL) else {
+            try? fileManager.removeItem(at: destinationURL)
+            return nil
+        }
+        let values = try destinationURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        return ImportedReaderFile(
+            name: fileName,
+            path: destinationURL.path,
+            contentId: contentId,
+            relativePath: fileName,
+            fileSize: Int64(values.fileSize ?? 0),
+            lastModifiedTimestamp: Int64(
+                (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+            )
+        )
     } catch {
         return nil
     }
@@ -338,10 +567,27 @@ private func copyExternalFileToTemporaryStorage(_ sourceURL: URL) -> ImportedRea
     do {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory.appendingPathComponent("ExternalOpen", isDirectory: true)
+        if fileManager.fileExists(atPath: directory.path) {
+            try fileManager.removeItem(at: directory)
+        }
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(uniqueImportedFileName(sourceURL.lastPathComponent))
         try fileManager.copyItem(at: sourceURL, to: destination)
-        return ImportedReaderFile(name: sourceURL.lastPathComponent, path: destination.path)
+        guard let contentId = sha256FileId(destination) else {
+            try? fileManager.removeItem(at: destination)
+            return nil
+        }
+        let values = try destination.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        return ImportedReaderFile(
+            name: sourceURL.lastPathComponent,
+            path: destination.path,
+            contentId: contentId,
+            relativePath: sourceURL.lastPathComponent,
+            fileSize: Int64(values.fileSize ?? 0),
+            lastModifiedTimestamp: Int64(
+                (values.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000
+            )
+        )
     } catch {
         return nil
     }

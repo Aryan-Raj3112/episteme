@@ -649,9 +649,12 @@ data class SharedSettingsHubInput(
     val accountAvailable: Boolean = true,
     val includeAccountAuthActions: Boolean = true,
     val syncAvailable: Boolean = true,
+    val cloudSyncEligible: Boolean = true,
     val folderSyncAvailable: Boolean = true,
     val aiSettingsAvailable: Boolean = true,
     val ttsSettingsAvailable: Boolean = true,
+    val bookCacheMaintenanceAvailable: Boolean = true,
+    val reflowCacheMaintenanceAvailable: Boolean = true,
     val includePdfReaderDefaults: Boolean = true,
     val includeReaderToolbar: Boolean = true,
     val includeLanguage: Boolean = true,
@@ -773,13 +776,18 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
                     }
                 }
                 if (input.syncAvailable && input.featurePolicy.aiAndCloud) {
+                    val syncEnabled = input.isProUser && input.cloudSyncEligible
                     add(
                         SharedSettingsItemModel(
                             action = SharedSettingsAction.CLOUD_SYNC,
                             title = "Cloud library sync",
-                            summary = if (input.isProUser) "Sync library metadata across signed-in devices." else "A Pro account is required for cloud sync.",
+                            summary = when {
+                                !input.isProUser -> "A Pro account is required for cloud sync."
+                                !input.cloudSyncEligible -> "Link Google and authorize Google Drive to enable sync."
+                                else -> "Sync library metadata across signed-in devices."
+                            },
                             kind = SharedSettingsItemKind.TOGGLE,
-                            enabled = input.isProUser,
+                            enabled = syncEnabled,
                             checked = input.isSyncEnabled
                         )
                     )
@@ -840,22 +848,26 @@ fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubMode
         SharedSettingsSectionModel(
             section = SharedSettingsSection.STORAGE_ADVANCED,
             items = buildList {
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.CLEAR_BOOK_CACHE,
-                        title = "Clear book cache",
-                        summary = "Remove generated book cache files and recreate them on demand",
-                        kind = SharedSettingsItemKind.DESTRUCTIVE
+                if (input.bookCacheMaintenanceAvailable) {
+                    add(
+                        SharedSettingsItemModel(
+                            action = SharedSettingsAction.CLEAR_BOOK_CACHE,
+                            title = "Clear book cache",
+                            summary = "Remove generated book cache files and recreate them on demand",
+                            kind = SharedSettingsItemKind.DESTRUCTIVE
+                        )
                     )
-                )
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.CLEAR_REFLOW_CACHE,
-                        title = "Clear reflow cache",
-                        summary = "Remove generated PDF text-view files",
-                        kind = SharedSettingsItemKind.DESTRUCTIVE
+                }
+                if (input.reflowCacheMaintenanceAvailable) {
+                    add(
+                        SharedSettingsItemModel(
+                            action = SharedSettingsAction.CLEAR_REFLOW_CACHE,
+                            title = "Clear reflow cache",
+                            summary = "Remove generated PDF text-view files",
+                            kind = SharedSettingsItemKind.DESTRUCTIVE
+                        )
                     )
-                )
+                }
                 if (input.isDebugBuild) {
                     add(
                         SharedSettingsItemModel(

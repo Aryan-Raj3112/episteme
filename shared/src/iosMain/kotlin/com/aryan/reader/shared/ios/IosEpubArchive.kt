@@ -34,6 +34,20 @@ import com.aryan.reader.shared.libarchive.archive_read_support_filter_all
 import com.aryan.reader.shared.libarchive.archive_read_support_format_7zip
 import com.aryan.reader.shared.libarchive.archive_read_support_format_rar
 import com.aryan.reader.shared.libarchive.archive_read_support_format_rar5
+import com.aryan.reader.shared.libarchive.archive_entry_free
+import com.aryan.reader.shared.libarchive.archive_entry_new
+import com.aryan.reader.shared.libarchive.archive_entry_set_filetype
+import com.aryan.reader.shared.libarchive.archive_entry_set_pathname
+import com.aryan.reader.shared.libarchive.archive_entry_set_perm
+import com.aryan.reader.shared.libarchive.archive_entry_set_size
+import com.aryan.reader.shared.libarchive.archive_write_close
+import com.aryan.reader.shared.libarchive.archive_write_data
+import com.aryan.reader.shared.libarchive.archive_write_free
+import com.aryan.reader.shared.libarchive.archive_write_header
+import com.aryan.reader.shared.libarchive.archive_write_new
+import com.aryan.reader.shared.libarchive.archive_write_open_filename
+import com.aryan.reader.shared.libarchive.archive_write_set_format_zip
+import com.aryan.reader.shared.libarchive.archive_write_set_options
 import cnames.structs.archive_entry
 import com.aryan.reader.shared.reader.SharedEpubArchive
 import com.aryan.reader.shared.reader.SharedEpubBook
@@ -78,6 +92,7 @@ import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
 import platform.Foundation.NSUserDomainMask
+import com.aryan.reader.shared.libarchive.AE_IFREG
 import platform.posix.memcpy
 import platform.posix.fclose
 import platform.posix.fopen
@@ -107,6 +122,101 @@ internal data class IosBookPresentation(
     val author: String? = null,
     val coverBytes: ByteArray? = null,
 )
+
+internal data class IosEpubMetadataWriteResult(
+    val title: String?,
+    val author: String?,
+    val description: String?,
+    val seriesName: String?,
+    val seriesIndex: Double?,
+    val coverBytes: ByteArray?,
+)
+
+internal fun rewriteIosEpubMetadata(
+    sourcePath: String,
+    destinationPath: String,
+    title: String?,
+    author: String?,
+    description: String?,
+    seriesName: String?,
+    seriesIndex: Double?,
+    coverPath: String?,
+    restoreCoverFromPath: String? = null,
+): IosEpubMetadataWriteResult {
+    val archive = IosZipEpubArchive(sourcePath)
+    val opfPath = archive.findIosOpfPath()
+        ?: error("EPUB package document was not found.")
+    val originalOpf = archive.readText(opfPath)
+        ?: error("EPUB package document entry is missing.")
+    val restoredCover = restoreCoverFromPath?.takeIf(String::isNotBlank)?.readIosEpubCover()
+    val coverBytes = coverPath?.takeIf(String::isNotBlank)?.readIosFileBytes()
+        ?: restoredCover?.first
+    val coverExtension = coverPath?.substringAfterLast('.', "")?.lowercase()
+        ?: restoredCover?.second
+    if (coverBytes != null) {
+        require(coverBytes.isNotEmpty()) { "EPUB cover image is empty." }
+        require(coverExtension in IosSupportedCoverExtensions) {
+            "Choose a JPG, PNG, GIF, WebP, or BMP cover image."
+        }
+    }
+    val existingCoverPath = originalOpf.findIosEpubCoverPath(opfPath)
+    val outputCoverPath = if (coverBytes != null) {
+        existingCoverPath?.takeIf {
+            it.substringAfterLast('.', "").lowercase() in IosSupportedCoverExtensions
+        } ?: opfPath.substringBeforeLast('/', "")
+            .let { base -> listOf(base, "Images", "cover.$coverExtension").filter(String::isNotBlank).joinToString("/") }
+    } else {
+        null
+    }
+    val opfParent = opfPath.substringBeforeLast('/', "")
+    val coverHref = outputCoverPath?.let {
+        if (opfParent.isBlank()) it else it.removePrefix("$opfParent/")
+    }
+    val rewrittenOpf = originalOpf.rewriteIosOpfMetadata(
+        title = title,
+        author = author,
+        description = description,
+        seriesName = seriesName,
+        seriesIndex = seriesIndex,
+        coverHref = coverHref,
+    )
+    val replacements = buildMap {
+        put(opfPath, rewrittenOpf.encodeToByteArray())
+        if (outputCoverPath != null && coverBytes != null) put(outputCoverPath, coverBytes)
+    }
+    val removedPaths = outputCoverPath?.let(::setOf).orEmpty()
+    writeIosZipArchive(
+        destinationPath = destinationPath,
+        orderedEntries = buildList {
+            if ("mimetype" in archive.entryPaths) add("mimetype")
+            addAll(archive.entryPaths.filterNot { it == "mimetype" || it in removedPaths })
+            addAll(replacements.keys)
+        }.distinct(),
+        bytesForPath = { path -> replacements[path] ?: archive.readBytes(path) },
+    )
+    val rewritten = IosZipEpubArchive(destinationPath)
+    val verifiedOpf = rewritten.readText(opfPath)
+        ?: error("Rewritten EPUB failed metadata validation.")
+    val verifiedCoverPath = verifiedOpf.findIosEpubCoverPath(opfPath)
+    return IosEpubMetadataWriteResult(
+        title = verifiedOpf.iosXmlElementText("title"),
+        author = verifiedOpf.iosXmlElementText("creator"),
+        description = verifiedOpf.iosXmlElementText("description"),
+        seriesName = verifiedOpf.iosMetaContent("calibre:series"),
+        seriesIndex = verifiedOpf.iosMetaContent("calibre:series_index")?.toDoubleOrNull(),
+        coverBytes = verifiedCoverPath?.let(rewritten::readBytes),
+    )
+}
+
+private fun String.readIosEpubCover(): Pair<ByteArray, String>? {
+    val archive = IosZipEpubArchive(this)
+    val opfPath = archive.findIosOpfPath() ?: return null
+    val opf = archive.readText(opfPath) ?: return null
+    val coverPath = opf.findIosEpubCoverPath(opfPath) ?: return null
+    val extension = coverPath.substringAfterLast('.', "").lowercase()
+        .takeIf { it in IosSupportedCoverExtensions } ?: return null
+    return (archive.readBytes(coverPath) ?: return null) to extension
+}
 
 internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = runCatching {
     when (book.type) {
@@ -815,6 +925,257 @@ private class IosZipEpubArchive(path: String) : SharedEpubArchive {
         val bytes = readBytes(path) ?: return null
         return bytes.decodeEpubText()
     }
+}
+
+private fun IosZipEpubArchive.findIosOpfPath(): String? {
+    val container = readText("META-INF/container.xml")
+    val declared = container?.let {
+        Regex(
+            """<rootfile\b[^>]*\bfull-path\s*=\s*["']([^"']+)["']""",
+            RegexOption.IGNORE_CASE,
+        ).find(it)?.groupValues?.getOrNull(1)
+    }?.trim()?.trimStart('/')?.takeIf(String::isNotBlank)
+    return declared?.takeIf { it in entryPaths }
+        ?: entryPaths.firstOrNull { it.endsWith(".opf", ignoreCase = true) }
+}
+
+private val IosSupportedCoverExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
+
+private fun String.rewriteIosOpfMetadata(
+    title: String?,
+    author: String?,
+    description: String?,
+    seriesName: String?,
+    seriesIndex: Double?,
+    coverHref: String?,
+): String {
+    val metadataMatch = Regex(
+        """<((?:[\w.-]+:)?metadata)\b([^>]*)>([\s\S]*?)</\1\s*>""",
+        RegexOption.IGNORE_CASE,
+    ).find(this) ?: error("EPUB package metadata section is missing.")
+    var metadataBody = metadataMatch.groupValues[3]
+    metadataBody = metadataBody.upsertIosDcElement("title", title)
+    metadataBody = metadataBody.upsertIosDcElement("creator", author)
+    metadataBody = metadataBody.upsertIosDcElement("description", description)
+    metadataBody = metadataBody.upsertIosMetaContent("calibre:series", seriesName)
+    metadataBody = metadataBody.upsertIosMetaContent(
+        "calibre:series_index",
+        seriesIndex?.formatIosSeriesIndex(),
+    )
+
+    var output = replaceRange(
+        metadataMatch.range,
+        "<${metadataMatch.groupValues[1]}${metadataMatch.groupValues[2]}>$metadataBody</${metadataMatch.groupValues[1]}>",
+    )
+    if (coverHref != null) {
+        val manifestMatch = Regex(
+            """<((?:[\w.-]+:)?manifest)\b([^>]*)>([\s\S]*?)</\1\s*>""",
+            RegexOption.IGNORE_CASE,
+        ).find(output) ?: error("EPUB package manifest section is missing.")
+        val coverId = output.iosMetaContent("cover").orEmpty().ifBlank { "cover-image" }
+        val manifestBody = manifestMatch.groupValues[3].upsertIosCoverManifestItem(
+            preferredId = coverId,
+            href = coverHref,
+        )
+        output = output.replaceRange(
+            manifestMatch.range,
+            "<${manifestMatch.groupValues[1]}${manifestMatch.groupValues[2]}>$manifestBody</${manifestMatch.groupValues[1]}>",
+        )
+        val refreshedMetadata = Regex(
+            """<((?:[\w.-]+:)?metadata)\b([^>]*)>([\s\S]*?)</\1\s*>""",
+            RegexOption.IGNORE_CASE,
+        ).find(output) ?: error("EPUB package metadata section is missing.")
+        val withCover = refreshedMetadata.groupValues[3].upsertIosMetaContent("cover", coverId)
+        output = output.replaceRange(
+            refreshedMetadata.range,
+            "<${refreshedMetadata.groupValues[1]}${refreshedMetadata.groupValues[2]}>$withCover</${refreshedMetadata.groupValues[1]}>",
+        )
+    }
+    if (!Regex("""\bxmlns:dc\s*=""", RegexOption.IGNORE_CASE).containsMatchIn(output)) {
+        output = output.replaceFirst(
+            Regex("""<((?:[\w.-]+:)?package)\b""", RegexOption.IGNORE_CASE),
+            "<$1 xmlns:dc=\"http://purl.org/dc/elements/1.1/\"",
+        )
+    }
+    return output
+}
+
+private fun String.upsertIosDcElement(localName: String, value: String?): String {
+    val expression = Regex(
+        """<((?:[\w.-]+:)?$localName)\b[^>]*>[\s\S]*?</\1\s*>""",
+        RegexOption.IGNORE_CASE,
+    )
+    val normalized = value?.trim()?.takeIf(String::isNotBlank)
+    val matches = expression.findAll(this).toList()
+    if (normalized == null) {
+        return expression.replace(this, "")
+    }
+    val replacement = "<dc:$localName>${normalized.escapeIosXmlText()}</dc:$localName>"
+    if (matches.isEmpty()) return this + replacement
+    var output = replaceRange(matches.first().range, replacement)
+    expression.findAll(output).drop(1).toList().asReversed().forEach { duplicate ->
+        output = output.removeRange(duplicate.range)
+    }
+    return output
+}
+
+private fun String.upsertIosMetaContent(name: String, value: String?): String {
+    val expression = Regex(
+        """<meta\b(?=[^>]*\bname\s*=\s*["']${Regex.escape(name)}["'])[^>]*(?:/>|>[\s\S]*?</meta\s*>)""",
+        RegexOption.IGNORE_CASE,
+    )
+    val normalized = value?.trim()?.takeIf(String::isNotBlank)
+    val replacement = normalized?.let {
+        "<meta name=\"${name.escapeIosXmlAttribute()}\" content=\"${it.escapeIosXmlAttribute()}\"/>"
+    }
+    val matches = expression.findAll(this).toList()
+    if (replacement == null) return expression.replace(this, "")
+    if (matches.isEmpty()) return this + replacement
+    var output = replaceRange(matches.first().range, replacement)
+    expression.findAll(output).drop(1).toList().asReversed().forEach { duplicate ->
+        output = output.removeRange(duplicate.range)
+    }
+    return output
+}
+
+private fun String.upsertIosCoverManifestItem(preferredId: String, href: String): String {
+    val items = Regex("""<item\b[^>]*(?:/>|>[\s\S]*?</item\s*>)""", RegexOption.IGNORE_CASE)
+        .findAll(this)
+        .toList()
+    val target = items.firstOrNull { match ->
+        match.value.iosXmlAttribute("properties")
+            ?.split(Regex("""\s+"""))
+            ?.any { it.equals("cover-image", ignoreCase = true) } == true
+    } ?: items.firstOrNull { match ->
+        match.value.iosXmlAttribute("id")?.equals(preferredId, ignoreCase = true) == true
+    } ?: items.firstOrNull { match ->
+        match.value.iosXmlAttribute("id")?.equals("cover-image", ignoreCase = true) == true ||
+            match.value.iosXmlAttribute("id")?.equals("cover", ignoreCase = true) == true
+    }
+    val id = target?.value?.iosXmlAttribute("id")?.takeIf(String::isNotBlank) ?: preferredId
+    val existingProperties = target?.value?.iosXmlAttribute("properties")
+        ?.split(Regex("""\s+"""))
+        ?.filter(String::isNotBlank)
+        .orEmpty()
+    val properties = (existingProperties + "cover-image").distinctBy(String::lowercase)
+    val extension = href.substringAfterLast('.', "").lowercase()
+    val mediaType = when (extension) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "bmp" -> "image/bmp"
+        else -> "application/octet-stream"
+    }
+    val replacement = buildString {
+        append("<item id=\"").append(id.escapeIosXmlAttribute())
+        append("\" href=\"").append(href.escapeIosXmlAttribute())
+        append("\" media-type=\"").append(mediaType)
+        append("\" properties=\"").append(properties.joinToString(" ").escapeIosXmlAttribute())
+        append("\"/>")
+    }
+    return if (target == null) this + replacement else replaceRange(target.range, replacement)
+}
+
+private fun String.findIosEpubCoverPath(opfPath: String): String? {
+    val coverId = iosMetaContent("cover")
+    val items = Regex("""<item\b[^>]*(?:/>|>[\s\S]*?</item\s*>)""", RegexOption.IGNORE_CASE)
+        .findAll(this)
+        .map { it.value }
+        .toList()
+    val item = items.firstOrNull {
+        coverId != null && it.iosXmlAttribute("id") == coverId
+    } ?: items.firstOrNull {
+        it.iosXmlAttribute("properties")
+            ?.split(Regex("""\s+"""))
+            ?.any { property -> property.equals("cover-image", ignoreCase = true) } == true
+    } ?: items.firstOrNull {
+        it.iosXmlAttribute("media-type")?.startsWith("image/", ignoreCase = true) == true &&
+            it.iosXmlAttribute("href")?.contains("cover", ignoreCase = true) == true
+    }
+    val href = item?.iosXmlAttribute("href")?.trim()?.trimStart('/')?.takeIf(String::isNotBlank)
+        ?: return null
+    val parent = opfPath.substringBeforeLast('/', "")
+    return (if (parent.isBlank() || href.contains("://")) href else "$parent/$href")
+        .normalizeIosZipPathSegments()
+}
+
+private fun String.iosMetaContent(name: String): String? {
+    val tag = Regex(
+        """<meta\b(?=[^>]*\bname\s*=\s*["']${Regex.escape(name)}["'])[^>]*>""",
+        RegexOption.IGNORE_CASE,
+    ).find(this)?.value ?: return null
+    return tag.iosXmlAttribute("content")?.decodeIosXmlEntities()?.trim()?.takeIf(String::isNotBlank)
+}
+
+private fun String.escapeIosXmlText(): String = replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+
+private fun String.escapeIosXmlAttribute(): String = escapeIosXmlText()
+    .replace("\"", "&quot;")
+    .replace("'", "&apos;")
+
+private fun Double.formatIosSeriesIndex(): String =
+    if (this % 1.0 == 0.0) toInt().toString() else toString().trimEnd('0').trimEnd('.')
+
+internal fun writeIosZipArchive(
+    destinationPath: String,
+    orderedEntries: List<String>,
+    bytesForPath: (String) -> ByteArray?,
+) {
+    val writer = archive_write_new() ?: error("Could not create EPUB ZIP writer.")
+    try {
+        checkArchiveResult(archive_write_set_format_zip(writer), writer, "configure EPUB ZIP writer")
+        checkArchiveResult(
+            archive_write_set_options(writer, "zip:compression=store"),
+            writer,
+            "configure EPUB ZIP compression",
+        )
+        checkArchiveResult(
+            archive_write_open_filename(writer, destinationPath),
+            writer,
+            "open rewritten EPUB",
+        )
+        orderedEntries.forEach { path ->
+            checkArchiveResult(
+                archive_write_set_options(
+                    writer,
+                    if (path == "mimetype") "zip:compression=store" else "zip:compression=deflate",
+                ),
+                writer,
+                "configure EPUB ZIP entry compression",
+            )
+            val bytes = bytesForPath(path) ?: error("EPUB ZIP entry is unreadable: $path")
+            val entry = archive_entry_new() ?: error("Could not create EPUB ZIP entry.")
+            try {
+                archive_entry_set_pathname(entry, path)
+                archive_entry_set_filetype(entry, AE_IFREG.toUInt())
+                archive_entry_set_perm(entry, 0x1A4.toUShort())
+                archive_entry_set_size(entry, bytes.size.toLong())
+                checkArchiveResult(archive_write_header(writer, entry), writer, "write EPUB ZIP entry header")
+                if (bytes.isNotEmpty()) {
+                    val written = bytes.usePinned { pinned ->
+                        archive_write_data(writer, pinned.addressOf(0), bytes.size.convert())
+                    }
+                    require(written == bytes.size.toLong()) {
+                        "Could not write the complete EPUB ZIP entry: $path"
+                    }
+                }
+            } finally {
+                archive_entry_free(entry)
+            }
+        }
+        checkArchiveResult(archive_write_close(writer), writer, "close rewritten EPUB")
+    } finally {
+        archive_write_free(writer)
+    }
+}
+
+private fun checkArchiveResult(result: Int, archive: kotlinx.cinterop.CPointer<cnames.structs.archive>, action: String) {
+    if (result >= ARCHIVE_OK) return
+    val detail = archive_error_string(archive)?.toKString()
+    error("Could not $action${detail?.let { ": $it" }.orEmpty()}")
 }
 
 private data class IosZipEntry(

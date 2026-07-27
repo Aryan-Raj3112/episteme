@@ -34,6 +34,7 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
         pdfHighlighterPalette = pdfHighlighterPalette,
         readerTtsReplacementPreferences = readerTtsReplacementPreferences,
         readerBookReplacementPreferences = readerBookReplacementPreferences,
+        cloudBookTombstones = bookTombstones,
     )
     return SharedLibraryStateProjector().project(
         SharedLibraryProjectionInput(
@@ -67,6 +68,7 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
     }
     return SharedLibrarySnapshot(
         books = rawLibraryBooks,
+        bookTombstones = cloudBookTombstones,
         shelfRecords = shelfRecords,
         shelfRefs = shelfRefs,
         tags = allTags,

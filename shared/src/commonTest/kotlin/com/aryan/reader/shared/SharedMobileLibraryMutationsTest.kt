@@ -8,6 +8,41 @@ import kotlin.test.assertTrue
 class SharedMobileLibraryMutationsTest {
 
     @Test
+    fun `book identity migration preserves library references`() {
+        val legacy = book(id = "legacy-path-id")
+        val shelf = Shelf(
+            id = "favorites",
+            name = "Favorites",
+            type = ShelfType.MANUAL,
+            books = listOf(legacy),
+            directBooks = listOf(legacy),
+        )
+        val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(legacy),
+            libraryBooks = listOf(legacy),
+            recentBooks = listOf(legacy),
+            openTabs = listOf(legacy),
+            selectedBookIds = setOf(legacy.id),
+            pinnedHomeBookIds = setOf(legacy.id),
+            pinnedLibraryBookIds = setOf(legacy.id),
+            openTabIds = listOf(legacy.id),
+            activeTabBookId = legacy.id,
+            shelves = listOf(shelf),
+            cloudBookTombstones = listOf(CloudBookTombstone(legacy.id, FileType.EPUB.name, 2L)),
+        )
+
+        val migrated = state.withMigratedMobileBookIdentity(legacy.id, "sha256-id")
+
+        assertEquals(listOf("sha256-id"), migrated.rawLibraryBooks.map { it.id })
+        assertEquals(setOf("sha256-id"), migrated.selectedBookIds)
+        assertEquals(setOf("sha256-id"), migrated.pinnedHomeBookIds)
+        assertEquals(listOf("sha256-id"), migrated.openTabIds)
+        assertEquals("sha256-id", migrated.activeTabBookId)
+        assertEquals("sha256-id", migrated.shelves.single().books.single().id)
+        assertTrue(migrated.cloudBookTombstones.isEmpty())
+    }
+
+    @Test
     fun `mobile imports add only new books to every mobile library collection`() {
         val existing = book(id = "existing", timestamp = 1L)
         val added = book(id = "added", timestamp = 2L)
@@ -37,6 +72,23 @@ class SharedMobileLibraryMutationsTest {
 
         assertTrue(result.addedBooks.isEmpty())
         assertEquals(listOf("ios_import_book"), result.state.rawLibraryBooks.map { it.id })
+    }
+
+    @Test
+    fun `reimporting a newer deleted book clears its cloud tombstone`() {
+        val replacement = book(id = "book", timestamp = 200L)
+        val result = SharedReaderScreenState(
+            cloudBookTombstones = listOf(
+                CloudBookTombstone(
+                    bookId = replacement.id,
+                    type = replacement.type.name,
+                    deletedAt = 100L,
+                )
+            )
+        ).withMobileImportedBooks(listOf(replacement))
+
+        assertEquals(listOf(replacement), result.addedBooks)
+        assertEquals(emptyList(), result.state.cloudBookTombstones)
     }
 
     @Test
@@ -133,6 +185,38 @@ class SharedMobileLibraryMutationsTest {
         assertNull(closed.selectedBookId)
         assertNull(closed.selectedUriString)
         assertNull(closed.selectedFileType)
+    }
+
+    @Test
+    fun `temporary external session never enters library recents shelves or tabs`() {
+        val stored = book(id = "stored")
+        val temporary = book(id = "temporary").copy(path = "/tmp/temporary.pdf")
+        val original = SharedReaderScreenState(
+            rawLibraryBooks = listOf(stored),
+            libraryBooks = listOf(stored),
+            recentBooks = listOf(stored),
+            openTabIds = listOf(stored.id),
+            activeTabBookId = stored.id,
+        )
+
+        val opened = original.withMobileTemporaryBookOpened(temporary)
+
+        assertEquals(listOf(stored), opened.rawLibraryBooks)
+        assertEquals(listOf(stored), opened.libraryBooks)
+        assertEquals(listOf(stored), opened.recentBooks)
+        assertEquals(listOf(stored.id), opened.openTabIds)
+        assertEquals(temporary.id, opened.selectedBookId)
+        assertEquals(temporary.path, opened.selectedUriString)
+
+        val closed = opened.withMobileTemporaryBookClosed(temporary.id)
+
+        assertNull(closed.selectedBookId)
+        assertNull(closed.selectedUriString)
+        assertNull(closed.selectedFileType)
+        assertEquals(listOf(stored), closed.rawLibraryBooks)
+        assertEquals(listOf(stored), closed.recentBooks)
+        assertEquals(listOf(stored.id), closed.openTabIds)
+        assertEquals(stored.id, closed.activeTabBookId)
     }
 
     private fun book(id: String, timestamp: Long = 0L): BookItem {

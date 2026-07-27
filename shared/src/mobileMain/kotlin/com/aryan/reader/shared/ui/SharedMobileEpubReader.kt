@@ -142,6 +142,7 @@ import com.aryan.reader.shared.ReaderTexture
 import com.aryan.reader.shared.ReaderFont
 import com.aryan.reader.shared.ReaderTtsPlanner
 import com.aryan.reader.shared.ReaderTtsChunk
+import com.aryan.reader.shared.ReaderLifecycleAction
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.readerExternalLookupActionForSelectionId
 import com.aryan.reader.shared.HighlightColor
@@ -159,6 +160,9 @@ import com.aryan.reader.shared.ReaderWordReplacementEngine
 import com.aryan.reader.shared.ReaderWordReplacementRule
 import com.aryan.reader.shared.SystemUiMode
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.readerWordStartMatchOffsets
+import com.aryan.reader.shared.readerLifecycleAction
+import com.aryan.reader.shared.shouldFollowReaderTtsChunk
 import com.aryan.reader.shared.toSharedReaderFontFamily
 import com.aryan.reader.shared.withTtsReplacements
 import com.aryan.reader.shared.withReaderFormatFrom
@@ -231,6 +235,10 @@ fun SharedMobileEpubReaderScreen(
     onReaderStateChange: (SharedMobileEpubReaderSnapshot) -> Unit = {},
     onMetadataLoaded: (title: String, author: String?) -> Unit = { _, _ -> },
     onKeepScreenOnChange: (Boolean) -> Unit = {},
+    appIsActive: Boolean = true,
+    appLifecycleEventId: Long = 0L,
+    initialKeepScreenOn: Boolean = false,
+    onKeepScreenOnPreferenceChange: (Boolean) -> Unit = {},
     onSystemUiAppearanceChange: (statusHidden: Boolean, navigationHidden: Boolean, lightContent: Boolean, backgroundArgb: Long) -> Unit = { _, _, _, _ -> },
     customReaderThemes: List<ReaderTheme> = emptyList(),
     onCustomReaderThemesChange: (List<ReaderTheme>) -> Unit = {},
@@ -278,6 +286,7 @@ fun SharedMobileEpubReaderScreen(
     }
     val localTts = rememberSharedMobileEpubLocalTts()
     val activeTtsChunk = localTts.progress.currentChunk
+    var detachedTtsChunkIndex by remember(book.id) { mutableStateOf<Int?>(null) }
     val storedBookSettings = book.readerSettings ?: readerDefaultSettings
     var isLocalFormatMode by remember(book.id) { mutableStateOf(book.readerFormatIsLocal) }
     var localFormatSettings by remember(book.id) { mutableStateOf(book.readerLocalFormatSettings) }
@@ -320,7 +329,7 @@ fun SharedMobileEpubReaderScreen(
     var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
     var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
-    var keepScreenOn by remember(book.id) { mutableStateOf(false) }
+    var keepScreenOn by remember(book.id) { mutableStateOf(initialKeepScreenOn) }
     var autoScrollModeActive by remember(book.id) { mutableStateOf(false) }
     var autoScroll by remember(book.id) { mutableStateOf(false) }
     var autoScrollIsLocal by remember(book.id) { mutableStateOf(book.readerAutoScrollIsLocal) }
@@ -426,7 +435,10 @@ fun SharedMobileEpubReaderScreen(
         commandScript = if (autoScroll) sharedMobileEpubAutoScrollStartScript(autoScrollSpeed) else SharedMobileEpubAutoScrollStopScript
         navigationRequestId++
     }
-    LaunchedEffect(loadedBook, searchQuery) {
+    LaunchedEffect(localTts.isSessionActive) {
+        if (!localTts.isSessionActive) detachedTtsChunkIndex = null
+    }
+    LaunchedEffect(loadedBook, searchQuery, pages) {
         val epub = loadedBook
         val query = searchQuery.trim()
         if (epub == null || query.isBlank()) {
@@ -438,7 +450,7 @@ fun SharedMobileEpubReaderScreen(
         delay(350)
         isSearchInProgress = true
         try {
-            searchResults = withContext(Dispatchers.Default) { epub.searchMobileEpub(query) }
+            searchResults = withContext(Dispatchers.Default) { epub.searchMobileEpub(query, pages) }
             searchResultIndex = -1
             showSearchResultsPanel = true
         } finally {
@@ -453,49 +465,49 @@ fun SharedMobileEpubReaderScreen(
     }
     val progress = pageInfo?.progressPercent?.toFloat()
         ?: ((currentPageIndex + 1).toFloat() / pageCount) * 100f
+
+    fun currentReaderSnapshot(): SharedMobileEpubReaderSnapshot? {
+        val locator = currentLocator ?: return null
+        return SharedMobileEpubReaderSnapshot(
+            locator = locator,
+            settings = settings,
+            bookmarks = bookmarks,
+            highlights = highlights,
+            progressPercent = progress.coerceIn(0f, 100f),
+            pageIndex = currentPageIndex,
+            pageCount = pageCount,
+            formatIsLocal = isLocalFormatMode,
+            localFormatSettings = localFormatSettings,
+            autoScrollIsLocal = autoScrollIsLocal,
+            autoScrollLocalSpeed = autoScrollLocalSpeed,
+        )
+    }
+
     LaunchedEffect(currentLocator, settings, bookmarks, highlights, currentPageIndex, pageCount, isLocalFormatMode, localFormatSettings, autoScrollIsLocal, autoScrollLocalSpeed) {
         delay(220)
-        currentLocator?.let { locator ->
-            onReaderStateChange(
-                SharedMobileEpubReaderSnapshot(
-                    locator = locator,
-                    settings = settings,
-                    bookmarks = bookmarks,
-                    highlights = highlights,
-                    progressPercent = progress.coerceIn(0f, 100f),
-                    pageIndex = currentPageIndex,
-                    pageCount = pageCount,
-                    formatIsLocal = isLocalFormatMode,
-                    localFormatSettings = localFormatSettings,
-                    autoScrollIsLocal = autoScrollIsLocal,
-                    autoScrollLocalSpeed = autoScrollLocalSpeed
-                )
-            )
-        }
+        currentReaderSnapshot()?.let(onReaderStateChange)
     }
 
     fun closeReader() {
-        currentLocator?.let { locator ->
-            onReaderStateChange(
-                SharedMobileEpubReaderSnapshot(
-                    locator = locator,
-                    settings = settings,
-                    bookmarks = bookmarks,
-                    highlights = highlights,
-                    progressPercent = progress.coerceIn(0f, 100f),
-                    pageIndex = currentPageIndex,
-                    pageCount = pageCount,
-                    formatIsLocal = isLocalFormatMode,
-                    localFormatSettings = localFormatSettings,
-                    autoScrollIsLocal = autoScrollIsLocal,
-                    autoScrollLocalSpeed = autoScrollLocalSpeed
-                )
-            )
-        }
+        currentReaderSnapshot()?.let(onReaderStateChange)
         onBack()
     }
 
-    fun navigate(locator: ReaderLocator, fragment: String? = null) {
+    fun detachVerticalReaderFromTts() {
+        if (
+            settings.readingMode == ReaderReadingMode.VERTICAL &&
+            localTts.isSessionActive
+        ) {
+            detachedTtsChunkIndex = activeTtsChunk?.index
+        }
+    }
+
+    fun navigate(
+        locator: ReaderLocator,
+        fragment: String? = null,
+        detachFromTts: Boolean = true,
+    ) {
+        if (detachFromTts) detachVerticalReaderFromTts()
         val epub = loadedBook
         locator.chapterIndex?.let { chapterIndex ->
             epub?.chapters?.lastIndex?.let { lastIndex ->
@@ -583,32 +595,62 @@ fun SharedMobileEpubReaderScreen(
         }
     }
 
+    LaunchedEffect(appLifecycleEventId, appIsActive) {
+        when (
+            readerLifecycleAction(
+                isActive = appIsActive,
+                isTtsActive = localTts.isSessionActive,
+                detachedChunkIndex = detachedTtsChunkIndex,
+                currentChunkIndex = activeTtsChunk?.index,
+            )
+        ) {
+            ReaderLifecycleAction.SAVE_POSITION -> {
+                // Android requests a final CFI on pause. Persist the latest
+                // portable locator immediately instead of awaiting the debounce.
+                currentReaderSnapshot()?.let(onReaderStateChange)
+            }
+            ReaderLifecycleAction.LOCATE_TTS -> {
+                // Speech may advance while backgrounded. Restore the active
+                // chunk unless the user intentionally detached from it.
+                val chunk = activeTtsChunk ?: return@LaunchedEffect
+                detachedTtsChunkIndex = null
+                navigate(chunk.toLocator(), detachFromTts = false)
+            }
+            ReaderLifecycleAction.NONE -> Unit
+        }
+    }
+
     LaunchedEffect(activeTtsChunk?.index, activeTtsChunk?.chapterIndex, activeTtsChunk?.pageIndex) {
         val chunk = activeTtsChunk
         if (chunk == null || loadedBook == null) return@LaunchedEffect
+        if (!shouldFollowReaderTtsChunk(detachedTtsChunkIndex, chunk.index)) {
+            return@LaunchedEffect
+        }
+        detachedTtsChunkIndex = null
         // Speech chunks have source offsets and page indices from the same shared planner used
         // by Android. Let them own navigation while reading, so a spoken sentence is always
         // visible in either reader mode.
-        navigate(chunk.toLocator())
+        navigate(chunk.toLocator(), detachFromTts = false)
     }
 
     fun navigateSearchResult(result: SharedMobileEpubSearchResult) {
         val epub = loadedBook ?: return
         val chapter = epub.chapters.getOrNull(result.chapterIndex) ?: return
+        detachVerticalReaderFromTts()
         val chunks = ReaderHtmlDocumentBuilder.verticalChapterChunks(epub, result.chapterIndex)
         currentChapterIndex = result.chapterIndex
-        currentLocator = ReaderLocator(
-            chapterIndex = result.chapterIndex,
-            chapterId = chapter.id,
-            href = chapter.baseHref,
-            startOffset = 0,
-            endOffset = 0,
-            textQuote = result.snippet
-        )
-        explicitNavigationLocator = null
+        currentLocator = result.locator
+        result.locator.pageIndex?.let { currentPageIndex = it.coerceIn(0, pageCount - 1) }
+        explicitNavigationLocator = result.locator.takeIf {
+            settings.readingMode == ReaderReadingMode.PAGINATED
+        }
         explicitNavigationChunkIndex = result.chunkIndex
         explicitNavigationChunkHtml = chunks.getOrNull(result.chunkIndex)
-        commandScript = sharedMobileEpubSearchNavigationScript(result, searchQuery, chunks.getOrNull(result.chunkIndex))
+        commandScript = if (settings.readingMode == ReaderReadingMode.VERTICAL) {
+            sharedMobileEpubSearchNavigationScript(result, searchQuery, chunks.getOrNull(result.chunkIndex))
+        } else {
+            null
+        }
         navigationRequestId++
         showSearch = false
     }
@@ -1096,7 +1138,10 @@ fun SharedMobileEpubReaderScreen(
                         },
                         onLocalTtsStop = localTts::stop,
                         keepScreenOn = keepScreenOn,
-                        onKeepScreenOnChange = { keepScreenOn = it },
+                        onKeepScreenOnChange = {
+                            keepScreenOn = it
+                            onKeepScreenOnPreferenceChange(it)
+                        },
                         autoScroll = autoScrollModeActive,
                         onAutoScrollChange = { active ->
                             autoScrollModeActive = active
@@ -1172,6 +1217,10 @@ fun SharedMobileEpubReaderScreen(
                 if (localTts.isSessionActive) {
                     SharedMobileEpubTtsControls(
                         tts = localTts,
+                        onLocate = {
+                            detachedTtsChunkIndex = null
+                            activeTtsChunk?.let { navigate(it.toLocator(), detachFromTts = false) }
+                        },
                         onOpenSettings = { showTtsSettingsSheet = true },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -1822,6 +1871,7 @@ private fun SharedMobileEpubLocalTtsState.icon() = when (this) {
 @Composable
 private fun SharedMobileEpubTtsControls(
     tts: SharedMobileEpubLocalTts,
+    onLocate: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1869,6 +1919,9 @@ private fun SharedMobileEpubTtsControls(
                 enabled = progress.currentChunkIndex in 0 until progress.chunks.lastIndex
             ) {
                 Icon(Icons.Default.SkipNext, contentDescription = "Next reading part")
+            }
+            IconButton(onClick = onLocate, enabled = progress.currentChunk != null) {
+                Icon(Icons.Default.Visibility, contentDescription = "Locate current reading part")
             }
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Default.Settings, contentDescription = "TTS voice settings")
@@ -3119,7 +3172,14 @@ private fun SharedMobileEpubSearchNavigation(current: Int, total: Int, onPreviou
     }
 }
 
-private data class SharedMobileEpubSearchResult(val chapterIndex: Int, val chapterTitle: String, val chunkIndex: Int, val occurrenceIndex: Int, val snippet: String)
+private data class SharedMobileEpubSearchResult(
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val chunkIndex: Int,
+    val occurrenceIndex: Int,
+    val snippet: String,
+    val locator: ReaderLocator,
+)
 private data class SharedMobileEpubLink(val href: String, val chapterHref: String?)
 private data class SharedMobileEpubActiveToc(val href: String, val fragmentId: String?)
 private data class SharedMobileEpubSelectionAction(val action: String, val text: String, val locator: ReaderLocator?)
@@ -3187,26 +3247,49 @@ private fun String.sharedMobileEpubPullOrNull(): Pair<String, Float>? {
     return direction to progress.coerceIn(0f, 1.25f)
 }
 
-private fun SharedEpubBook.searchMobileEpub(query: String): List<SharedMobileEpubSearchResult> {
-    val needle = query.lowercase()
+private fun SharedEpubBook.searchMobileEpub(
+    query: String,
+    pages: List<ReaderPage>,
+): List<SharedMobileEpubSearchResult> {
+    val needle = query.trim()
     return buildList {
         chapters.forEachIndexed { chapterIndex, chapter ->
+            val chapterOffsets = readerWordStartMatchOffsets(chapter.plainText, query)
+            var chapterOccurrence = 0
             ReaderHtmlDocumentBuilder.verticalChapterChunks(this@searchMobileEpub, chapterIndex).forEachIndexed { chunkIndex, html ->
                 val text = html.mobileEpubPlainText()
-                val lower = text.lowercase()
-                var from = 0
-                var chunkOccurrence = 0
-                while (from < lower.length) {
-                    val found = lower.indexOf(needle, from)
-                    if (found < 0) break
-                    val wordStart = found == 0 || !lower[found - 1].isLetterOrDigit()
-                    if (wordStart) {
-                        val snippetStart = (found - 35).coerceAtLeast(0)
-                        val snippetEnd = (found + needle.length + 35).coerceAtMost(text.length)
-                        add(SharedMobileEpubSearchResult(chapterIndex, chapter.title.ifBlank { "Chapter ${chapterIndex + 1}" }, chunkIndex, chunkOccurrence, text.substring(snippetStart, snippetEnd).trim()))
-                        chunkOccurrence++
-                    }
-                    from = found + needle.length.coerceAtLeast(1)
+                readerWordStartMatchOffsets(text, query).forEachIndexed { chunkOccurrence, found ->
+                    val snippetStart = (found - 35).coerceAtLeast(0)
+                    val snippetEnd = (found + needle.length + 35).coerceAtMost(text.length)
+                    val sourceOffset = chapterOffsets.getOrNull(chapterOccurrence)
+                    val page = sourceOffset?.let { offset ->
+                        pages.firstOrNull {
+                            it.chapterIndex == chapterIndex &&
+                                offset >= it.startOffset &&
+                                offset < it.endOffset.coerceAtLeast(it.startOffset + 1)
+                        }
+                    } ?: pages.firstOrNull { it.chapterIndex == chapterIndex }
+                    add(
+                        SharedMobileEpubSearchResult(
+                            chapterIndex = chapterIndex,
+                            chapterTitle = chapter.title.ifBlank { "Chapter ${chapterIndex + 1}" },
+                            chunkIndex = chunkIndex,
+                            occurrenceIndex = chunkOccurrence,
+                            snippet = text.substring(snippetStart, snippetEnd).trim(),
+                            locator = ReaderLocator(
+                                chapterIndex = chapterIndex,
+                                chapterId = chapter.id,
+                                href = chapter.baseHref,
+                                pageIndex = page?.pageIndex,
+                                startOffset = sourceOffset ?: page?.startOffset ?: 0,
+                                endOffset = sourceOffset?.plus(needle.length)
+                                    ?: page?.startOffset
+                                    ?: 0,
+                                textQuote = text.substring(found, found + needle.length),
+                            ),
+                        )
+                    )
+                    chapterOccurrence++
                 }
             }
         }

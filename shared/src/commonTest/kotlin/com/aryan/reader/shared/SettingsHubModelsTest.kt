@@ -96,6 +96,9 @@ class SettingsHubModelsTest {
                 syncAvailable = false,
                 folderSyncAvailable = true,
                 aiSettingsAvailable = false,
+                ttsSettingsAvailable = false,
+                bookCacheMaintenanceAvailable = false,
+                reflowCacheMaintenanceAvailable = false,
             )
         )
         val actions = model.visibleNestedActions()
@@ -104,9 +107,57 @@ class SettingsHubModelsTest {
         assertFalse(SharedSettingsAction.SIGN_OUT in actions)
         assertFalse(SharedSettingsAction.CLOUD_SYNC in actions)
         assertFalse(SharedSettingsAction.AI_SETTINGS in actions)
+        assertFalse(SharedSettingsAction.TTS_SETTINGS in actions)
+        assertFalse(SharedSettingsAction.CLEAR_BOOK_CACHE in actions)
+        assertFalse(SharedSettingsAction.CLEAR_REFLOW_CACHE in actions)
         assertTrue(SharedSettingsAction.FOLDER_SYNC in actions)
         assertTrue(SharedSettingsAction.CUSTOM_FONTS in actions)
         assertTrue(SharedSettingsAction.APP_THEME in actions)
+    }
+
+    @Test
+    fun `ios can expose native account actions without claiming cloud sync support`() {
+        val signedOut = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                accountAvailable = true,
+                includeAccountAuthActions = true,
+                syncAvailable = false,
+                isSignedIn = false,
+            )
+        ).visibleNestedActions()
+        val signedIn = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                accountAvailable = true,
+                includeAccountAuthActions = true,
+                syncAvailable = false,
+                isSignedIn = true,
+            )
+        ).visibleNestedActions()
+
+        assertTrue(SharedSettingsAction.SIGN_IN in signedOut)
+        assertFalse(SharedSettingsAction.CLOUD_SYNC in signedOut)
+        assertTrue(SharedSettingsAction.SIGN_OUT in signedIn)
+        assertFalse(SharedSettingsAction.CLOUD_SYNC in signedIn)
+    }
+
+    @Test
+    fun `cloud sync row requires both pro and platform account eligibility`() {
+        val item = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                isSignedIn = true,
+                isProUser = true,
+                syncAvailable = true,
+                cloudSyncEligible = false,
+            )
+        ).page(SharedSettingsDestination.SYNC_ACCOUNTS)
+            .items
+            .single { it.action == SharedSettingsAction.CLOUD_SYNC }
+
+        assertFalse(item.enabled)
+        assertTrue(item.summary.contains("Google"))
     }
 
     @Test
