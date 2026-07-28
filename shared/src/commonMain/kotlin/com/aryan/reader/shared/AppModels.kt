@@ -286,3 +286,20 @@ data class SharedReaderScreenState(
     val readerTtsReplacementPreferences: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences(),
     val readerBookReplacementPreferences: ReaderBookReplacementPreferences = ReaderBookReplacementPreferences()
 )
+
+val AndroidExternalFileBehaviors: Set<String> = setOf("ASK", "KEEP", "DELETE", "TEMPORARY")
+val AndroidRecentFilesLimits: List<Int> = listOf(0, 10, 20, 50, 100)
+
+fun normalizedRecentFilesLimit(value: Int): Int {
+    if (value <= 0) return 0
+    return AndroidRecentFilesLimits.drop(1).minBy { kotlin.math.abs(it - value) }
+}
+
+fun normalizedExternalFileBehavior(value: String?): String {
+    val normalized = value?.trim()?.uppercase()
+    return when (normalized) {
+        "COPY" -> "KEEP"
+        in AndroidExternalFileBehaviors -> normalized!!
+        else -> "ASK"
+    }
+}

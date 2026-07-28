@@ -29,6 +29,14 @@ class ReaderExtrasModelsTest {
     }
 
     @Test
+    fun `external lookup actions use android selection length boundary`() {
+        assertTrue(readerExternalLookupActionsAvailable(0))
+        assertTrue(readerExternalLookupActionsAvailable(ReaderExternalLookupSelectionLimit))
+        assertFalse(readerExternalLookupActionsAvailable(ReaderExternalLookupSelectionLimit + 1))
+        assertFalse(readerExternalLookupActionsAvailable(-1))
+    }
+
+    @Test
     fun `reader ai settings require BYO key and selected model`() {
         val missingModel = ReaderByokTextRequests.build(
             settings = ReaderAiByokSettings(groqKey = "gsk_test"),

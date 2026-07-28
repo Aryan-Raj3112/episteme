@@ -46,7 +46,10 @@ class SharedLibraryStateProjector(
         )
             .withPinnedFirst(current.pinnedHomeBookIds)
             .take(if (current.recentFilesLimit > 0) current.recentFilesLimit else Int.MAX_VALUE)
-        val openTabs = current.openTabIds.mapNotNull { tabId -> allLibraryBooks.find { it.id == tabId } }
+        val openTabs = current.openTabIds
+            .distinct()
+            .mapNotNull { tabId -> allLibraryBooks.find { it.id == tabId } }
+            .take(MAX_OPEN_PDF_TABS)
         val openTabIds = openTabs.map { it.id }
         val activeTabBookId = current.activeTabBookId?.takeIf { it in openTabIds }
         val shelfProjection = buildShelves(
@@ -61,16 +64,12 @@ class SharedLibraryStateProjector(
         val viewingShelfId = current.viewingShelfId?.takeIf { it in validShelfIds }
         val selectedShelfIds = current.selectedShelfIds.filterTo(mutableSetOf()) { it in validShelfIds }
         val booksAvailableForAdding = if (current.isAddingBooksToShelf && viewingShelfId != null) {
-            val currentShelfBookIds = shelfProjection.shelves
-                .find { it.id == viewingShelfId }
-                ?.books
-                ?.map { it.id }
-                ?.toSet()
-                ?: emptySet()
-            when (current.addBooksSource) {
-                AddBooksSource.UNSHELVED -> shelfProjection.unshelvedBooks
-                AddBooksSource.ALL_BOOKS -> allLibraryBooks.filter { it.id !in currentShelfBookIds }
-            }
+            booksAvailableForShelfAddition(
+                allLibraryBooks = allLibraryBooks,
+                shelves = shelfProjection.shelves,
+                shelfId = viewingShelfId,
+                source = current.addBooksSource,
+            )
         } else {
             emptyList()
         }
@@ -116,7 +115,15 @@ class SharedLibraryStateProjector(
                 val definition = SmartCollectionEngine.fromJson(shelf.smartRulesJson)
                 if (definition != null) {
                     val matchingBooks = allLibraryBooks.filter { SmartCollectionEngine.evaluate(it, definition) }
-                    shelves.add(Shelf(shelf.id, shelf.name, ShelfType.SMART, sortBooks(matchingBooks, sortOrder)))
+                    shelves.add(
+                        Shelf(
+                            id = shelf.id,
+                            name = shelf.name,
+                            type = ShelfType.SMART,
+                            books = sortBooks(matchingBooks, sortOrder),
+                            smartRulesJson = shelf.smartRulesJson,
+                        )
+                    )
                     shelvedBookIds.addAll(matchingBooks.map { it.id })
                 }
             } else {
@@ -125,7 +132,18 @@ class SharedLibraryStateProjector(
                     .sortedBy { it.addedAt }
                     .map { it.bookId }
                 val books = bookIds.mapNotNull { booksById[it] }
-                shelves.add(Shelf(shelf.id, shelf.name, ShelfType.MANUAL, sortBooks(books, sortOrder)))
+                shelves.add(
+                    Shelf(
+                        id = shelf.id,
+                        name = shelf.name,
+                        type = ShelfType.MANUAL,
+                        books = sortBooks(books, sortOrder),
+                        directBooks = books,
+                        directBookAddedAt = shelfRefs
+                            .filter { it.shelfId == shelf.id && it.bookId in booksById }
+                            .associate { it.bookId to it.addedAt },
+                    )
+                )
                 shelvedBookIds.addAll(bookIds)
             }
         }
@@ -256,6 +274,26 @@ class SharedLibraryStateProjector(
         val directBooks: MutableList<BookItem> = mutableListOf(),
         val childShelfIds: MutableList<String> = mutableListOf()
     )
+}
+
+fun booksAvailableForShelfAddition(
+    allLibraryBooks: List<BookItem>,
+    shelves: List<Shelf>,
+    shelfId: String,
+    source: AddBooksSource,
+): List<BookItem> {
+    val currentShelfBookIds = shelves
+        .firstOrNull { it.id == shelfId }
+        ?.books
+        .orEmpty()
+        .mapTo(mutableSetOf()) { it.id }
+    val candidates = when (source) {
+        AddBooksSource.UNSHELVED -> shelves.firstOrNull { it.id == "unshelved" }?.books.orEmpty()
+        AddBooksSource.ALL_BOOKS -> allLibraryBooks
+    }
+    return candidates
+        .filterNot { it.id in currentShelfBookIds }
+        .distinctBy { it.sharedLibraryIdentity() }
 }
 
 private fun List<SyncedFolder>.withSourceFolderFallbacks(books: List<BookItem>): List<SyncedFolder> {

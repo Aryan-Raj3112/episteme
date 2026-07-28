@@ -20,7 +20,6 @@ struct ContentView: View {
     @State private var isImportPickerPresented = false
     @State private var importKind: ImportKind = .books
     @State private var isReaderSystemUiHidden = false
-    @State private var pendingExternalURL: URL?
 
     var body: some View {
         ReaderComposeHost(
@@ -147,32 +146,6 @@ struct ContentView: View {
                 bridge.updateAppActive(active: false)
             }
         }
-        .confirmationDialog(
-            "Open external file",
-            isPresented: Binding(
-                get: { pendingExternalURL != nil },
-                set: { if !$0 { pendingExternalURL = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Copy to Library") {
-                if let url = pendingExternalURL {
-                    openExternalURL(url, addToLibrary: true)
-                }
-                pendingExternalURL = nil
-            }
-            Button("Open Temporarily") {
-                if let url = pendingExternalURL {
-                    openExternalURL(url, addToLibrary: false)
-                }
-                pendingExternalURL = nil
-            }
-            Button("Cancel", role: .cancel) {
-                pendingExternalURL = nil
-            }
-        } message: {
-            Text("Choose whether to keep a managed copy in your library.")
-        }
     }
 
     private var allowedReaderImportTypes: [UTType] {
@@ -185,12 +158,12 @@ struct ContentView: View {
 
     private func handleExternalURL(_ url: URL) {
         switch bridge.externalFileBehavior().uppercased() {
-        case "COPY":
+        case "ASK", "KEEP", "COPY", "DELETE":
             openExternalURL(url, addToLibrary: true)
         case "TEMPORARY":
             openExternalURL(url, addToLibrary: false)
         default:
-            pendingExternalURL = url
+            openExternalURL(url, addToLibrary: true)
         }
     }
 

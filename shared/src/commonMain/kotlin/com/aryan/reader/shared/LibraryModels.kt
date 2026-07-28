@@ -50,6 +50,11 @@ enum class ReadStatusFilter {
 }
 
 const val IN_APP_STORAGE_SOURCE = "IN_APP_STORAGE"
+const val MAX_SYNCED_FOLDER_COUNT = 10
+
+fun canAddSyncedFolder(folders: Collection<SyncedFolder>): Boolean =
+    folders.mapTo(mutableSetOf()) { it.uriString.trim() }
+        .count { it.isNotBlank() } < MAX_SYNCED_FOLDER_COUNT
 
 enum class ShelfType {
     MANUAL,
@@ -124,7 +129,9 @@ data class Shelf(
     val parentShelfId: String? = null,
     val childShelfIds: List<String> = emptyList(),
     val depth: Int = 0,
-    val sortKey: String = name.lowercase()
+    val sortKey: String = name.lowercase(),
+    val smartRulesJson: String? = null,
+    val directBookAddedAt: Map<String, Long> = emptyMap(),
 ) {
     val bookCount: Int get() = books.size
     val topBook: BookItem? get() = books.maxByOrNull { it.timestamp }

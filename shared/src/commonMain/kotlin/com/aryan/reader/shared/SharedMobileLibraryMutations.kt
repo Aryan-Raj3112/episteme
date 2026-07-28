@@ -1,5 +1,36 @@
 package com.aryan.reader.shared
 
+const val MAX_OPEN_PDF_TABS = 20
+
+enum class MobileExternalFileCloseAction {
+    KEEP,
+    PROMPT,
+    DELETE,
+}
+
+fun mobileExternalFileCloseAction(
+    behavior: String?,
+    isTemporarySession: Boolean = false,
+): MobileExternalFileCloseAction {
+    if (isTemporarySession) return MobileExternalFileCloseAction.DELETE
+    return when (normalizedExternalFileBehavior(behavior)) {
+        "KEEP" -> MobileExternalFileCloseAction.KEEP
+        "DELETE", "TEMPORARY" -> MobileExternalFileCloseAction.DELETE
+        else -> MobileExternalFileCloseAction.PROMPT
+    }
+}
+
+fun canOpenMobilePdfTab(openTabIds: Collection<String>, bookId: String): Boolean {
+    val normalizedBookId = bookId.trim()
+    if (normalizedBookId.isBlank()) return false
+    val currentTabIds = openTabIds.asSequence()
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinct()
+        .toList()
+    return normalizedBookId in currentTabIds || currentTabIds.size < MAX_OPEN_PDF_TABS
+}
+
 /**
  * Platform-neutral state changes used when a phone app imports or opens books.
  *
@@ -102,6 +133,39 @@ fun SharedReaderScreenState.withMobileBookOpened(
         selectedUriString = openedBook.path,
         selectedFileType = openedBook.type,
         bannerMessage = null
+    )
+}
+
+fun resolveMobileReaderSessionBook(
+    books: Collection<BookItem>,
+    bookId: String?,
+    fileType: FileType?,
+): BookItem? {
+    val normalizedBookId = bookId?.trim().orEmpty()
+    if (normalizedBookId.isBlank() || fileType == null) return null
+    return books.firstOrNull { book ->
+        book.id == normalizedBookId &&
+            book.type == fileType &&
+            book.isAvailable &&
+            !book.path.isNullOrBlank()
+    }
+}
+
+fun SharedReaderScreenState.withRestoredMobileReaderSession(book: BookItem): SharedReaderScreenState {
+    val storedBook = resolveMobileReaderSessionBook(rawLibraryBooks, book.id, book.type) ?: return this
+    return copy(
+        selectedBookId = storedBook.id,
+        selectedUriString = storedBook.path,
+        selectedFileType = storedBook.type,
+        bannerMessage = null,
+    )
+}
+
+fun SharedReaderScreenState.withoutMobileReaderSession(): SharedReaderScreenState {
+    return copy(
+        selectedBookId = null,
+        selectedUriString = null,
+        selectedFileType = null,
     )
 }
 

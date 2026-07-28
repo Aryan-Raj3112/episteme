@@ -155,6 +155,24 @@ class ReaderAppearanceModelsTest {
     }
 
     @Test
+    fun `reader theme resolution includes valid custom themes and falls back safely`() {
+        val fallback = BuiltInPdfReaderThemes.first()
+        val custom = ReaderTheme(
+            id = "custom_pdf",
+            name = "Custom PDF",
+            backgroundColor = Color(0xFF102030),
+            textColor = Color(0xFFF0E0D0),
+            isDark = true,
+            isCustom = true,
+        )
+        val invalid = custom.copy(id = "invalid", isCustom = false)
+
+        assertEquals(custom, resolveReaderTheme(custom.id, BuiltInPdfReaderThemes, listOf(custom)))
+        assertEquals(fallback, resolveReaderTheme(invalid.id, BuiltInPdfReaderThemes, listOf(invalid)))
+        assertEquals(fallback, resolveReaderTheme("missing", BuiltInPdfReaderThemes, listOf(custom)))
+    }
+
+    @Test
     fun `reader textures expose shared desktop resource paths`() {
         assertTrue(ReaderTexture.entries.all { it.assetPath.startsWith("textures/") })
         assertEquals("textures/ep_naturalwhite.webp", ReaderTexture.NATURAL_WHITE.assetPath)

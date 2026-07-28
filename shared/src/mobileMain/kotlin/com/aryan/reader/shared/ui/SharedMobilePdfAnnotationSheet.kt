@@ -22,9 +22,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +54,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.readerExternalLookupActionsAvailable
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.generated.resources.Res
 import com.aryan.reader.shared.generated.resources.copy
@@ -78,6 +82,7 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
     annotation: SharedPdfAnnotation,
     onUpdate: (SharedPdfAnnotation) -> Unit,
     onDelete: () -> Unit,
+    onReadAloud: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -130,13 +135,22 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 SharedMobilePdfAnnotationTool(icon = Res.drawable.copy, label = "Copy") { clipboard.setText(AnnotatedString(annotation.text)) }
-                SharedMobilePdfAnnotationTool(icon = Res.drawable.translate, label = "Translate") {
-                    openSharedMobileExternalUrl("https://translate.google.com/?text=${sharedMobilePdfEncodeQuery(annotation.text)}")
-                }
-                SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Search, label = "Search") {
-                    openSharedMobileExternalUrl("https://www.google.com/search?q=${sharedMobilePdfEncodeQuery(annotation.text)}")
+                SharedMobilePdfAnnotationTool(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud", onClick = onReadAloud)
+                if (readerExternalLookupActionsAvailable(annotation.text.length)) {
+                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Book, label = "Define") {
+                        openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, annotation.text)
+                    }
+                    SharedMobilePdfAnnotationTool(icon = Res.drawable.translate, label = "Translate") {
+                        openSharedMobileEpubLookup(ReaderExternalLookupAction.TRANSLATE, annotation.text)
+                    }
+                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Search, label = "Search") {
+                        openSharedMobileEpubLookup(ReaderExternalLookupAction.SEARCH, annotation.text)
+                    }
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -307,5 +321,3 @@ private fun SharedMobilePdfAnnotationTool(icon: DrawableResource? = null, imageV
         Text(label, style = MaterialTheme.typography.labelSmall)
     }
 }
-
-private fun sharedMobilePdfEncodeQuery(text: String): String = text.trim().replace(" ", "+").replace("\n", "+")

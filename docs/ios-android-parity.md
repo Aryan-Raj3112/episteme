@@ -127,6 +127,214 @@ integration boundaries.
   the foreground forces an immediate portable position/session snapshot rather
   than risking the normal debounce losing the last scroll, and returning to the
   app re-locates active speech unless the reader was intentionally detached.
+- EPUB navigation now uses the same bounded portable jump history as
+  Android. Search results, TOC entries, bookmarks, annotations, book images, and
+  internal links record both origin and destination; visible reader controls
+  expose chapter-labelled back, forward, and clear actions in vertical and
+  paginated modes, with history preserved when switching layouts.
+- The EPUB drawer now removes legacy duplicate bookmarks by portable location
+  before sorting them in reading order. Annotation rows show Android-equivalent
+  chapter and highlight-color context in addition to their text and optional
+  note, while retaining the full color/style/note/delete editor.
+- The EPUB bookmark icon and toggle now use Android's location rules: exact
+  locator, the same text block within 160 characters, or the visible paginated
+  page. Removing a bookmark also clears legacy duplicates matching that active
+  location, preventing duplicate creation and a falsely active icon after a
+  small scroll.
+- PDF overflow actions no longer collapse into the old current-page placeholder.
+  Share opens the native activity sheet, Save Copy opens the Files export
+  picker without moving the managed library file, and Print opens the native
+  print controller after confirming that iOS can print the PDF. The remaining
+  bridge-dependent menu items now report their own unavailable feature instead
+  of misleadingly behaving like a file action.
+- PDF File Information now opens the same full-screen shared metadata view used
+  by the library: title, author, series, format, size, reading progress, file
+  path, source folder, summary, and tags. PDF display-name/tag edits use the
+  shared Android metadata mutation contract, preserving file identity, path,
+  reading state, and independent metadata timestamps.
+- PDF Brightness and Screen Orientation now open real shared controls instead
+  of bridge placeholders. Both PDF and EPUB use Android's system/custom
+  brightness contract with 1% rounding, 1–100% bounds, one-percent step
+  buttons, and preservation of the last custom level while system brightness is
+  active. Orientation follows the same persisted follow-system, portrait, and
+  landscape modes and resets the platform override when a reader closes.
+- PDF toolbar customization now uses a shared mirror of Android's PDF tool
+  catalog, defaults, hidden-tool migration state, order, and top/bottom
+  placement rules. iOS persists those preferences, renders both scrollable bars
+  in the chosen order, keeps hidden toolbar actions reachable from the overflow
+  menu, and applies visibility to supported overflow actions. Paid or
+  unimplemented iOS tools are omitted from the availability set instead of
+  appearing as inert controls.
+- PDF Voice Settings and Word Replacements now open the same shared controls as
+  EPUB. Voice, rate, and pitch update the active local speech controller, while
+  global and per-book replacement changes flow through the shared library state
+  and persist across reader formats. Both entries participate independently in
+  PDF toolbar visibility preferences.
+- PDF themes now use the shared Android-equivalent theme editor instead of the
+  iOS-only preset grid with an inert custom-theme button. Saved custom themes
+  can be created, edited, deleted, selected, persisted, and resolved by the
+  active PDF renderer; invalid or deleted IDs safely fall back to No Theme.
+  The old local-only Preserve Image Colors switch was removed because the iOS
+  renderer cannot yet exclude PDF image regions from its page-wide color
+  filter.
+- PDF text selection now exposes Android's free lookup action set: Define,
+  Translate, and Search appear only for selections up to 2,000 characters.
+  Define uses the native iOS reference library, matching EPUB, while Translate
+  and Search use the shared external-lookup routes instead of separate PDF-only
+  URL construction. Saved-highlight editing exposes the same bounded lookup
+  actions plus Read aloud, which resumes from the highlight's stored page
+  character offset.
+- External PDF links no longer launch immediately on iOS. Like Android, tapping
+  one now shows the full destination and offers Visit, Copy, and Cancel;
+  internal PDF destinations continue to navigate directly and enter the shared
+  jump history.
+- iOS Settings now uses Android's explicit dialogs instead of cycling values
+  on tap. Recent books offers 0/10/20/50/100, strict file filtering requires
+  confirmation when enabled, and sign-out is confirmed from Settings, Account,
+  and the navigation drawer. External-file behavior now uses Android's
+  ASK/KEEP/DELETE/TEMPORARY
+  contract; legacy iOS COPY and 12/24 limits migrate to their nearest Android
+  equivalents, and the native open router honors all four modes.
+- Manual shelf detail no longer traps iOS in an invisible selection state.
+  Long-press now opens Android-equivalent contextual controls; subsequent taps
+  extend the selection, and users can clear, tag, inspect, save, share, export
+  annotations, or remove selected books from that shelf. Removing shelf
+  membership preserves the library books and uses a shared, tested mutation
+  instead of the library-deletion path.
+- Home and Library now use Android's multi-shelf chooser for the contextual
+  Add to shelf action. Users can add the selected books to one or more existing
+  manual shelves or continue into New shelf; shared mutation logic ignores
+  folders and immutable shelves, deduplicates existing membership, and clears
+  selection after the operation.
+- Manual shelf detail now includes Android's dedicated Add books mode instead
+  of sending iOS users back to the Library selection menu. It supports the same
+  Unshelved/All books sources, sort choices, tap multi-selection, selected-count
+  confirmation, and source-specific empty states. Candidate filtering is shared
+  with Android's library projector and membership updates use the same
+  deduplicating shelf mutation.
+- Shelf detail now carries Android's local management header on iOS: book count,
+  all shared sort orders, shelf-scoped title/author/tag search with clear and
+  no-results states, plus rename and confirmed delete for mutable manual
+  shelves. Search state resets when leaving the shelf, and management actions
+  remain hidden for synthetic, smart, tag, series, and folder shelves.
+- Folder shelf detail no longer flattens every descendant file on iOS. It now
+  mirrors Android's hierarchy: child folders and directly contained files are
+  separate sections, child rows navigate deeper, Back returns to the parent
+  folder before leaving Library, and folder search matches both child names and
+  descendant book metadata. Shared projection tests assert direct membership,
+  child IDs, and parent IDs.
+- Home contextual Remove now matches Android's non-destructive Recents
+  operation. iOS confirms the action, clears only `isRecent` and the contextual
+  selection, advances the portable metadata clock, and preserves the library
+  record, managed file path, shelf membership, open reader tabs, and Home pin.
+  The previous iOS path permanently deleted managed and folder-backed files.
+- Shelf contextual selection and deletion now enforce Android's mutable-manual
+  boundary. Smart, series, folder, tag, and reserved Unshelved rows cannot enter
+  shelf selection; rename/delete reject those IDs again in shared mutation
+  logic. Deleting a manual shelf removes only that shelf and preserves every
+  library record, source-folder link, and file path. Synced folders remain
+  removable only through their dedicated folder-sync action.
+- Shelf multi-selection now shows Android's actual action set on iOS: close,
+  selected count, and delete. The visible but inert Select all and Pin buttons,
+  plus the non-benchmark contextual Rename shortcut, were removed; rename
+  remains available inside an individual manual shelf. Folder cards also show
+  the real localized `MMM d, h:mm a` last-scan time instead of the literal word
+  “Updated.”
+- Folder linking now enforces Android's ten-folder cap through shared tested
+  policy, hiding Add Folder once the unique linked-folder limit is reached.
+  Disabling an enabled folder now requires confirmation instead of changing
+  immediately; iOS explicitly retains its managed reading copies because it
+  does not create Android's removable `.syncdata` directory.
+- Home and Library contextual pinning now use Android's batch rule instead of
+  independently inverting each selected book. A mixed or wholly unpinned
+  selection becomes fully pinned; a selection that is already entirely pinned
+  becomes fully unpinned. Both paths clear contextual selection while
+  preserving pins outside the selected set.
+- Contextual tagging now uses Android's searchable tri-state tag sheet on iOS
+  instead of a comma-separated replacement field. Mixed tags assign to the
+  whole selection, fully assigned tags are removed from the whole selection,
+  unrelated tags are preserved, new tags can be created in place, and global
+  tag deletion is confirmed and removed from every projected book surface.
+- The iOS Library filter now matches Android's transactional bottom sheet:
+  changes remain a local draft until Apply, dismissing cancels them, Clear all
+  clears the draft, source filters include in-app storage and every synced
+  folder, file-type choices are restricted to readable formats, and tag chips
+  show their configured colors.
+- The iOS Home app bar now mirrors Android's quick-action structure: Settings,
+  app theme, recent-file limit, and a real overflow menu for About, multi-tab
+  reading, external-file behavior, strict filtering, PDF filename display, and
+  language. Checked toggles reflect current state, language returns to its
+  launch context, and folder/cloud refresh moved from an extra toolbar icon to
+  Android's conditional pull-to-refresh gesture.
+- Home and Library Select all now use Android's visible-set toggle. The first
+  action replaces stale or partial selection with exactly the currently visible
+  recent/filtered library IDs; invoking it when that full visible set is
+  already selected clears contextual mode. Duplicate or blank IDs are
+  normalized by the shared mutation.
+- Shelf creation was traced against both active Android Library layouts. Android
+  currently creates manual shelves from a single trimmed, nonblank name and can
+  seed them from the contextual book selection; iOS already follows that
+  contract. The dormant shared smart-collection engine was intentionally not
+  exposed as an iOS-only creation feature.
+- Permanent book and shelf confirmations on iOS now use Android's operation
+  labels: destructive library actions say Delete, while recents and
+  shelf-membership actions retain Remove. Folder-backed deletion also colors
+  the Delete action as an error and states that the source files are removed
+  irreversibly.
+- iOS active PDF tabs now enforce Android's twenty-tab ceiling before opening a
+  new reader session, while still allowing an existing tab to be reactivated.
+  Close all now requires Android's error-styled confirmation instead of
+  discarding the whole session set immediately.
+- Active PDF tabs are now available inside the iOS reader when chrome is
+  visible, matching Android's default top strip. Tabs can be switched or closed
+  in place, closing the active tab moves to the most recent remaining tab,
+  closing the final tab exits the reader, and the plus action lists unopened
+  library PDFs by recency. The PDF drawer also exposes Android's Tabs section
+  and a persisted Show top tab strip switch. The shared close transition keeps
+  projected tab objects and selected-reader identity aligned instead of leaving
+  stale Home chips.
+- Android's no-limit recent-books value now survives iOS persistence as `0`.
+  The previous mobile snapshot writer silently converted it to legacy `12`,
+  which reloaded as a ten-book limit. Invalid legacy values are normalized to
+  the nearest Android option before writing, with round-trip coverage for the
+  unlimited case.
+- The global Folder Sync toggle now survives iOS relaunches independently from
+  the linked-folder records, matching Android's persisted off-by-default
+  preference. Snapshot schema 27 stores the flag; older snapshots safely
+  restore it as disabled.
+- Shelf projection is no longer lossy when iOS persists the library. Smart
+  shelves retain their Android-compatible rule JSON, manual shelves retain the
+  original per-membership `addedAt` timestamps, and smart shelves no longer
+  emit meaningless static book references. Generated tag, series, and folder
+  shelves remain excluded from durable records.
+- Library view state now survives iOS relaunches at Android's durability
+  boundary. Sort order, applied file/folder/read-status/tag filters, the Home
+  versus Library landing page, and the selected Library sub-tab are stored in
+  snapshot schema 28. Older snapshots restore Android's defaults, unknown enum
+  values are ignored safely, and persisted page indices are range-clamped.
+- Interrupted reader sessions now restore on iOS like Android. The device-local
+  marker records the open book ID and file type, restores only when the matching
+  library record and physical file remain available, follows active PDF tab
+  switches, and is cleared on an intentional reader exit. It is deliberately
+  kept outside the cloud snapshot so one device cannot open another device's
+  transient reader screen.
+- External-file retention now follows Android's managed-copy lifecycle. `ASK`
+  opens the book first and presents the non-dismissible Keep/Remove decision
+  only after the reader closes, `DELETE` removes the managed copy on close,
+  `KEEP` retains it, and `TEMPORARY` never enters the library. The “don't ask
+  again” choice persists the matching default. Pending managed copies are
+  recorded device-locally and cleaned after an interrupted session, while
+  reopening bytes that already belong to a library book does not put that
+  existing record at risk.
+
+## Known platform constraint
+
+Android's screen-capture preference applies `FLAG_SECURE` to the activity. iOS
+does not provide a supported equivalent that blocks screenshots. The
+frequently suggested secure-text-field canvas technique depends on undocumented
+UIKit internals and is intentionally not shipped; a supported recording/privacy
+overlay can be added later, but must not be presented as exact screenshot
+protection.
 
 ## Deferred cloud slice
 

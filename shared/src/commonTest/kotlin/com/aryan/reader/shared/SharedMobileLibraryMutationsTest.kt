@@ -2,10 +2,54 @@ package com.aryan.reader.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SharedMobileLibraryMutationsTest {
+
+    @Test
+    fun `external file close policy matches Android managed-copy lifecycle`() {
+        assertEquals(
+            MobileExternalFileCloseAction.PROMPT,
+            mobileExternalFileCloseAction("ASK"),
+        )
+        assertEquals(
+            MobileExternalFileCloseAction.KEEP,
+            mobileExternalFileCloseAction("KEEP"),
+        )
+        assertEquals(
+            MobileExternalFileCloseAction.KEEP,
+            mobileExternalFileCloseAction("COPY"),
+        )
+        assertEquals(
+            MobileExternalFileCloseAction.DELETE,
+            mobileExternalFileCloseAction("DELETE"),
+        )
+        assertEquals(
+            MobileExternalFileCloseAction.DELETE,
+            mobileExternalFileCloseAction("TEMPORARY"),
+        )
+        assertEquals(
+            MobileExternalFileCloseAction.PROMPT,
+            mobileExternalFileCloseAction("unknown"),
+        )
+        assertEquals(
+            MobileExternalFileCloseAction.DELETE,
+            mobileExternalFileCloseAction("KEEP", isTemporarySession = true),
+        )
+    }
+
+    @Test
+    fun `mobile PDF tab policy matches Android twenty tab limit`() {
+        val full = (1..MAX_OPEN_PDF_TABS).map { "book-$it" }
+
+        assertFalse(canOpenMobilePdfTab(full, "new-book"))
+        assertTrue(canOpenMobilePdfTab(full, "book-10"))
+        assertTrue(canOpenMobilePdfTab(full + " book-10 ", "book-10"))
+        assertFalse(canOpenMobilePdfTab(full, " "))
+        assertTrue(canOpenMobilePdfTab(full.dropLast(1), "new-book"))
+    }
 
     @Test
     fun `book identity migration preserves library references`() {
@@ -185,6 +229,48 @@ class SharedMobileLibraryMutationsTest {
         assertNull(closed.selectedBookId)
         assertNull(closed.selectedUriString)
         assertNull(closed.selectedFileType)
+    }
+
+    @Test
+    fun `reader session restore requires a matching available library book and type`() {
+        val available = book(id = "available").copy(path = "/books/available.pdf")
+        val missing = book(id = "missing").copy(path = null, isAvailable = false)
+        val books = listOf(available, missing)
+
+        assertEquals(
+            available,
+            resolveMobileReaderSessionBook(books, " available ", FileType.PDF),
+        )
+        assertNull(resolveMobileReaderSessionBook(books, "available", FileType.EPUB))
+        assertNull(resolveMobileReaderSessionBook(books, "missing", FileType.PDF))
+        assertNull(resolveMobileReaderSessionBook(books, "unknown", FileType.PDF))
+        assertNull(resolveMobileReaderSessionBook(books, " ", FileType.PDF))
+        assertNull(resolveMobileReaderSessionBook(books, "available", null))
+    }
+
+    @Test
+    fun `restored and intentionally closed reader sessions update only reader identity`() {
+        val pdf = book(id = "pdf").copy(path = "/books/pdf.pdf")
+        val original = SharedReaderScreenState(
+            rawLibraryBooks = listOf(pdf),
+            openTabIds = listOf(pdf.id),
+            activeTabBookId = pdf.id,
+            bannerMessage = BannerMessage("old"),
+        )
+
+        val restored = original.withRestoredMobileReaderSession(pdf)
+        val closed = restored.withoutMobileReaderSession()
+
+        assertEquals(pdf.id, restored.selectedBookId)
+        assertEquals(pdf.path, restored.selectedUriString)
+        assertEquals(pdf.type, restored.selectedFileType)
+        assertNull(restored.bannerMessage)
+        assertNull(closed.selectedBookId)
+        assertNull(closed.selectedUriString)
+        assertNull(closed.selectedFileType)
+        assertEquals(original.openTabIds, closed.openTabIds)
+        assertEquals(original.activeTabBookId, closed.activeTabBookId)
+        assertEquals(original.rawLibraryBooks, closed.rawLibraryBooks)
     }
 
     @Test

@@ -11,6 +11,11 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
         pinnedLibraryBookIds = pinnedLibraryBookIds,
         recentFilesLimit = recentFilesLimit,
         isTabsEnabled = isTabsEnabled,
+        isFolderSyncEnabled = isFolderSyncEnabled,
+        sortOrder = sortOrder,
+        libraryFilters = libraryFilters,
+        mainScreenStartPage = mainScreenStartPage,
+        libraryScreenStartPage = libraryScreenStartPage,
         openTabIds = openTabIds,
         activeTabBookId = activeTabBookId,
         useStrictFileFilter = useStrictFileFilter,
@@ -59,11 +64,16 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
             id = shelf.id,
             name = shelf.name,
             isSmart = shelf.type == ShelfType.SMART,
+            smartRulesJson = shelf.smartRulesJson,
         )
     }
-    val shelfRefs = persistentShelves.flatMap { shelf ->
+    val shelfRefs = persistentShelves.filter { it.type == ShelfType.MANUAL }.flatMap { shelf ->
         shelf.directBooks.mapIndexed { index, book ->
-            BookShelfRef(bookId = book.id, shelfId = shelf.id, addedAt = book.timestamp + index)
+            BookShelfRef(
+                bookId = book.id,
+                shelfId = shelf.id,
+                addedAt = shelf.directBookAddedAt[book.id] ?: (book.timestamp + index),
+            )
         }
     }
     return SharedLibrarySnapshot(
@@ -74,8 +84,13 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
         tags = allTags,
         customFonts = customFonts,
         syncedFolders = syncedFolders,
-        recentFilesLimit = recentFilesLimit.takeIf { it > 0 } ?: 12,
+        recentFilesLimit = normalizedRecentFilesLimit(recentFilesLimit),
         isTabsEnabled = isTabsEnabled,
+        isFolderSyncEnabled = isFolderSyncEnabled,
+        sortOrder = sortOrder,
+        libraryFilters = libraryFilters,
+        mainScreenStartPage = mainScreenStartPage.coerceIn(0, 1),
+        libraryScreenStartPage = libraryScreenStartPage.coerceIn(0, 3),
         openTabIds = openTabIds,
         activeTabBookId = activeTabBookId,
         pinnedHomeBookIds = pinnedHomeBookIds,

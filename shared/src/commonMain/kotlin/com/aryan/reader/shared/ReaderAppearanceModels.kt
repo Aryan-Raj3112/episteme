@@ -123,6 +123,17 @@ fun List<ReaderTheme>.sanitizeCustomReaderThemes(): List<ReaderTheme> {
         .asReversed()
 }
 
+fun resolveReaderTheme(
+    themeId: String?,
+    builtInThemes: List<ReaderTheme>,
+    customThemes: List<ReaderTheme>,
+): ReaderTheme? {
+    val id = themeId?.takeIf(String::isNotBlank) ?: return builtInThemes.firstOrNull()
+    return customThemes.sanitizeCustomReaderThemes().firstOrNull { it.id == id }
+        ?: builtInThemes.firstOrNull { it.id == id }
+        ?: builtInThemes.firstOrNull()
+}
+
 private val StandardReaderSolidThemes = listOf(
     ReaderTheme("light", "Light", Color(0xFFFFFFFF), Color(0xFF000000), false),
     ReaderTheme("dark", "Dark", Color(0xFF121212), Color(0xFFE0E0E0), true),

@@ -219,6 +219,29 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
+    fun `projected tabs keep only twenty distinct available books`() {
+        val pdfs = (1..(MAX_OPEN_PDF_TABS + 2)).map { index ->
+            book("pdf-$index").copy(type = FileType.PDF)
+        }
+        val result = SharedLibraryStateProjector().project(
+            SharedLibraryProjectionInput(
+                state = SharedReaderScreenState(
+                    openTabIds = pdfs.map { it.id } + pdfs.first().id,
+                    activeTabBookId = pdfs.last().id,
+                ),
+                booksFromStore = pdfs,
+                shelfRecords = emptyList(),
+                shelfRefs = emptyList(),
+                tags = emptyList(),
+            )
+        )
+
+        assertEquals(pdfs.take(MAX_OPEN_PDF_TABS).map { it.id }, result.openTabIds)
+        assertNull(result.activeTabBookId)
+        assertEquals(result.openTabIds, result.openTabs.map { it.id })
+    }
+
+    @Test
     fun `SharedLibraryStateProjector builds manual tag series folder and unshelved shelves`() {
         val tag = Tag("favorite", "Favorite")
         val manual = book("manual")
@@ -248,9 +271,47 @@ class SharedLibraryProjectorTest {
         assertEquals(listOf("manual"), result.shelves.first { it.id == "manual_shelf" }.books.ids())
         assertEquals(listOf("tagged"), result.shelves.first { it.id == "tag_favorite" }.books.ids())
         assertEquals(listOf("series_1", "series_2"), result.shelves.first { it.id == "series_Saga" }.books.ids())
-        assertEquals(listOf("folder"), result.shelves.first { it.id == "folder_content://library" }.books.ids())
-        assertEquals(listOf("folder"), result.shelves.first { it.id == "folder_content://library::Nested" }.directBooks.ids())
+        val rootFolder = result.shelves.first { it.id == "folder_content://library" }
+        val nestedFolder = result.shelves.first { it.id == "folder_content://library::Nested" }
+        assertEquals(listOf("folder"), rootFolder.books.ids())
+        assertTrue(rootFolder.directBooks.isEmpty())
+        assertEquals(listOf(nestedFolder.id), rootFolder.childShelfIds)
+        assertEquals(rootFolder.id, nestedFolder.parentShelfId)
+        assertEquals(listOf("folder"), nestedFolder.directBooks.ids())
         assertEquals(listOf("loose", "tagged"), result.shelves.first { it.id == "unshelved" }.books.ids())
+    }
+
+    @Test
+    fun `shelf add candidates match Android unshelved and all books sources`() {
+        val alreadyAdded = book("already")
+        val loose = book("loose")
+        val otherShelfBook = book("other")
+        val duplicateLoose = loose.copy(path = loose.path)
+        val shelves = listOf(
+            Shelf("target", "Target", ShelfType.MANUAL, books = listOf(alreadyAdded)),
+            Shelf("other_shelf", "Other", ShelfType.MANUAL, books = listOf(otherShelfBook)),
+            Shelf("unshelved", "Unshelved", ShelfType.MANUAL, books = listOf(loose, duplicateLoose)),
+        )
+        val allBooks = listOf(alreadyAdded, loose, otherShelfBook, duplicateLoose)
+
+        assertEquals(
+            listOf("loose"),
+            booksAvailableForShelfAddition(
+                allLibraryBooks = allBooks,
+                shelves = shelves,
+                shelfId = "target",
+                source = AddBooksSource.UNSHELVED,
+            ).ids(),
+        )
+        assertEquals(
+            listOf("loose", "other"),
+            booksAvailableForShelfAddition(
+                allLibraryBooks = allBooks,
+                shelves = shelves,
+                shelfId = "target",
+                source = AddBooksSource.ALL_BOOKS,
+            ).ids(),
+        )
     }
 
     @Test
@@ -454,6 +515,22 @@ class SharedLibraryProjectorTest {
         assertEquals(FileType.CBZ, "comic.cbz".toFileType())
         assertEquals(FileType.CBT, "comic.cbt".toFileType())
         assertEquals(FileType.UNKNOWN, "archive.zip".toFileType())
+    }
+
+    @Test
+    fun `synced folder addition follows android ten-folder cap`() {
+        fun folders(count: Int) = (0 until count).map { index ->
+            SyncedFolder(uriString = "folder-$index", name = "Folder $index", lastScanTime = 0L)
+        }
+
+        assertTrue(canAddSyncedFolder(folders(MAX_SYNCED_FOLDER_COUNT - 1)))
+        assertFalse(canAddSyncedFolder(folders(MAX_SYNCED_FOLDER_COUNT)))
+        assertTrue(
+            canAddSyncedFolder(
+                folders(MAX_SYNCED_FOLDER_COUNT - 1) +
+                    SyncedFolder(uriString = " folder-0 ", name = "Duplicate", lastScanTime = 0L)
+            )
+        )
     }
 
     private fun book(

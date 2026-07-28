@@ -32,8 +32,13 @@ data class SharedLibrarySnapshot(
     val tags: List<Tag> = emptyList(),
     val customFonts: List<CustomFontItem> = emptyList(),
     val syncedFolders: List<SyncedFolder> = emptyList(),
-    val recentFilesLimit: Int = 12,
+    val recentFilesLimit: Int = 0,
     val isTabsEnabled: Boolean = true,
+    val isFolderSyncEnabled: Boolean = false,
+    val sortOrder: SortOrder = SortOrder.RECENT,
+    val libraryFilters: LibraryFilters = LibraryFilters(),
+    val mainScreenStartPage: Int = 0,
+    val libraryScreenStartPage: Int = 0,
     val openTabIds: List<String> = emptyList(),
     val activeTabBookId: String? = null,
     val pinnedHomeBookIds: Set<String> = emptySet(),
@@ -61,7 +66,7 @@ data class SharedLibrarySnapshot(
 )
 
 object SharedLibrarySnapshotJson {
-    private const val SCHEMA_VERSION = 26
+    private const val SCHEMA_VERSION = 28
 
     private val json = Json {
         prettyPrint = true
@@ -89,14 +94,30 @@ object SharedLibrarySnapshotJson {
             tags = root.array("tags").mapNotNull { it.asTagOrNull() },
             customFonts = root.array("customFonts").mapNotNull { it.asCustomFontItemOrNull() },
             syncedFolders = root.array("syncedFolders").mapNotNull { it.asSyncedFolderOrNull() },
-            recentFilesLimit = root.int("recentFilesLimit", 12),
+            recentFilesLimit = normalizedRecentFilesLimit(root.int("recentFilesLimit", 0)),
             isTabsEnabled = root.boolean("isTabsEnabled", true),
+            isFolderSyncEnabled = root.boolean("isFolderSyncEnabled", false),
+            sortOrder = root.string("sortOrder")
+                ?.let { runCatching { SortOrder.valueOf(it) }.getOrNull() }
+                ?: SortOrder.RECENT,
+            libraryFilters = LibraryFilters(
+                fileTypes = root.stringArray("libraryFilterFileTypes")
+                    .mapNotNull { runCatching { FileType.valueOf(it) }.getOrNull() }
+                    .toSet(),
+                sourceFolders = root.stringArray("libraryFilterSourceFolders").toSet(),
+                readStatus = root.string("libraryFilterReadStatus")
+                    ?.let { runCatching { ReadStatusFilter.valueOf(it) }.getOrNull() }
+                    ?: ReadStatusFilter.ALL,
+                tagIds = root.stringArray("libraryFilterTagIds").toSet(),
+            ),
+            mainScreenStartPage = root.int("mainScreenStartPage", 0).coerceIn(0, 1),
+            libraryScreenStartPage = root.int("libraryScreenStartPage", 0).coerceIn(0, 3),
             openTabIds = openTabIds,
             activeTabBookId = root.string("activeTabBookId"),
             pinnedHomeBookIds = root.stringArray("pinnedHomeBookIds").toSet(),
             pinnedLibraryBookIds = root.stringArray("pinnedLibraryBookIds").toSet(),
             useStrictFileFilter = root.boolean("useStrictFileFilter", false),
-            externalFileBehavior = root.string("externalFileBehavior") ?: "ASK",
+            externalFileBehavior = normalizedExternalFileBehavior(root.string("externalFileBehavior")),
             usePdfFileNameAsDisplayName = root.boolean("usePdfFileNameAsDisplayName", false),
             appLanguageTag = root.string("appLanguageTag"),
             appThemeMode = root.string("appThemeMode")
@@ -162,6 +183,14 @@ object SharedLibrarySnapshotJson {
                 "syncedFolders" to JsonArray(snapshot.syncedFolders.map { it.toJsonObject() }),
                 "recentFilesLimit" to JsonPrimitive(snapshot.recentFilesLimit),
                 "isTabsEnabled" to JsonPrimitive(snapshot.isTabsEnabled),
+                "isFolderSyncEnabled" to JsonPrimitive(snapshot.isFolderSyncEnabled),
+                "sortOrder" to JsonPrimitive(snapshot.sortOrder.name),
+                "libraryFilterFileTypes" to snapshot.libraryFilters.fileTypes.map { it.name }.asJsonArray(),
+                "libraryFilterSourceFolders" to snapshot.libraryFilters.sourceFolders.toList().asJsonArray(),
+                "libraryFilterReadStatus" to JsonPrimitive(snapshot.libraryFilters.readStatus.name),
+                "libraryFilterTagIds" to snapshot.libraryFilters.tagIds.toList().asJsonArray(),
+                "mainScreenStartPage" to JsonPrimitive(snapshot.mainScreenStartPage.coerceIn(0, 1)),
+                "libraryScreenStartPage" to JsonPrimitive(snapshot.libraryScreenStartPage.coerceIn(0, 3)),
                 "openTabIds" to snapshot.openTabIds.asJsonArray(),
                 "activeTabBookId" to snapshot.activeTabBookId.asJson(),
                 "pinnedHomeBookIds" to snapshot.pinnedHomeBookIds.toList().asJsonArray(),

@@ -21,7 +21,9 @@ interface SharedMobileHomeActions {
     fun closeTab(book: BookItem)
     fun closeAllTabs()
     fun togglePinned(book: BookItem)
-    fun deleteSelectedBooks() {}
+    fun toggleSelectedPins() {}
+    fun removeSelectedBooksFromRecents() {}
+    fun addSelectedBooksToShelves(shelfIds: Set<String>) {}
     fun createShelfFromSelectedBooks(name: String) {}
     fun showBookInfo(book: BookItem) {}
     fun updateBook(book: BookItem) {}
@@ -29,7 +31,16 @@ interface SharedMobileHomeActions {
     fun shareBook(book: BookItem) {}
     fun exportAnnotations(book: BookItem) {}
     fun importCover() {}
-    fun tagSelectedBooks(tags: String) {}
+    fun createAndAssignTag(name: String) {}
+    fun toggleTagForSelectedBooks(tagId: String, assign: Boolean) {}
+    fun deleteTag(tagId: String) {}
     fun openSettings()
-    fun openMoreActions()
+    fun openAppTheme()
+    fun openRecentLimit()
+    fun openAbout()
+    fun openLanguage()
+    fun toggleTabs()
+    fun openExternalFileBehavior()
+    fun toggleStrictFileFilter()
+    fun togglePdfFileNameDisplay()
 }

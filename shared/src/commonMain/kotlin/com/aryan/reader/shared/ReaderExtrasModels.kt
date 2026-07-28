@@ -210,6 +210,12 @@ enum class ReaderExternalLookupAction(val title: String) {
     SEARCH("Search")
 }
 
+const val ReaderExternalLookupSelectionLimit = 2_000
+
+fun readerExternalLookupActionsAvailable(selectionLength: Int): Boolean {
+    return selectionLength in 0..ReaderExternalLookupSelectionLimit
+}
+
 fun readerExternalLookupActionForSelectionId(id: String): ReaderExternalLookupAction? {
     return when (id.trim().lowercase()) {
         "dictionary" -> ReaderExternalLookupAction.DICTIONARY

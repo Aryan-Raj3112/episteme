@@ -78,6 +78,89 @@ object SharedLibraryEditor {
         )
     }
 
+    fun removeBooksFromShelf(
+        state: SharedReaderScreenState,
+        shelfId: String,
+        bookIds: Iterable<String>
+    ): SharedReaderScreenState? {
+        val cleanShelfId = shelfId.trim()
+        if (!canMutateShelf(cleanShelfId)) return null
+        val shelf = state.shelves.firstOrNull { it.id == cleanShelfId && it.type == ShelfType.MANUAL }
+            ?: return null
+        val selectedBooks = cleanBookIds(bookIds)
+        if (selectedBooks.isEmpty()) return null
+        val existingIds = shelf.books.mapTo(mutableSetOf()) { it.id }
+        val removedIds = selectedBooks.intersect(existingIds)
+        if (removedIds.isEmpty()) return null
+        return state.copy(
+            shelves = state.shelves.map { current ->
+                if (current.id == cleanShelfId) {
+                    current.copy(
+                        books = current.books.filterNot { it.id in removedIds },
+                        directBooks = current.directBooks.filterNot { it.id in removedIds },
+                        directBookAddedAt = current.directBookAddedAt - removedIds,
+                    )
+                } else {
+                    current
+                }
+            },
+            selectedBookIds = emptySet(),
+            bannerMessage = BannerMessage.quantity(
+                "banner_books_removed_from_shelf",
+                removedIds.size,
+                "Removed %1\$d book from \"%2\$s\".",
+                "Removed %1\$d books from \"%2\$s\".",
+                removedIds.size,
+                shelf.name,
+            ),
+        )
+    }
+
+    fun addBooksToShelvesInState(
+        state: SharedReaderScreenState,
+        bookIds: Iterable<String>,
+        shelfIds: Iterable<String>,
+        nowMillis: Long = currentTimestamp(),
+    ): SharedReaderScreenState? {
+        val selectedBooks = cleanBookIds(bookIds)
+        if (selectedBooks.isEmpty()) return null
+        val requestedShelves = shelfIds.mapTo(mutableSetOf()) { it.trim() }
+        val mutableShelfIds = state.shelves
+            .filter { it.type == ShelfType.MANUAL && canMutateShelf(it.id) && it.id in requestedShelves }
+            .mapTo(mutableSetOf()) { it.id }
+        if (mutableShelfIds.isEmpty()) return null
+        val booksById = state.rawLibraryBooks.associateBy { it.id }
+        var addedEntries = 0
+        val nextShelves = state.shelves.map { shelf ->
+            if (shelf.id !in mutableShelfIds) return@map shelf
+            val existingIds = shelf.books.mapTo(mutableSetOf()) { it.id }
+            val additions = selectedBooks
+                .asSequence()
+                .filterNot(existingIds::contains)
+                .mapNotNull(booksById::get)
+                .toList()
+            addedEntries += additions.size
+            shelf.copy(
+                books = shelf.books + additions,
+                directBooks = shelf.directBooks + additions.filterNot { addition ->
+                    shelf.directBooks.any { it.id == addition.id }
+                },
+                directBookAddedAt = shelf.directBookAddedAt + additions.associate { it.id to nowMillis },
+            )
+        }
+        return state.copy(
+            shelves = nextShelves,
+            selectedBookIds = emptySet(),
+            bannerMessage = BannerMessage.quantity(
+                "banner_books_added_to_shelves",
+                addedEntries,
+                "%1\$d shelf entry added.",
+                "%1\$d shelf entries added.",
+                addedEntries,
+            ),
+        )
+    }
+
     fun createShelf(
         state: SharedReaderScreenState,
         shelfRecords: List<ShelfRecord>,
@@ -211,6 +294,58 @@ object SharedLibraryEditor {
         )
     }
 
+    fun renameShelfInState(
+        state: SharedReaderScreenState,
+        shelfId: String,
+        name: String,
+    ): SharedReaderScreenState? {
+        val target = state.shelves.firstOrNull {
+            it.id == shelfId && it.type == ShelfType.MANUAL && canMutateShelf(it.id)
+        } ?: return null
+        val trimmed = cleanShelfName(name) ?: return null
+        return state.copy(
+            shelves = state.shelves.map { shelf ->
+                if (shelf.id == target.id) shelf.copy(name = trimmed) else shelf
+            },
+            selectedShelfIds = emptySet(),
+            bannerMessage = BannerMessage.string(
+                "banner_shelf_renamed",
+                "Renamed shelf to \"%1\$s\".",
+                trimmed,
+            ),
+        )
+    }
+
+    fun deleteShelvesInState(
+        state: SharedReaderScreenState,
+        shelfIds: Iterable<String>,
+    ): SharedReaderScreenState? {
+        val requestedIds = shelfIds.map(String::trim).filter(String::isNotBlank).toSet()
+        val removableShelves = state.shelves.filter {
+            it.id in requestedIds && it.type == ShelfType.MANUAL && canMutateShelf(it.id)
+        }
+        if (removableShelves.isEmpty()) return null
+        val removableIds = removableShelves.mapTo(mutableSetOf()) { it.id }
+        return state.copy(
+            shelves = state.shelves.filterNot { it.id in removableIds },
+            selectedShelfIds = emptySet(),
+            viewingShelfId = state.viewingShelfId?.takeUnless { it in removableIds },
+            bannerMessage = if (removableShelves.size == 1) {
+                BannerMessage.string(
+                    "banner_shelf_deleted",
+                    "Deleted shelf \"%1\$s\".",
+                    removableShelves.single().name,
+                )
+            } else {
+                BannerMessage.string(
+                    "banner_shelves_deleted",
+                    "Deleted %1\$d shelves.",
+                    removableShelves.size,
+                )
+            },
+        )
+    }
+
     fun deleteTag(
         state: SharedReaderScreenState,
         shelfRecords: List<ShelfRecord>,
@@ -300,6 +435,211 @@ object SharedLibraryEditor {
                     book
                 }
             }
+        )
+    }
+
+    fun removeBooksFromRecentsInState(
+        state: SharedReaderScreenState,
+        bookIds: Iterable<String>,
+        nowMillis: Long = currentTimestamp(),
+    ): SharedReaderScreenState? {
+        val cleanedBookIds = cleanBookIds(bookIds)
+        if (cleanedBookIds.isEmpty()) return null
+        val existingIds = state.rawLibraryBooks
+            .asSequence()
+            .filter { it.id in cleanedBookIds && it.isRecent }
+            .mapTo(mutableSetOf()) { it.id }
+        if (existingIds.isEmpty()) return null
+
+        fun List<BookItem>.updated(): List<BookItem> = map { book ->
+            if (book.id in existingIds) {
+                book.copy(
+                    isRecent = false,
+                    metadataModifiedTimestamp = maxOf(book.metadataModifiedTimestamp, nowMillis),
+                )
+            } else {
+                book
+            }
+        }
+
+        return state.copy(
+            rawLibraryBooks = state.rawLibraryBooks.updated(),
+            libraryBooks = state.libraryBooks.updated(),
+            recentBooks = state.recentBooks.filterNot { it.id in existingIds },
+            openTabs = state.openTabs.updated(),
+            shelves = state.shelves.map { shelf ->
+                shelf.copy(
+                    books = shelf.books.updated(),
+                    directBooks = shelf.directBooks.updated(),
+                )
+            },
+            selectedBookIds = emptySet(),
+        )
+    }
+
+    fun toggleSelectedPinsInState(
+        state: SharedReaderScreenState,
+        bookIds: Iterable<String>,
+        isHome: Boolean,
+    ): SharedReaderScreenState? {
+        val selectedIds = cleanBookIds(bookIds)
+        if (selectedIds.isEmpty()) return null
+        val currentPins = if (isHome) state.pinnedHomeBookIds else state.pinnedLibraryBookIds
+        val nextPins = if (selectedIds.all { it in currentPins }) {
+            currentPins - selectedIds
+        } else {
+            currentPins + selectedIds
+        }
+        return if (isHome) {
+            state.copy(
+                pinnedHomeBookIds = nextPins,
+                selectedBookIds = emptySet(),
+            )
+        } else {
+            state.copy(
+                pinnedLibraryBookIds = nextPins,
+                selectedBookIds = emptySet(),
+            )
+        }
+    }
+
+    fun toggleVisibleBookSelectionInState(
+        state: SharedReaderScreenState,
+        visibleBookIds: Iterable<String>,
+    ): SharedReaderScreenState {
+        val visibleIds = cleanBookIds(visibleBookIds)
+        val nextSelection = if (
+            visibleIds.isNotEmpty() && state.selectedBookIds.containsAll(visibleIds)
+        ) {
+            emptySet()
+        } else {
+            visibleIds
+        }
+        return state.copy(selectedBookIds = nextSelection)
+    }
+
+    fun createAndAssignTagInState(
+        state: SharedReaderScreenState,
+        name: String,
+        bookIds: Iterable<String>,
+        nowMillis: Long = currentTimestamp(),
+    ): SharedReaderScreenState? {
+        val selectedIds = cleanBookIds(bookIds)
+        val trimmed = cleanTagName(name) ?: return null
+        if (selectedIds.isEmpty()) return null
+        val tag = state.allTags.firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
+            ?: Tag(
+                id = trimmed.toStableTagId("tag_$nowMillis"),
+                name = trimmed,
+                color = 0xFF64B5F6.toInt(),
+            )
+        return setTagAssignmentInState(
+            state = state.copy(
+                allTags = (state.allTags + tag).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+            ),
+            tag = tag,
+            bookIds = selectedIds,
+            assign = true,
+            nowMillis = nowMillis,
+        )
+    }
+
+    fun toggleTagForBooksInState(
+        state: SharedReaderScreenState,
+        tagId: String,
+        bookIds: Iterable<String>,
+        assign: Boolean,
+        nowMillis: Long = currentTimestamp(),
+    ): SharedReaderScreenState? {
+        val cleanTagId = tagId.trim().takeIf(String::isNotBlank) ?: return null
+        val tag = state.allTags.firstOrNull { it.id == cleanTagId }
+            ?: state.rawLibraryBooks.asSequence()
+                .flatMap { it.tags.asSequence() }
+                .firstOrNull { it.id == cleanTagId }
+            ?: return null
+        val selectedIds = cleanBookIds(bookIds)
+        if (selectedIds.isEmpty()) return null
+        return setTagAssignmentInState(state, tag, selectedIds, assign, nowMillis)
+    }
+
+    fun deleteTagInState(
+        state: SharedReaderScreenState,
+        tagId: String,
+        nowMillis: Long = currentTimestamp(),
+    ): SharedReaderScreenState? {
+        val cleanTagId = tagId.trim().takeIf(String::isNotBlank) ?: return null
+        val tag = state.allTags.firstOrNull { it.id == cleanTagId }
+            ?: state.rawLibraryBooks.asSequence()
+                .flatMap { it.tags.asSequence() }
+                .firstOrNull { it.id == cleanTagId }
+            ?: return null
+        val affectedIds = state.rawLibraryBooks
+            .filter { book -> book.tags.any { it.id == cleanTagId } }
+            .mapTo(mutableSetOf()) { it.id }
+        fun List<BookItem>.updated(): List<BookItem> = map { book ->
+            if (book.id in affectedIds) {
+                book.copy(
+                    tags = book.tags.filterNot { it.id == cleanTagId },
+                    metadataModifiedTimestamp = maxOf(book.metadataModifiedTimestamp, nowMillis),
+                )
+            } else {
+                book
+            }
+        }
+        return state.copy(
+            rawLibraryBooks = state.rawLibraryBooks.updated(),
+            libraryBooks = state.libraryBooks.updated(),
+            recentBooks = state.recentBooks.updated(),
+            openTabs = state.openTabs.updated(),
+            shelves = state.shelves
+                .filterNot { it.type == ShelfType.TAG && it.id == "tag_$cleanTagId" }
+                .map { shelf ->
+                    shelf.copy(
+                        books = shelf.books.updated(),
+                        directBooks = shelf.directBooks.updated(),
+                    )
+                },
+            allTags = state.allTags.filterNot { it.id == cleanTagId },
+            libraryFilters = state.libraryFilters.copy(tagIds = state.libraryFilters.tagIds - cleanTagId),
+            bannerMessage = BannerMessage.string(
+                "banner_tag_deleted",
+                "Deleted tag \"%1\$s\".",
+                tag.name,
+            ),
+        )
+    }
+
+    private fun setTagAssignmentInState(
+        state: SharedReaderScreenState,
+        tag: Tag,
+        bookIds: Set<String>,
+        assign: Boolean,
+        nowMillis: Long,
+    ): SharedReaderScreenState {
+        fun BookItem.updated(): BookItem {
+            if (id !in bookIds) return this
+            val nextTags = if (assign) {
+                (tags + tag).distinctBy { it.id }.sortedBy { it.name.lowercase() }
+            } else {
+                tags.filterNot { it.id == tag.id }
+            }
+            return if (nextTags == tags) this else copy(
+                tags = nextTags,
+                metadataModifiedTimestamp = maxOf(metadataModifiedTimestamp, nowMillis),
+            )
+        }
+        fun List<BookItem>.updated(): List<BookItem> = map { it.updated() }
+        return state.copy(
+            rawLibraryBooks = state.rawLibraryBooks.updated(),
+            libraryBooks = state.libraryBooks.updated(),
+            recentBooks = state.recentBooks.updated(),
+            openTabs = state.openTabs.updated(),
+            shelves = state.shelves.map { shelf ->
+                shelf.copy(
+                    books = shelf.books.updated(),
+                    directBooks = shelf.directBooks.updated(),
+                )
+            },
         )
     }
 

@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Translate
@@ -70,6 +71,8 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.ReaderExternalLookupAction
+import com.aryan.reader.shared.readerExternalLookupActionsAvailable
 import com.aryan.reader.shared.pdf.SharedPdfAndroidHighlightColors
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.PdfInkTool
@@ -483,12 +486,16 @@ internal fun SharedMobilePdfTextSelectionOverlay(
                     clipboard.setText(AnnotatedString(text))
                     applyRangeUpdate(null, emptyList(), null)
                 },
+                onDefine = { text ->
+                    openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, text)
+                    applyRangeUpdate(null, emptyList(), null)
+                },
                 onTranslate = { text ->
-                    openSharedMobileExternalUrl("https://translate.google.com/?text=${encodeQuery(text)}")
+                    openSharedMobileEpubLookup(ReaderExternalLookupAction.TRANSLATE, text)
                     applyRangeUpdate(null, emptyList(), null)
                 },
                 onSearch = { text ->
-                    openSharedMobileExternalUrl("https://www.google.com/search?q=${encodeQuery(text)}")
+                    openSharedMobileEpubLookup(ReaderExternalLookupAction.SEARCH, text)
                     applyRangeUpdate(null, emptyList(), null)
                 },
                 onReadAloud = {
@@ -502,28 +509,6 @@ internal fun SharedMobilePdfTextSelectionOverlay(
             )
         }
     }
-}
-
-private fun encodeQuery(text: String): String {
-    val trimmed = text.trim()
-    val builder = StringBuilder(trimmed.length)
-    for (ch in trimmed) {
-        when {
-            ch == ' ' -> builder.append('+')
-            ch == '\n' -> builder.append('+')
-            ch.isLetterOrDigit() -> builder.append(ch)
-            else -> {
-                val code = ch.code
-                if (code < 128) {
-                    builder.append('%')
-                    builder.append(code.toString(16).uppercase().padStart(2, '0'))
-                } else {
-                    builder.append(ch)
-                }
-            }
-        }
-    }
-    return builder.toString()
 }
 
 /**
@@ -646,6 +631,7 @@ private fun SharedMobilePdfSelectionMenu(
     selectedText: String,
     onHighlight: (Int, HighlightStyle, Boolean) -> Unit,
     onCopy: (String) -> Unit,
+    onDefine: (String) -> Unit,
     onTranslate: (String) -> Unit,
     onSearch: (String) -> Unit,
     onReadAloud: () -> Unit,
@@ -706,14 +692,17 @@ private fun SharedMobilePdfSelectionMenu(
                 }
             }
             HorizontalDivider()
-            val actions = listOf(
-                SharedMobilePdfMenuAction(Res.drawable.copy, "Copy") { onCopy(selectedText) },
-                SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) },
-                SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) },
-                SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = "Note") { onHighlight(colors.first(), selectedStyle, true) },
-                SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud") { onReadAloud() },
-                SharedMobilePdfMenuAction(Res.drawable.select_all, "Select all") { onSelectAll() }
-            )
+            val actions = buildList {
+                add(SharedMobilePdfMenuAction(Res.drawable.copy, "Copy") { onCopy(selectedText) })
+                add(SharedMobilePdfMenuAction(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = "Read aloud") { onReadAloud() })
+                if (readerExternalLookupActionsAvailable(selectedText.length)) {
+                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Book, label = "Define") { onDefine(selectedText) })
+                    add(SharedMobilePdfMenuAction(Res.drawable.translate, "Translate") { onTranslate(selectedText) })
+                    add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Search, label = "Search") { onSearch(selectedText) })
+                }
+                add(SharedMobilePdfMenuAction(imageVector = Icons.Default.Edit, label = "Note") { onHighlight(colors.first(), selectedStyle, true) })
+                add(SharedMobilePdfMenuAction(Res.drawable.select_all, "Select all") { onSelectAll() })
+            }
             Column(Modifier.padding(bottom = 4.dp)) {
                 actions.chunked(3).forEach { rowActions ->
                     Row(
