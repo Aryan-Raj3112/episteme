@@ -194,6 +194,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -211,6 +212,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.state.ToggleableState
@@ -562,6 +564,9 @@ fun SharedMobilePdfReaderScreen(
     var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var showNewPdfTabSheet by remember(book.id) { mutableStateOf(false) }
     var pendingExternalLink by remember(book.id) { mutableStateOf<String?>(null) }
+    var pdfPassword by remember(book.id) { mutableStateOf<String?>(null) }
+    var pdfPasswordDraft by remember(book.id) { mutableStateOf("") }
+    var showPasswordProtectedPrintWarning by remember(book.id) { mutableStateOf(false) }
     var showVerticalPageGap by remember(book.id) {
         mutableStateOf(readerDefaultSettings.pdfVerticalPageGapVisible)
     }
@@ -614,7 +619,7 @@ fun SharedMobilePdfReaderScreen(
     var pendingTtsPlayWhenReady by remember(book.id) { mutableStateOf(true) }
     var ttsHighlightBounds by remember(book.id) { mutableStateOf<List<PdfPageBounds>>(emptyList()) }
     var lastTtsCompletionCount by remember(book.id) { mutableStateOf(pdfTts.completionCount) }
-    val ttsTextSession = rememberPdfTextPageSession(book, ttsPageIndex)
+    val ttsTextSession = rememberPdfTextPageSession(book, ttsPageIndex, pdfPassword)
     var searchResults by remember(book.id) { mutableStateOf<List<SharedPdfSearchResult>>(emptyList()) }
     var tableOfContents by remember(book.id) { mutableStateOf<List<PdfTocEntry>>(emptyList()) }
     var noteAnnotationId by remember(book.id) { mutableStateOf<String?>(null) }
@@ -624,14 +629,14 @@ fun SharedMobilePdfReaderScreen(
     // Document metadata must not follow the visible page. A newly requested page starts with
     // SharedMobilePdfPageRender's loading value (pageCount = 1); using that transient value here
     // used to collapse the list/pager to page zero every time the user changed pages.
-    val documentRender = rememberSharedMobilePdfPageRender(book, 0)
+    val documentRender = rememberSharedMobilePdfPageRender(book, 0, password = pdfPassword)
     val pageCount = if (documentRender.bitmap != null || documentRender.errorMessage != null) {
         documentRender.pageCount.coerceAtLeast(1)
     } else {
         readerState.pageCount.coerceAtLeast(1)
     }
     val prefetchedTtsPageIndex = (ttsPageIndex + 1).coerceAtMost(pageCount - 1)
-    val prefetchedTtsTextSession = rememberPdfTextPageSession(book, prefetchedTtsPageIndex)
+    val prefetchedTtsTextSession = rememberPdfTextPageSession(book, prefetchedTtsPageIndex, pdfPassword)
     val activeTheme = remember(readerState.themeId, customReaderThemes) {
         resolveReaderTheme(readerState.themeId, BuiltInPdfReaderThemes, customReaderThemes)
             ?: BuiltInPdfReaderThemes.first()
@@ -839,13 +844,17 @@ fun SharedMobilePdfReaderScreen(
         delay(250)
         isSearchInProgress = true
         searchResults = withContext(Dispatchers.Default) {
-            searchSharedMobilePdf(book, query)
+            searchSharedMobilePdf(book, query, pdfPassword)
         }
         isSearchInProgress = false
     }
 
-    LaunchedEffect(book.path) {
-        tableOfContents = withContext(Dispatchers.Default) { loadSharedMobilePdfOutline(book) }
+    LaunchedEffect(book.path, pdfPassword, documentRender.openError) {
+        tableOfContents = if (documentRender.openError == null) {
+            withContext(Dispatchers.Default) { loadSharedMobilePdfOutline(book, pdfPassword) }
+        } else {
+            emptyList()
+        }
     }
 
     LaunchedEffect(ttsTextSession, pendingTtsStart, ttsPageIndex) {
@@ -1023,7 +1032,13 @@ fun SharedMobilePdfReaderScreen(
                             },
                             onVoiceSettings = { showTtsSettingsSheet = true },
                             onWordReplacements = { showTtsReplacementsSheet = true },
-                            onNativeAction = { action -> onNativePdfAction(book, action) },
+                            onNativeAction = { action ->
+                                if (action == SharedMobilePdfNativeAction.PRINT && pdfPassword != null) {
+                                    showPasswordProtectedPrintWarning = true
+                                } else {
+                                    onNativePdfAction(book, action)
+                                }
+                            },
                             onFileInformation = { showFileInformation = true },
                             onBrightness = { showBrightnessSheet = true },
                             onScreenOrientation = { showScreenOrientationSheet = true },
@@ -1090,6 +1105,7 @@ fun SharedMobilePdfReaderScreen(
                 if (readerState.displayMode == PdfDisplayMode.VERTICAL_SCROLL) {
                     SharedMobilePdfVerticalPages(
                         book = book,
+                        pdfPassword = pdfPassword,
                         state = readerState,
                         activeTheme = activeTheme,
                         textureAlpha = 1f - globalTextureTransparency,
@@ -1121,6 +1137,7 @@ fun SharedMobilePdfReaderScreen(
                 } else {
                     SharedMobilePdfPaginatedPages(
                         book = book,
+                        pdfPassword = pdfPassword,
                         state = readerState,
                         activeTheme = activeTheme,
                         textureAlpha = 1f - globalTextureTransparency,
@@ -1426,6 +1443,55 @@ fun SharedMobilePdfReaderScreen(
                 showFileInformation = false
             },
             onRestore = {},
+        )
+    }
+    if (documentRender.openError == SharedMobilePdfOpenError.PASSWORD_REQUIRED) {
+        AlertDialog(
+            onDismissRequest = onBack,
+            title = { Text("Password protected") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("This PDF is password protected. Enter the password to open it.")
+                    OutlinedTextField(
+                        value = pdfPasswordDraft,
+                        onValueChange = { pdfPasswordDraft = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        isError = pdfPassword != null,
+                        supportingText = if (pdfPassword != null) {
+                            { Text("Incorrect password") }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { pdfPassword = pdfPasswordDraft },
+                    enabled = pdfPasswordDraft.isNotBlank(),
+                ) {
+                    Text("Open")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onBack) { Text("Cancel") }
+            },
+            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        )
+    }
+    if (showPasswordProtectedPrintWarning) {
+        AlertDialog(
+            onDismissRequest = { showPasswordProtectedPrintWarning = false },
+            title = { Text("Printing unavailable") },
+            text = { Text("Password-protected PDFs cannot be printed.") },
+            confirmButton = {
+                TextButton(onClick = { showPasswordProtectedPrintWarning = false }) {
+                    Text("OK")
+                }
+            },
         )
     }
     if (showBrightnessSheet) {
@@ -3214,6 +3280,7 @@ private fun SharedMobilePdfZoomViewport(
 @Composable
 private fun SharedMobilePdfVerticalPages(
     book: BookItem,
+    pdfPassword: String?,
     state: SharedPdfReaderState,
     activeTheme: ReaderTheme,
     textureAlpha: Float,
@@ -3247,7 +3314,8 @@ private fun SharedMobilePdfVerticalPages(
     val navigationRender = rememberSharedMobilePdfPageRender(
         book = book,
         pageIndex = navigationRequestPage.coerceIn(0, pageCount - 1),
-        zoomScale = zoomCamera.scale
+        zoomScale = zoomCamera.scale,
+        password = pdfPassword,
     )
     LaunchedEffect(navigationRequestToken, pageCount, viewportSize, navigationRender.aspectRatio) {
         if (viewportSize.height <= 0) return@LaunchedEffect
@@ -3295,9 +3363,10 @@ private fun SharedMobilePdfVerticalPages(
             verticalArrangement = Arrangement.spacedBy(if (showPageGap) 8.dp else 0.dp)
         ) {
             items(pageCount) { page ->
-                val render = rememberSharedMobilePdfPageRender(book, page, zoomScale)
+                val render = rememberSharedMobilePdfPageRender(book, page, zoomScale, pdfPassword)
                 SharedMobilePdfPageSurface(
                 book = book,
+                pdfPassword = pdfPassword,
                 pageIndex = page,
                 pageCount = pageCount,
                 pageRender = render,
@@ -3330,6 +3399,7 @@ private fun SharedMobilePdfVerticalPages(
 @Composable
 private fun SharedMobilePdfPaginatedPages(
     book: BookItem,
+    pdfPassword: String?,
     state: SharedPdfReaderState,
     activeTheme: ReaderTheme,
     textureAlpha: Float,
@@ -3454,7 +3524,7 @@ private fun SharedMobilePdfPaginatedPages(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     spreadPages.forEach { pageIndex ->
-                        val render = rememberSharedMobilePdfPageRender(book, pageIndex, zoomScale)
+                        val render = rememberSharedMobilePdfPageRender(book, pageIndex, zoomScale, pdfPassword)
                         val aspectRatio = render.aspectRatio.coerceIn(0.1f, 10f)
                         val widthLimited = slotWidth.value / viewportHeight.value <= aspectRatio
                         val fittedWidth = if (widthLimited) slotWidth else viewportHeight * aspectRatio
@@ -3465,6 +3535,7 @@ private fun SharedMobilePdfPaginatedPages(
                         ) {
                             SharedMobilePdfPageSurface(
                                 book = book,
+                                pdfPassword = pdfPassword,
                                 pageIndex = pageIndex,
                                 pageCount = pageCount,
                                 pageRender = render,
@@ -3841,6 +3912,7 @@ private fun SharedMobilePdfPageSlider(
 @Composable
 private fun SharedMobilePdfPageSurface(
     book: BookItem,
+    pdfPassword: String?,
     pageIndex: Int,
     pageCount: Int,
     pageRender: SharedMobilePdfPageRender,
@@ -3872,7 +3944,8 @@ private fun SharedMobilePdfPageSurface(
         pageIndex = pageIndex,
         pageAspectRatio = pageRender.aspectRatio,
         zoomScale = zoomCamera.scale,
-        visibleBounds = visiblePageBounds
+        visibleBounds = visiblePageBounds,
+        password = pdfPassword,
     )
     Surface(
         color = sharedMobilePdfPageBackground(activeTheme),
@@ -3990,6 +4063,7 @@ private fun SharedMobilePdfPageSurface(
             SharedMobilePdfTextSelectionOverlay(
                 book = book,
                 pageIndex = pageIndex,
+                password = pdfPassword,
                 canvasSize = localCanvasSize,
                 selectedTool = selectedTool,
                 onExternalLink = onExternalLink,
@@ -4391,6 +4465,7 @@ fun SharedMobileLibraryScreen(
     onRemoveFolder: (SyncedFolder) -> Unit = {},
     onRenameShelf: (Shelf, String) -> Unit = { _, _ -> },
     onNavigateShelfBack: () -> Unit = {},
+    onShelfAddBooksStateChange: (Boolean, AddBooksSource) -> Unit = { _, _ -> },
     onOpenCatalog: (OpdsCatalog) -> Unit = {},
     onOpenFeedUrl: (String) -> Unit = {},
     onOpdsNavigateBack: () -> Unit = {},
@@ -4460,6 +4535,9 @@ fun SharedMobileLibraryScreen(
             onAddBooks = { ids -> onAddBooksToShelves(ids, setOf(viewedShelf.id)) },
             onRenameShelf = { name -> onRenameShelf(viewedShelf, name) },
             onDeleteShelf = { onDeleteShelves(setOf(viewedShelf.id)) },
+            initialIsAddingBooks = state.isAddingBooksToShelf,
+            initialAddBooksSource = state.addBooksSource,
+            onAddingBooksStateChange = onShelfAddBooksStateChange,
             modifier = modifier
         )
         return
@@ -4778,13 +4856,16 @@ private fun SharedMobileShelfDetail(
     onAddBooks: (Set<String>) -> Unit,
     onRenameShelf: (String) -> Unit,
     onDeleteShelf: () -> Unit,
+    initialIsAddingBooks: Boolean,
+    initialAddBooksSource: AddBooksSource,
+    onAddingBooksStateChange: (Boolean, AddBooksSource) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var infoBook by remember { mutableStateOf<BookItem?>(null) }
     var showTagDialog by remember { mutableStateOf(false) }
     var showRemoveBooks by remember { mutableStateOf(false) }
-    var isAddingBooks by remember { mutableStateOf(false) }
-    var addBooksSource by remember { mutableStateOf(AddBooksSource.UNSHELVED) }
+    var isAddingBooks by remember(shelf.id) { mutableStateOf(initialIsAddingBooks) }
+    var addBooksSource by remember(shelf.id) { mutableStateOf(initialAddBooksSource) }
     var addBooksSortOrder by remember { mutableStateOf(SortOrder.RECENT) }
     var booksSelectedForAdding by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -4822,6 +4903,7 @@ private fun SharedMobileShelfDetail(
             onSourceChange = {
                 addBooksSource = it
                 booksSelectedForAdding = emptySet()
+                onAddingBooksStateChange(true, it)
             },
             onSortOrderChange = { addBooksSortOrder = it },
             onToggleBook = { id ->
@@ -4834,11 +4916,13 @@ private fun SharedMobileShelfDetail(
             onBack = {
                 isAddingBooks = false
                 booksSelectedForAdding = emptySet()
+                onAddingBooksStateChange(false, AddBooksSource.UNSHELVED)
             },
             onAddSelectedBooks = {
                 onAddBooks(booksSelectedForAdding)
                 isAddingBooks = false
                 booksSelectedForAdding = emptySet()
+                onAddingBooksStateChange(false, AddBooksSource.UNSHELVED)
             },
             modifier = modifier,
         )
@@ -4975,7 +5059,12 @@ private fun SharedMobileShelfDetail(
         floatingActionButton = {
             if (shelf.type == ShelfType.MANUAL && shelf.id != "unshelved" && selectedShelfBooks.isEmpty()) {
                 ExtendedFloatingActionButton(
-                    onClick = { isAddingBooks = true },
+                    onClick = {
+                        isAddingBooks = true
+                        addBooksSource = AddBooksSource.UNSHELVED
+                        booksSelectedForAdding = emptySet()
+                        onAddingBooksStateChange(true, AddBooksSource.UNSHELVED)
+                    },
                     icon = { Icon(Icons.Default.Add, contentDescription = null) },
                     text = { Text(readerString("fab_add_books", "Add books")) },
                 )

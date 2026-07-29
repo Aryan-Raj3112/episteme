@@ -2,6 +2,7 @@ package com.aryan.reader.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -168,6 +169,9 @@ class SharedLibraryEditorTest {
             ),
             selectedShelfIds = setOf("manual", "smart", "folder", "unshelved"),
             viewingShelfId = "manual",
+            isAddingBooksToShelf = true,
+            addBooksSource = AddBooksSource.ALL_BOOKS,
+            booksSelectedForAdding = setOf("kept"),
         )
 
         val renamed = SharedLibraryEditor.renameShelfInState(state, "manual", "  Reading  ")
@@ -187,6 +191,9 @@ class SharedLibraryEditorTest {
         assertEquals(listOf("kept"), deleted.libraryBooks.ids())
         assertTrue(deleted.selectedShelfIds.isEmpty())
         assertNull(deleted.viewingShelfId)
+        assertFalse(deleted.isAddingBooksToShelf)
+        assertEquals(AddBooksSource.UNSHELVED, deleted.addBooksSource)
+        assertTrue(deleted.booksSelectedForAdding.isEmpty())
     }
 
     @Test

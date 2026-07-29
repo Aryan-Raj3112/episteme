@@ -7,6 +7,51 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SharedMobileLibraryMutationsTest {
+    @Test
+    fun `mobile import batch reports added duplicate unsupported and native copy failures`() {
+        val outcome = planMobileImportBatch(
+            files = listOf(
+                ImportedBookFile(name = "new.epub", uriString = null, localPath = "/imports/new.epub", size = 1L, id = "new"),
+                ImportedBookFile(name = "again.pdf", uriString = null, localPath = "/imports/again.pdf", size = 1L, id = "existing"),
+                ImportedBookFile(name = "notes.xyz", uriString = null, localPath = "/imports/notes.xyz", size = 1L, id = "unknown"),
+            ),
+            existingBookIds = setOf("existing"),
+            failedCount = 2,
+            nowMillis = 100L,
+        )
+
+        assertEquals(1, outcome.counts.addedCount)
+        assertEquals(1, outcome.counts.duplicateCount)
+        assertEquals(1, outcome.counts.unsupportedCount)
+        assertEquals(2, outcome.counts.failedCount)
+        assertEquals(listOf("new"), outcome.plan.importedBooks.map { it.id })
+    }
+
+    @Test
+    fun `folder sync toggle requests cloud work only when both toggles are enabled`() {
+        assertTrue(shouldRequestCloudSyncAfterFolderSyncChange(true, true))
+        assertFalse(shouldRequestCloudSyncAfterFolderSyncChange(true, false))
+        assertFalse(shouldRequestCloudSyncAfterFolderSyncChange(false, true))
+        assertFalse(shouldRequestCloudSyncAfterFolderSyncChange(false, false))
+    }
+
+    @Test
+    fun `mobile folder scan queue preserves every folder and replaces only duplicate pending work`() {
+        val first = SharedMobileFolderScanResult(" First ", emptyList())
+        val second = SharedMobileFolderScanResult("Second", emptyList())
+        val newerFirst = SharedMobileFolderScanResult("First", emptyList(), succeeded = false)
+
+        val queued = enqueueMobileFolderScan(
+            enqueueMobileFolderScan(emptyList(), first),
+            second,
+        )
+        val replaced = enqueueMobileFolderScan(queued, newerFirst)
+
+        assertEquals(listOf("First", "Second"), queued.map { it.folderName })
+        assertEquals(listOf("Second", "First"), replaced.map { it.folderName })
+        assertFalse(replaced.last().succeeded)
+        assertEquals(queued, enqueueMobileFolderScan(queued, first.copy(folderName = " ")))
+    }
 
     @Test
     fun `external file close policy matches Android managed-copy lifecycle`() {
@@ -38,6 +83,30 @@ class SharedMobileLibraryMutationsTest {
             MobileExternalFileCloseAction.DELETE,
             mobileExternalFileCloseAction("KEEP", isTemporarySession = true),
         )
+    }
+
+    @Test
+    fun `mobile library navigation restores only an existing shelf`() {
+        val shelf = Shelf("reading", "Reading", ShelfType.MANUAL, books = emptyList())
+        val state = SharedReaderScreenState(shelves = listOf(shelf))
+
+        val restored = state.withRestoredMobileLibraryNavigation(
+            restoredShelfId = " reading ",
+            restoredIsAddingBooks = true,
+            restoredAddBooksSource = AddBooksSource.ALL_BOOKS,
+        )
+        val stale = state.withRestoredMobileLibraryNavigation(
+            restoredShelfId = "deleted",
+            restoredIsAddingBooks = true,
+            restoredAddBooksSource = AddBooksSource.ALL_BOOKS,
+        )
+
+        assertEquals(shelf.id, restored.viewingShelfId)
+        assertTrue(restored.isAddingBooksToShelf)
+        assertEquals(AddBooksSource.ALL_BOOKS, restored.addBooksSource)
+        assertNull(stale.viewingShelfId)
+        assertFalse(stale.isAddingBooksToShelf)
+        assertEquals(AddBooksSource.UNSHELVED, stale.addBooksSource)
     }
 
     @Test

@@ -20,6 +20,26 @@ fun mobileExternalFileCloseAction(
     }
 }
 
+fun shouldRequestCloudSyncAfterFolderSyncChange(
+    folderSyncEnabled: Boolean,
+    cloudSyncEnabled: Boolean,
+): Boolean = folderSyncEnabled && cloudSyncEnabled
+
+data class SharedMobileFolderScanResult(
+    val folderName: String,
+    val files: List<SharedFolderScannedFile>,
+    val succeeded: Boolean = true,
+)
+
+fun enqueueMobileFolderScan(
+    queue: List<SharedMobileFolderScanResult>,
+    result: SharedMobileFolderScanResult,
+): List<SharedMobileFolderScanResult> {
+    val folderName = result.folderName.trim()
+    if (folderName.isBlank()) return queue
+    return queue.filterNot { it.folderName == folderName } + result.copy(folderName = folderName)
+}
+
 fun canOpenMobilePdfTab(openTabIds: Collection<String>, bookId: String): Boolean {
     val normalizedBookId = bookId.trim()
     if (normalizedBookId.isBlank()) return false
@@ -42,6 +62,34 @@ data class SharedMobileImportResult(
     val state: SharedReaderScreenState,
     val addedBooks: List<BookItem>
 )
+
+data class SharedMobileImportBatchOutcome(
+    val plan: SharedImportPlan,
+    val counts: SharedImportOutcomeCounts,
+)
+
+fun planMobileImportBatch(
+    files: List<ImportedBookFile>,
+    existingBookIds: Set<String>,
+    failedCount: Int = 0,
+    nowMillis: Long = currentTimestamp(),
+): SharedMobileImportBatchOutcome {
+    val plan = SharedImportPlanner.plan(
+        files = files,
+        existingBookIds = existingBookIds,
+        platform = ReaderPlatform.IOS,
+        nowMillis = nowMillis,
+    )
+    return SharedMobileImportBatchOutcome(
+        plan = plan,
+        counts = SharedImportOutcomeCounts(
+            addedCount = plan.importedCount,
+            duplicateCount = plan.duplicateCount,
+            unsupportedCount = plan.unsupportedCount,
+            failedCount = failedCount.coerceAtLeast(0),
+        ),
+    )
+}
 
 fun SharedReaderScreenState.withMobileImportedBooks(
     books: List<BookItem>,
@@ -166,6 +214,22 @@ fun SharedReaderScreenState.withoutMobileReaderSession(): SharedReaderScreenStat
         selectedBookId = null,
         selectedUriString = null,
         selectedFileType = null,
+    )
+}
+
+fun SharedReaderScreenState.withRestoredMobileLibraryNavigation(
+    restoredShelfId: String?,
+    restoredIsAddingBooks: Boolean,
+    restoredAddBooksSource: AddBooksSource,
+): SharedReaderScreenState {
+    val shelfId = restoredShelfId
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+        ?.takeIf { candidate -> shelves.any { it.id == candidate } }
+    return copy(
+        viewingShelfId = shelfId,
+        isAddingBooksToShelf = restoredIsAddingBooks && shelfId != null,
+        addBooksSource = if (shelfId != null) restoredAddBooksSource else AddBooksSource.UNSHELVED,
     )
 }
 

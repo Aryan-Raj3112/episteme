@@ -326,10 +326,14 @@ object SharedLibraryEditor {
         }
         if (removableShelves.isEmpty()) return null
         val removableIds = removableShelves.mapTo(mutableSetOf()) { it.id }
+        val removesViewedShelf = state.viewingShelfId in removableIds
         return state.copy(
             shelves = state.shelves.filterNot { it.id in removableIds },
             selectedShelfIds = emptySet(),
             viewingShelfId = state.viewingShelfId?.takeUnless { it in removableIds },
+            isAddingBooksToShelf = state.isAddingBooksToShelf && !removesViewedShelf,
+            addBooksSource = if (removesViewedShelf) AddBooksSource.UNSHELVED else state.addBooksSource,
+            booksSelectedForAdding = if (removesViewedShelf) emptySet() else state.booksSelectedForAdding,
             bannerMessage = if (removableShelves.size == 1) {
                 BannerMessage.string(
                     "banner_shelf_deleted",

@@ -91,10 +91,15 @@ struct ContentView: View {
                     bridge.recordImportedFiles(
                         fileNames: importedFiles.map(\.name),
                         filePaths: importedFiles.map(\.path),
-                        contentIds: importedFiles.map(\.contentId)
+                        contentIds: importedFiles.map(\.contentId),
+                        failedCount: Int32(urls.count - importedFiles.count),
+                        wasCancelled: false
                     )
                 }
-            case .failure:
+            case .failure(let error):
+                let nsError = error as NSError
+                let wasCancelled = error is CancellationError ||
+                    (nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError)
                 if importKind == .fonts {
                     bridge.recordImportedFonts(fileNames: [], filePaths: [])
                 } else if importKind == .cover {
@@ -111,7 +116,13 @@ struct ContentView: View {
                         scanSucceeded: false
                     )
                 } else {
-                    bridge.recordImportedFiles(fileNames: [], filePaths: [], contentIds: [])
+                    bridge.recordImportedFiles(
+                        fileNames: [],
+                        filePaths: [],
+                        contentIds: [],
+                        failedCount: wasCancelled ? 0 : 1,
+                        wasCancelled: wasCancelled
+                    )
                 }
             }
         }

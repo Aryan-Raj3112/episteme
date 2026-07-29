@@ -22,6 +22,7 @@ import com.aryan.reader.shared.pdfium.c.FPDFBitmap_GetStride
 import com.aryan.reader.shared.pdfium.c.FPDF_CloseDocument
 import com.aryan.reader.shared.pdfium.c.FPDF_ClosePage
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageCount
+import com.aryan.reader.shared.pdfium.c.FPDF_GetLastError
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageHeightF
 import com.aryan.reader.shared.pdfium.c.FPDF_GetPageWidthF
 import com.aryan.reader.shared.pdfium.c.FPDF_LoadDocument
@@ -49,12 +50,13 @@ import kotlin.math.roundToInt
 internal actual fun rememberSharedMobilePdfPageRender(
     book: BookItem,
     pageIndex: Int,
-    zoomScale: Float
+    zoomScale: Float,
+    password: String?,
 ): SharedMobilePdfPageRender {
-    var render by remember(book.path, pageIndex) { mutableStateOf(SharedMobilePdfPageRender()) }
+    var render by remember(book.path, pageIndex, password) { mutableStateOf(SharedMobilePdfPageRender()) }
 
-    LaunchedEffect(book.path, pageIndex) {
-        render = IosPdfiumRenderer.render(book.path, pageIndex, 1f)
+    LaunchedEffect(book.path, pageIndex, password) {
+        render = IosPdfiumRenderer.render(book.path, pageIndex, 1f, password)
     }
 
     return render
@@ -66,13 +68,14 @@ internal actual fun rememberSharedMobilePdfTileRenders(
     pageIndex: Int,
     pageAspectRatio: Float,
     zoomScale: Float,
-    visibleBounds: PdfPageBounds?
+    visibleBounds: PdfPageBounds?,
+    password: String?,
 ): List<SharedMobilePdfTileRender> {
     val requests = remember(pageAspectRatio, zoomScale, visibleBounds) {
         visibleBounds?.let { planPdfZoomTiles(pageAspectRatio, zoomScale, it) }.orEmpty()
     }
-    var tiles by remember(book.path, pageIndex) { mutableStateOf<List<SharedMobilePdfTileRender>>(emptyList()) }
-    LaunchedEffect(book.path, pageIndex, requests) {
+    var tiles by remember(book.path, pageIndex, password) { mutableStateOf<List<SharedMobilePdfTileRender>>(emptyList()) }
+    LaunchedEffect(book.path, pageIndex, requests, password) {
         if (requests.isEmpty()) {
             tiles = emptyList()
             return@LaunchedEffect
@@ -87,7 +90,7 @@ internal actual fun rememberSharedMobilePdfTileRenders(
             return@LaunchedEffect
         }
         kotlinx.coroutines.delay(60)
-        tiles = retained + IosPdfiumRenderer.renderTiles(book.path, pageIndex, missing)
+        tiles = retained + IosPdfiumRenderer.renderTiles(book.path, pageIndex, missing, password)
     }
     val activeScale = requests.firstOrNull()?.renderScale
     val activeIds = requests.mapTo(mutableSetOf()) { it.id }
@@ -98,12 +101,13 @@ private object IosPdfiumRenderer {
     suspend fun renderTiles(
         path: String?,
         pageIndex: Int,
-        requests: List<PdfZoomTileRequest>
+        requests: List<PdfZoomTileRequest>,
+        password: String?,
     ): List<SharedMobilePdfTileRender> = IosPdfiumRuntime.mutex.withLock {
         val resolvedPath = path.resolvedIosPdfPath() ?: return@withLock emptyList()
         if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withLock emptyList()
         IosPdfiumRuntime.ensureInitialized()
-        val document = FPDF_LoadDocument(resolvedPath, null) ?: return@withLock emptyList()
+        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock emptyList()
         try {
             val count = FPDF_GetPageCount(document).coerceAtLeast(1)
             val page = FPDF_LoadPage(document, pageIndex.coerceIn(0, count - 1)) ?: return@withLock emptyList()
@@ -149,7 +153,7 @@ private object IosPdfiumRenderer {
         }
     }
 
-    suspend fun render(path: String?, pageIndex: Int, zoomScale: Float): SharedMobilePdfPageRender =
+    suspend fun render(path: String?, pageIndex: Int, zoomScale: Float, password: String?): SharedMobilePdfPageRender =
         IosPdfiumRuntime.mutex.withLock {
         val resolvedPath = path.resolvedIosPdfPath()
         if (resolvedPath.isNullOrBlank()) {
@@ -161,8 +165,11 @@ private object IosPdfiumRenderer {
 
         IosPdfiumRuntime.ensureInitialized()
 
-        val document = FPDF_LoadDocument(resolvedPath, null)
-            ?: return SharedMobilePdfPageRender(errorMessage = "Pdfium could not open this PDF: $resolvedPath")
+        val document = FPDF_LoadDocument(resolvedPath, password)
+            ?: return SharedMobilePdfPageRender(
+                errorMessage = "Pdfium could not open this PDF",
+                openError = sharedMobilePdfOpenErrorForPdfiumCode(FPDF_GetLastError().toLong()),
+            )
         return try {
                 val pageCount = FPDF_GetPageCount(document).coerceAtLeast(1)
                 val safePageIndex = pageIndex.coerceIn(0, pageCount - 1)

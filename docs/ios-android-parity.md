@@ -326,6 +326,41 @@ integration boundaries.
   recorded device-locally and cleaned after an interrupted session, while
   reopening bytes that already belong to a library book does not put that
   existing record at risk.
+- Shelf navigation now restores at Android's device-local boundary. iOS
+  remembers the open shelf, whether its Add Books workflow was active, and the
+  selected Unshelved/All Books source; stale shelf IDs normalize back to the
+  shelf overview. Entering, backing out of, completing, or deleting the viewed
+  shelf clears the nested workflow consistently, including its transient book
+  selection.
+- The iOS Settings cloud-sync switch now reflects and persists the real
+  device-local toggle instead of always rendering off. Startup preserves the
+  saved preference while Firebase/Google account state is still loading, then
+  disables and persists it only after a resolved account proves Drive sync is
+  ineligible. Google linkage plus Drive authorization remains mandatory for
+  sync; Apple-linked Pro accounts continue to work for non-sync Pro features.
+- Folder Sync toggles now have Android's exact side effects from both Settings
+  and the drawer: changing the switch never opens a folder picker, and enabling
+  it requests cloud work only when cloud sync is already active and eligible.
+  Linking a folder remains an explicit action in the Library Folders tab.
+- Native iOS folder refresh now delivers an ordered batch instead of a single
+  overwrite-prone pending slot. Every linked folder is reconciled during Scan
+  All, repeat results replace only that folder's queued work, failed scans keep
+  the previous library contents, and the shared refreshing state remains active
+  until the complete native batch is consumed. Successful scans update both
+  per-folder and global last-scan timestamps through the shared sync engine.
+- iOS bulk imports now retain the complete picker outcome instead of silently
+  dropping native copy/hash failures through `compactMap`. The shared Android
+  import planner classifies each copied file as added, duplicate, or unsupported,
+  combines those counts with native failures, removes rejected managed copies,
+  and applies Android's feedback priority. Cancelling the picker remains silent
+  and is no longer misreported as an import failure.
+- Password-protected PDFs now follow Android's open contract on iOS. PDFium's
+  password error is distinguished from corrupt-document failures, a
+  non-dismissible password prompt retries the document without persisting the
+  secret, and an unsuccessful retry shows an incorrect-password state.
+  The transient password is forwarded to page and zoom-tile rendering, search,
+  outline loading, text selection, links, and read-aloud extraction so the
+  complete reader remains functional after unlock.
 
 ## Known platform constraint
 

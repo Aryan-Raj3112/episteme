@@ -348,11 +348,11 @@ internal class IosPdfTextPage internal constructor(
             IosPdfiumRuntime.ensureInitialized()
         }
 
-        fun open(path: String?, pageIndex: Int): IosPdfTextPage? {
+        fun open(path: String?, pageIndex: Int, password: String? = null): IosPdfTextPage? {
             val resolvedPath = path.resolvedIosPdfPath() ?: return null
             if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return null
             ensureLibraryInitialized()
-            val document = FPDF_LoadDocument(resolvedPath, null) ?: return null
+            val document = FPDF_LoadDocument(resolvedPath, password) ?: return null
             return try {
                 val pageCount = FPDF_GetPageCount(document).coerceAtLeast(1)
                 val safePageIndex = pageIndex.coerceIn(0, pageCount - 1)

@@ -161,6 +161,26 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `eligible ios cloud sync row reflects the persisted toggle state`() {
+        val item = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                isSignedIn = true,
+                isProUser = true,
+                syncAvailable = true,
+                cloudSyncEligible = true,
+                isSyncEnabled = true,
+            )
+        ).page(SharedSettingsDestination.SYNC_ACCOUNTS)
+            .items
+            .single { it.action == SharedSettingsAction.CLOUD_SYNC }
+
+        assertTrue(item.enabled)
+        assertEquals(true, item.checked)
+        assertTrue(item.summary.contains("Sync library metadata"))
+    }
+
+    @Test
     fun `desktop can hide account auth rows while preserving sync controls`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(

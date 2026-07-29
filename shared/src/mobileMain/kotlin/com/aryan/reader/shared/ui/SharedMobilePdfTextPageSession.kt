@@ -16,4 +16,8 @@ import com.aryan.reader.shared.pdf.PdfTextPageSession
  * `PdfPageComposable` machinery and does not call this expect) may return `null`.
  */
 @Composable
-expect fun rememberPdfTextPageSession(book: BookItem, pageIndex: Int): PdfTextPageSession?
+expect fun rememberPdfTextPageSession(
+    book: BookItem,
+    pageIndex: Int,
+    password: String? = null,
+): PdfTextPageSession?

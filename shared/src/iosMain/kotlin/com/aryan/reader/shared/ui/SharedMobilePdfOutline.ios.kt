@@ -26,14 +26,17 @@ import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
 
-internal actual suspend fun loadSharedMobilePdfOutline(book: BookItem): List<PdfTocEntry> {
+internal actual suspend fun loadSharedMobilePdfOutline(
+    book: BookItem,
+    password: String?,
+): List<PdfTocEntry> {
     val path = book.path?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
         if (value.startsWith("file://")) NSURL.URLWithString(value)?.path ?: value.removePrefix("file://") else value
     } ?: return emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(path)) return emptyList()
     return withContext(Dispatchers.Main) { IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
-        val document = FPDF_LoadDocument(path, null) ?: return@withLock emptyList()
+        val document = FPDF_LoadDocument(path, password) ?: return@withLock emptyList()
         try {
         val result = mutableListOf<PdfTocEntry>()
         fun titleOf(bookmark: com.aryan.reader.shared.pdfium.c.FPDF_BOOKMARK): String = memScoped {

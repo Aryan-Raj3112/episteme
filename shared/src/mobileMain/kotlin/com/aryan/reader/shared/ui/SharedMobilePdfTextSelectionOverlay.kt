@@ -111,6 +111,7 @@ private data class SharedMobilePdfTextSelectionState(
 internal fun SharedMobilePdfTextSelectionOverlay(
     book: BookItem,
     pageIndex: Int,
+    password: String? = null,
     canvasSize: IntSize,
     selectedTool: PdfInkTool,
     onExternalLink: (String) -> Unit,
@@ -122,7 +123,7 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     modifier: Modifier = Modifier
 ) {
     if (canvasSize.width <= 0 || canvasSize.height <= 0) return
-    val session = rememberPdfTextPageSession(book, pageIndex)
+    val session = rememberPdfTextPageSession(book, pageIndex, password)
     val linkBounds = remember(session) { session?.linkBoundsNormalized().orEmpty() }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
@@ -132,11 +133,11 @@ internal fun SharedMobilePdfTextSelectionOverlay(
     val teardropWidthPx = with(density) { teardropWidthDp.toPx() }
     val teardropHeightPx = with(density) { teardropHeightDp.toPx() }
 
-    androidx.compose.runtime.LaunchedEffect(book.path, pageIndex, canvasSize) {
+    androidx.compose.runtime.LaunchedEffect(book.path, pageIndex, password, canvasSize) {
         selLog { "overlay mount page=$pageIndex canvas=${canvasSize.width}x${canvasSize.height} tool=$selectedTool session=${session != null} pageChars=${session?.pageCharCount ?: -1}" }
     }
 
-    var state by remember(book.path, pageIndex) {
+    var state by remember(book.path, pageIndex, password) {
         mutableStateOf(SharedMobilePdfTextSelectionState())
     }
 

@@ -33,7 +33,8 @@ private fun String?.resolvedIosPdfPath(): String? {
 
 internal actual suspend fun searchSharedMobilePdf(
     book: BookItem,
-    query: String
+    query: String,
+    password: String?,
 ): List<SharedPdfSearchResult> = withContext(Dispatchers.Main) {
     val resolvedPath = book.path.resolvedIosPdfPath() ?: return@withContext emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
@@ -43,7 +44,7 @@ internal actual suspend fun searchSharedMobilePdf(
     IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
 
-        val document = FPDF_LoadDocument(resolvedPath, null) ?: return@withLock emptyList()
+        val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock emptyList()
         try {
         val pageCount = FPDF_GetPageCount(document)
         val pageTexts = mutableListOf<String>()

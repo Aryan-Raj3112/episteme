@@ -9,8 +9,21 @@ internal data class SharedMobilePdfPageRender(
     /** The rendered page's width divided by its height. */
     val aspectRatio: Float = DefaultSharedMobilePdfPageAspectRatio,
     val bitmap: ImageBitmap? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val openError: SharedMobilePdfOpenError? = null,
 )
+
+internal enum class SharedMobilePdfOpenError {
+    PASSWORD_REQUIRED,
+    INVALID_DOCUMENT,
+}
+
+internal fun sharedMobilePdfOpenErrorForPdfiumCode(code: Long): SharedMobilePdfOpenError =
+    if (code == 4L) {
+        SharedMobilePdfOpenError.PASSWORD_REQUIRED
+    } else {
+        SharedMobilePdfOpenError.INVALID_DOCUMENT
+    }
 
 internal data class SharedMobilePdfTileRender(
     val request: com.aryan.reader.shared.pdf.PdfZoomTileRequest,
@@ -23,7 +36,8 @@ internal const val DefaultSharedMobilePdfPageAspectRatio = 0.72f
 internal expect fun rememberSharedMobilePdfPageRender(
     book: BookItem,
     pageIndex: Int,
-    zoomScale: Float = 1f
+    zoomScale: Float = 1f,
+    password: String? = null,
 ): SharedMobilePdfPageRender
 
 @Composable
@@ -32,5 +46,6 @@ internal expect fun rememberSharedMobilePdfTileRenders(
     pageIndex: Int,
     pageAspectRatio: Float,
     zoomScale: Float,
-    visibleBounds: com.aryan.reader.shared.pdf.PdfPageBounds?
+    visibleBounds: com.aryan.reader.shared.pdf.PdfPageBounds?,
+    password: String? = null,
 ): List<SharedMobilePdfTileRender>
