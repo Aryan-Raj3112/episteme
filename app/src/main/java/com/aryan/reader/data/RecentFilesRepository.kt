@@ -246,6 +246,9 @@ class RecentFilesRepository(private val context: Context) {
             val incomingReadingWins = incomingReadingTimestamp >= existingReadingTimestamp
             incomingEntity.copy(
                 uriString = existingItem.uriString ?: item.uriString,
+                dateAddedTimestamp = existingItem.dateAddedTimestamp.takeIf { it > 0L }
+                    ?: item.dateAddedTimestamp.takeIf { it > 0L }
+                    ?: item.timestamp,
                 isAvailable = existingItem.isAvailable || item.isAvailable,
                 coverImagePath = if (folderFileChanged) {
                     item.coverImagePath

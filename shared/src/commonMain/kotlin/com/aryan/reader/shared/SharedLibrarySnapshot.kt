@@ -315,6 +315,8 @@ private fun JsonElement.asBookItemOrNull(): BookItem? {
         type = type,
         displayName = displayName,
         timestamp = obj.long("timestamp"),
+        dateAddedTimestamp = obj.long("dateAddedTimestamp").takeIf { it > 0L }
+            ?: obj.long("timestamp"),
         coverImagePath = obj.string("coverImagePath"),
         title = obj.string("title"),
         author = obj.string("author"),
@@ -457,6 +459,7 @@ private fun BookItem.toJsonObject(): JsonObject {
             "type" to JsonPrimitive(type.name),
             "displayName" to JsonPrimitive(displayName),
             "timestamp" to JsonPrimitive(timestamp),
+            "dateAddedTimestamp" to JsonPrimitive(dateAddedTimestamp),
             "coverImagePath" to coverImagePath.asJson(),
             "title" to title.asJson(),
             "author" to author.asJson(),

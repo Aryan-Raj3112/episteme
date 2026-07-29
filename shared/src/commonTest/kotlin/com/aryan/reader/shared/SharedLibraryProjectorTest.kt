@@ -466,12 +466,13 @@ class SharedLibraryProjectorTest {
 
     @Test
     fun `shared sort supports newest and oldest date added`() {
-        val oldest = book("oldest", timestamp = 10L)
-        val newest = book("newest", timestamp = 30L)
-        val middle = book("middle", timestamp = 20L)
+        val oldest = book("oldest", timestamp = 40L).copy(dateAddedTimestamp = 10L)
+        val newest = book("newest", timestamp = 10L).copy(dateAddedTimestamp = 30L)
+        val middle = book("middle", timestamp = 20L).copy(dateAddedTimestamp = 20L)
 
         assertEquals(listOf("newest", "middle", "oldest"), sortBooks(listOf(oldest, newest, middle), SortOrder.DATE_ADDED_NEWEST).ids())
         assertEquals(listOf("oldest", "middle", "newest"), sortBooks(listOf(oldest, newest, middle), SortOrder.DATE_ADDED_OLDEST).ids())
+        assertEquals(listOf("oldest", "middle", "newest"), sortBooks(listOf(oldest, newest, middle), SortOrder.RECENT).ids())
     }
 
     @Test

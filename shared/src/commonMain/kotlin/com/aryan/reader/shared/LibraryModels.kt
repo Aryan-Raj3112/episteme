@@ -84,6 +84,7 @@ data class BookItem(
     val type: FileType,
     val displayName: String,
     val timestamp: Long,
+    val dateAddedTimestamp: Long = timestamp,
     val coverImagePath: String? = null,
     val title: String? = null,
     val author: String? = null,

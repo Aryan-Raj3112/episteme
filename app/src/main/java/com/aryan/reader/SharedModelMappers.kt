@@ -48,6 +48,7 @@ private fun RecentFileItem.toSharedBookItem(
         type = type,
         displayName = displayName,
         timestamp = timestamp,
+        dateAddedTimestamp = dateAddedTimestamp.takeIf { it > 0L } ?: timestamp,
         coverImagePath = coverImagePath,
         title = title,
         author = author,
@@ -132,6 +133,7 @@ fun SharedBookItem.toRecentFileItem(
             existing.uriString == path &&
             existing.type == type &&
             existing.timestamp == timestamp &&
+            existing.dateAddedTimestamp == dateAddedTimestamp &&
             existing.coverImagePath == coverImagePath &&
             existing.title == title &&
             existing.author == author &&
@@ -167,6 +169,7 @@ fun SharedBookItem.toRecentFileItem(
             type = type,
             displayName = existing.displayName,
             timestamp = timestamp,
+            dateAddedTimestamp = dateAddedTimestamp,
             coverImagePath = coverImagePath,
             title = title,
             author = author,
@@ -202,6 +205,7 @@ fun SharedBookItem.toRecentFileItem(
         type = type,
         displayName = displayName,
         timestamp = timestamp,
+        dateAddedTimestamp = dateAddedTimestamp,
         coverImagePath = coverImagePath,
         title = title,
         author = author,
