@@ -2991,6 +2991,7 @@ private fun SharedMobileEpubPageInfo(
     val background = settings.readerPageInfoBackgroundColor()
     val foreground = settings.readerTextColor().copy(alpha = 0.8f)
     val texture = sharedMobileEpubTextureBitmap(settings.textureId)
+    val clockTime = rememberReaderClockTime()
     Box(
         modifier.fillMaxWidth().height(25.dp).background(background)
             .then(texture?.let { bitmap -> Modifier.drawBehind { drawRect(ShaderBrush(ImageShader(bitmap, TileMode.Repeated, TileMode.Repeated)), alpha = settings.textureAlpha.coerceIn(0f, 1f), blendMode = if (settings.darkMode) BlendMode.Screen else BlendMode.Multiply) } } ?: Modifier)
@@ -3009,12 +3010,31 @@ private fun SharedMobileEpubPageInfo(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp)
             )
             Text(
+                clockTime,
+                style = MaterialTheme.typography.bodySmall,
+                color = foreground,
+                modifier = Modifier.align(Alignment.CenterStart)
+            )
+            Text(
                 "${formatReaderProgress(progressPercent)}%",
                 style = MaterialTheme.typography.bodySmall,
                 color = foreground,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
     }
+}
+
+@Composable
+private fun rememberReaderClockTime(): String {
+    var currentTimeMillis by remember { mutableLongStateOf(currentTimestamp()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = currentTimestamp()
+            currentTimeMillis = now
+            delay(60_000L - now.mod(60_000L))
+        }
+    }
+    return formatSharedMobileClockTime(currentTimeMillis)
 }
 
 internal fun formatReaderProgress(progressPercent: Float): String {

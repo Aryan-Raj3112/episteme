@@ -129,7 +129,6 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -151,6 +150,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.AiDefinitionResult
 import com.aryan.reader.BuildConfig
@@ -237,6 +237,7 @@ import com.aryan.reader.tts.splitTextIntoChunks
 import com.aryan.reader.withTtsReplacements
 import com.aryan.reader.shared.reader.ReaderJumpHistory
 import kotlinx.coroutines.Dispatchers
+import java.util.Date
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -311,6 +312,23 @@ private fun List<TtsChunk>.withInitialChunkOverride(
     return toMutableList().also { chunks ->
         chunks[startChunkIndex] = initialChunk
     }
+}
+
+@Composable
+private fun rememberReaderClockTime(): String {
+    val context = LocalContext.current
+    val formatter = remember(context) {
+        android.text.format.DateFormat.getTimeFormat(context)
+    }
+    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = System.currentTimeMillis()
+            currentTimeMillis = now
+            delay(60_000L - now.mod(60_000L))
+        }
+    }
+    return formatter.format(Date(currentTimeMillis))
 }
 
 private fun View.bottomRoundedCornerRadiusPx(): Int {
@@ -6328,6 +6346,7 @@ fun EpubReaderHost(
                     } else {
                         0.dp
                     }
+                val readerClockTime = rememberReaderClockTime()
 
                 // Page Info Bar (Vertical)
                 AnimatedVisibility(
@@ -6357,6 +6376,13 @@ fun EpubReaderHost(
                             currentScrollHeightValue <= 0 || isChapterParsing -> ""
                             else -> " ($currentPageInChapter/$totalPagesInCurrentChapter)"
                         }
+
+                        Text(
+                            text = readerClockTime,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = effectiveText.copy(alpha = 0.8f),
+                            modifier = Modifier.align(Alignment.CenterStart)
+                        )
 
                         Text(
                             text = "$chapterTitle$displayPageInfo",
@@ -6420,6 +6446,13 @@ fun EpubReaderHost(
                         } else {
                             stringResource(R.string.page_number_of_total, paginatedPagerState.currentPage + 1, paginatedPagerState.pageCount)
                         }
+
+                        Text(
+                            text = readerClockTime,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = effectiveText.copy(alpha = 0.8f),
+                            modifier = Modifier.align(Alignment.CenterStart)
+                        )
 
                         Text(
                             text = textToShow,
