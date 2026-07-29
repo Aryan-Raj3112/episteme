@@ -1021,16 +1021,6 @@ class TtsService : MediaSessionService() {
         cacheManager = TtsCacheManager(this)
 
         baseTtsSynthesizer = BaseTtsSynthesizer(this)
-        scope.launch {
-            try {
-                Timber.tag(TTS_LOCAL_DIAG_TAG).i("service-local-engine-warmup-start")
-                baseTtsSynthesizer.initialize()
-                Timber.tag(TTS_LOCAL_DIAG_TAG).i("service-local-engine-warmup-success")
-            } catch (e: Exception) {
-                Timber.e(e, "Base TTS synthesizer failed to initialize")
-                Timber.tag(TTS_LOCAL_DIAG_TAG).e(e, "service-local-engine-warmup-failed")
-            }
-        }
 
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
@@ -1088,6 +1078,7 @@ class TtsService : MediaSessionService() {
                 // Do not use this for natural chapter handoffs: #346 relies on
                 // the service staying alive while ordered chunks are generated.
                 // It is only invoked for the user's explicit Stop action.
+                shutdownLocalTtsEngine("explicit-stop")
                 stopSelf()
             }
         )
@@ -1115,11 +1106,14 @@ class TtsService : MediaSessionService() {
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "onTaskRemoved. playWhenReady=${if (::player.isInitialized) player.playWhenReady else null}, isPlaying=${if (::player.isInitialized) player.isPlaying else null}"
         )
-        if (!::player.isInitialized || !player.playWhenReady) {
-            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Task removed while player is not playWhenReady. Calling stopSelf().")
-            stopSelf()
+        // Home/background keeps media playback alive. Removing Episteme from
+        // Recents is an explicit task dismissal and must end the TTS session.
+        if (::playbackManager.isInitialized) {
+            playbackManager.stopForAppTaskRemoval()
         }
-        Timber.d("onTaskRemoved called, stopping service.")
+        shutdownLocalTtsEngine("task-removed")
+        stopSelf()
+        Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("Task removed; TTS playback and service stopped.")
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -1153,5 +1147,11 @@ class TtsService : MediaSessionService() {
             player.release()
         }
         super.onDestroy()
+    }
+
+    private fun shutdownLocalTtsEngine(reason: String) {
+        if (!::baseTtsSynthesizer.isInitialized) return
+        Timber.tag(TTS_LOCAL_DIAG_TAG).i("service-local-engine-shutdown reason=$reason")
+        baseTtsSynthesizer.shutdown()
     }
 }

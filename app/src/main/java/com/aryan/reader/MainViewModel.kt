@@ -519,7 +519,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     val proUpgradeState = billingClientWrapper.proUpgradeState
 
-    val ttsController by lazy { TtsController(appContext).apply { connect() } }
+    // Connecting creates TtsService. Keep it lazy so browsing the app never starts
+    // the user's system TTS engine; TtsController.start() connects on demand.
+    val ttsController by lazy { TtsController(appContext) }
 
     private var backgroundTtsBook: EpubBook? = null
     private var backgroundTtsBookId: String? = null

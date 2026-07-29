@@ -24,6 +24,7 @@ import android.content.Context
 import timber.log.Timber
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
+import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -49,6 +50,7 @@ import com.aryan.reader.shared.SharedFolderScannedFile
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.reader.ReaderBookmark
 import java.io.File
+import java.util.concurrent.TimeUnit
 import android.provider.DocumentsContract
 
 class FolderSyncWorker(
@@ -338,10 +340,15 @@ class FolderSyncWorker(
                                 .putString(MetadataExtractionWorker.KEY_SOURCE_FOLDER_URI, folderUriString)
                                 .build()
                         )
+                        .setBackoffCriteria(
+                            BackoffPolicy.EXPONENTIAL,
+                            METADATA_EXTRACTION_RETRY_BACKOFF_SECONDS,
+                            TimeUnit.SECONDS
+                        )
                         .build()
                     WorkManager.getInstance(appContext).enqueueUniqueWork(
                         MetadataExtractionWorker.WORK_NAME,
-                        ExistingWorkPolicy.REPLACE,
+                        ExistingWorkPolicy.APPEND_OR_REPLACE,
                         metaRequest
                     )
                 } else {

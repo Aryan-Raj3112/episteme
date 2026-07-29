@@ -1527,6 +1527,10 @@ class TtsPlaybackManager(
         }
     }
 
+    fun stopForAppTaskRemoval() {
+        handleStopTts(userInitiated = true)
+    }
+
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
         val newPlaylistIndex = player.currentMediaItemIndex
         Timber.tag("TTS_CLOUD_DIAG").d("onMediaItemTransition to playlistIndex: $newPlaylistIndex, mediaId: ${mediaItem?.mediaId}, reason: $reason")

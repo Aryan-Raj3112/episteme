@@ -5,6 +5,7 @@ import android.content.Context
 import android.provider.OpenableColumns
 import android.util.Xml
 import androidx.core.net.toUri
+import androidx.work.BackoffPolicy
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -21,7 +22,11 @@ import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import timber.log.Timber
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
+
+internal const val MAX_METADATA_EXTRACTION_RETRY_ATTEMPTS = 3
+internal const val METADATA_EXTRACTION_RETRY_BACKOFF_SECONDS = 30L
 
 class MetadataExtractionWorker(
     private val appContext: Context,
@@ -212,23 +217,14 @@ class MetadataExtractionWorker(
                 } catch (e: Exception) {
                     failed++
                     Timber.tag("MetadataWorker").e(e, "Failed metadata extraction for ${item.displayName}")
-                    if (needsTextMetadata || needsEmbeddedCover || needsContentThumbnail) {
-                        pendingUpdates.add(
-                            item.copy(
-                                folderTextMetadataParsed = item.folderTextMetadataParsed || needsTextMetadata,
-                                folderCoverMetadataParsed = item.folderCoverMetadataParsed || needsEmbeddedCover || needsContentThumbnail
-                            )
-                        )
-                        if (pendingUpdates.size >= METADATA_DB_BATCH_SIZE) {
-                            flushUpdates()
-                        }
-                    }
+                    // Leave parsed flags unchanged so a transient read/parser failure can retry.
                 }
             }
 
             flushUpdates()
 
             val nextBatchEnqueued = !isStopped &&
+                failed == 0 &&
                 filesToProcess.size >= METADATA_WORKER_BOOK_BATCH_SIZE &&
                 recentFilesRepository.hasFolderBooksNeedingTextMetadata(sourceFolderUri)
             if (nextBatchEnqueued) {
@@ -240,7 +236,15 @@ class MetadataExtractionWorker(
                     "nextBatch=$nextBatchEnqueued elapsed=${ReaderPerfLog.elapsedMs(workerStart)}ms folder=${sourceFolderUri ?: "ALL"}"
             )
 
-            return@withContext Result.success()
+            return@withContext if (shouldRetryMetadataExtraction(failed, runAttemptCount)) {
+                ReaderPerfLog.w(
+                    "MetadataWorker scheduling retry attempt=${runAttemptCount + 1} failed=$failed " +
+                        "folder=${sourceFolderUri ?: "ALL"}"
+                )
+                Result.retry()
+            } else {
+                Result.success()
+            }
         } catch (e: Exception) {
             Timber.tag("MetadataWorker").e(e, "Metadata extraction failed")
             return@withContext Result.failure()
@@ -255,6 +259,11 @@ class MetadataExtractionWorker(
         }.build()
         val request = OneTimeWorkRequestBuilder<MetadataExtractionWorker>()
             .setInputData(data)
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                METADATA_EXTRACTION_RETRY_BACKOFF_SECONDS,
+                TimeUnit.SECONDS
+            )
             .build()
         WorkManager.getInstance(appContext).enqueueUniqueWork(
             WORK_NAME,
@@ -392,3 +401,6 @@ class MetadataExtractionWorker(
         val cover: EmbeddedEbookCover? = null
     )
 }
+
+internal fun shouldRetryMetadataExtraction(failedCount: Int, runAttemptCount: Int): Boolean =
+    failedCount > 0 && runAttemptCount < MAX_METADATA_EXTRACTION_RETRY_ATTEMPTS
